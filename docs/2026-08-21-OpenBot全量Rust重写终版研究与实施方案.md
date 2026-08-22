@@ -1,14 +1,14 @@
 # OpenBot 全量 Rust 重写：终版研究、前置审计与实施方案
 
-> 日期：2026-08-21（America/Los_Angeles）
+> 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22
 >
-> 文档状态：终版实施基线 v2
+> 文档状态：终版实施基线 v3（v2 + 第二轮只读前置审计修订，修订清单见 §28）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
-> 审计方式：两份第一真源只读；本文件为新结论，不反向改写第一真源
+> 审计方式：两份输入文档只读；本文件为新结论，不反向改写输入文档。自 2026-08-22 起本文件是 `acosmi/OpenBot` 仓内唯一实施真源，与任何输入文档冲突时以本文件为准
 >
-> 结论口径：源码、固定提交、一手规范或实测不能支持的说法，不进入实施事实
+> 结论口径：源码、固定提交、一手规范或实测不能支持的说法，不进入实施事实；本文件中每个计数都必须能被 §28.4 的命令复现
 
 ## 0. 最终裁决
 
@@ -75,6 +75,8 @@ Electron/Chromium browser engine（无业务裁决权）
 | `2026-08-21-OpenBot全量Rust重写与CrabCode复用审计结论.md` | `de9a0ed40522848d8cad4746beb87ac481036a1be48372e8caefac3c869cb95c` | 全文通读；未修改 |
 | `2026-08-21-OpenBot全量Rust未完成能力深度研究与实现方案.md` | `5db37a2ca2471687e8d6e9c829c67cbc13484d1c1ee0d46b8c12182b7aaf49d5` | 全文通读；未修改 |
 
+两份输入文档**未随 `acosmi/OpenBot` 仓归档**（2026-08-22 核对：仓内只有 `README.md` 与本文件），只以 SHA-256 登记供历史追溯。Phase 0 的 evidence bundle 必须把两份原件按上述摘要归档到 `docs/inputs/`；归档前任何人不得以"输入文档里写过"作为实施依据，只认本文件。
+
 ### 1.2 固定源码基线
 
 本文件不再引用会漂移的 `main` 作为实施真源。固定版本如下：
@@ -88,10 +90,28 @@ Electron/Chromium browser engine（无业务裁决权）
 | AG-UI | `e42bdbedc27cdf982ed9b5de904215acd73a17fb` |
 | RMCP Rust SDK | `4a738b9dd99eaca418b614afa433a0cbdaf8d056`；发布版 `3.1.4` |
 | Tauri | 稳定版 `2.11.5` |
-| Leptos | 稳定版 `0.8.19` |
+| Leptos | `0.8.19`（2026-08-22 crates.io 最高稳定版已是 `0.8.20`，`0.9.0-beta` 在飞；本文件仍固定 0.8.19，升级走 delta audit） |
+| CEL 引擎 | crate **`cel`** `0.14.3`（仓库 `cel-rust/cel-rust`；旧名 `cel-interpreter` 0.10.0 已停更，不用）；golden oracle = 上游锁定的 `cel-js@0.8.2` |
+| OIDC / SAML | `openidconnect` `4.0.1`；`samael` `0.0.22`（`njaremko/samael`，0.0.x 版号即"未稳定"信号，§6.2 的独立外审因此不可免） |
 | CrabCode browser kernel | Electron `43.3.0` / Chromium `150.0.7871.212` |
 | Rust 工具链 | `1.94.1`，edition 2024 |
-| PostgreSQL | 17 |
+| PostgreSQL | 17（上游 compose 用 `pgvector/pgvector:pg17`；Rust 版不需要 pgvector，平装 `postgres:17` 即可，§14.1） |
+
+上游 oracle 运行时版本（来自固定 commit 的 `bun.lock` / 各 `package.json`，fixture 录制与 golden 对照只认这些版本）：
+
+| 上游组件 | 锁定版本 | 用途 |
+| --- | --- | --- |
+| `@copilotkit/runtime` / `@copilotkit/react-core` | `1.68.3` | Intelligence 模式 runtime、`BuiltInAgent`、`OpenGenerativeUIActivityRenderer` 沙箱渲染器 |
+| `@ag-ui/core` / `@ag-ui/client` / `@ag-ui/encoder` | `0.0.57` | AG-UI 事件族与 `HttpAgent` 行为 oracle |
+| `better-auth` / `@better-auth/sso` | `1.7.1` | 旧 session/SSO 语义（只做失效与数据关联，不反向工程） |
+| `@modelcontextprotocol/sdk` | `1.30.0` | 上游 MCP Streamable HTTP client 行为 oracle |
+| `cel-js` | `0.8.2` | policy corpus golden oracle（§8.3） |
+| `playwright` | `1.62.1` | 浏览器操作 / screencast / 输入 oracle |
+| `drizzle-orm` / `postgres` | `0.45.2` / `3.4.9` | 28 表 schema 与 13 条 migration 的生成器 |
+| `hono` / `zod` | `4.13.3` / `4.4.3` | 95 条 handler 的 framing / 校验 oracle |
+| `dockerode` | `5.0.1` | Supervisor 容器参数 oracle |
+| `bun` | `1.3.14` | 上游测试运行器（Phase 0 跑基线测试用） |
+| 管理 Bot `agent-langgraph` | `@langchain/{openai,anthropic,google-genai}` + `@langchain/langgraph` 1.4.x | `BOT_PROVIDER` 三家 provider 行为 oracle（§7.3） |
 
 后续升级任一来源时，必须新建 delta audit，记录旧/新 commit、协议差异、许可证差异、迁移影响和回归结果；禁止静默更新 lockfile 后继续沿用本结论。
 
@@ -106,11 +126,11 @@ Electron/Chromium browser engine（无业务裁决权）
 | PostgreSQL 表定义 | 28 |
 | SQL migration | 13 |
 | 前端 route 文件 | 31 |
-| `server/src` 静态 Hono route 注册 | 95；另有 Supervisor 5 条及 agent-computer 手写路由，不含 Better Auth/CopilotKit 动态注入 |
+| `server/src` 静态 Hono route 注册 | 95 = `app`/`routes` 上全部 HTTP method handler（含 4 处多行写法）；**不含** 9 处 `app.route()` 模块挂载、2 处 `use()` 中间件、1 处 `app.on(["GET","POST"], "/api/auth/*")` Better Auth 动态挂载与 CopilotKit `/api/copilotkit` 动态注入；另有 Supervisor 5 条及 agent-computer 29 个 `url.pathname` 手写路径 |
 | `.test.ts/.test.tsx` 文件 | 105 |
 | 版本控制测试文件中的 `test()` / `it()` 词法命中 | 1,007 |
 
-这些数字用于完整性核算，不等于质量证明；1,007 是词法命中，不冒充 AST 解析后的精确 test 数。本轮依赖安装在审计环境中长时间未完成后被终止，因此本文件不宣称上游测试当前全部通过。Phase 0 必须在干净、可联网的受控 CI 中运行、生成 AST 级测试 inventory 并归档原始结果。
+这些数字用于完整性核算，不等于质量证明；1,007 是词法命中，不冒充 AST 解析后的精确 test 数。2026-08-22 第二轮审计在本机独立克隆上把八个数字全部重新算了一遍，逐个相等（命令见 §28.4）。本轮依赖安装在审计环境中长时间未完成后被终止，因此本文件不宣称上游测试当前全部通过。Phase 0 必须在干净、可联网的受控 CI 中运行、生成 AST 级测试 inventory 并归档原始结果。
 
 ## 2. 前置审计结论
 
@@ -173,7 +193,7 @@ Electron/Chromium browser engine（无业务裁决权）
 | [从未运行的 thread history 返回 500](https://github.com/CopilotKit/openbot/issues/72) | 明确返回空 history；真实上游/数据库错误仍返回 5xx |
 | [withdrawn tool 的 stale grant 可能在 transport 切换后复活](https://github.com/CopilotKit/openbot/issues/106) | catalog refresh 将 grant 标为 `suspended_missing`；工具重现后仍需管理员重新启用，永不静默复活 |
 | Google Drive disconnect 尚未实现 | 本地立即 deny 并 tombstone；调用 vendor revoke；失败进入 `revocation_pending` 重试，UI 不谎报 vendor 已撤权 |
-| `allowed_groups` 已存储但没有身份组写入/授权使用 | 只有配置 IdP group claim mapping 后才允许包使用 `allowed_groups`；否则启动拒绝该包，不再保留无效安全字段 |
+| [`allowed_groups` 已存储但没有身份组写入/授权使用](https://github.com/CopilotKit/openbot/issues/82)（上游 2026-08-21 以"改文档、声明它不是控制"关闭；固定 commit 里 `users.groups` 无任何写入路径，`synchronizeTenantPackage` 也不为包声明的 channel 写任何 membership 行——**包里声明的 channel 在当前产品中对所有人不可达**，包括 `OPENBOT_SINGLE_USER` 的唯一管理员） | 语义按 §6.5 固定：保留字 `all` = 全体有效用户；具名组在多用户 Server 必须有 IdP group mapping，否则包校验失败并指出原因；单用户模式（Server `OPENBOT_SINGLE_USER` / Desktop Local）把唯一 principal 直接写入全部包 channel 的 membership 并在包报告中注明"单用户：组不参与裁决"；空 `allowed_groups` 的包 channel 是校验错误（"无受众"），不再静默不可达 |
 | MCP success/failure 审计发生在 vendor 调用之后 | action 前持久化 decision + attempt，action 后持久化 outcome + commit state |
 
 ## 3. 完整产品范围
@@ -188,7 +208,7 @@ Electron/Chromium browser engine（无业务裁决权）
 4. channel transcript、composer draft/queue、`@coworker`、自动 routing、stop/steer、失败恢复。
 5. direct Bot chat、agent selector、新会话、历史恢复和损坏消息隔离。
 6. personal skills、deployment skills、`/` 命令选择。
-7. settings、主题、connected accounts、component gallery，以及 native memory 的查看/纠正/删除/禁用控制。
+7. settings、主题、connected accounts、component gallery，以及 native memory 的查看/删除/禁用控制（**这是 31 个上游 route 之外的新增页面**：固定 commit 的 `app/src` 没有任何 memory UI/API，上游"memory"只存在于 Intelligence 托管侧；它是 §4.1 退出 Intelligence 后的替代面，route ledger 记为 31 + 1，不得冒充 parity 项）。
 8. admin people、identity providers、credentials、computers、boundaries、audit。
 9. admin plugins、connector、单 tool grant 页面、OAuth client 配置。
 10. compiled components、sandboxed component playground、draft/publish/unpublish、HITL decision。
@@ -203,8 +223,9 @@ Electron/Chromium browser engine（无业务裁决权）
 - per-user hidden roster；
 - coworker soft delete 后旧 channel 可读、不可再次运行；
 - channel membership 覆盖所有读写、realtime、screen 和 control 路径；
-- 显式 `@` 选择优先，未标注消息进入 routing，router 失败使用默认 coworker；
+- 显式 `@` 选择优先，未标注消息进入 routing；routing 只在 channel 创建时做一次并把 coworker 钉在该 thread 上（上游 `routing/classify.ts` 语义），router 调用失败、返回不可解析、命中不在 roster 上的 id 或置信度低于阈值，一律落到部署默认 coworker 并在 audit 里说明"未确定匹配"——router 永不抛错；
 - routing audit 记录候选、选择和原因，不记录原始用户消息；
+- 包声明的 channel 的 membership 由 §6.5 规则在包同步与登录时 provision（保留字 `all` / 具名组 / 单用户模式三档），用户创建的 channel 仍只在创建事务里写创建者 membership；
 - tool/connector holdings 参与 routing 候选描述，但 discovery 不产生权限；
 - tenant package 的 brand、agents、channels、model、knowledge 五类 YAML 继续做 schema 与引用检查；
 - `knowledge.sources` 保留为兼容输入并产生“不执行本地同步”的明确状态，不建立 customer document index。
@@ -216,7 +237,11 @@ Electron/Chromium browser engine（无业务裁决权）
 1. **Compiled gallery**：现有 React gallery 全部重写为 Leptos component；保留参数 schema、published 状态、per-Bot withholding、data-function grant 和 tool-call-time 再授权。
 2. **Sandboxed component**：保留用户 authored HTML/CSS/JavaScript、draft/publish/revision/sample arguments；它属于不可信用户数据，不属于第一方 GUI 控制面。
 
-Sandboxed component 固定运行位置：Server Web 在浏览器 opaque-origin sandbox iframe；Desktop 不在主 Tauri WebView 创建用户脚本 iframe，而是在独立、零 Tauri capability 的 component Chromium renderer 中运行，通过 typed MessageChannel/broker 返回渲染帧和交互事件。
+Sandboxed component 固定运行位置：Server Web 在浏览器 opaque-origin sandbox iframe；Desktop 不在主 Tauri WebView 创建用户脚本 iframe，而是在独立、零 Tauri capability 的 component Chromium renderer 中运行，通过 typed MessageChannel/broker 返回渲染帧并只转发指针/滚轮/键盘/文本输入。
+
+用户脚本可见的**运行时契约固定为上游现状**（`app/src/lib/copilot/sandboxed-tools.tsx` 与 `admin/playground.tsx`）：wrapper 先注入 `window.__args = <本次调用参数 JSON>`，再执行作者的 `jsFunctions`；作者拿到的只有 `window.__args` 与自己那份 DOM。沙箱脚本**没有** data function、没有网络、没有向宿主回调的通道（上游 `component_functions` 只服务 compiled component），R1 不新增任何一种。迁移后已发布的 `sandboxed_components` 行必须在新沙箱里逐行渲染通过（Phase 0 把每行的 published html/css/jsFunctions/sampleArguments 录成 fixture）。
+
+Desktop 独立 renderer 的两条必然后果在此写死，不留给实现期发现：① renderer 是同一个 Electron/Chromium engine 进程类（§11.1 单 engine），不引入第三种渲染器；② 画面以帧流回主 GUI，文本不可选中、屏幕阅读器不可达——Desktop 的 sandboxed component **不承诺** a11y parity，§18 / G6 的 a11y 要求对 Desktop sandboxed component 明确豁免并在产品文档写明；Web 路径（iframe）保持 a11y 要求。
 
 固定运行规则：
 
@@ -233,8 +258,10 @@ Sandboxed component 固定运行位置：Server Web 在浏览器 opaque-origin s
 - 任意 remote AG-UI endpoint；
 - write-only endpoint authorization header；
 - standing role 去重注入；
-- per-agent callback token hash；
+- per-agent callback token hash（`obot_agt_` 前缀、32 字节、库内只存 SHA-256）；
 - 10 分钟、绑定 actor/bot/run/tool 的签名 run assertion；
+- **deployment-wide `AGENT_TOOL_TOKEN` 旧路径不保留**：固定 commit 的 `verifyCallback` 仍接受该共享 token（只认证、不授权，Bot/actor 仍取自 assertion），供"盒内 Bot"回调。Rust 版的盒内 Bot 是进程内 built-in Agent，不需要回调；任何仍以共享 token 回调的外部 Bot 必须在 cutover 前换发 per-agent token——迁移 preflight 列出最近 30 天用共享 token 回调过的 endpoint，未换发的部署不进入 §20.4 第 7 步；
+- **managed Bot 插槽**：上游 `MANAGED_AGENT_AG_UI_URL` + `MANAGED_AGENT_TOKEN` 指定"产品内创建的 coworker 默认端点"（开发期指向 `agent-langgraph`；未设则省略随包的 Risk Analyst coworker，且拒绝创建没有自带端点的 coworker）。Rust 版该插槽默认由进程内 built-in Agent 承接，两个变量保留为可选外部覆盖（语义不变：server 以 `x-openbot-agent-token` 向该端点自证），`.env` 里有 token 无 URL 继续被忽略；
 - deployment tool 与 surface/HITL tool 分流；
 - stall watchdog、cancel、断流、未知事件和 provider 错误；
 - Google Drive REST adapter、per-user OAuth 和 connected accounts；
@@ -305,7 +332,7 @@ intelligence_import_cursors
 5. outbox 是 at-least-once；destination 使用 `(aggregate_id, seq, destination)` 去重，任何外部非幂等 effect 不通过普通 outbox 自动重放。
 6. WebSocket/SSE reconnect 必须携带 last cursor；服务端先 replay，再进入 live。
 7. token delta 以 50 ms 或 8 KiB 为上限合并成 semantic chunk 后持久化，避免逐 token 行爆炸。
-8. memory 只保存三类：用户明确要求保留的 preference、带来源的事实、Bot 的 operational checkpoint；每条记录包含 scope、source message/thread、sensitivity、created_by、supersedes、expires_at。
+8. memory 只保存两类：用户明确要求保留的 preference、带来源的事实；每条记录包含 scope、source message/thread、sensitivity、created_by、supersedes、expires_at。**写入只有两个显式入口**：built-in Agent 的 `remember` tool（经 §8.1 管线，effect=write）与用户在 GUI 的"记住这条"动作；R1 没有后台抽取、没有跨会话"learning" job。Bot 的 operational checkpoint 不是 memory，归 `runs` / `run_events`。Intelligence 托管侧的隐式记忆行为在 OpenBot 源码里不可观察、算法不可复刻（§4.1 条 5），这条替代面作为**已披露的行为差异**写进发布说明与 §22。
 9. R1 memory retrieval 使用 PostgreSQL full-text、结构化 tag、scope 和 recency；不重建 customer document index，也不要求 pgvector。
 10. 自动 thread summary 是上下文压缩产物，不冒充用户事实；原消息仍是可追溯来源。
 11. 用户可以列出、删除、纠正和禁止 memory；撤权后 realtime subscription 和 memory recall 同时失效。
@@ -409,7 +436,7 @@ Rust 选型：OIDC 使用 `openidconnect` 4.x；SAML 使用固定版本 `samael`
 
 ### 6.3 Session
 
-- server cookie：`HttpOnly`、`Secure`、`SameSite=Lax`，host-only，短 idle + 绝对期限；
+- server cookie：`HttpOnly`、`SameSite=Lax`，host-only，短 idle + 绝对期限；`Secure` 当且仅当 `OPENBOT_PUBLIC_URL`（§15.4：它接替 `BETTER_AUTH_URL` 成为唯一公共地址来源）是 `https` 时设置——上游 `docs/deployment.md` 写的是"把 TLS 放在前面"而不是"拒绝 HTTP"，且 CHANGELOG 明确修过"plain HTTP 真实地址上无法开始会话"，所以非 loopback 的 plain HTTP 部署仍可登录，但启动日志告警、`/health` readiness 附带 `insecure_transport: true`；不另设开关。对应地，Leptos GUI 不得依赖只在 secure context 才有的浏览器 API（`crypto.subtle`、`crypto.randomUUID` 等）——ID 与随机数一律由服务端签发或走 `crypto.getRandomValues`；
 - session token 数据库只保存 keyed hash，不保存可直接使用的明文 token；
 - 敏感 admin 写操作要求 fresh session，并校验 CSRF/origin；
 - refresh/reauth 不沿用旧 auth generation；
@@ -431,13 +458,14 @@ record AEAD 的 AAD 固定绑定 `tenant_id + secret_id + kind + owner + consume
 
 ### 6.5 Group access 的修正
 
-当前 `users.groups` 与 `channels.allowed_groups` 不是生效的控制。Rust 版作确定修正：
+当前 `users.groups` 与 `channels.allowed_groups` 不是生效的控制（[#82](https://github.com/CopilotKit/openbot/issues/82)），而且包声明的 channel 没有任何 membership 写入路径，对所有人不可达（§2.4）。Rust 版作确定修正：
 
 1. 每个动态 IdP 可配置一个明确的 group claim path 和规范化规则。
-2. Tenant package 出现非空 `allowed_groups`，但相关 IdP 没有 group mapping 时，package 校验失败并指出原因。
-3. 登录时将 verified group claims 写入 membership projection；每次 session refresh 重算。
-4. group 只负责 provision channel membership，所有运行时 channel route 仍检查 materialized membership。
-5. IdP 撤组后递增 auth generation 并撤销相应 membership；不等待下次应用重启。
+2. `allowed_groups` 的取值固定三档：保留字 `all`（精确匹配、区分大小写）= 部署内全体有效用户（含 `INITIAL_ADMIN_EMAILS` 与单用户 principal），不需要任何 IdP mapping——这是随包示例 `examples/fintech/channels.yaml` 已在用的写法；具名组 = 必须由至少一个已配置 IdP 的 group mapping 解析；空列表 = 包校验错误 "channel has no audience"，不再静默不可达。
+3. 多用户 Server 上出现具名组但没有任何 IdP 配置 group mapping 时，package 校验失败并指出缺哪一家的 mapping。单用户模式（Server `OPENBOT_SINGLE_USER=true` / Desktop Local）只有一个 principal，组无法区分任何人：该 principal 被 provision 进全部包 channel，包报告注明"单用户：组不参与裁决"，不拒绝启动。
+4. 登录时将 verified group claims 写入 membership projection；每次 session refresh 重算；包同步时对 `all` 做一次全量 provision，新用户首次登录时补齐。
+5. group 只负责 provision channel membership，所有运行时 channel route 仍检查 materialized membership。
+6. IdP 撤组后递增 auth generation 并撤销相应 membership；不等待下次应用重启。
 
 ## 7. Rust Agent、Provider 与 AG-UI
 
@@ -447,6 +475,8 @@ record AEAD 的 AAD 固定绑定 `tenant_id + secret_id + kind + owner + consume
 | --- | --- | --- |
 | built-in Agent | `openbot-agent` 内的 Rust loop | 第一方生产逻辑必须 Rust |
 | remote AG-UI Agent | 外部 endpoint | 任意语言；按不可信服务处理 |
+
+上游 `RegisteredAgent` 实际有三种：`built_in`（包声明、CopilotKit `BuiltInAgent`）、`remote_ag_ui`（外部端点，含 §3.4 的 managed Bot）、`unavailable`（profile 已软删除但旧 channel 仍可读的 tombstone，每次 run 直接拒绝、不联系端点）。Rust 版把前两种分别落到上表两行，并把 `built_in` 与 managed Bot 插槽统一为同一个 Rust loop；`unavailable` 保留为 Agent 注册表的第三种终态（§3.2 "soft delete 后旧 channel 可读、不可再次运行"的实现面），不是新类型。
 
 Rust loop 不能删除 BYO Agent。remote Agent 也不能直接调用 vendor 或 computer 绕过 Rust gateway；它只能使用运行时给出的工具，并以 per-agent token + signed run assertion 回调 Rust。
 
@@ -476,7 +506,15 @@ Queued
 
 数据库、provider、MCP、browser、file 和 shell 都是 runtime effect。Reducer 不持有 Tauri handle、SQL pool、HTTP client、Electron socket 或 secret。
 
-每个 thread 一个 foreground actor，串行处理 prompt、steer、cancel、tool result、MCP/computer lifecycle 和 timeout。默认 tool step cap 保持当前行为：8；默认 run absolute deadline 30 分钟；任何后台任务必须是独立 durable run，不共享 foreground mutable future。
+每个 thread 一个 foreground actor，串行处理 prompt、steer、cancel、tool result、MCP/computer lifecycle 和 timeout。任何后台任务必须是独立 durable run，不共享 foreground mutable future。
+
+run 预算三条，**哪条是 parity、哪条是新增，分开写**：
+
+| 预算 | 来源 | R1 固定值 |
+| --- | --- | --- |
+| tool step cap | parity：`server/src/copilot.ts::TOOL_STEPS = 8` | 8，不可配置（与上游一致） |
+| 流静默看门狗 | parity：`AGENT_STALL_TIMEOUT_MS`（未设或 `0` = 关；`.env.example` 发 `60000`；触发写 `agent.stream_stalled`） | 变量名、语义、audit 事件名原样保留；判据是"远端 body 真实 read 间隔"（§7.5） |
+| run 绝对期限 | **新增**：固定 commit 没有任何 run 级绝对期限（全仓唯一 30 分钟常量是 `COMPUTER_BROWSER_IDLE_MS`，那是浏览器空闲驱逐，另一概念） | `OPENBOT_RUN_DEADLINE_MS`，默认 `1800000`，`0` = 关；到点按 §7.4 走 `Cancelling → Cancelled` 并写 audit，不是静默杀进程 |
 
 ### 7.3 Provider adapters
 
@@ -485,6 +523,8 @@ Queued
 1. `openai-compatible`：OpenAI Chat Completions/Responses，以及明确声明兼容的网关/xAI endpoint；
 2. `anthropic`；
 3. `google-generative-ai`。
+
+三类的 parity 依据必须说清，否则就是 §0.4 禁止的"新模型专用集成"：固定 commit 里，包声明的 built-in Bot 被 `tenant-package.ts` 钉死 `model.provider must be openai`；而管理 Bot `agent-langgraph`（产品内创建的 coworker 的默认端点）按 `BOT_PROVIDER=openai|anthropic|google` 选 provider，并读 `BOT_MODEL` / `BOT_RESPONSES_API` / `{OPENAI,ANTHROPIC,GOOGLE_GENERATIVE_AI}_BASE_URL`。Rust built-in Agent 同时承接这两个角色，所以三家是 parity 面。provider 的选择位置也按上游分两层固定：包 Bot 读 `model.yaml`，`provider` 继续只接受 `openai`（放宽是独立产品变更）；managed 插槽读 `BOT_PROVIDER` / `BOT_MODEL` / `BOT_RESPONSES_API` 三个部署级变量，缺 key 时与上游一致拒绝启动而不是静默降级。`agent-bot` 的 Rust 重写 `openbot-reference-agent` 保持 OpenAI Chat Completions 单协议（上游注释："proof-of-concept Bot is OpenAI only by construction"）。
 
 不建立 `xai` 专用 crate。每个 adapter 用 `reqwest`/SSE 或 WebSocket 隔离实现，并输出统一事件：
 
@@ -599,9 +639,14 @@ resource_lock keys
 
 ### 8.3 CEL
 
-使用固定版 `cel-rust`，但不能凭语法相似宣称替代 `cel-js`。Phase 0 从现有默认、测试和生产脱敏 policy 构建 corpus；Rust 对每条 expression、context、结果和错误语义做 golden 对照。
+使用 crate `cel` `0.14.3`（§1.2；"cel-rust"是仓库名不是 crate 名，Cargo 里不存在），但不能凭语法相似宣称替代 `cel-js`。Phase 0 从现有默认、测试和生产脱敏 policy 构建 corpus；Rust 对每条 expression、context、结果和错误语义做 golden 对照，oracle 固定为 `cel-js@0.8.2`。
 
-规则固定：deny 先于 allow；missing/empty/broken policy fail-closed；`dry-run` 只改变执行拦截，不跳过 decision/audit；policy version 进入 approval 和 capability，版本变化后旧批准失效。
+两处已核实的引擎差异必须进 corpus，不能留到上线后发现：
+
+1. `cel-js@0.8.2` **没有任何字符串方法**：`element.name.contains("x")`、`startsWith`、`endsWith`、`matches` 方法形式都会抛 "Unknown method"，上游靠两个注入的**全局函数** `contains(haystack, needle)`（大小写不敏感）与 `matches(value, pattern)` 工作（`server/src/computer/policy.ts`）。Rust 引擎必须注册同名、同签名、同大小写语义的两个全局函数；标准 CEL 方法形式（大小写敏感）允许作为超集存在。
+2. 后果：一条在上游"求值出错"的规则（deny 出错 → 拒绝；allow 出错 → 不放行）在 Rust 里可能变成"正常求值"。迁移 preflight 对每条已持久化规则在两个引擎上各跑一遍 corpus context，**结果类别**（true / false / error）任一不同即在迁移报告高亮并要求管理员逐条确认后才导入；不确认的部署不切 policy writer。这是 §8.3 "不悄悄收紧或放宽"的机械执行面。
+
+规则固定：deny 先于 allow；missing/empty/broken policy fail-closed；`dry-run` 只改变执行拦截，不跳过 decision/audit；policy version 进入 approval 和 capability，版本变化后旧批准失效。多 replica 下 policy / grant / catalog 变更沿用上游 `policy-listener.ts` 的形态：PostgreSQL `LISTEN/NOTIFY` 只做唤醒，每个 replica 收到通知或重连后**整表重读**（NOTIFY 载荷 8000 字节上限，不用它带内容），并把 `policy_version` 写进每个 decision——一个 replica 用旧版本做出的 decision 在 audit 里可辨认。
 
 新安装没有隐式 `allow: ["true"]`。首次设置 wizard 必须由本地 owner/admin 选择并保存一个有版本的 policy preset；在完成前所有 acting tool deny。旧部署中已持久化的显式 allow policy 原样导入并在迁移报告中高亮，不被 Rust 悄悄收紧或放宽。
 
@@ -623,10 +668,11 @@ approval UI 展示真实 effect、target、diff/arguments 摘要和可能副作�
 
 ### 8.6 Audit
 
-- Server：业务 DB role 对 audit 只有 INSERT/SELECT，无 UPDATE/DELETE/TRUNCATE；migration/retention 使用分离角色；
-- audit 分区按 retention policy 关闭，不允许业务代码删除单行来“清理”；
-- 对 audit event 建 hash chain，并将周期 checkpoint 签名写入不可变对象存储；
-- retention 删除旧分区前先写并外存该分区的首尾 hash、event count 和 signed closure checkpoint，保留链边界；
+- 表语义保持上游现状，不重建：`audit_events` 由行级触发器拒绝 UPDATE，`0012` 起连 TRUNCATE 也拒绝；DELETE 只在声明了 retention 窗口的事务里、且只对窗口外的行放行。`AUDIT_RETENTION_DAYS` 原名原义保留（未设 = 永久；≥ 1 的整数；非法值拒绝启动），retention sweep 仍是"带锁的分批行删除"（上游 `audit-retention.ts`），只是改为由 Rust 用**独立 DB role** 执行；
+- Server：业务 DB role 对 audit 只有 INSERT/SELECT，无 UPDATE/DELETE/TRUNCATE；migration 与 retention 各用分离角色；
+- **不做表分区**：把既有 `audit_events` 改成分区表在 PostgreSQL 里等于建新表 + 搬行 + 换名，违反 §14.3 兼容期禁令，且上游的触发器语义已经给出同等保证。分区化列为 GA 后独立运维变更，自带 delta audit；
+- hash chain 以**追加 nullable 列**落地（`prev_hash` / `row_hash`，首条 Rust 写入的行是 genesis，旧行 hash 为 NULL 并在 genesis checkpoint 里记录"链起点之前有 N 行未入链"）；周期 checkpoint 签名后写入本库 `audit_checkpoints` 表；**外部不可变存储是可选 sink**（S3 object-lock 或只追加文件），未配置时 readiness 不受影响——不把一项新基础设施写成上线前置；
+- retention 删除窗口外的行之前，先为被删区间写一条包含首尾 `row_hash`、event count 的 closure checkpoint，链边界由此保留；
 - Desktop：同样 append-only，但只承诺可追溯，不宣称抵抗设备所有者/root 篡改；
 - payload 使用字段 allowlist，不保存原始 header/body、prompt、tool full result、screen frame、文件内容、secret 或可验证 secret hash；
 - human takeover 记录 request/taken/released，不记录每个键盘和鼠标事件；
@@ -647,7 +693,7 @@ approval UI 展示真实 effect、target、diff/arguments 摘要和可能副作�
 
 首版不向产品暴露 stdio、resources、prompts、tasks、elicitation，也不接受模型动态安装本机 MCP server。RMCP crate 可以包含这些类型，但运行时 capability 必须不声明，UI 不显示，测试确认无法调用。
 
-单 server 固定上限：1,000 tools、每 tool description 4 KiB、input schema 256 KiB、单 call model-visible text 20,000 Unicode scalar values；超限 listing/call 显式失败或可见截断，不静默把任意 vendor payload塞入模型上下文。
+单 server 固定上限：1,000 tools、每 tool description 4 KiB、input schema 256 KiB、单 call model-visible text 20,000 Unicode scalar values；超限 listing/call 显式失败或可见截断，不静默把任意 vendor payload塞入模型上下文。四个上限里只有最后一个是 parity（`server/src/plugins/mcp.ts::MAX_RESULT_CHARS = 20_000`，截断后附 `[truncated: the tool returned N characters]`），前三个是新增加固。计数单位是一处**有意的差异**：上游按 JS `.length` 数 UTF-16 code unit 并可能把一个字符从代理对中间切开，Rust 按 Unicode scalar value 数且永不切开字符；golden 对照里非 BMP 文本允许长度差异，fixture 注明。超时原名原值保留：`tools/list` 15 s、`tools/call` 60 s、OAuth token 换取 10 s（`LIST_TIMEOUT_MS` / `CALL_TIMEOUT_MS` / `TOKEN_TIMEOUT_MS`），并服从 §7.2 的 run 级预算。
 
 ### 9.2 连接生命周期
 
@@ -751,7 +797,7 @@ public Bot 默认生成 per-user profile，不生成所有人共用 profile。�
 
 共享 channel 中，user-principal computer 的 live screen、snapshot、download 和 human control 默认只对该 principal 可见；其他成员只看脱敏 activity/audit summary。发起者可以铸造一次性、可撤销、限时 screen-share grant。service-principal computer 才可按 channel membership 向全体成员展示，UI 必须明确标识“共享服务身份”。
 
-每个 thread/channel 有独立 workspace/download/artifact root。相同 principal 的浏览器 profile 可以跨 thread 保留登录，但 profile 同一时刻只能被一个 ComputerInstance 持锁；切换 workspace 前必须结束前一 lease。
+每个 thread/channel 有独立 workspace/artifact root（R1 无下载落盘，§11.2；若将来加入，下载也落在这个 root 下）。相同 principal 的浏览器 profile 可以跨 thread 保留登录，但 profile 同一时刻只能被一个 ComputerInstance 持锁；切换 workspace 前必须结束前一 lease。
 
 ### 10.2 Engine 能看到什么
 
@@ -812,7 +858,7 @@ pub struct EngineCommand {
 }
 ```
 
-它不接收 `actor_id`、role、policy、intent 或 `policy_decision_id`；这些留在 Rust。`BrowserOperation` 是封闭 enum：navigate、snapshot、read、click、type、key、scroll、screenshot、screencast、input、download/artifact。禁止自由 CDP method、自由 HTTP passthrough、自由本机路径、任意 shell 或任意环境变量。
+它不接收 `actor_id`、role、policy、intent 或 `policy_decision_id`；这些留在 Rust。`BrowserOperation` 是封闭 enum，R1 成员**与固定 commit 的 agent-computer 浏览器面一一对应**：navigate、snapshot、read、click、type、key、scroll、screenshot、screencast（start/stop/ack）、human input（§12.5 的输入 union）、secret insert、profile lifecycle（ensure/stop/reset）。**没有 download、没有 upload**：上游 29 条手写路径里没有下载/上传/文件选择/对话框处理（`page.on`、`setInputFiles`、`filechooser` 全仓零命中）；Chromium 自发的下载事件由 engine 默认取消并上报一条规范化 `download_refused` 事件，弹出的 JS dialog 默认 dismiss 并上报。把下载落盘或上传文件做成工具是独立产品变更，届时才适用 §11.3 的 quarantine / artifact handle 规则。文件与 shell 不走 `BrowserOperation`，它们是 computer 的另一组封闭操作（§18 "File/shell" 行：files/list、files/read、files/write、exec）。禁止自由 CDP method、自由 HTTP passthrough、自由本机路径、任意 shell 或任意环境变量。
 
 ### 11.3 Browser 安全配置
 
@@ -822,8 +868,7 @@ pub struct EngineCommand {
 - popup/new-window 默认拒绝；外部打开只接受 Rust 重新验证的 URL；
 - 不开放 remote debugging port，只通过 `webContents.debugger` 使用 CDP；
 - 启用 ASAR integrity，关闭未用 Electron fuses，禁止 `ELECTRON_RUN_AS_NODE`；
-- download 进入 quarantine，校验名称、MIME、大小，不自动打开；
-- file upload 只接受 Rust 铸造、scope 绑定的 artifact handle；
+- R1 没有下载落盘与上传操作（§11.2）；若未来作为产品变更加入，download 进入 quarantine、校验名称/MIME/大小、不自动打开，file upload 只接受 Rust 铸造、scope 绑定的 artifact handle——两条规则此时即已写死，不随实现期再议；
 - Electron/Chromium critical/high 修复在 72 小时内升级；无法及时升级时关闭受影响能力或停止发行；
 - browser sidecar 不自更新，必须与 Rust/Tauri 原子版本、原子签名。
 
@@ -892,7 +937,7 @@ Server 使用同源 `wss` 与 session cookie/CSRF-style origin check；不能把
 
 ### 12.5 Input
 
-坐标转换使用 frame metadata、DPI、zoom、scroll、canvas letterbox。输入 union 包含 mouse、wheel、key、insert text、IME composition 和 drag；不提供自由 CDP。
+坐标转换使用 frame metadata、DPI、zoom、scroll、canvas letterbox。输入 union 与上游 `/stream` 协议对齐：mouse（move / down / up，含 button 与 modifiers）、wheel、key（down / up，含 modifiers 与 `Input.dispatchKeyEvent` 所需的 keyCode 表）、insertText、secret insert；不提供自由 CDP。不设 "IME composition" 与 "drag" 两个独立变体：IME 合成发生在 viewer 自己的输入元素里，合成完成的文本走 insertText（上游 `/human/type` 正是这样做的）；拖拽就是 down → move → up 序列，engine 不需要知道"这是一次拖拽"。
 
 ```text
 GUI input
@@ -910,14 +955,14 @@ paste 使用 `Input.insertText`，不读取系统 clipboard；secret 使用独�
 
 ### 12.6 性能目标与降级
 
-- 目标：1280×800、10 fps passive/15 fps driving、JPEG quality 65；
+- 目标：1280×800、JPEG quality 70（与上游 `screencast.ts` 的 `maxWidth 1280 / maxHeight 800 / quality 70` 逐值相同；上游不限 fps、每次变化一帧）；fps 上限是新增背压：10 fps passive / 15 fps driving；
 - loopback capture-to-paint p95 ≤ 200 ms，p99 ≤ 400 ms；
 - 每 viewer 最多 1 个待发 frame，ScreenHub 每 tab 最多 2 个 frame buffer；
 - 最后 viewer 断开后 2 秒内停止 screencast；
 - `Page.startScreencast` capability 不存在时，降级为 `captureScreenshot` 2 fps，并在 UI 明示“低频预览”；不称实时；
 - Electron offscreen/beginFrameSubscription 不作为第二生产路径，只作为实验 fixture。
 
-必须覆盖 DPI/zoom/scroll、resize、navigation、tab switch/close、frame corruption/order、慢消费者、ticket replay、engine restart、多 viewer、IME、drag、human lease race 和跨 scope frame 注入。
+必须覆盖 DPI/zoom/scroll、resize、navigation、tab switch/close、frame corruption/order、慢消费者、ticket replay、engine restart、多 viewer、IME 合成文本经 insertText、down→move→up 拖拽序列、human lease race 和跨 scope frame 注入。
 
 ## 13. Tauri/Leptos 与 in-process transport
 
@@ -977,7 +1022,7 @@ Server 和 Desktop Local 都使用 PostgreSQL 17。理由：
 
 Desktop Rust supervisor 管理固定版本 PostgreSQL sidecar：仅 loopback/本机 socket、随机 SCRAM secret 存 OS key store、独立 data dir、启动锁、ready probe、graceful shutdown、backup 和 upgrade。PostgreSQL major upgrade不与 Tauri/Electron major upgrade同一 release。
 
-R1 不要求 pgvector，也不重建 customer document index。升级前先要求旧 OpenBot 把数据库迁到当前第 13 条 migration；Rust 不接收更早 schema。Fresh install 使用当前最终 schema 的 Rust baseline，不创建已删除的 document/vector 表；现有数据库中的 `vector` extension 原样保留，不能因未使用而在兼容 migration 中删除。
+R1 不要求 pgvector，也不重建 customer document index。升级前先要求旧 OpenBot 把数据库迁到当前第 13 条 migration（`0012`）；Rust 不接收更早 schema。Fresh install 使用当前最终 schema 的 Rust baseline，不创建已删除的 document/vector 表。`vector` extension 的实况是：上游 `0010_drop_the_document_index.sql` 已 `DROP EXTENSION IF EXISTS "vector"`（默认 RESTRICT），所以迁到 `0012` 的库**通常已没有**该 extension；只有部署自行加过 vector 列导致 `0010` 失败、或手工保留的库里还有它。Rust 兼容 migration 对 extension 零操作——既不创建，也不再删一次；Server 镜像改用平装 `postgres:17`，不再依赖 `pgvector/pgvector` 镜像。
 
 ### 14.2 28 表 parity ledger
 
@@ -1046,6 +1091,32 @@ AG-UI 是持续支持的开放协议边界；CopilotKit Intelligence 私有 wire
 
 错误给用户的文本可本地化，但 stable code、HTTP status 和 audit event 类型不能随文案变化。
 
+### 15.4 环境变量处置（本文件已裁决部分）
+
+§21.1 条 6 要求所有变量在 `parity/env.yaml` 标记 preserve / rename / remove。其中会改变关联方行为的裁决不能留到 Phase 0，在此写死；Phase 0 只补齐表外的纯内部变量。上游 `docs/configuration.md` 记录 48 个，`server/src/config.ts` 读 32 个，agent-computer / supervisor 另读 22 个。
+
+| 变量 | 处置 | 固定语义 |
+| --- | --- | --- |
+| `INTELLIGENCE_API_URL` / `INTELLIGENCE_API_KEY` / `INTELLIGENCE_GATEWAY_WS_URL` / `COPILOTKIT_LICENSE_TOKEN` | remove | 只有 §20.3 的导入工具读取；生产二进制出现其中任一变量即启动报错"已退役变量"，不静默忽略 |
+| `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL` | rename → `OPENBOT_SESSION_SECRET` / `OPENBOT_PUBLIC_URL` | 旧名在启动时给出一次性迁移提示后拒绝启动；`OPENBOT_PUBLIC_URL` 原本就存在（缺省回落 `BETTER_AUTH_URL`），成为唯一公共地址来源 |
+| `KEY_ENCRYPTION_KEY` | preserve | v1 envelope 解密（§6.4）与 HMAC 标签派生（run assertion、thread 相关签名）都依赖它；base64 32 字节；示例值在生产拒绝 |
+| `DEPLOYMENT_ID` | preserve | thread id 的 6 字节指纹来源（§20.3）；改它等于放弃对既有 thread 的 `owns` 判定，迁移 preflight 拒绝与旧库不一致的值 |
+| `OPENBOT_SINGLE_USER` / `INITIAL_ADMIN_EMAILS` / `TRUSTED_ORIGINS` / `OPENBOT_APP_URL` / `TENANT_PACKAGE_DIR` / `APP_DIST_DIR` / `PORT` / `DATABASE_URL` | preserve | 语义不变 |
+| `NODE_ENV` | rename → `OPENBOT_ENV`（`production` / `development`，缺省 `production`） | 上游只用它做一件事：`NODE_ENV=production` 时拒绝示例 `KEY_ENCRYPTION_KEY`。Rust 版缺省即生产语义，只有显式 `OPENBOT_ENV=development` 才放行示例 key；它对单用户、cookie、policy 等一切安全判断仍然无效（§6.1） |
+| `GOOGLE_OAUTH_*` / `MICROSOFT_OAUTH_*` / `OKTA_OAUTH_*` | preserve | 三家可同时配置（§6.2） |
+| `AGENT_STALL_TIMEOUT_MS` / `AUDIT_RETENTION_DAYS` | preserve | §7.2 / §8.6 |
+| `OPENBOT_RUN_DEADLINE_MS` | 新增 | §7.2 |
+| `AGENT_TOOL_TOKEN` | remove | §3.4；preflight 列出仍在用它的端点 |
+| `MANAGED_AGENT_AG_UI_URL` / `MANAGED_AGENT_TOKEN` | preserve（可选覆盖） | §3.4；未设时 managed 插槽 = 进程内 built-in Agent |
+| `BOT_PROVIDER` / `BOT_MODEL` / `BOT_RESPONSES_API` / `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` / `GOOGLE_API_KEY` / `GOOGLE_GENERATIVE_AI_BASE_URL` | preserve | §7.3；由 Rust built-in Agent 读取，原来读它们的 `agent-langgraph` 进程不再发布 |
+| `OPENBOT_ACCESSIBILITY_DISABLED` | remove | 它只控制 CopilotKit runtime 自带的 Segment/Scarf 分析上报（`@segment/analytics-node`、`@scarf/scarf` 是 runtime 依赖）。Rust 版**没有任何第一方遥测外发**，变量无事可控；§16.4 据此写明"零 phone-home" |
+| `AGENT_COMPUTER_URL` / `AGENT_COMPUTER_POLICY` / `AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS` / `COMPUTER_SUPERVISOR_URL` / `COMPUTER_TOKEN` / `SUPERVISOR_TOKEN` | preserve（Server） | Desktop Local 不读它们：本机 engine 与 Supervisor 由 Rust 进程内管理 |
+| `COMPUTER_RUNTIME` / `COMPUTER_SANDBOX` / `COMPUTER_IMAGE` / `COMPUTER_NETWORK` / `COMPUTER_NAMESPACE` / `COMPUTER_MEMORY_BYTES` / `COMPUTER_MAX_BROWSERS` / `COMPUTER_BROWSER_IDLE_MS` / `COMPUTER_SHELL_ENV` / `ACTION_TIMEOUT_MS` / `NAVIGATION_TIMEOUT_MS` / `DOCKER_SOCKET` | preserve（Server Supervisor / computer image） | `COMPUTER_RUNTIME=runsc` 在多用户 Server 由 §10.4 升格为强制；`COMPUTER_SHELL_ENV` 继续拒绝 `PATH` 等前置名；默认值逐个与固定 commit 相同（idle 30 min、pids 512、`/exec` 45 s backstop） |
+| `SPIRE_*` / `SPIFFE_ENDPOINT_SOCKET` | preserve（可选） | §10.4 |
+| `COMPUTER_BOT_ID` / `PROFILES_DIR` / `WORKSPACE_DIR` | rename → scope 化 | 容器内按 `ComputerSecurityScope` 注入，不再只有 `bot_id`（§10.1） |
+
+未列出的变量由 Phase 0 归类；任何 remove 都必须在启动期被识别并报错，禁止"读不到就当没设"。
+
 ## 16. 部署、打包、更新与可观测性
 
 ### 16.1 Server 发行物
@@ -1096,7 +1167,7 @@ artifact signature/provenance verification
 
 ### 16.4 Observability
 
-Rust 全链使用 `tracing` + OpenTelemetry；Server 暴露 Prometheus metrics；Desktop 默认只保留 7 天 redacted local ring buffer，不自动外传。
+Rust 全链使用 `tracing` + OpenTelemetry；Server 暴露 Prometheus metrics；Desktop 默认只保留 7 天 redacted local ring buffer，不自动外传。**零 phone-home**：上游 `@copilotkit/runtime` 依赖 `@segment/analytics-node` 与 `@scarf/scarf`，默认向 CopilotKit/Segment 上报使用分析（`OPENBOT_ACCESSIBILITY_DISABLED` 关闭它）；Rust 版删掉 runtime 后没有任何第一方外发遥测端点，OTel exporter 只在管理员显式配置 collector 地址时才建连，supply-chain 闸门（§16.3）把"二进制内出现非配置来源的外部分析域名"判为失败。该变化写进 §22 的合规披露。
 
 统一关联字段：
 
@@ -1161,7 +1232,7 @@ mcp_server_id / transport / release_sha
 | Tenant package | application | 5 YAML、theme allowlist、引用与 group claim 校验 | 当前 package golden + 全部坏包错误 |
 | Coworker/channel | domain/application | profile/visibility/preferences/delete/tombstone/membership/routing/activity | store/route/user journey；跨用户统一 404 |
 | Native thread | domain/infra | message/run/event/lease/outbox/realtime/replay | crash/reconnect/fencing/cursor；无 Intelligence 配置完整运行 |
-| Memory | domain/agent | explicit preference/fact/operational checkpoint、provenance、delete | scope/recall/supersede/delete fixtures；无跨用户 recall |
+| Memory | domain/agent | explicit preference/fact（只有 `remember` tool 与 GUI 两个显式写入口）、provenance、delete | scope/recall/supersede/delete fixtures；无跨用户 recall；无后台抽取 job（正向对照：故意投喂应被抽取的对话，memory 行数不变） |
 | Built-in Agent | agent | 3 provider families、stream/tool loop、8-step、cancel/budget/recovery | recorded stream、partial JSON、429/断流/unknown commit |
 | Remote AG-UI | agent/server | endpoint safety、standing role、callback token/run assertion、stall | 官方 schema golden；SSRF/token/expiry/断流负向 |
 | Tool/Policy/Audit | domain/application | schema/effect/CEL/approval/decision-attempt-outcome | corpus 对等；audit-before-action 违规 0 |
@@ -1171,10 +1242,10 @@ mcp_server_id / transport / release_sha
 | Components | ui/application | compiled Leptos、sandboxed HTML/CSS/JS、publish/withhold/data function/HITL | render/schema/visual/a11y；sandbox escape 0 |
 | ComputerManager | computer | security scope、generation、driver、lease、quota、reconcile | 多用户同 Bot + 多 Bot 隔离；crash/reset/upgrade |
 | Supervisor | computer | server runsc containers；desktop process tree | socket 不在 API；digest/namespace/resource/cleanup |
-| Browser actions | computer | navigate/read/snapshot/click/type/key/scroll/download/artifact | OpenBot + CrabCode fixture；旧 ref 100% 拒绝 |
-| Screen/input | computer/server/desktop | CDP、binary hub、ticket、coordinates、IME、human lease | latency/fps/backpressure/replay/race/跨 scope 注入 |
+| Browser actions | computer | navigate/read/snapshot/click/type/key/scroll/screenshot（R1 无 download/upload，§11.2） | OpenBot + CrabCode fixture；旧 ref 100% 拒绝；Chromium 自发下载被取消并上报 `download_refused` |
+| Screen/input | computer/server/desktop | CDP、binary hub、ticket、coordinates、insertText（含 IME 合成文本）、human lease | latency/fps/backpressure/replay/race/跨 scope 注入 |
 | File/shell | computer | canonical handle、symlink/hardlink、env、timeout/cancel | path corpus；cancel 5 秒内进程树归零 |
-| Leptos GUI | ui | 31 route 对应旅程、settings/admin/sign-in、web/desktop | route ledger 100%；visual/a11y/E2E |
+| Leptos GUI | ui | 31 route 对应旅程 + 1 个新增 memory 页（§3.1 条 7）、settings/admin/sign-in、web/desktop | route ledger 100%；visual/a11y/E2E（Desktop sandboxed component 的 a11y 豁免见 §3.3） |
 | Tauri | desktop | capability、typed in-process、multi-window、update/sidecar | XSS 模拟；queue saturation；签名安装/升级/回滚 |
 | Server/deployment | server/testkit | OCI/Compose/migration/health/readiness/multi-replica | clean checkout；8-Bot soak；backup/restore |
 | Observability | 全部 | OTel/metrics/log/redaction/support bundle | run→decision→tool→computer 全链可追踪；无 secret |
@@ -1256,7 +1327,7 @@ fixtures/browser/*.json
 旧 OpenBot 在 maintenance 前运行固定 commit 的 legacy exporter，生成加密、签名的中立 bundle：thread、message、AG-UI semantic event、user/project mapping、cursor、hash。Rust importer：
 
 1. 验证 bundle schema/signature/hash；
-2. 映射 deployment/user/bot/thread ID；
+2. 映射 deployment/user/bot/thread ID。thread id 沿用上游 `thread-identity.ts` 的布局：RFC 9562 UUIDv8，前 6 字节 = `SHA-256(DEPLOYMENT_ID)` 指纹，其余随机。一个 Intelligence project 可能被多个部署共用（生产与其开发副本），导入只认指纹 `owns()` 为真的 thread，指纹不匹配或前缀期（部署尚无名字）铸造的 thread 列入报告由管理员逐个认领；Rust 之后继续按同一布局铸造 thread id，`owns()` 语义不断档；
 3. 幂等导入 message/run event；
 4. 对每 thread 重建 projection 和 full-text index；
 5. 比较 count、ordered event hash、terminal state 和 sample render；
@@ -1303,7 +1374,7 @@ native thread final cutover 是明确的 writer switch。之后不回到 Intelli
 3. 28 张表、13 条 migration 全部映射；生产脱敏快照 primary key set、foreign key、row count、关键 JSON canonical hash 差异为 0。
 4. 105 个现有测试文件以及 Phase 0 生成的全部 AST 级 test inventory 逐个标记 `ported`、`covered-by-golden` 或 `not-applicable-with-proof`；未分类为 0。1,007 个词法命中只用于交叉检查，不能替代 AST inventory。
 5. 每个 compiled component 具参数/render/action golden；sandboxed component 具 publish/revision/security fixture。
-6. 所有环境变量标记 preserve/rename/remove，并提供启动错误或 migration 文档；未知变量不静默忽略。
+6. 所有环境变量标记 preserve/rename/remove，并提供启动错误或 migration 文档；未知变量不静默忽略。影响关联方的裁决已在 §15.4 写死，Phase 0 只补表外的纯内部变量。
 
 ### 21.2 Agent/Protocol
 
@@ -1334,7 +1405,7 @@ native thread final cutover 是明确的 writer switch。之后不回到 Intelli
 - symlink、hardlink、path traversal、malicious filename、socket抢占、PID reuse、profile lock；
 - malicious engine 伪造 computer/generation/frame/outcome/peer/capability；
 - navigation redirect、iframe、subresource、WS、WebRTC、QUIC、metadata、private/reserved IPv4/IPv6；
-- DPI/zoom/scroll/letterbox/resize/tab close、ticket replay、多 viewer、IME/drag；
+- DPI/zoom/scroll/letterbox/resize/tab close、ticket replay、多 viewer、IME 合成文本/拖拽序列；
 - human lease 时 Agent input 100% 立即拒绝；
 - Tauri XSS 不能扩大 command、读取 vault、订阅其他 thread 或取得 screen ticket；
 - sandbox component XSS/top-nav/network/storage/MessageChannel replay/CPU-memory DoS。
@@ -1379,6 +1450,12 @@ native thread final cutover 是明确的 writer switch。之后不回到 Intelli
 | CrabCode 权利人 | 专有代码可能进入新产品 | 每文件书面授权与 provenance；没有授权只按行为 clean-room 重写 |
 | OpenAI/xAI/OpenCode/Steel 等上游 | Apache/MIT/NOTICE 与商标边界 | 回溯原始来源、保留修改声明；模型/API 使用权另行获得 |
 | 最终客户/采购 | 依赖从 CopilotKit Intelligence 转为自有 Rust/Postgres，仍依赖模型/IdP/vendor | 数据流、subprocessor、retention、DPA、BYOK、region 和出网清单明确披露 |
+| 仍以 deployment-wide `AGENT_TOOL_TOKEN` 回调的外部 Bot 运营方 | 共享 token 路径删除（§3.4）；未换发 per-agent token 的 Bot 在 cutover 后每次回调 401 | preflight 列出最近 30 天用共享 token 回调过的端点；cutover 前逐个换发并实测一次回调；换发未完成的部署不进入 §20.4 第 7 步 |
+| 使用示例包 `allowed_groups: [all]` / 具名组的部署 | 包 channel 从"对所有人不可达"变为"按 §6.5 真正 provision"；具名组无 IdP mapping 的多用户部署启动被拒 | 包 preflight 报告逐 channel 给出"将被 provision 的受众"；拒绝启动的原因可操作（缺哪个 IdP 的 mapping） |
+| 依赖 Intelligence 隐式记忆的用户 | 隐式跨会话记忆不可复刻（§4.3 条 8）；Rust 版只有显式 `remember` / GUI 记住 | 发布说明明写该差异；导入报告列出"可导入的显式 memory 数 = 0 或 N"，不伪造 |
+| 合规 / 隐私（遥测） | CopilotKit runtime 自带的 Segment/Scarf 使用分析随 runtime 一并删除；Rust 版零第一方外发 | subprocessor 清单删去 CopilotKit/Segment/Scarf；新增项只剩管理员自配的 OTel collector |
+| 依赖 `pgvector` 镜像或 `vector` extension 的运维 | Rust 版不需要 pgvector；Server 镜像改平装 `postgres:17` | 既有库里残留的 `vector` extension 零操作（§14.1）；runbook 写明可由运维自行决定是否清理 |
+| plain HTTP（非 loopback）部署 | 仍可登录（§6.3），但 cookie 无 `Secure`、readiness 标 `insecure_transport` | 部署文档保持"把 TLS 放在前面"的建议，不新增拒绝开关 |
 
 ## 23. 许可证、来源与品牌
 
@@ -1457,16 +1534,16 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 
 ### G6：GUI/Components/Tauri
 
-- 31 route journey 100%；
+- 31 route journey 100% + 新增 memory 页 journey；
 - compiled gallery全部 Leptos；sandbox escape=0；
 - multi-window ACL、Tauri XSS、queue saturation/shutdown；
-- web/desktop visual/a11y parity。
+- web/desktop visual/a11y parity（唯一豁免：Desktop sandboxed component 的 a11y，§3.3 已写死）。
 
 ### G7：Screen/Handover
 
 - 目标 fps/latency/backpressure；
 - ticket/replay/origin/generation；
-- coordinates/IME/drag；
+- coordinates / insertText（含 IME 合成文本）/ 拖拽序列；
 - human lease 时 Agent acting 100% 拒绝；secret canary 0 泄漏。
 
 ### G8：Migration/Release
@@ -1557,3 +1634,70 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 > Tauri 2 + Leptos、Axum、Rust Application Core、PostgreSQL 17、native Rust thread/memory/realtime、Rust built-in Agent、remote AG-UI、RMCP tools client、Rust Policy/Audit/Vault/Supervisor、CrabCode 受权基础设施，以及一个最小化、无业务裁决权的 Electron/Chromium browser engine。
 
 该路线既保留 OpenBot 的完整产品契约，也消除了长期依赖 TypeScript 控制面、CopilotKit Intelligence 真源、跨用户 profile、MCP 过度实现、双数据库和多 driver 的结构性风险。按第 24 节逐闸门验收后，可以达到本项目约定的真正“全量 Rust”。
+
+## 28. 第二轮前置审计修订记录（2026-08-22）
+
+审计方式：本机独立克隆 `CopilotKit/openbot`（`git rev-parse main` = `891df72f…`，与 §1.2 钉死的 commit 逐字符相同，钉死之后上游零提交）、`acosmi/OpenBot`（只有 README 与本文件）、本机 CrabCode（`98f971bcf…` 存在）；每条断言亲自 `grep` / `read` / `gh api` 复核，未跑过的命令不写进本节。v2 → v3 只改本文件，不触碰任何输入文档。
+
+### 28.1 修订清单（按严重度）
+
+| # | 位置 | v2 表述 | 问题 | v3 修订 | 证据 |
+| --- | --- | --- | --- | --- | --- |
+| R1 | §7.2 | "默认 run absolute deadline 30 分钟"与"保持当前行为"并列 | 固定 commit 没有任何 run 级绝对期限；唯一 30 分钟常量是浏览器空闲驱逐 `COMPUTER_BROWSER_IDLE_MS`；真正的 parity 是 `AGENT_STALL_TIMEOUT_MS`（默认关） | 拆成三行表：8 步（parity）/ stall 看门狗（parity，原名原义）/ 绝对期限（**新增**，`OPENBOT_RUN_DEADLINE_MS`） | `grep -rn '30 \* 60' --include=*.ts .` 只命中 `agent-computer/src/profiles.ts`；`config.ts::agentStallTimeoutMs` 未设返回 0 |
+| R2 | §2.4 / §6.5 / §3.2 | `allowed_groups` 只规定"无 mapping 则拒包" | 漏了三件事：#82 已于 08-21 关闭（上游改文档不改行为）；包 channel 在当前产品对**所有人**不可达（含单用户管理员）；随包示例用 `allowed_groups: [all]`，按 v2 规则会把官方示例包拒在门外 | 保留字 `all` / 具名组 / 空列表三档 + 单用户模式语义写死；§22 加关联方行 | `synchronizeTenantPackage` 只写 `channels` 与 `channel_agents`，全仓 `channelMemberships` 的 insert 只有 `channels/routes.ts` 创建路径一处；`examples/fintech/channels.yaml` |
+| R3 | §7.3 | 三家 provider 无 parity 依据，与 §0.4 "新模型专用集成不得挤入"自相矛盾 | 包 Bot 被钉死 `model.provider must be openai`；但管理 Bot `agent-langgraph` 按 `BOT_PROVIDER=openai\|anthropic\|google` 选 provider，所以三家确是 parity | 补上依据，并把 provider 选择位置按上游分两层写死；参考 Agent 保持 OpenAI 单协议 | `tenant-package.ts:349`；`agent-langgraph/src/index.ts:59–119`；`.env.example` 118–150 |
+| R4 | §8.3 / §1.2 | "固定版 `cel-rust`" | `cel-rust` 是仓库名，crates.io 没有这个 crate；同仓有新名 `cel`（0.14.3，2026-08-15 更新）与停更旧名 `cel-interpreter`（0.10.0）。另：`cel-js@0.8.2` 没有字符串方法，上游靠两个注入的全局函数工作，方法形式规则在上游是"求值出错" | 钉 `cel = 0.14.3`；写死两个全局函数的签名与大小写语义；preflight 对每条规则比对**结果类别**（true/false/error），变化即高亮待确认 | `cargo search`、crates.io API；`server/src/computer/policy.ts:166–197` |
+| R5 | §8.6 | audit 表分区 + 周期 checkpoint **必须**签名写入不可变对象存储 | 过度设计：既有表改分区 = 建新表搬行换名，违反 §14.3；上游触发器（`0007`/`0012`）已给出 append-only + 窗口内删除的同等保证；"不可变对象存储"是一项新的上线前置基础设施，落到运维头上 | 表语义保持上游；`AUDIT_RETENTION_DAYS` 原名原义；hash chain 以追加 nullable 列落地；外部 sink 可选；分区化列为 GA 后变更 | `server/drizzle/0012_*.sql`；`audit-retention.ts` |
+| R6 | §11.2 / §11.3 / §12.5 / §12.6 | `BrowserOperation` 含 download/artifact；upload 规则；输入 union 含 IME composition 与 drag；JPEG quality 65 | 上游 29 条手写路径没有下载/上传/文件选择/对话框处理（`page.on` / `setInputFiles` / `filechooser` 零命中）；`/stream` 输入 union 只有 mouse/wheel/key/text；screencast quality 是 70 | R1 enum 与上游一一对应；下载默认取消并上报；不设 IME/drag 变体；quality 70，fps 上限标为新增 | `agent-computer/src/screencast.ts:136–142`；`grep -rlE 'page\.on\(\|setInputFiles\|filechooser' agent-computer/src` 为空 |
+| R7 | §3.1 / §4.3 / §18 | memory 三类含 "operational checkpoint"；memory 页未标注为新增 | 固定 commit 的 `app/src` 与 `server/src` 没有任何 memory UI/API（只有注释提到 Intelligence 持有它），memory 是替代面不是 parity 项；checkpoint 属于 run journal | 只保留两类、写入只剩两个显式入口、无后台抽取 job；route ledger 记 31 + 1；§22 加"依赖隐式记忆的用户"行 | `grep -rn -i '\bmemor' app/src server/src` 无生产代码命中 |
+| R8 | §3.3 | 沙箱组件"通过 MessageChannel 返回渲染帧和交互事件"，未写运行时契约 | 上游沙箱脚本只拿到 `window.__args` 与自己的 DOM，没有 data function、网络或回调通道；Desktop 独立 renderer 的 a11y 代价未披露 | 契约写死为上游现状；Desktop renderer 两条后果（同一 engine 类；a11y 豁免）写死 | `app/src/lib/copilot/sandboxed-tools.tsx:110`；`admin/playground.tsx:42` |
+| R9 | §3.4 / §7.1 / §15.4 | 未提 deployment-wide `AGENT_TOOL_TOKEN`、managed Bot 插槽（`MANAGED_AGENT_*`）、`unavailable` tombstone 类型 | 三者都是固定 commit 的生产行为，直接影响外部 Bot 运营方与"盒内 Bot" | 共享 token 路径删除 + preflight 清单；managed 插槽默认 built-in、变量保留为可选覆盖；tombstone 作为第三终态 | `agents/callback-token.ts:164–190`；`docs/configuration.md:30–35`；`copilot.ts:39–70` |
+| R10 | §16.4 / §15.4 / §22 | 未提上游 runtime 自带的使用分析外发 | `@copilotkit/runtime` 依赖 `@segment/analytics-node` 与 `@scarf/scarf`，`OPENBOT_ACCESSIBILITY_DISABLED` 只为关它；删 runtime 后该变量无事可控，合规披露需同步 | 写死"零 phone-home"，变量 remove，subprocessor 清单更新 | `bun.lock` 中 `@copilotkit/runtime@1.68.3` 的 dependencies；`config.ts:566–569` |
+| R11 | §6.3 | cookie 无条件 `Secure` | 上游支持非 loopback plain HTTP（文档只建议 TLS；CHANGELOG 专门修过 plain HTTP 发不出消息），无条件 `Secure` 等于让这类部署无法登录 | `Secure` iff `https`；readiness 标 `insecure_transport`；GUI 禁依赖 secure-context-only API | `docs/deployment.md:87–90`；`CHANGELOG.md:448–452` |
+| R12 | §14.1 | "现有数据库中的 `vector` extension 原样保留" | 前提不成立：上游 `0010` 已 `DROP EXTENSION IF EXISTS "vector"`，迁到 `0012` 的库通常已没有它 | 改为"extension 零操作"；Server 镜像改平装 `postgres:17` | `server/drizzle/0010_drop_the_document_index.sql:26`；`docker-compose.yml:3` |
+| R13 | §9.1 | 四个上限一并写成固定值；计数单位、超时未提 | 只有 20,000 是 parity（`MAX_RESULT_CHARS`），且上游按 UTF-16 code unit 数；三个超时常量未保留 | 标明 parity/新增；计数单位差异显式化；15 s / 60 s / 10 s 原名原值保留 | `plugins/mcp.ts:19–29`；`plugins/store.ts:248` |
+| R14 | §20.3 / §15.4 | thread id 与 `DEPLOYMENT_ID` 的关系未写 | 上游 thread id 是 UUIDv8 + 6 字节 `SHA-256(DEPLOYMENT_ID)` 指纹，导入的 `owns()` 判定与后续铸造都依赖它 | 导入规则与铸造布局写死；`DEPLOYMENT_ID` preserve 且 preflight 校验一致 | `channels/thread-identity.ts` |
+| R15 | §1.2 / §1.3 | oracle 运行时版本缺失；route 计数无复算口径；Leptos "稳定版" 已不是最新 | fixture/golden 需要锁版本；95 需要命令才能复现；0.8.20 已发布 | 加 oracle 版本表；写明 95 的口径与排除项；Leptos 注明 0.8.20 存在但不升 | §28.4 |
+| R16 | §1.1 | 两份输入文档只有 SHA-256 | 仓内不存在原件，无法被任何人复核 | 要求 Phase 0 归档到 `docs/inputs/`；本文件为仓内唯一真源 | `gh api repos/acosmi/OpenBot/git/trees/main?recursive=1` 只有 2 个 blob |
+| R17 | §8.3 | 多 replica 下 policy 传播未写 | 上游 `policy-listener.ts` 以 LISTEN/NOTIFY 唤醒 + 整表重读解决"规则只在 N 分之一 replica 生效"的已知事故 | 形态写死，`policy_version` 进每个 decision | `computer/policy-listener.ts`；`CHANGELOG.md:319` |
+| R18 | §3.2 | routing 失败语义只写"失败用默认" | 上游 router 还在置信度低于阈值、id 不在 roster、JSON 不可解析时落默认，且 routing 发生在 channel 创建时一次性钉定 | 四种落默认情形与钉定时机写死 | `routing/classify.ts:1–46, 124–152` |
+| R19 | §15.4（新增） | 环境变量处置全部推给 Phase 0 | 影响关联方的 remove/rename（Intelligence 四项、Better Auth 两项、`NODE_ENV`、`AGENT_TOOL_TOKEN`、遥测开关）不能等 Phase 0 | 新增处置表；`NODE_ENV` → `OPENBOT_ENV` 并钉示例 key 的拒绝语义 | `config.ts` 读 32 个变量；`docs/configuration.md` 记 48 个 |
+
+### 28.2 复核通过、原样保留的断言
+
+§1.3 八个静态数字（504 / 72,000 / 28 / 13 / 31 / 95 / 105 / 1,007）逐个相等；§1.2 四个上游 commit（AG-UI `e42bdbed…` 08-21、RMCP `4a738b9d…` = tag `rmcp-v3.1.4` 解引用、Codex `4f39251a…` 08-22、Grok Build `19d42e35…` 08-19）与 `rmcp 3.1.4` / `tauri 2.11.5` / `openidconnect 4.0.1` / Electron `43.3.0` + Chromium `150.0.7871.212`（CrabCode `kernel-pin.json`）/ MCP `2026-07-28` 规范 URL 全部存在；§2.4 的 #36 / #44 / #53 / #72 / #106 全部 open，#119 两次 API EOF 未能复核状态（GitHub 作用域代理间歇握手失败，不构成 DIFFERS）；"Disconnecting is not built yet" 原文在 `connected-accounts/$key.tsx:167`；MCP 允许调用的 audit 确实发生在 vendor 调用之后（`plugins/store.ts` 的 `mcp.call_succeeded/failed` 在 `vendor()` 之后，`call_rejected` 在之前）；`knowledge.sources` 只在 `tenant-package.ts` 解析、全仓无消费者；per-call MCP client（`mcp.ts:211–227`）；`VendorTransport` 两实现（`transport.ts`）；worker 只返回 `{status:"idle"}`；AES-GCM v1 envelope 12 字节 IV、无 `additionalData`，`sso_providers` 两字段同用该 envelope；Entra claim 顺序 `email → upn → preferred_username`；SSO 三条注册路由管理员前置守卫；`TOOL_STEPS = 8`；run assertion `RUN_TTL_MS = 10 分钟`；默认 policy `allow: ["true"]`；CrabCode `in_process::embed()` 仍是 stub、生产 Agent 仍启动 Bun worker（与 §2.1 条 5 一致）；CrabCode 根 notices 文件明示 closed-source proprietary（与 §2.2 / §23.1 条 7 一致）；Supervisor 现状已有 `no-new-privileges` / `CapDrop ALL` / `PidsLimit 512` / 可选 `Runtime: runsc`，§10.4 是在其上加固而非从零。
+
+### 28.3 审计后仍然成立的裁决（不改）
+
+- Desktop sandboxed component 用独立 renderer（§0.1 条 3 / §2.3 条 11）：本轮只补代价披露，不推翻——推翻需要三平台 WebView 子帧脚本注入行为的实测证据，本轮没有。
+- 12 人 / 52 周：无法用源码证伪，保留为计划基线。
+- 新增的限额、egress gateway、Vault v2、approval 绑定等加固项：均有上游缺陷或威胁模型支撑，且都已标注"parity / 新增"。
+
+### 28.4 计数复算命令（在固定 commit 的干净克隆根目录执行）
+
+```bash
+git rev-parse HEAD                                                   # 891df72f1827454d8b353d108fe5dd2313b7e30d
+git ls-files | wc -l                                                 # 504
+git ls-files '*.ts' '*.tsx' | xargs cat | wc -l                      # 72000
+cat server/src/db/schema/*.ts | tr '\n' ' ' | grep -oE 'pgTable\(\s*"[a-z_]+"' | wc -l   # 28
+ls server/drizzle/*.sql | wc -l                                      # 13（0000–0012）
+git ls-files 'app/src/routes/*' | wc -l                              # 31
+grep -rnE '^\s*(app|routes)\.(get|post|put|patch|delete|all)\(' server/src --include=*.ts | grep -v '\.test\.' | wc -l   # 95
+grep -rnE '^\s*app\.route\(' server/src --include=*.ts | grep -v '\.test\.' | wc -l       # 9（模块挂载，不计入 95）
+grep -cE '\.(get|post)\("/' supervisor/src/index.ts                  # 5
+grep -oE '"/[a-z][a-z0-9/:_-]*"' agent-computer/src/index.ts | sort -u | wc -l   # 29
+git ls-files '*.test.ts' '*.test.tsx' | wc -l                        # 105
+git ls-files '*.test.ts' '*.test.tsx' | xargs grep -hoE '\b(test|it)\(' | wc -l   # 1007
+grep -oE '"[A-Z][A-Z0-9_]{3,}"' server/src/config.ts | sort -u | wc -l            # 32
+grep -oE '^\| `[A-Z][A-Z0-9_]+`' docs/configuration.md | sort -u | wc -l           # 48
+grep -c 'const TOOL_STEPS = 8' server/src/copilot.ts                 # 1
+grep -c 'RUN_TTL_MS = 10 \* 60 \* 1000' server/src/agents/callback-token.ts   # 1
+grep -c 'MAX_RESULT_CHARS = 20_000' server/src/plugins/mcp.ts        # 1
+grep -c 'quality: options.quality ?? 70' agent-computer/src/screencast.ts      # 1
+grep -c 'DROP EXTENSION IF EXISTS "vector"' server/drizzle/0010_drop_the_document_index.sql   # 1
+grep -rn 'knowledgeSources' server/src app/src --include=*.ts --include=*.tsx | grep -v test | wc -l   # 2（定义 + 赋值，零消费者）
+grep -rlE 'page\.on\(|setInputFiles|filechooser' agent-computer/src | wc -l     # 0（无下载/上传/对话框处理）
+grep -c 'legacyToken && sameToken' server/src/agents/callback-token.ts        # 1（共享 token 旧路径仍在）
+```
+
+对不上 = 上游 commit 变了或本文件漂了 → 先核 `git rev-parse HEAD`，再按 §1.2 走 delta audit。
