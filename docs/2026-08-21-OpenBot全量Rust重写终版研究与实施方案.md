@@ -100,7 +100,7 @@ Electron/Chromium browser engine（无业务裁决权）
 | CEL 引擎 | crate **`cel`** `0.14.3`（仓库 `cel-rust/cel-rust`；旧名 `cel-interpreter` 0.10.0 已停更，不用）；golden oracle = 上游锁定的 `cel-js@0.8.2` |
 | OIDC / SAML | `openidconnect` `4.0.1`；`samael` `0.0.22`（`njaremko/samael`，0.0.x 版号即"未稳定"信号，§6.2 的独立外审因此不可免） |
 | CrabCode browser kernel | Electron `43.3.0` / Chromium `150.0.7871.212` |
-| Rust 工具链 | `1.94.1`，edition 2024 |
+| Rust 工具链 | `1.98.0`（2026-08-18 发布的当时最新稳定版），edition 2024。2026-08-22 由 `1.94.1` 升级，delta audit 见 `docs/2026-08-22-Rust工具链1.94.1升1.98.0-delta审计.md` |
 | PostgreSQL | 17（上游 compose 用 `pgvector/pgvector:pg17`；Rust 版不需要 pgvector，平装 `postgres:17` 即可，§14.1） |
 
 上游 oracle 运行时版本（来自固定 commit 的 `bun.lock` / 各 `package.json`，fixture 录制与 golden 对照只认这些版本）：
@@ -1690,6 +1690,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R18 | §3.2 | routing 失败语义只写"失败用默认" | 上游 router 还在置信度低于阈值、id 不在 roster、JSON 不可解析时落默认，且 routing 发生在 channel 创建时一次性钉定 | 四种落默认情形与钉定时机写死 | `routing/classify.ts:1–46, 124–152` |
 | R19 | §15.4（新增） | 环境变量处置全部推给 Phase 0 | 影响关联方的 remove/rename（Intelligence 四项、Better Auth 两项、`NODE_ENV`、`AGENT_TOOL_TOKEN`、遥测开关）不能等 Phase 0 | 新增处置表；`NODE_ENV` → `OPENBOT_ENV` 并钉示例 key 的拒绝语义 | `config.ts` 读 32 个变量；`docs/configuration.md` 记 48 个 |
 | R20 | §0.1 / §1.2 / §3.1 / §13.1 / §18 / §19.2 / §19.3 / §24 G6 / §26（2026-08-22 第二次修订） | GUI 只有旅程与架构；视觉 / token / 字体 / 主题 / 响应式 / i18n / a11y 零定义（`样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应式` / `i18n` 全文 0 次）；G6 的 "visual parity" 没有判据 | 上游 UI 栈实测：Tailwind `^4.3.3` + shadcn `base-nova`（`@base-ui/react`）+ 21 原语 + 45 业务组件 + 47 Tabler 图标 + 6 个运行时 JS 库（base-ui / motion / streamdown / prompt-area / boring-avatars / tw-animate-css）+ 手动两态主题不跟随系统 + 0 i18n 框架；v3 对它们既无 parity 裁决也无替代方案，且 `leptos_router` 最新版要求 `leptos ^0.8.20` 与钉死的 0.8.19 冲突 | 用户裁决：自有设计系统 / Tailwind v4 standalone CLI 零 Node / 中英双语带 i18n；新增 `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md` 作为视觉真源；G6 的 visual 改为 golden 截图的可判定定义；§1.2 补 GUI 工具链、生态（`leptos_router =0.8.13`）与资产钉版；§19.3 补 `parity/ui.yaml` 等产物 | 设计系统文档 §1 / §17（上游计数命令）；`app/components.json`；`app/src/styles.css`；crates.io `leptos_router` 0.8.13–0.8.15 的依赖声明 |
+| R21 | §1.2（2026-08-22 第三次修订） | Rust 工具链 `1.94.1`（2026-03-25 发布） | 该 pin 是从 CrabCode 基础设施继承的默认值，v3 正文没有为它写过任何理由；而 `1.98.0` 早在 v3 定稿前三天（2026-08-18）就已发布。更关键的是它**正在卡工具**：Phase 0 的 AST 级 test inventory 需要 `oxc_parser`，`cargo build` 在 1.94.1 上直接拒绝 `oxc_parser@0.146.0 requires rustc 1.95.0`，被迫退到 MSRV 台阶上的 `0.139.0` | 升 `1.98.0`；全 workspace 实跑回归，迁移影响 = 1 处新 clippy lint（`collapsible_match`）；oxc 随之升 `0.146.0`，两版 `xtask test-inventory` 产物剔除 parser 版本字段后**逐字节相同** | `rustup check` 实测 `1.94.1 -> 1.98.0 (88d9e12ae 2026-08-18)`；delta audit 全文见 `docs/2026-08-22-Rust工具链1.94.1升1.98.0-delta审计.md` |
 
 ### 28.2 复核通过、原样保留的断言
 
