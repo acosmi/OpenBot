@@ -1,0 +1,382 @@
+# OpenBot parity ledger —— Generative UI 与 Components（v3 §3.3 / §21.1 条 5 / 设计系统文档 §6.2）。
+#
+# 两类 entry：
+#   (a) compiled gallery —— 上游 `app/src/components/gallery/*.tsx` 每个文件一条（8 条）。
+#   (b) sandboxed component —— `app/src/lib/copilot/sandboxed-tools.tsx` 与
+#       `app/src/routes/_authed/admin/playground.tsx` 定义的运行时契约，逐条拆开（12 条）。
+#   (c) Desktop 独立 renderer 的两条必然后果（v3 §3.3 末段写死，2 条）。
+#
+# label 的判据（CLAUDE.md §4 硬要求，不得含糊）：
+#   parity = 上游此刻真的这么跑，本轮有命令输出为证；
+#   新增   = v3 写死的加固，上游第一方源零命中（每条都配了正向对照，证明 grep 的作用域确实
+#            覆盖到了沙箱调用点，而不是"命令根本没扫到那里"）；
+#   替代   = 同一能力换实现（React → Leptos）。
+#
+# 未验证项一律 status: todo 并在 notes 里写明缺什么。本仓此刻零实现代码，因此不存在 done。
+
+schema: "components"
+schema_version: 1
+upstream_commit: "891df72f1827454d8b353d108fe5dd2313b7e30d"
+generated_by: "manual"
+
+recount:
+  - command: "find app/src/components/gallery -name '*.tsx' | wc -l"
+    cwd: "upstream"
+    expect: 8
+  - command: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l"
+    cwd: "upstream"
+    expect: 13
+  - command: "grep -c callComponentFunction app/src/lib/copilot/sandboxed-tools.tsx app/src/routes/_authed/admin/playground.tsx app/src/components/gallery/activity.tsx | sed 's#.*/##' | paste -sd' ' -"
+    cwd: "upstream"
+    expect: "sandboxed-tools.tsx:0 playground.tsx:0 activity.tsx:3"
+  - command: "awk '/ALTER TABLE \"component_functions\"/' server/drizzle/0000_schema.sql | grep -c 'REFERENCES \"public\".\"components\"(\"name\")'"
+    cwd: "upstream"
+    expect: 1
+  - command: "awk '/ALTER TABLE \"component_functions\"/' server/drizzle/0000_schema.sql | grep -c 'sandboxed_components'"
+    cwd: "upstream"
+    expect: 0
+  - command: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l"
+    cwd: "upstream"
+    expect: 0
+  - command: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce|OpenGenerativeUIActivityRenderer' app server shared | wc -l"
+    cwd: "upstream"
+    expect: 4
+  - command: "grep -rE 'MessageChannel|postMessage' app server shared | wc -l"
+    cwd: "upstream"
+    expect: 0
+  - command: "grep -rE 'MessageChannel|postMessage|useFrontendTool' app server shared | wc -l"
+    cwd: "upstream"
+    expect: 22
+  - command: "grep -c 'window.__args' app/src/lib/copilot/sandboxed-tools.tsx app/src/routes/_authed/admin/playground.tsx | sed 's#.*/##' | paste -sd' ' -"
+    cwd: "upstream"
+    expect: "sandboxed-tools.tsx:1 playground.tsx:2"
+  - command: "grep -c respond app/src/lib/copilot/sandboxed-tools.tsx app/src/components/gallery/decisions.tsx app/src/lib/copilot/gallery-tools.tsx | sed 's#.*/##' | paste -sd' ' -"
+    cwd: "upstream"
+    expect: "sandboxed-tools.tsx:0 decisions.tsx:12 gallery-tools.tsx:7"
+  - command: "grep -c revision server/src/components/routes.ts server/src/components/store.ts server/src/components/sandboxed.ts | sed 's#.*/##' | paste -sd' ' -"
+    cwd: "upstream"
+    expect: "routes.ts:0 store.ts:0 sandboxed.ts:4"
+  - command: "grep -c 'revision: row.revision + 1' server/src/components/sandboxed.ts"
+    cwd: "upstream"
+    expect: 2
+  - command: "grep -c sampleArguments app/src/routes/_authed/admin/playground.tsx app/src/lib/sandboxed/mutations.ts server/src/components/sandboxed.ts | sed 's#.*/##' | paste -sd' ' -"
+    cwd: "upstream"
+    expect: "playground.tsx:7 mutations.ts:2 sandboxed.ts:5"
+  - command: "grep -c '\"@jetbrains/websandbox\"' bun.lock"
+    cwd: "upstream"
+    expect: 2
+  - command: "grep -c '^  - id: ' parity/components.yaml"
+    cwd: "repo"
+    expect: 22
+
+entries:
+  # =========================================================================
+  # (a) compiled gallery —— 8 个上游文件，逐个重写为 Leptos。
+  #
+  # 五项必须保留的能力（v3 §3.3 条 1）在每条 notes 里逐项落到符号：
+  #   ① 参数 schema        ② published 状态       ③ per-Bot withholding
+  #   ④ data-function grant ⑤ tool-call-time 再授权
+  # =========================================================================
+
+  - id: "gallery-activity"
+    upstream: "app/src/components/gallery/activity.tsx::GALLERY"
+    label: "替代"
+    target: "openbot_ui::features::gallery::activity"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0001"
+    migration_rule: "preserve: 工具名 showActivityReport 与参数 schema 不变，React 实现换成 Leptos"
+    status: "todo"
+    evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献 showActivityReport 一条"
+    notes: "唯一会自己读部署数据的 gallery 组件。① 参数 schema = activity.tsx::ActivityReportProps；② published 状态 = server/src/db/schema/components.ts::components 的 publishedDescription（null 即模型永不被提供该组件）；③ per-Bot withholding = 同文件 componentExclusions（开放默认，有行才是例外）；④ data-function grant = 同文件 componentFunctions（缺行即拒，activity.tsx::GALLERY 的 reads 回调声明本次调用要读哪个函数）；⑤ tool-call-time 再授权 = app/src/lib/copilot/gallery-tools.tsx::GrantedTool 的 handler 调 decideComponent，服务端 server/src/components/routes.ts 的 POST /:name/decision 与 POST /:name/call 各自复核 canUseBot + store.decide + store.mayCall 并写 audit。本条实测 grep -c callComponentFunction 命中 3 次，是判定沙箱侧为零的正向对照。上游刻意不给它 preview（Admin 画廊里显示为不可预览），Leptos 版必须保留这个缺省，否则 Admin 页会用当前活跃 Bot 的身份发起一次真实读取。"
+
+  - id: "gallery-cards"
+    upstream: "app/src/components/gallery/cards.tsx::GALLERY"
+    label: "替代"
+    target: "openbot_ui::features::gallery::cards"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0002"
+    migration_rule: "preserve: showRecord / showMetrics / showChecklist / showNotice 四个工具名与参数 schema 不变"
+    status: "todo"
+    evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献 showRecord / showMetrics / showChecklist / showNotice 四条"
+    notes: "一个文件四个注册项，Leptos 版必须仍是四个独立工具名而不是一个带 kind 参数的合并组件（工具名是目录键、Admin 行键与 grant 键，合并会静默改掉三处身份）。① 参数 schema = RecordCardProps / MetricsCardProps / ChecklistCardProps / NoticeCardProps；②③④⑤ 与 gallery-activity 同一套：components.publishedDescription / componentExclusions / componentFunctions / gallery-tools.tsx::GrantedTool 的 handler + routes.ts 的 /decision 与 /call。本文件无 reads 回调，即不读部署数据，只画模型给的参数。"
+
+  - id: "gallery-charts"
+    upstream: "app/src/components/gallery/charts.tsx::GALLERY"
+    label: "替代"
+    target: "openbot_ui::features::gallery::charts"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0003"
+    migration_rule: "preserve: showBarChart / showPieChart / showLineChart / showAreaChart / showProgress 五个工具名与参数 schema 不变"
+    status: "todo"
+    evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献五条，是 8 个文件里注册项最多的一个"
+    notes: "五个注册项，其中 AreaChartProps 直接等于 LineChartProps（charts.tsx::AreaChartProps），Leptos 版要保留这层复用而不是抄两份 schema，否则两个工具的参数会各自漂移。① 参数 schema = BarChartProps / PieChartProps / LineChartProps / AreaChartProps / ProgressChartProps；②③④⑤ 同 gallery-activity。上游图表是手写 SVG（charts.tsx::Plot / Legend / Empty），不依赖 JS 图表库，因此 Leptos 版不需要引入运行时库；这一点与设计系统文档 §6.3〈六个运行时 JavaScript 库的替代〉不冲突，本轮未逐库核对，见本文件末尾未验证项。"
+
+  - id: "gallery-decisions"
+    upstream: "app/src/components/gallery/decisions.tsx::GALLERY"
+    label: "替代"
+    target: "openbot_ui::features::gallery::decisions"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0004"
+    migration_rule: "preserve: askApproval / askChoice 两个工具名、参数 schema 与 HITL 挂起语义不变"
+    status: "todo"
+    evidence: "grep -c respond app/src/lib/copilot/sandboxed-tools.tsx app/src/components/gallery/decisions.tsx app/src/lib/copilot/gallery-tools.tsx = sandboxed-tools.tsx:0 decisions.tsx:12 gallery-tools.tsx:7"
+    notes: "kind=decision 是唯一走 useHumanInTheLoop 的分支（gallery-tools.tsx::GrantedDecision），它会挂起整个 run，所以⑤ tool-call-time 再授权在这里的形态不同：被拒时 gallery-tools.tsx::RefusedDecision 必须调 respond 把 tool call 答掉，否则 run 永远挂着。这条 HITL 半边的落点是 openbot-application（v3 §8.5 Approval），本 ledger 按主控指定的 owner 域记为 openbot-ui（渲染面）——两侧同 PR 落地，缺任一即挂死。① 参数 schema = ApprovalCardProps / ChoiceCardProps；② published / ③ withholding / ④ data-function grant 同 gallery-activity。decisions.tsx::readResult / readDecision / readChoice 是结果回读，Leptos 版必须一并搬，否则已完成的决策卡重渲染会丢掉用户答案。"
+
+  - id: "gallery-frame"
+    upstream: "app/src/components/gallery/frame.tsx::GalleryFrame"
+    label: "替代"
+    target: "openbot_ui::features::gallery::frame"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0005"
+    migration_rule: "preserve: 外框与 Badge 的语义色调词表不变"
+    status: "todo"
+    evidence: "grep -l '^export const GALLERY' app/src/components/gallery/*.tsx 不含 frame.tsx（5 个文件命中，frame/preview/refused 不在其中）"
+    notes: "支撑件，不是注册项：它没有 GALLERY 导出，因此不占工具名、没有参数 schema、不参与 published/withholding/grant/再授权这四项——五项能力在这条上只有第①项以 props 形式存在（frame.tsx::GalleryFrame 的 title/caption/action/children）。frame.tsx::Tone 是固定四值语义色调词表（neutral/positive/caution/negative），Leptos 版必须仍是封闭枚举，落到 design token 而不是硬编码 Tailwind 颜色类。"
+
+  - id: "gallery-preview"
+    upstream: "app/src/components/gallery/preview.tsx::GalleryPreview"
+    label: "替代"
+    target: "openbot_ui::features::gallery::preview"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0006"
+    migration_rule: "preserve: 不可预览组件显示为不可预览瓦片而非渲染失败"
+    status: "todo"
+    evidence: "grep -l '^export const GALLERY' app/src/components/gallery/*.tsx 不含 preview.tsx；preview.tsx::PreviewOf 与 firstSentence 是其内部符号"
+    notes: "支撑件，不是注册项（无 GALLERY 导出，不占工具名）。它消费 gallery-registry.ts::GalleryComponent 的可选 preview 字段：省略 preview 的组件（当前只有 activity）必须画成不可预览瓦片，而不是当成渲染失败——这是①参数 schema 之外唯一与五项能力相关的行为，且是 Admin 页避免以活跃 Bot 身份发起真实读取的那道闸。Leptos 版的 preview 数据来源同样必须与组件定义同处一地，否则新增组件时可以忘记决定它怎么自我介绍。"
+
+  - id: "gallery-quote"
+    upstream: "app/src/components/gallery/quote.tsx::GALLERY"
+    label: "替代"
+    target: "openbot_ui::features::gallery::quote"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0007"
+    migration_rule: "preserve: showQuote 工具名与参数 schema 不变"
+    status: "todo"
+    evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献 showQuote 一条"
+    notes: "① 参数 schema = quote.tsx::QuoteCardProps；②③④⑤ 同 gallery-activity（components.publishedDescription / componentExclusions / componentFunctions / gallery-tools.tsx::GrantedTool 的 handler + routes.ts 的 /decision 与 /call）。无 reads 回调，不读部署数据。"
+
+  - id: "gallery-refused"
+    upstream: "app/src/components/gallery/refused.tsx::RefusedCard"
+    label: "替代"
+    target: "openbot_ui::features::gallery::refused"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0008"
+    migration_rule: "preserve: data-testid=component-refused 与 role=status 不变"
+    status: "todo"
+    evidence: "grep -l '^export const GALLERY' app/src/components/gallery/*.tsx 不含 refused.tsx；被 gallery-tools.tsx 与 sandboxed-tools.tsx 双方 import"
+    notes: "支撑件，不是注册项（无 GALLERY 导出）。它是⑤ tool-call-time 再授权与②③④三项拒绝的唯一可见出口：compiled 侧（gallery-tools.tsx::GrantedTool / GrantedDecision）与 sandboxed 侧（sandboxed-tools.tsx::SandboxedTool）都渲染它，所以 Leptos 版必须是两条路径共用的同一个组件，不能各画各的。上游把 data-testid=component-refused 与 role=status 写死，是拒绝可被自动化断言的唯一抓手，迁移必须逐字保留。"
+
+  # =========================================================================
+  # (b) sandboxed component 运行时契约 —— 逐条拆开。
+  #
+  # 判定 parity 与 新增 的共同前提（本轮实测）：上游第一方源（app/ server/ shared/）里
+  #   grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' = 0 行，
+  #   grep -rE 'MessageChannel|postMessage' = 0 行。
+  # 正向对照：把同一条 grep 的 pattern 加上一个确定存在的词（OpenGenerativeUIActivityRenderer /
+  #   useFrontendTool），命中数分别变成 4 与 22，且 4 行正好是两个沙箱渲染调用点本身
+  #   （sandboxed-tools.tsx 两处、playground.tsx 两处）——证明 grep 的作用域确实覆盖到了
+  #   沙箱调用点，"零命中"不是"命令没扫到那里"。
+  # 因此隔离实现在依赖 @jetbrains/websandbox（经 @copilotkit/react-core@1.68.3 引入，
+  #   bun.lock 里锁到 1.3.1）内部，而不是在上游第一方代码里。
+  # =========================================================================
+
+  - id: "sandbox-args-injection"
+    upstream: "app/src/lib/copilot/sandboxed-tools.tsx::SandboxedTool"
+    label: "parity"
+    target: "openbot_ui::features::gallery::sandboxed::wrapper"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0009"
+    migration_rule: "preserve: 注入语句与作者脚本之间的先后次序不变"
+    status: "todo"
+    evidence: "grep -c 'window.__args' app/src/lib/copilot/sandboxed-tools.tsx app/src/routes/_authed/admin/playground.tsx = sandboxed-tools.tsx:1 playground.tsx:2"
+    notes: "wrapper 先写 window.__args = <本次调用参数 JSON>，换行，再拼作者的 jsFunctions —— 两个调用点（会话渲染与 playground 预览）逐字同构，playground 侧注入的是 sampleArguments。作者脚本拿到的全部输入就是这一个全局变量；Rust wrapper 必须自己做 JSON 序列化并保证它在作者代码之前求值，顺序反了作者脚本读到的是 undefined。上游未对参数做转义以外的任何校验（parametersFor 在 schema 读不懂时退回 z.object({}).catchall(z.unknown())），这是**上游现状**，不是本 ledger 认可的目标状态；是否加校验属 v3 未裁决项，见末尾未验证项。"
+
+  - id: "sandbox-jsfunctions-exec"
+    upstream: "app/src/lib/copilot/sandboxed-tools.tsx::SandboxedTool"
+    label: "parity"
+    target: "openbot_ui::features::gallery::sandboxed::wrapper"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0010"
+    migration_rule: "preserve: 只执行 published 源，draft 永不进入渲染"
+    status: "todo"
+    evidence: "app/src/lib/sandboxed/queries.ts::PublishedSandboxed 只含 name/html/css/jsFunctions/argumentSchema；server/src/components/sandboxed.ts::PublishedSandboxed 注释写明只发 published 源"
+    notes: "渲染内容 = { css, html: [html], jsFunctions } 三件套，全部取自 published 列而非 draft 列（server/src/db/schema/plugins.ts::sandboxedComponents 的 publishedHtml / publishedCss / publishedJsFunctions）。sandboxed-tools.tsx 里 key 取 JSON.stringify(args)，即参数一变就整体重挂载——沙箱源每个 keyed 实例只注入一次，所以上游刻意等 props.status === 'complete' 才渲染，未完成时画 ToolLine 'Drawing'。Leptos 版必须保留这个等待态，否则会拿半截参数注入一次并再也不更新。"
+
+  - id: "sandbox-no-data-function"
+    upstream: "app/src/lib/copilot/sandboxed-tools.tsx::SandboxedTool"
+    label: "parity"
+    target: "openbot_application::components::sandboxed::no_data_function"
+    owner: "openbot-application"
+    test_id: "T-CMP-0011"
+    migration_rule: "preserve: 沙箱侧不得新增 data function 通道"
+    status: "todo"
+    evidence: "grep -c callComponentFunction app/src/lib/copilot/sandboxed-tools.tsx app/src/routes/_authed/admin/playground.tsx app/src/components/gallery/activity.tsx = sandboxed-tools.tsx:0 playground.tsx:0 activity.tsx:3"
+    notes: "两重证据。① 词法：沙箱两个调用点对 callComponentFunction 零命中，而同一条命令在 compiled 侧 activity.tsx 命中 3 次——正向对照成立，不是命令没扫到。② 结构：server/drizzle/0000_schema.sql 里 component_functions 的外键只指向 public.components(name)（命中 1），零指向 sandboxed_components（命中 0）；sandboxed_components 是 server/src/db/schema/plugins.ts 里的独立表，名字带 custom_ 前缀（sandboxed.ts 里保证不与 compiled 名冲突），所以一个沙箱组件在库层面就无法持有 data-function 行。v3 §3.3 明确 R1 不新增这一通道，Rust 版必须让“沙箱组件没有可授予的 data function”仍是**结构性**事实而不是靠调用点自觉。"
+
+  - id: "sandbox-no-network"
+    upstream: "server/src/db/schema/plugins.ts::sandboxedComponents"
+    label: "parity"
+    target: "openbot_ui::features::gallery::sandboxed::isolation"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0012"
+    migration_rule: "preserve: 作者脚本默认无网络"
+    status: "todo"
+    evidence: "server/src/db/schema/plugins.ts::sandboxedComponents 的 draftJsFunctions 注释原文：Runs inside @jetbrains/websandbox, so it reaches neither the page, the session nor the network except through what the host hands it"
+    notes: "上游把“无网络”写在 schema 注释里，隔离的实际执行者是 @jetbrains/websandbox（bun.lock 命中 2 次：@copilotkit/react-core@1.68.3 的依赖声明 + 自身条目 1.3.1）。**本轮未能验证该库内部如何实现无网络**：克隆里没有 node_modules，见末尾未验证项。因此本条 label=parity 的依据是上游第一方源与 schema 注释所声明的现状 + v3 §3.3 的裁决，不是对 SDK 实现的实测。Rust 版不得把“无网络”寄托在被替换掉的 SDK 上，必须由本仓自己的 CSP（sandbox-csp-literal）与 renderer 配置兑现，届时这条的 evidence 要换成本仓的实测。"
+
+  - id: "sandbox-no-host-callback"
+    upstream: "app/src/lib/copilot/sandboxed-tools.tsx::SandboxedTool"
+    label: "parity"
+    target: "openbot_ui::features::gallery::sandboxed::isolation"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0013"
+    migration_rule: "preserve: 作者脚本没有向宿主回调的通道"
+    status: "todo"
+    evidence: "grep -c respond app/src/lib/copilot/sandboxed-tools.tsx app/src/components/gallery/decisions.tsx app/src/lib/copilot/gallery-tools.tsx = sandboxed-tools.tsx:0 decisions.tsx:12 gallery-tools.tsx:7"
+    notes: "正向对照成立：同一条 grep 在 compiled HITL 路径（decisions.tsx 12 次、gallery-tools.tsx 7 次）大量命中，在沙箱调用点零命中。沙箱组件用的是 useFrontendTool 而非 useHumanInTheLoop，其 handler 只返回一句字符串给模型，作者脚本本身拿不到 respond、也没有任何 host bridge。注意这条与 sandbox-message-channel 不矛盾：MessageChannel 是宿主与 renderer wrapper 之间的通道，**不暴露给作者脚本**；把它暴露出去就等于新增回调通道，v3 §3.3 禁止。"
+
+  - id: "sandbox-opaque-origin-renderer"
+    upstream: "-"
+    label: "新增"
+    target: "openbot_ui::features::gallery::sandboxed::renderer"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0014"
+    migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
+    status: "todo"
+    evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0；正向对照同命令加 OpenGenerativeUIActivityRenderer 后 = 4，4 行正好是两个沙箱渲染调用点"
+    notes: "v3 §3.3 固定运行位置：Server Web 走浏览器 opaque-origin sandbox iframe；Desktop **不**在主 Tauri WebView 创建用户脚本 iframe，而是在独立、零 Tauri capability 的 component Chromium renderer 里跑。上游第一方源里一个字都没有（隔离细节全在 SDK 内部），所以这是 R1 新加的、写进本仓自己代码的契约，不是“当前行为”。Desktop 侧的 renderer 进程实体归 openbot-computer §11.1 / openbot-desktop §13.3 管，本 ledger 按主控指定的 owner 域记为 openbot-ui（渲染面）；跨 crate 归属请主控复核。"
+
+  - id: "sandbox-iframe-attributes"
+    upstream: "-"
+    label: "新增"
+    target: "openbot_ui::features::gallery::sandboxed::renderer"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0015"
+    migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
+    status: "todo"
+    evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0（正向对照见 T-CMP-0014）"
+    notes: "sandbox 属性恰为 allow-scripts 一项；禁止 allow-same-origin（给了它 opaque origin 就没了，同源即可读宿主 storage 与 DOM）、禁止 top navigation、popup、download、storage。Rust 版应把这串属性做成常量并配双向断言（既断言 allow-scripts 在、也断言 allow-same-origin 不在），否则“少写一个属性”是静默失效。上游第一方源零命中，故 label=新增。"
+
+  - id: "sandbox-csp-literal"
+    upstream: "-"
+    label: "新增"
+    target: "openbot_ui::features::gallery::sandboxed::renderer"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0016"
+    migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
+    status: "todo"
+    evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0（正向对照见 T-CMP-0014）"
+    notes: "CSP 逐字固定为：default-src 'none'; connect-src 'none'; script-src 'nonce-<per-render-random>'; style-src 'unsafe-inline'; img-src data: blob:。connect-src 'none' 是 sandbox-no-network 在本仓的兑现方式；style-src 'unsafe-inline' 是有意放开的（作者 CSS 就是产品本身），img-src 只放 data: 与 blob: 即不出网。这串必须是单一常量并配单测逐字比对：CSP 写错一个指令不会报错，只会静默不生效。上游第一方源零 CSP 字面量，故 label=新增。"
+
+  - id: "sandbox-per-render-nonce"
+    upstream: "-"
+    label: "新增"
+    target: "openbot_ui::features::gallery::sandboxed::renderer"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0017"
+    migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
+    status: "todo"
+    evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0（正向对照见 T-CMP-0014）"
+    notes: "nonce 每次渲染重新随机；Rust wrapper **只**给本次封装后的用户脚本设置该 nonce，不给任何其它 script 标签。判据必须是“每次 render 取到的 nonce 互不相等”，而不是“nonce 非空”——常量 nonce 在 CSP 下同样能跑通，正好是失效模式。上游第一方源零命中，故 label=新增。"
+
+  - id: "sandbox-message-channel"
+    upstream: "-"
+    label: "新增"
+    target: "openbot_application::components::sandboxed::broker"
+    owner: "openbot-application"
+    test_id: "T-CMP-0018"
+    migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
+    status: "todo"
+    evidence: "grep -rE 'MessageChannel|postMessage' app server shared | wc -l = 0；正向对照同命令加 useFrontendTool 后 = 22"
+    notes: "一次性 MessageChannel capability，对端是 Rust typed broker。“一次性”是承重的：端口只在本次 render 有效，renderer 崩溃或组件卸载即作废，不得跨 render 复用（复用等于给作者脚本一条长期通道）。该通道**只**承载宿主与 renderer wrapper 之间的帧流与指针/滚轮/键盘/文本输入转发，作者脚本够不到它——见 sandbox-no-host-callback。上游第一方源零命中（正向对照 22 证明扫到了），故 label=新增。"
+
+  - id: "sandbox-draft-publish-revision"
+    upstream: "server/src/components/sandboxed.ts::publish"
+    label: "parity"
+    target: "openbot_application::components::sandboxed::publish"
+    owner: "openbot-application"
+    test_id: "T-CMP-0019"
+    migration_rule: "preserve: draft/published 双列、单次 publish 原子提升、revision 单调递增"
+    status: "todo"
+    evidence: "grep -c 'revision: row.revision + 1' server/src/components/sandboxed.ts = 2（update 语句 + audit payload 各一处）"
+    notes: "publish 是一个动作同时提升描述与源码：sandboxed.ts::publish 一次 update 写 publishedDescription/Html/Css/JsFunctions/ArgumentSchema + published=true + publishedAt + revision+1，并同步把 components 行的 publishedDescription 与 published 一起提上去（沙箱与 compiled 共用同一张治理表与同一套 grant 面）。拆成两个端点即产生“有措辞没源码”或“有源码没措辞”两种没人想要的中间态。hasUnpublishedChanges 由 draft 三列与 published 三列逐一比对得出（sandboxed.ts::toRecord），不是另存的标志位。前端 publishSandboxedMutationOptions 先 POST /api/sandboxed 存草稿再 POST /:name/publish，save 失败即中止 publish。**注意**：v3 §3.3 要求 data function 每次调用重新检查 component revision，而上游 /call 与 store 侧对 revision 零命中（routes.ts:0 store.ts:0，sandboxed.ts:4 是正向对照）——即 revision 复检是 R1 新加的，本条只覆盖上游已有的 draft/publish/revision 生命周期。"
+
+  - id: "sandbox-sample-arguments"
+    upstream: "server/src/db/schema/plugins.ts::sandboxedComponents"
+    label: "parity"
+    target: "openbot_application::components::sandboxed::sample_arguments"
+    owner: "openbot-application"
+    test_id: "T-CMP-0020"
+    migration_rule: "preserve: sampleArguments 随组件持久化，预览注入路径与会话渲染逐字同构"
+    status: "todo"
+    evidence: "grep -c sampleArguments app/src/routes/_authed/admin/playground.tsx app/src/lib/sandboxed/mutations.ts server/src/components/sandboxed.ts = playground.tsx:7 mutations.ts:2 sandboxed.ts:5"
+    notes: "sampleArguments 是 jsonb 列（plugins.ts::sandboxedComponents），随组件存下来“so the next editor sees what it draws”。playground 把它与 argumentSchema 一起当文本编辑，解析失败就不发给服务端（mutations.ts 的注释写明解析是编辑器的职责），预览区在 sample 解析失败时画一句提示而不是画一个坏组件。预览用的注入语句与会话渲染逐字相同（都是 window.__args = <JSON>; 换行 + jsFunctions），这是 playground 能当“生产沙箱渲染器”用的前提——Rust 版必须共用同一个 wrapper 构造函数，两处各写一遍就会漂。v3 §3.3 要求 Phase 0 把每行已发布组件的 html/css/jsFunctions/sampleArguments 录成 fixture，那份 fixture 归 openbot-testkit，本条不覆盖，见末尾未验证项。"
+
+  # =========================================================================
+  # (c) Desktop 独立 renderer 的两条必然后果（v3 §3.3 末段，写死不留给实现期发现）。
+  # =========================================================================
+
+  - id: "desktop-renderer-single-engine"
+    upstream: "-"
+    label: "新增"
+    target: "openbot_ui::features::gallery::sandboxed::desktop_renderer"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0021"
+    migration_rule: "n/a: v3 §3.3 末段写死的必然后果，上游无 Desktop 形态"
+    status: "todo"
+    evidence: "docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md §3.3 末段；上游第一方源零 Desktop renderer 代码（grep -rE 'MessageChannel|postMessage' app server shared = 0）"
+    notes: "后果①：Desktop 上跑用户脚本的 renderer 必须是与 §11.1 单 engine 同一个 Electron/Chromium engine 进程类，**不引入第三种渲染器**。判据要能机械核对——例如断言 renderer 的启动路径与 browser engine 走同一个 spawn 入口，而不是“看起来是同一个”。上游是纯 Web 产品，没有 Desktop 形态，故 label=新增。engine 进程实体归 openbot-computer §11.1 / openbot-desktop §13.3；本 ledger 按主控指定的 owner 域记为 openbot-ui（渲染面），跨 crate 归属请主控复核。"
+
+  - id: "desktop-sandboxed-a11y-exemption"
+    upstream: "-"
+    label: "新增"
+    target: "openbot_ui::features::gallery::sandboxed::desktop_renderer"
+    owner: "openbot-ui"
+    test_id: "T-CMP-0022"
+    migration_rule: "n/a: v3 §3.3 末段写死的必然后果，上游无 Desktop 形态"
+    status: "todo"
+    evidence: "docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md §3.3 末段：Desktop 的 sandboxed component 不承诺 a11y parity，§18 / G6 的 a11y 要求对其明确豁免"
+    notes: "后果②：画面以帧流回主 GUI，文本不可选中、屏幕阅读器不可达，所以 Desktop sandboxed component **不承诺** a11y parity，§18 / G6 的 a11y 要求对它明确豁免并写进产品文档；Web 路径（iframe）保持 a11y 要求不变。这条必须在 a11y 闸门里做成**具名豁免**而不是把整条闸门放宽——豁免面大于实际不可达面就等于把 Web 路径也一起豁免了。豁免的作用域是 Desktop × sandboxed component，compiled gallery 在 Desktop 上仍是原生 Leptos DOM，不在豁免内。上游无 Desktop 形态，故 label=新增。"
+
+# =========================================================================
+# 未验证项（本轮没跑出证据的东西，明写缺什么 + 解除条件）。
+# 顶层键集合是固定的（schema / schema_version / upstream_commit / generated_by /
+# recount / entries），所以这一段只能是注释，不是 YAML 数据。
+# =========================================================================
+#
+# U1. @jetbrains/websandbox 的隔离实现本身。
+#     缺什么：只读克隆里没有 node_modules（`ls -d node_modules` 报 No such file or
+#     directory），bun.lock 只证明版本被锁到 1.3.1（经 @copilotkit/react-core@1.68.3
+#     引入，命中 2 次）。因此 T-CMP-0012（无网络）与 T-CMP-0013（无回调通道）的
+#     label=parity 依据是上游第一方源零通道 + schema 注释所声明的现状 + v3 §3.3 的裁决，
+#     不是对 SDK 内部的实测。
+#     解除条件：装出 node_modules 后读 @jetbrains/websandbox 与
+#     @copilotkit/react-core 的 OpenGenerativeUIActivityRenderer，把它实际下的
+#     iframe 属性与 CSP 抄成实测记录；届时 T-CMP-0014..0017 四条的 label 可能要从
+#     新增 改成 parity（若 SDK 已经这么做）——**在拿到那份实测前不得改**。
+#
+# U2. 设计系统文档 §6.3〈六个运行时 JavaScript 库的替代〉与 gallery 的关系。
+#     缺什么：本轮只核到 charts.tsx 是手写 SVG（Plot / Legend / Empty，无图表库
+#     import），没有逐个核对那 6 个运行时库分别是谁、gallery 是否还依赖其中之一。
+#     解除条件：该 6 库清单属 parity/ui.yaml 的作用域，由 ui ledger 的作者逐库落证据；
+#     若核出 gallery 仍依赖其中之一，本文件对应 entry 的 notes 要同 PR 修订。
+#
+# U3. 已发布 sandboxed_components 行的 fixture。
+#     缺什么：v3 §3.3 要求 Phase 0 把每行已发布组件的 published html/css/jsFunctions/
+#     sampleArguments 录成 fixture，逐行在新沙箱里渲染通过。本轮没有可访问的生产
+#     数据库，一行都没录。
+#     解除条件：拿到脱敏生产快照后由 openbot-testkit 落 fixtures/；那批 fixture 不属
+#     本 ledger（components.yaml 记契约，不记数据），归 parity/tests.yaml。
+#
+# U4. Desktop renderer 的 owner 归属。
+#     缺什么：T-CMP-0014 / T-CMP-0021 / T-CMP-0022 描述的是 Desktop 独立 renderer，
+#     其进程实体在 v3 里归 openbot-computer §11.1（单 engine）与 openbot-desktop
+#     §13.3（多窗口 / capability）。本 ledger 按主控指定的 owner 域
+#     （openbot-ui 渲染 / openbot-application grant-policy-HITL）记为 openbot-ui。
+#     解除条件：主控裁决是否把这三条改挂 openbot-computer / openbot-desktop。
+#
+# U5. T-CMP-0009 里的参数校验缺口。
+#     缺什么：上游 sandboxed-tools.tsx::parametersFor 在作者 JSON Schema 读不懂时
+#     退回 z.object({}).catchall(z.unknown())，即模型可以给沙箱组件传任意参数。这是
+#     上游现状（已如实记为 parity），但 v3 没有对"是否加校验"下裁决。
+#     解除条件：主控裁决保留现状还是加严；加严即新开一条 label=新增 的 entry。

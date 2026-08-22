@@ -1,0 +1,82 @@
+# OpenBot Rust workspace —— Phase 0 骨架（v3 §19.3 / §24 G0）。
+#
+# 成员集合恰好等于 v3 §5.1〈精简 workspace〉的十个 crate，与 CLAUDE.md §4
+#〈10 crate workspace〉逐字对应。建第 11 个 crate 只有四个理由（v3 §5.1）：
+#   1) 独立安全边界  2) 独立发布单元  3) 明显不同的 feature graph  4) 可单独复用的纯协议
+# 其余一律以 module 组织 —— 细粒度 crate 会放大编译时间、循环依赖与跨 crate 重构成本。
+#
+# xtask 刻意不是第 11 个 crate：它一条都不满足上面四个理由，只是仓库闸门的驱动器。
+# 落点 = `openbot-testkit` 的 bin target（`crates/openbot-testkit/src/bin/xtask.rs`，
+# `required-features = ["xtask"]`），由 `.cargo/config.toml` 的 alias `cargo xtask` 调用。
+# v3 §5.1 的 crate 表里 `openbot-testkit` 的职责原文就写着 "golden trace、fault injection、
+# fake provider、xtask"，所以 xtask 归属它是方案内既定归属，不是本轮新增。
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/openbot-contracts",
+    "crates/openbot-domain",
+    "crates/openbot-application",
+    "crates/openbot-infra",
+    "crates/openbot-agent",
+    "crates/openbot-computer",
+    "crates/openbot-server",
+    "crates/openbot-ui",
+    "crates/openbot-desktop",
+    "crates/openbot-testkit",
+]
+
+[workspace.package]
+version = "0.0.0"
+# CLAUDE.md §3 固定基线：Rust `1.98.0`，edition 2024。与 rust-toolchain.toml 同值。
+edition = "2024"
+rust-version = "1.98.0"
+# v3 §23.2〈新项目发行许可〉：本次实施默认是内部、闭源、all-rights-reserved 的第一方新代码。
+# 因此这里**不能**写 MIT —— 上游 OpenBot 的 MIT（v3 §23.1 条 1）只约束被复用的上游源码，
+# 不上溯覆盖本仓第一方代码。SPDX 的 `LicenseRef-` 前缀是表达"非 SPDX 登记许可"的合法写法。
+# 若未来开源，必须另立书面发布决议并重做 whole-tree license audit（v3 §23.2），不在本次重写中自动发生。
+license = "LicenseRef-OpenBot-Proprietary"
+publish = false
+
+# v3 §16.3〈Supply chain〉：核心 crate `unsafe_code = "deny"`。
+# 确需 unsafe 的窄 crate 必须有 owner、测试和安全说明，并在该 crate 内显式 `#![allow(unsafe_code)]`
+# + 单列审计条目；Phase 0 十个 crate 一个都不豁免。
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.dependencies]
+# xtask（仓库闸门驱动器）的依赖。版本由本机 `cargo search` / `cargo add` 在 2026-08-22 实测
+# 解析出的真实最新版，不手写猜测；精确 lock 见提交入库的 `Cargo.lock`（v3 §16.3）。
+# 只有 `openbot-testkit` 在 `xtask` feature 下消费它们；十个业务 crate 在 Phase 0 零依赖。
+anyhow = "1.0.104"
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+# 上游实际版本号是 `0.9.34+deprecated`（dtolnay 已归档该 crate）。`+deprecated` 是 semver
+# build metadata，不参与版本需求匹配，所以这里写 `0.9.34`。选它而不是替代品的理由：parity
+# ledger 是人手写的 YAML 1.1 子集，serde_yaml 的行为已被大量既有工具固化；真要换（例如
+# `serde_norway` / `serde_yaml_ng`）必须单独 delta audit，因为 YAML 解析差异会静默改变
+# `parity-check` 的判定结果。cargo-deny 的 advisories 段对它只会报 unmaintained（本 crate
+# 只在开发期 xtask 里编译，不进发行物）。
+serde_yaml = "0.9.34"
+walkdir = "2.5.0"
+# `xtask test-inventory`（v3 §24 G0 / G8 点名的 AST 级 test inventory）的 TS/TSX 解析器。
+#
+# **版本 `0.146.0`（2026-08-22 实测最新）。五个 crate 同版本 —— oxc 全家桶同步发版。**
+# 本仓一度钉在 `0.139.0`，理由是当时工具链还是 `1.94.1`，而 `cargo build` 直接拒绝：
+#   `rustc 1.94.1 is not supported by the following packages: oxc_parser@0.146.0 requires rustc 1.95.0`
+# oxc 的 MSRV 台阶是 `0.139.0 -> 1.94.0`、`0.140.0 -> 1.95.0`，所以 0.139.0 曾是唯一可编版本。
+# 2026-08-22 工具链升 `1.98.0` 后该约束消失（delta audit 见 docs/2026-08-22-Rust工具链…）。
+# 升级已实测无行为差异：0.139.0 与 0.146.0 各跑一次 `xtask test-inventory`，
+# `fixtures/tests/upstream-ast-inventory.json` **逐字节相同**（1,047 test 节点 / 229 describe 节点）。
+# 再动版本仍须走 delta audit：解析器版本决定 G0/G8 的 inventory 判定，不得静默升。
+# 选纯 Rust parser 而不是起 Node/Bun 子进程：v3 §1.3 明写"1,007 是词法命中，不冒充 AST 解析后
+# 的精确 test 数"，而 §24 G0 要求归档 AST 级 inventory —— 走 JS 运行时会把闸门的正确性系在
+# 一个本仓刻意不安装的运行时上（v3 §3.5 已裁决删除 Bun launcher）。
+oxc_allocator = "0.146.0"
+oxc_ast = "0.146.0"
+# `oxc_ast_visit` 提供 `Visit` trait 的默认 walk。不用它就得手写覆盖全部 AST 节点类型的递归，
+# 漏一个节点类型 = inventory 静默少数用例 —— 那正是本轮要消灭的失效模式。
+oxc_ast_visit = "0.146.0"
+oxc_parser = "0.146.0"
+oxc_span = "0.146.0"

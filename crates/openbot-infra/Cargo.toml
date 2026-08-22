@@ -1,0 +1,13 @@
+[package]
+name = "openbot-infra"
+description = "PostgreSQL、vault、HTTP safe dialer、provider adapters（v3 §5.1）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

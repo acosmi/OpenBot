@@ -1,0 +1,13 @@
+[package]
+name = "openbot-application"
+description = "所有 use case 的唯一入口（v3 §5.1 / §5.2）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

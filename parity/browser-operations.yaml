@@ -1,0 +1,588 @@
+# parity/browser-operations.yaml —— computer 面（浏览器 + File/shell）的封闭操作台账。
+#
+# 真源：v3 §11.2（Engine 协议、`BrowserOperation` 封闭 enum 的 R1 成员、R1 无 download/upload、
+# File/shell 是 computer 的另一组封闭操作）、v3 §11.3（Browser 安全配置，含 download/upload
+# 未来规则已写死）、v3 §12.5（输入 union、HumanLease、不设 IME composition 与 drag 两个独立变体）、
+# v3 §18〈Browser actions〉与〈File/shell〉两行、v3 §28.4（计数复算命令）。
+#
+# 口径说明（复核时先读这三条，否则条数会对不上）：
+#
+# 1. 本表的骨架是 v3 §28.4 那条命令取出的 29 条手写路径，一条一 entry（T-BROP-0001..0029），
+#    顺序 = 该命令 `sort -u` 的输出顺序，方便逐行对拍。29 条里有 2 条不是 HTTP route：
+#    `/profiles` 与 `/workspace` 是 `PROFILES_DIR` / `WORKSPACE_DIR` 的默认目录字面量
+#    （`agent-computer/src/index.ts::profiles` / `::workspace` / `::shell` 三处 `?? "/..."`），
+#    §28.4 的正则抓的是"引号包住的路径形字面量"而不是"路由"。这一点必须写明，
+#    否则下一轮会有人把 29 当成"29 个 endpoint"。
+# 2. v3 §18〈File/shell〉那行的四条封闭操作（files/list、files/read、files/write、exec）
+#    本来就在这 29 条里，所以不另开重复 entry，而是就地标注它们属于 File/shell 封闭集、
+#    **不进** `BrowserOperation`（v3 §11.2 末句）。四条上游都在，label 全 parity。
+# 3. 29 条之外另有 17 条 entry（T-BROP-0030..0046）：3 条 screencast 子操作 + 1 条 profile ensure
+#    + 3 条 R1 新增/负向闭合（download_refused / JS dialog dismiss / 无 upload）
+#    + 8 条 §12.5 输入 union 成员 + 1 条 IME/drag 裁决 + 1 条 lease epoch 栅栏。
+#
+# 关键负向断言（v3 §11.2「没有 download、没有 upload」）：
+#   `grep -rlE 'page\.on\(|setInputFiles|filechooser' agent-computer/src | wc -l` = 0。
+#   本轮为它配了两条正向对照，分别排除"正则写错"和"目录写错"两种假 0：
+#   recount 第 3 条 = 同一条正则换到确实含这三个字面量的目录（repo 的 docs/）得 1；
+#   recount 第 4 条 = 同一个目录、同一种 grep 调用换成确实存在的字面量得 1。
+#   同族还有两组：download 的负向（第 5 条得 1，唯一命中是 workspace.ts 注释里的 `downloaded`）
+#   配第 6 条（server/src 得 2）；dialog 的负向（第 7 条得 0）配第 8 条（app/src 得 10）。
+#   recount 里所有 command 都是可直接执行的裸命令，不带任何说明前缀，方便 CI 逐条重跑。
+#
+# status 全为 todo：本仓当前零实现代码（`find crates -name '*.rs' | wc -l` = 11，
+# 全是 10 个 `lib.rs` + 1 个 `bin/xtask.rs`），写任何 done 都会是假 done。
+#
+# owner 全表固定 openbot-computer（v3 §5.1 十 crate 之一；§18 里 Browser actions / Supervisor /
+# File/shell 三行的 Rust owner 都是 computer）。Screen/input 行在 §18 写作
+# `computer/server/desktop`，本表只登记 computer 侧的操作契约，viewer ticket / WS 传输那半
+# 不在本 ledger。
+
+schema: browser-operations
+schema_version: 1
+upstream_commit: 891df72f1827454d8b353d108fe5dd2313b7e30d
+generated_by: manual
+recount:
+  - command: "grep -oE '\"/[a-z][a-z0-9/:_-]*\"' agent-computer/src/index.ts | sort -u | wc -l"
+    cwd: upstream
+    expect: 29
+  - command: "grep -rlE 'page\\.on\\(|setInputFiles|filechooser' agent-computer/src | wc -l"
+    cwd: upstream
+    expect: 0
+  - command: "grep -rlE 'page\\.on\\(|setInputFiles|filechooser' docs | wc -l"
+    cwd: repo
+    expect: 1
+  - command: "grep -rlE 'client\\.on\\(|Input\\.insertText|Page\\.startScreencast' agent-computer/src | wc -l"
+    cwd: upstream
+    expect: 1
+  - command: "grep -rhoiE 'download[A-Za-z]*' agent-computer/src | sort -u | wc -l"
+    cwd: upstream
+    expect: 1
+  - command: "grep -rhoiE 'download[A-Za-z]*' server/src | sort -u | wc -l"
+    cwd: upstream
+    expect: 2
+  - command: "grep -rliE 'dialog' agent-computer/src | wc -l"
+    cwd: upstream
+    expect: 0
+  - command: "grep -rliE 'dialog' app/src | wc -l"
+    cwd: upstream
+    expect: 10
+  - command: "grep -oE '\"/(click|type|key|scroll)\"' agent-computer/src/index.ts | sort -u | wc -l"
+    cwd: upstream
+    expect: 4
+  - command: "grep -oE '\"/human/(click|type|key|scroll)\"' agent-computer/src/index.ts | sort -u | wc -l"
+    cwd: upstream
+    expect: 4
+  - command: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u | wc -l"
+    cwd: upstream
+    expect: 4
+  - command: "grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u | wc -l"
+    cwd: upstream
+    expect: 3
+  - command: "grep -oE 'Input\\.(dispatchMouseEvent|dispatchKeyEvent|insertText)' agent-computer/src/screencast.ts | sort -u | wc -l"
+    cwd: upstream
+    expect: 3
+  - command: "grep -c 'quality: options.quality ?? 70' agent-computer/src/screencast.ts"
+    cwd: upstream
+    expect: 1
+  - command: "grep -c '^  - id: ' parity/browser-operations.yaml"
+    cwd: repo
+    expect: 46
+  - command: "grep -c '^    label: parity$' parity/browser-operations.yaml"
+    cwd: repo
+    expect: 38
+  - command: "grep -c '^    label: 新增$' parity/browser-operations.yaml"
+    cwd: repo
+    expect: 5
+  - command: "grep -c '^    label: 替代$' parity/browser-operations.yaml"
+    cwd: repo
+    expect: 3
+  - command: "grep -c '^    status: todo$' parity/browser-operations.yaml"
+    cwd: repo
+    expect: 46
+  - command: "grep -c '^    upstream: \"-\"$' parity/browser-operations.yaml"
+    cwd: repo
+    expect: 5
+  - command: "grep -oE '^    test_id: T-BROP-[0-9]{4}$' parity/browser-operations.yaml | sort -u | wc -l"
+    cwd: repo
+    expect: 46
+
+entries:
+  # ===========================================================================
+  # A 段：§28.4 命令取出的 29 条手写路径字面量，按 sort -u 顺序（T-BROP-0001..0029）
+  # ===========================================================================
+  - id: path-click
+    upstream: agent-computer/src/index.ts::ACTIONS
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Click"
+    owner: openbot-computer
+    test_id: T-BROP-0001
+    migration_rule: "preserve: 必须带 ref + 可选 snapshotId，陈旧 ref 恒 409 拒绝（v3 §18 Browser actions 行「旧 ref 100% 拒绝」）"
+    status: todo
+    evidence: "grep -oE '\"/(click|type|key|scroll)\"' agent-computer/src/index.ts | sort -u 得 4 条，含 /click；上游走 ACTIONS 集合分发到 performAction"
+    notes: "上游 performAction 里 /click 必须有 ref（无 ref 直接抛），经 resolveRef 做 snapshot 代次校验。取消语义：调用方 AbortSignal 透传到 Playwright，中断返回 499 而不是 502——这条是行为契约的一部分，Rust engine 侧必须有等价的「停在点击落地之前」路径。"
+  - id: path-computers
+    upstream: agent-computer/src/index.ts::serve.fetch
+    label: parity
+    target: "openbot_computer::manager::ComputerManager::list"
+    owner: openbot-computer
+    test_id: T-BROP-0002
+    migration_rule: "preserve: 返回 computer 列表（有 profile 即有 computer，与浏览器此刻是否在跑无关）"
+    status: todo
+    evidence: "grep -c '\"/computers\"' agent-computer/src/index.ts 得 1；同文件 GET 分支返回 profiles.summary(await profiles.known())"
+    notes: "不是 BrowserOperation：这是 manager 查询面，engine 收不到它。v3 §10.2 要求 engine 只看见 computer_id/generation/capability，所以列表面留在 Rust。上游按 bot 列举，Rust 侧要按 ComputerSecurityScope 过滤（v3 §10.1），跨 scope 一律 404 而非空列表。"
+  - id: path-computers-reset
+    upstream: agent-computer/src/profiles.ts::createProfiles
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Profile(ProfileOp::Reset)"
+    owner: openbot-computer
+    test_id: T-BROP-0003
+    migration_rule: "preserve: 删除 profile 目录 = 登出一切，且必须与 stop 分成两个操作（上游注释：点 stop 的人不能因为打错参数就丢掉登录态）"
+    status: todo
+    evidence: "grep -c '\"/computers/reset\"' agent-computer/src/index.ts 得 1；handler 调 profiles.reset(botId) 后 session.control.release()"
+    notes: "v3 §11.2 profile lifecycle 三成员之一。上游 reset 顺带 release control（旧会话与待答 secret 都没了）——这个副作用是契约，Rust 侧必须同轮递增 lease epoch（见 T-BROP-0046）。profile 目录解析用 profileDirectoryFor 而不是 join，防 botId 为 `../workspace` 时越出 root。"
+  - id: path-computers-stop
+    upstream: agent-computer/src/profiles.ts::createProfiles
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Profile(ProfileOp::Stop)"
+    owner: openbot-computer
+    test_id: T-BROP-0004
+    migration_rule: "preserve: 优雅关闭让 Chromium 冲盘，保留 profile；不在此处重启（下一次请求走与首次启动同一条路径）"
+    status: todo
+    evidence: "grep -c '\"/computers/stop\"' agent-computer/src/index.ts 得 1；handler 调 profiles.stop(botId) 返回 {stopped, wasRunning} 并 release control"
+    notes: "v3 §11.2 profile lifecycle 三成员之一。上游刻意「只有一条把浏览器变出来的路径」，Rust 侧不得新增第二条启动入口（ensure 见 T-BROP-0033）。"
+  - id: path-control
+    upstream: agent-computer/src/control.ts::createControl
+    label: parity
+    target: "openbot_computer::control::ControlService::state"
+    owner: openbot-computer
+    test_id: T-BROP-0005
+    migration_rule: "preserve: 只读控制状态，供界面与屏幕一起轮询"
+    status: todo
+    evidence: "grep -c '\"/control\"' agent-computer/src/index.ts 得 1；GET 分支返回 session.control.get()"
+    notes: "不是 BrowserOperation：控制状态是 Rust 侧 HumanLease 的投影（v3 §12.5），engine 不参与裁决。上游 get() 在没有 pending 请求时会剥掉 reason/requestedAt 两个字段，Rust 侧的 DTO 也必须是同样的「无请求即无理由」形状，否则界面会一直显示上一次的求助文案。"
+  - id: path-control-release
+    upstream: agent-computer/src/control.ts::createControl
+    label: parity
+    target: "openbot_computer::control::ControlService::release"
+    owner: openbot-computer
+    test_id: T-BROP-0006
+    migration_rule: "preserve: 释放时丢弃 reason（人做完了，界面不能还挂着旧请求）"
+    status: todo
+    evidence: "grep -c '\"/control/release\"' agent-computer/src/index.ts 得 1；handler 调 session.control.release()"
+    notes: "v3 §12.5：release 必须递增 epoch（新增部分单列在 T-BROP-0046，本条只承诺上游可观察行为）。"
+  - id: path-control-request
+    upstream: agent-computer/src/control.ts::createControl
+    label: parity
+    target: "openbot_computer::control::ControlService::request_help"
+    owner: openbot-computer
+    test_id: T-BROP-0007
+    migration_rule: "preserve: Bot 只能「说我卡住了」，不能自己把控制权交给人"
+    status: todo
+    evidence: "grep -c '\"/control/request\"' agent-computer/src/index.ts 得 1；handler 调 session.control.requestHelp(body?.reason)；同文件 control.ts 导出 HELP_REQUEST_TTL_MS"
+    notes: "上游注释写死了理由：能把自己交给人的 Bot 也能把人拽到一个他没要求看的页面上。求助有 TTL（HELP_REQUEST_TTL_MS = 10 分钟），Rust 侧要保留过期语义，过期同样递增 epoch。"
+  - id: path-control-secret
+    upstream: agent-computer/src/control.ts::createControl
+    label: parity
+    target: "openbot_computer::control::ControlService::request_secret"
+    owner: openbot-computer
+    test_id: T-BROP-0008
+    migration_rule: "preserve: Bot 请求一个它不该被告知的值，只给 label + ref（+ 可选 snapshotId），不给值"
+    status: todo
+    evidence: "grep -c '\"/control/secret\"' agent-computer/src/index.ts 得 1；handler 调 session.control.requestSecret(body)，非法输入抛 ControlRequestError 转 400"
+    notes: "这是 secret insert 的「请求半边」，留在 Rust 控制面；真正把值打进页面的是 T-BROP-0018 / T-BROP-0044。值全程不进 engine 命令、不进 frame log、不进 transcript（v3 §12.5 末句）。"
+  - id: path-control-take
+    upstream: agent-computer/src/control.ts::createControl
+    label: parity
+    target: "openbot_computer::control::ControlService::take"
+    owner: openbot-computer
+    test_id: T-BROP-0009
+    migration_rule: "preserve: 人接管后 Bot 立即被拒（上游 assertBotMayAct 抛 ControlError -> 409），不排队"
+    status: todo
+    evidence: "grep -c '\"/control/take\"' agent-computer/src/index.ts 得 1；control.ts 内 assertBotMayAct 与 humanMayDrive 成对，导出常量 HUMAN_HAS_CONTROL / TAKE_CONTROL_FIRST"
+    notes: "v3 §12.5「接管期间 Agent acting 立即返回确定性 refusal，不排队」与上游一致，属 parity。epoch 栅栏是新增，见 T-BROP-0046。"
+  - id: path-exec
+    upstream: agent-computer/src/shell.ts::createShell
+    label: parity
+    target: "openbot_computer::shell::ShellOperation::Exec"
+    owner: openbot-computer
+    test_id: T-BROP-0010
+    migration_rule: "preserve: 命令 + 可选 timeoutMs + 调用方 AbortSignal；此处不做第二次策略判定"
+    status: todo
+    evidence: "grep -c '\"/exec\"' agent-computer/src/index.ts 得 1；handler 调 shell.run({command, timeoutMs?, signal})"
+    notes: "File/shell 封闭集成员（v3 §11.2 末句 + §18 File/shell 行），**不进** BrowserOperation。上游注释写明：网关已经问过策略并写了 audit 行，这里再拒一次等于第二套没人配置的策略——v3 §8.1「唯一执行管线」是同一条原则。§18 完成证据要求「cancel 5 秒内进程树归零」。"
+  - id: path-files-list
+    upstream: agent-computer/src/workspace.ts::createWorkspace
+    label: parity
+    target: "openbot_computer::files::FileOperation::List"
+    owner: openbot-computer
+    test_id: T-BROP-0011
+    migration_rule: "preserve: 相对 workspace 根，默认 `.`；越界与 symlink 由 workspace 层拒绝"
+    status: todo
+    evidence: "grep -c '\"/files/list\"' agent-computer/src/index.ts 得 1；handler 调 workspace.list(path?)，错误经 fileStatus(error) 映射状态码"
+    notes: "File/shell 封闭集成员，不进 BrowserOperation。v3 §18 File/shell 行要求 canonical handle + symlink/hardlink 语料；上游 workspace.ts 已经点出裸 startsWith 会让 `/workspace-evil` 冒充 `/workspace`，Rust 侧必须是规范化后逐段比对。"
+  - id: path-files-read
+    upstream: agent-computer/src/workspace.ts::createWorkspace
+    label: parity
+    target: "openbot_computer::files::FileOperation::Read"
+    owner: openbot-computer
+    test_id: T-BROP-0012
+    migration_rule: "preserve: 路径必填（上游用 String(body?.path ?? '') 落到空串再由 workspace 拒），错误码经 fileStatus 分档"
+    status: todo
+    evidence: "grep -c '\"/files/read\"' agent-computer/src/index.ts 得 1；handler 调 workspace.read(String(body?.path ?? ''))"
+    notes: "File/shell 封闭集成员，不进 BrowserOperation。"
+  - id: path-files-write
+    upstream: agent-computer/src/workspace.ts::createWorkspace
+    label: parity
+    target: "openbot_computer::files::FileOperation::Write"
+    owner: openbot-computer
+    test_id: T-BROP-0013
+    migration_rule: "preserve: contents 必须是字符串（否则 400），append 只认布尔 true"
+    status: todo
+    evidence: "grep -c '\"/files/write\"' agent-computer/src/index.ts 得 1；handler 调 workspace.write(path, contents, {append: body.append === true})"
+    notes: "File/shell 封闭集成员，不进 BrowserOperation。注意上游 append 判据是严格 === true，不是 truthy——Rust 侧用 bool 即可，但 JSON 兼容层不得把 'yes'/1 当真。"
+  - id: path-health
+    upstream: agent-computer/src/authorisation.ts::isOpenPath
+    label: parity
+    target: "openbot_computer::health::ComputerHealth::report"
+    owner: openbot-computer
+    test_id: T-BROP-0014
+    migration_rule: "preserve: 唯一免鉴权路径；返回 status/browser/profile/identity 四段，identity 为 null 表示这个部署没跑 SPIRE 而不是身份坏了"
+    status: todo
+    evidence: "grep -c '\"/health\"' agent-computer/src/index.ts 得 1；authorisation.ts 的 isOpenPath 里 `return pathname === \"/health\"` 是全部实现"
+    notes: "不是 BrowserOperation。这是整个 computer 面唯一的开放路径，也就是唯一一处「不鉴权」的攻击面——Rust 侧必须同样窄：不点名 bot、不碰浏览器、不泄露 profile 之外的东西。上游把 `browser` 字段保留是因为发布契约与 start.sh 在读它。"
+  - id: path-human-click
+    upstream: agent-computer/src/index.ts::performHumanInput
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::HumanInput(BrowserInput::MouseClick)"
+    owner: openbot-computer
+    test_id: T-BROP-0015
+    migration_rule: "preserve: 按像素点击（人看的是图片，Bot 读的是列表，两条路各自的定址方式不换）；越界坐标钳制而不是拒绝"
+    status: todo
+    evidence: "grep -oE '\"/human/(click|type|key|scroll)\"' agent-computer/src/index.ts | sort -u 得 4 条，含 /human/click；performHumanInput 内 at() 把 x/y 钳到 VIEWPORT 内"
+    notes: "只有握着方向盘的人能用：上游先查 session.control.humanMayDrive()，否则 409 + TAKE_CONTROL_FIRST。坐标钳制的理由是缩放截图的舍入误差，不是容错——Rust 侧按 v3 §12.5 用 frame metadata + DPI + zoom + scroll + letterbox 换算后同样钳制。"
+  - id: path-human-key
+    upstream: agent-computer/src/index.ts::performHumanInput
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::HumanInput(BrowserInput::KeyPress)"
+    owner: openbot-computer
+    test_id: T-BROP-0016
+    migration_rule: "preserve: 需要 key 名，走 keyboard.press（一次按下+抬起）"
+    status: todo
+    evidence: "grep -oE '\"/human/(click|type|key|scroll)\"' agent-computer/src/index.ts | sort -u 含 /human/key；performHumanInput 内 target.keyboard.press(body.key)"
+    notes: "HTTP 侧的一次性按键，与 /stream 上的 key down / key up 两个独立变体（T-BROP-0041 / T-BROP-0042）不是同一件事：这里是「按一下」，那里是「按住/松开」。两条都要保留，否则长按与组合键会丢。"
+  - id: path-human-scroll
+    upstream: agent-computer/src/index.ts::performHumanInput
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::HumanInput(BrowserInput::Wheel)"
+    owner: openbot-computer
+    test_id: T-BROP-0017
+    migration_rule: "preserve: deltaY 缺省 400，横向不滚（上游 mouse.wheel(0, deltaY)）"
+    status: todo
+    evidence: "grep -c '\"/human/scroll\"' agent-computer/src/index.ts 得 1（只在 HUMAN_INPUT 集合里出现一次）；performHumanInput 没有 /human/scroll 的显式分支，它是函数末尾的兜底分支"
+    notes: "口径注意：/human/scroll 在 index.ts 里只出现 1 次，因为 performHumanInput 用「前三个 if 都不中就是 scroll」的兜底写法。Rust 侧用封闭 enum 后这个兜底必须变成显式变体，否则未来加第五种人类输入时会被静默吞进 scroll。"
+  - id: path-human-secret
+    upstream: agent-computer/src/index.ts::serve.fetch
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::SecretInsert"
+    owner: openbot-computer
+    test_id: T-BROP-0018
+    migration_rule: "preserve: 只在有 pending secret 请求时可用（否则 409 NO_SECRET_PENDING）；只填不提交；响应只回字符数不回值"
+    status: todo
+    evidence: "grep -c '\"/human/secret\"' agent-computer/src/index.ts 得 1；handler 先 session.control.pendingSecret()，再 locateRef -> click -> fill，返回 {supplied, characters, url}"
+    notes: "v3 §11.2 的 secret insert 成员。三条上游行为必须逐条保留：① 作用域是「那条 pending 请求」而不是「人握着方向盘」，所以它不能当成一般的打字后门；② 字段找不到时把请求关掉（否则人会对着一个死 ref 反复输密码）；③ 陈旧快照返回 409 + stale。上游刻意不做 generation 校验，靠 Playwright aria-ref 的重铸规则保证 ref 不会被回收的节点继承——Rust engine 换实现时必须自己提供等价保证，不能默认沿用。"
+  - id: path-human-type
+    upstream: agent-computer/src/index.ts::performHumanInput
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::HumanInput(BrowserInput::InsertText)"
+    owner: openbot-computer
+    test_id: T-BROP-0019
+    migration_rule: "preserve: 用 insertText 整块插入而不是逐键敲（粘贴一次性验证码不该被边输边格式化的字段拆散）；只回字符数不回值"
+    status: todo
+    evidence: "grep -oE '\"/human/(click|type|key|scroll)\"' agent-computer/src/index.ts | sort -u 含 /human/type；performHumanInput 内 target.keyboard.insertText(body.text) 后返回 {action, characters, url}"
+    notes: "v3 §12.5 明写：IME 合成完成的文本走 insertText，「上游 /human/type 正是这样做的」。这条 entry 就是那句话的上游锚点，也是 T-BROP-0045 裁决的正向依据。"
+  - id: path-key
+    upstream: agent-computer/src/index.ts::ACTIONS
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Key"
+    owner: openbot-computer
+    test_id: T-BROP-0020
+    migration_rule: "preserve: ref 可省（省略即作用于页面本身，Bot 按 Enter 提交就靠这条）"
+    status: todo
+    evidence: "grep -oE '\"/(click|type|key|scroll)\"' agent-computer/src/index.ts | sort -u 含 /key；performAction 文档注释写明 /key 与 /scroll 可以不带 ref"
+    notes: "Rust 侧 enum 里 ref 必须是 Option 而不是必填——把它做成必填会静默丢掉「对页面按键」这个上游一直有的能力。"
+  - id: path-navigate
+    upstream: agent-computer/src/index.ts::serve.fetch
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Navigate"
+    owner: openbot-computer
+    test_id: T-BROP-0021
+    migration_rule: "preserve: url 必填且必须是字符串（否则 400）；导航前先 assertBotMayAct"
+    status: todo
+    evidence: "grep -c '\"/navigate\"' agent-computer/src/index.ts 得 1；handler 校验 typeof body?.url === 'string' 后 session.control.assertBotMayAct()"
+    notes: "v3 §11.2 首个成员。URL 的重新验证留在 Rust（§11.3「外部打开只接受 Rust 重新验证的 URL」），engine 收到的是已裁决过的目标，不做自己的白名单。导航必须递增 lease epoch（§12.5「navigation 递增 epoch」，见 T-BROP-0046）。"
+  - id: path-profiles-dir
+    upstream: agent-computer/src/profiles.ts::profileDirectoryFor
+    label: parity
+    target: "openbot_computer::profile::ProfileStore::root"
+    owner: openbot-computer
+    test_id: T-BROP-0022
+    migration_rule: "preserve: 默认根 `/profiles`，可由 PROFILES_DIR 覆盖；botId 不得用 join 拼接"
+    status: todo
+    evidence: "grep -c '\"/profiles\"' agent-computer/src/index.ts 得 1，形态是 createProfiles(process.env.PROFILES_DIR ?? '/profiles')；profiles.ts 内 directoryFor 调 profileDirectoryFor(root, botId) 并注释「Checked, not joined」"
+    notes: "口径：这条不是 HTTP route，是 §28.4 正则抓到的默认目录字面量，占 29 之一。安全要点必须搬过去：join(root, botId) 会把 `..` 规范化掉，于是 botId = `../workspace` 就落到根外，reset 会删掉那里的东西。环境变量本身登记在 parity/env.yaml，本条只登记「profile 根 = 一个受检目录」这个操作契约。"
+  - id: path-read
+    upstream: agent-computer/src/index.ts::readablePageText
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Read"
+    owner: openbot-computer
+    test_id: T-BROP-0023
+    migration_rule: "preserve: 不导航，返回 {url, title, text, truncated}；script/style 正文丢弃"
+    status: todo
+    evidence: "grep -c '\"/read\"' agent-computer/src/index.ts 得 1；handler 调 readablePageText(target) 并回 truncated 标志"
+    notes: "上游注释解释了它为什么必须独立于 /navigate 存在：点了「提交订单」之后页面变成确认页，只有 /navigate 能回正文的话，Bot 就没有办法知道确认页写了什么。truncated 是契约字段，不能在 Rust 侧改成静默截断。"
+  - id: path-screenshot
+    upstream: agent-computer/src/index.ts::serve.fetch
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Screenshot"
+    owner: openbot-computer
+    test_id: T-BROP-0024
+    migration_rule: "preserve: PNG + base64，回 {base64, width, height, capturedAt, url}；viewport 缺省 1280x800"
+    status: todo
+    evidence: "grep -c '\"/screenshot\"' agent-computer/src/index.ts 得 1；handler target.screenshot({type: 'png'}) 后 viewportSize() ?? {width:1280,height:800}"
+    notes: "`url` 字段是刻意的：about:blank 的截图是一张完全合法的纯白 PNG，只看字节分不出它和真页面，转录必须能区分。v3 §12.6 的 1280x800 与这里的 viewport 缺省同值（screencast 的 maxWidth/maxHeight 见 T-BROP-0030）。screenshot 与 screencast 是两个成员，降级路径（§12.6：没有 startScreencast 能力时退化成 2 fps captureScreenshot）复用本成员。"
+  - id: path-scroll
+    upstream: agent-computer/src/index.ts::ACTIONS
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Scroll"
+    owner: openbot-computer
+    test_id: T-BROP-0025
+    migration_rule: "preserve: ref 可省（省略即滚页面本身）；deltaY 由调用方给"
+    status: todo
+    evidence: "grep -oE '\"/(click|type|key|scroll)\"' agent-computer/src/index.ts | sort -u 含 /scroll；performAction 注释写明 /key 与 /scroll 可省 ref"
+    notes: "与 T-BROP-0017（人的 wheel）分开：Bot 的 scroll 按 ref/页面定址，人的 wheel 按像素定址。两者在 Rust enum 里也必须是两个变体。"
+  - id: path-snapshot
+    upstream: agent-computer/src/aria-snapshot.ts::parseAriaSnapshot
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Snapshot"
+    owner: openbot-computer
+    test_id: T-BROP-0026
+    migration_rule: "preserve: POST 而不是 GET（它会改页面：给每个描述到的元素打标），返回带代次的 ref 列表"
+    status: todo
+    evidence: "grep -c '\"/snapshot\"' agent-computer/src/index.ts 得 1；handler 调 snapshotPage(session, await currentPage(botId))"
+    notes: "上游把「会改文档的 GET 是谎言，缓存和预取迟早会惩罚它」写进了注释——Rust 侧即使换成 typed framing，也要保留「snapshot 是一次写操作」这个语义（它推进 snapshotId 代次，所有 ref 的有效性挂在上面）。§18 完成证据「旧 ref 100% 拒绝」直接压在这条上。"
+  - id: path-stream
+    upstream: agent-computer/src/index.ts::serve.websocket
+    label: 替代
+    target: "openbot_computer::screen::ScreenIngress + openbot_computer::screen::session::ScreenSession"
+    owner: openbot-computer
+    test_id: T-BROP-0027
+    migration_rule: "rename: 上游单条 WebSocket 同时承载 base64 JPEG 帧与 JSON 输入；v3 §12.2 拆成「engine -> 认证 UDS/命名管道二进制 ingress -> ScreenHub -> 带 ticket 的 WS」，可观察行为保留、承载方式替换"
+    status: todo
+    evidence: "grep -c '\"/stream\"' agent-computer/src/index.ts 得 1；同文件 websocket.open 调 startScreencast，websocket.message 解析 InputMessage 后转 cast.send"
+    notes: "标 替代 而不是 parity 的三个具体差异，逐条都是 v3 明文：① 帧从 JSON/base64 换成 §12.3 的二进制 FrameHeader（含 generation/seq/scroll/scale）；② viewer 从「socket 开着就算数」换成 §12.4 的 128-bit、30 秒、一次性 ticket，且 ticket 走 Sec-WebSocket-Protocol 不进 URL；③ 上游一个 bot 只有一个 viewer（open 时先 stopViewer），v3 §12.6 支持多 viewer 且每 viewer 最多 1 个待发帧。**保留**的上游行为：socket 开着不等于有权驱动，输入仍要 humanMayDrive() 通过（上游注释：没有这道检查，任何能连到这个端口的东西都能在 Bot 干活时抢方向盘）；以及 FOLLOW_INTERVAL_MS 的「跟随当前页」轮询语义（换页后 cast 必须自动改跟新页，且新 cast 起来之后再停旧的，屏幕不能黑）。"
+  - id: path-type
+    upstream: agent-computer/src/index.ts::ACTIONS
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Type"
+    owner: openbot-computer
+    test_id: T-BROP-0028
+    migration_rule: "preserve: 需要 ref + text，submit 是独立可选项（打字与提交是两件事）"
+    status: todo
+    evidence: "grep -oE '\"/(click|type|key|scroll)\"' agent-computer/src/index.ts | sort -u 含 /type；ActionBody 类型里同时有 text 与 submit 两个字段"
+    notes: "与 secret insert（T-BROP-0018）刻意分开：secret 只填不提交，且值不落任何日志。Rust enum 把两者做成两个变体，避免「给 Type 加个 is_secret 布尔」这种一改就漏的形态。"
+  - id: path-workspace-dir
+    upstream: agent-computer/src/workspace.ts::createWorkspace
+    label: parity
+    target: "openbot_computer::files::WorkspaceRoot"
+    owner: openbot-computer
+    test_id: T-BROP-0029
+    migration_rule: "preserve: 默认根 `/workspace`，可由 WORKSPACE_DIR 覆盖；files 与 shell 共用同一个根"
+    status: todo
+    evidence: "grep -c '\"/workspace\"' agent-computer/src/index.ts 得 2，两处分别是 createWorkspace(process.env.WORKSPACE_DIR ?? '/workspace') 与 createShell(process.env.WORKSPACE_DIR ?? '/workspace')"
+    notes: "口径：这条不是 HTTP route，是 §28.4 正则抓到的默认目录字面量，占 29 之一。同一个字面量出现两次（workspace 与 shell 各一次）是刻意的：Bot 的文件和它跑的命令看到的是同一棵树。workspace.ts 里点名的坑必须搬：拿裸字符串做 startsWith 会让 `/workspace-evil` 通过 `/workspace` 的前缀检查。环境变量本身登记在 parity/env.yaml。"
+
+  # ===========================================================================
+  # B 段：§11.2 点名但不对应单独路径字面量的 BrowserOperation 成员（T-BROP-0030..0033）
+  # ===========================================================================
+  - id: op-screencast-start
+    upstream: agent-computer/src/screencast.ts::startScreencast
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Screencast(ScreencastOp::Start)"
+    owner: openbot-computer
+    test_id: T-BROP-0030
+    migration_rule: "preserve: format=jpeg、quality 70、maxWidth 1280、maxHeight 800、everyNthFrame 1（一帧一变化，不是定时轮询）"
+    status: todo
+    evidence: "grep -c 'quality: options.quality ?? 70' agent-computer/src/screencast.ts 得 1；grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u 得 3"
+    notes: "v3 §12.6 与这四个值逐值相同，属 parity。**新增**的是 fps 上限（10 passive / 15 driving）这条背压——v3 §12.6 自己写明「上游不限 fps」，所以它不算在本条里，登记在 screen/性能面而不是这里。§12.2 另钉死：只有 JPEG（生产）与 PNG（诊断）两种格式，不得把 WebP 写成已支持。"
+  - id: op-screencast-stop
+    upstream: agent-computer/src/screencast.ts::startScreencast
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Screencast(ScreencastOp::Stop)"
+    owner: openbot-computer
+    test_id: T-BROP-0031
+    migration_rule: "preserve: 幂等（上游 stop 用 stopped 标志守卫，调两次安全），停完 detach CDP session"
+    status: todo
+    evidence: "grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u 含 Page.stopScreencast；返回对象的 stop() 先置 stopped 再 send('Page.stopScreencast') 再 detach()"
+    notes: "v3 §12.6 要求「最后一个 viewer 断开后 2 秒内停止 screencast」——上游是断开即停（websocket.close -> stopViewer），2 秒宽限是新增的抖动容忍，登记在 screen 面。幂等这条必须保留：切页时上游是「新 cast 起来后再停旧的」，两条路径都会调 stop。"
+  - id: op-screencast-ack
+    upstream: agent-computer/src/screencast.ts::startScreencast
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserOperation::Screencast(ScreencastOp::Ack)"
+    owner: openbot-computer
+    test_id: T-BROP-0032
+    migration_rule: "preserve: 每帧必 ack，且 ack 是 Chromium 侧背压的唯一来源"
+    status: todo
+    evidence: "grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u 含 Page.screencastFrameAck；Page.screencastFrame 处理器里无条件先 ack 再判 stopped"
+    notes: "上游注释点名了这条的失败模式：忘了 ack 的实现会「发一帧然后看起来卡住」。v3 §12.2 加了一条时序约束：ack 在帧成功进入 size-1 latest buffer 之后发（上游是收到即 ack，先于任何投递）——这是**行为差异**，慢消费者语义从「Chromium 侧排队」变成「只丢旧帧」。差异本身属 screen 面的背压契约，本条只登记 ack 这个操作成员本身。"
+  - id: op-profile-ensure
+    upstream: agent-computer/src/profiles.ts::createProfiles
+    label: 替代
+    target: "openbot_computer::browser::protocol::BrowserOperation::Profile(ProfileOp::Ensure)"
+    owner: openbot-computer
+    test_id: T-BROP-0033
+    migration_rule: "rename: 上游没有 ensure 端点，浏览器由任何一次页面操作隐式懒启动；v3 §11.2 把它提成显式成员"
+    status: todo
+    evidence: "grep -oE '\"/[a-z][a-z0-9/:_-]*\"' agent-computer/src/index.ts | sort -u 里没有 ensure 类路径（29 条全在 A 段）；profiles.ts 的 page(botId) 内先查 starting 表再查 live 表，未命中才启动，是唯一的启动点"
+    notes: "标 替代 的理由：能力上游有（懒启动），形态是新的（显式操作）。必须搬过来的三条上游不变量：① 每 bot 同时只允许一次启动在飞（starting 表），并发调用等同一个 Promise 而不是各起一个浏览器压同一个 profile 目录；② 只有一条把浏览器变出来的路径（上游 /computers/stop 刻意不重启，就是为了不产生第二条）；③ MAX_LIVE_BROWSERS 上限 + LRU 驱逐，且驱逐发生在启动之后，刚请求的那个 bot 永远不是被关掉的那个。"
+
+  # ===========================================================================
+  # C 段：R1 新增行为与负向闭合（T-BROP-0034..0036）
+  # ===========================================================================
+  - id: op-download-refused
+    upstream: "-"
+    label: 新增
+    target: "openbot_computer::browser::engine::EngineEvent::DownloadRefused"
+    owner: openbot-computer
+    test_id: T-BROP-0034
+    migration_rule: "n/a: 上游无对应物，R1 新增的确定性拒绝 + 规范化上报"
+    status: todo
+    evidence: "grep -rlE 'page\\.on\\(|setInputFiles|filechooser' agent-computer/src | wc -l 得 0（正向对照见 recount 第 3、4 条）；grep -rhoiE 'download[A-Za-z]*' agent-computer/src | sort -u 只得 1 个词 `downloaded`，且它出现在 workspace.ts 的注释里（正向对照：同一条命令在 server/src 得 2 个词）"
+    notes: "v3 §11.2 明文：Chromium 自发的下载事件由 engine 默认取消并上报一条规范化 download_refused 事件。这是**新增**，不是 parity——上游 agent-computer 对下载完全没有处理（既没有 acceptDownloads，也没有任何 download 监听），Chromium 的默认行为会直接落盘到浏览器下载目录，没人取消也没人知道。§18 Browser actions 行把「Chromium 自发下载被取消并上报 download_refused」写成完成证据。§11.3 已经把未来真要做下载时的规则写死（quarantine、校验名称/MIME/大小、不自动打开），本条不实现那条路径。"
+  - id: op-js-dialog-dismiss
+    upstream: "-"
+    label: 新增
+    target: "openbot_computer::browser::engine::EngineEvent::DialogDismissed"
+    owner: openbot-computer
+    test_id: T-BROP-0035
+    migration_rule: "n/a: 上游无对应物，R1 新增的默认 dismiss + 上报"
+    status: todo
+    evidence: "grep -rliE 'dialog' agent-computer/src | wc -l 得 0（正向对照：同一条命令在 app/src 得 10）"
+    notes: "v3 §11.2 明文：弹出的 JS dialog 默认 dismiss 并上报。**新增**的判据是硬的——`dialog` 一词在整个 agent-computer/src 里一次都没有出现，所以上游既没有 dismiss 也没有 accept，alert/confirm/prompt 的处置完全交给 Playwright 的默认行为。Rust engine 必须把它变成显式的、可观测的事件：dismiss 而不是 accept（accept 会替用户点「确定」），并且上报里不带 dialog 正文之外的页面状态。这条与 T-BROP-0034 是同一族：engine 不能有「悄悄发生了什么」的路径。"
+  - id: op-upload-absent-r1
+    upstream: "-"
+    label: 新增
+    target: "openbot_computer::browser::protocol::BrowserOperation（封闭 enum：无 Upload / FileChooser 变体）"
+    owner: openbot-computer
+    test_id: T-BROP-0036
+    migration_rule: "n/a: R1 不提供上传；file chooser 请求由 engine 确定性拒绝并上报"
+    status: todo
+    evidence: "grep -rlE 'page\\.on\\(|setInputFiles|filechooser' agent-computer/src | wc -l 得 0；正向对照一（recount 第 3 条）：同一条正则在 repo 的 docs 目录得 1；正向对照二（recount 第 4 条）：同一目录同一种 grep 调用换成确实存在的字面量（client.on( / Input.insertText / Page.startScreencast）得 1"
+    notes: "v3 §11.2「没有 download、没有 upload」的 upload 半边。两条正向对照分别排除两种假 0：A 证明这条正则本身能命中（换个确实含这三个字面量的目录就命中），B 证明目录与 grep 调用没写错（换个确实存在于该目录的正则就命中）。**注意这是新增而不是 parity**：上游不是「拒绝上传」，而是「压根没有这条路径，file chooser 弹出来就一直挂着」；R1 要求 engine 对 file chooser 请求给出确定性拒绝并上报，行为是新的。未来真要做上传时按 §11.3 写死的规则：只接受 Rust 铸造、scope 绑定的 artifact handle，不接受本机路径——那条规则此刻即已生效，不随实现期再议。"
+
+  # ===========================================================================
+  # D 段：§12.5 输入 union 成员（T-BROP-0037..0044）
+  # ===========================================================================
+  - id: input-mouse-move
+    upstream: agent-computer/src/screencast.ts::InputMessage
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserInput::MouseMove"
+    owner: openbot-computer
+    test_id: T-BROP-0037
+    migration_rule: "preserve: 映射到 Input.dispatchMouseEvent type=mouseMoved，clickCount 必须为 0"
+    status: todo
+    evidence: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u 得 4 个变体；mouse 变体的 event 域是 'pressed' | 'released' | 'moved'；send() 内 moved 分支把 clickCount 置 0"
+    notes: "上游把 pressed/released/moved 压在一个 mouse 变体的 event 字段里；v3 §12.5 把三者写成 union 的三个成员。语义 parity，形态在 Rust 侧展开成三个变体（封闭 enum 才能让漏掉一种在编译期红）。button 缺省 left、modifiers 缺省 0 这两条缺省值是契约。"
+  - id: input-mouse-down
+    upstream: agent-computer/src/screencast.ts::InputMessage
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserInput::MouseDown"
+    owner: openbot-computer
+    test_id: T-BROP-0038
+    migration_rule: "preserve: 映射到 Input.dispatchMouseEvent type=mousePressed，clickCount 缺省 1 且不得为 0"
+    status: todo
+    evidence: "screencast.ts 的 send() 内 pressed -> 'mousePressed'，clickCount 取 message.clickCount ?? 1；同文件注释写明 clickCount 为 0 时页面只看到一次带按钮的移动，click 永远不触发"
+    notes: "clickCount 非零这条不是风格问题而是功能：上游注释点名了「按下 clickCount=0 则 click 事件永不触发」这个失败模式。Rust 侧的类型应该让 0 不可表达（NonZeroU32 或构造函数校验），而不是靠调用方记得。"
+  - id: input-mouse-up
+    upstream: agent-computer/src/screencast.ts::InputMessage
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserInput::MouseUp"
+    owner: openbot-computer
+    test_id: T-BROP-0039
+    migration_rule: "preserve: 映射到 Input.dispatchMouseEvent type=mouseReleased，clickCount 同 down"
+    status: todo
+    evidence: "screencast.ts 的 send() 内 released -> 'mouseReleased'；三个 mouse 事件共用同一个 dispatchMouseEvent 调用与同一套缺省值"
+    notes: "与 down/move 一起构成 v3 §12.5 的 drag 序列（down -> move -> up），engine 不需要知道「这是一次拖拽」，见裁决 T-BROP-0045。"
+  - id: input-wheel
+    upstream: agent-computer/src/screencast.ts::InputMessage
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserInput::Wheel"
+    owner: openbot-computer
+    test_id: T-BROP-0040
+    migration_rule: "preserve: 映射到 Input.dispatchMouseEvent type=mouseWheel，带 deltaX/deltaY 与 modifiers"
+    status: todo
+    evidence: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u 含 wheel；send() 内 wheel 分支发 type='mouseWheel' 并透传 deltaX/deltaY"
+    notes: "与 T-BROP-0017（HTTP /human/scroll）是两条路：这里带 deltaX 且坐标由 viewer 给，那里横向恒 0 且 deltaY 缺省 400。两条都保留。"
+  - id: input-key-down
+    upstream: agent-computer/src/screencast.ts::virtualKeyCode
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserInput::KeyDown"
+    owner: openbot-computer
+    test_id: T-BROP-0041
+    migration_rule: "preserve: 有 text 时发 keyDown，无 text 时发 rawKeyDown；windowsVirtualKeyCode 与 nativeVirtualKeyCode 必填"
+    status: todo
+    evidence: "grep -oE 'Input\\.(dispatchMouseEvent|dispatchKeyEvent|insertText)' agent-computer/src/screencast.ts | sort -u 得 3，含 dispatchKeyEvent；同文件 VIRTUAL_KEY_CODES 表给 16 个键显式码，其余单字符取 key.toUpperCase().charCodeAt(0)"
+    notes: "v3 §12.5 明写「含 modifiers 与 Input.dispatchKeyEvent 所需的 keyCode 表」，指的就是 VIRTUAL_KEY_CODES。上游注释点名了失败模式：只给 key 不给 virtual key code，表单会忽略 Backspace 与 Enter——「字母能打、编辑键不行」正是这个原因。keyDown / rawKeyDown 的二分同理：无文本却发 keyDown，编辑键会变成什么都没发生。这张表是 Rust 侧必须逐条搬的 fixture，不是可以「大致对齐」的东西。"
+  - id: input-key-up
+    upstream: agent-computer/src/screencast.ts::InputMessage
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserInput::KeyUp"
+    owner: openbot-computer
+    test_id: T-BROP-0042
+    migration_rule: "preserve: 映射到 Input.dispatchKeyEvent type=keyUp，同样带 virtual key code 与 modifiers"
+    status: todo
+    evidence: "screencast.ts 的 key 变体 event 域是 'down' | 'up'；send() 内 up -> 'keyUp'"
+    notes: "与 T-BROP-0016（HTTP /human/key 的一次性 press）分开：那条是「按一下」，这条是「松开」。组合键与长按只有靠 down/up 分离才可能。"
+  - id: input-insert-text
+    upstream: agent-computer/src/screencast.ts::InputMessage
+    label: parity
+    target: "openbot_computer::browser::protocol::BrowserInput::InsertText"
+    owner: openbot-computer
+    test_id: T-BROP-0043
+    migration_rule: "preserve: 映射到 Input.insertText，完全绕开按键事件（它不假装自己是键盘）"
+    status: todo
+    evidence: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u 含 text；send() 的末尾分支 client.send('Input.insertText', {text: message.text})"
+    notes: "v3 §12.5：paste 用 Input.insertText，不读取系统 clipboard——上游已经是这样（socket 上收到的是 viewer 自己那侧取到的文本，engine 从不碰宿主剪贴板），属 parity。IME 合成完成的文本也走这条（裁决 T-BROP-0045）。"
+  - id: input-secret-insert
+    upstream: agent-computer/src/index.ts::serve.fetch
+    label: 替代
+    target: "openbot_computer::browser::protocol::BrowserInput::SecretInsert"
+    owner: openbot-computer
+    test_id: T-BROP-0044
+    migration_rule: "rename: 能力上游有（HTTP /human/secret，Playwright click + fill），v3 §12.5 把它收进输入 union 并规定走独立 typed command"
+    status: todo
+    evidence: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u 得 4 个变体，**不含** secret——上游 /stream 的输入 union 里没有 secret 成员；secret 只在 HTTP 侧的 /human/secret（T-BROP-0018）"
+    notes: "标 替代 而不是 parity：上游 secret 与 /stream 输入不在同一条通道上，v3 §12.5 把 secret insert 列进输入 union 是形态变更。必须保留的语义：值不经过普通 key event、不进 frame log、不进 transcript；且它仍受「有 pending 请求」这个作用域约束（T-BROP-0008 / T-BROP-0018），不能因为进了输入 union 就变成人握着方向盘时的一般能力。Rust 侧类型上要让 secret 的载荷不可 Debug/不可序列化进日志。"
+
+  # ===========================================================================
+  # E 段：裁决与栅栏（T-BROP-0045..0046）
+  # ===========================================================================
+  - id: decision-no-ime-and-drag-variants
+    upstream: "-"
+    label: 新增
+    target: "openbot_computer::browser::protocol::BrowserInput（封闭 enum：无 ImeComposition / Drag 变体）"
+    owner: openbot-computer
+    test_id: T-BROP-0045
+    migration_rule: "n/a: 协议裁决，不是可迁移的上游行为"
+    status: todo
+    evidence: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u 得 4（mouse / wheel / key / text），上游 union 本来就没有 IME 与 drag 变体；performHumanInput 的 /human/type 分支用 keyboard.insertText 而不是逐键 type"
+    notes: "v3 §12.5 裁决原文：不设 IME composition 与 drag 两个独立变体。理由逐条可验：① IME 合成发生在 viewer 自己的输入元素里，合成完成的文本走 insertText——上游 /human/type 正是这样做的（T-BROP-0019），engine 从不需要看见合成中间态；② 拖拽就是 down -> move -> up 序列（T-BROP-0038 / 0037 / 0039），engine 不需要知道「这是一次拖拽」。标 新增 是因为它是本方案立的协议约束，不是从上游继承来的行为——上游没有这两个变体是「没做」，这里是「明确不做并说明为什么」，两者不能混为一谈。代价必须写明：真出现「必须知道是拖拽」的场景（HTML5 dragstart/dragover/drop 事件序列在某些站点上无法由裸鼠标事件合成）时，这是一次需要重新立项的协议扩展，不是实现期可以顺手加的变体。v3 §12.6 已把「IME 合成文本经 insertText」与「down->move->up 拖拽序列」两条列进必须覆盖的测试面。"
+  - id: human-lease-epoch-fencing
+    upstream: "-"
+    label: 新增
+    target: "openbot_computer::screen::lease::HumanLease"
+    owner: openbot-computer
+    test_id: T-BROP-0046
+    migration_rule: "n/a: 上游控制状态无 epoch/generation 概念，R1 新增"
+    status: todo
+    evidence: "grep -nE 'epoch|generation' agent-computer/src/control.ts | wc -l 得 0；同文件 ControlState 的全部字段是 holder / since / reason / requested / requestedAt / secretWanted / secretRef / secretSnapshotId，其中 secretSnapshotId 是 snapshot 代次而不是 lease 代次；对照 v3 §12.5 的 HumanLease(owner, computer, tab, epoch, expires_at)"
+    notes: "登记在本表是因为它是每一条输入操作的前置栅栏：v3 §12.5 要求 lease transfer / release / expiry / navigation / computer restart 都递增 epoch，且「旧 input 即使已经躺在 socket buffer 里也会被拒绝」。上游没有这层——它只有一个布尔式的「谁握着方向盘」，所以一条在 take 之前就发出、在 take 之后才被处理的输入会被当成合法输入执行。**这是新增，不得写进任何 parity 条目的 migration_rule 里冒充当前行为**：T-BROP-0006 / 0009 / 0021 / 0003 四条的 notes 都只承诺上游可观察行为，epoch 部分统一指回本条。"

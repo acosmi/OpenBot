@@ -1,0 +1,1311 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "openbot-rs-phase0-evidence-freeze",
+  "documentNamespace": "https://github.com/acosmi/OpenBot/spdxdocs/openbot-rs-phase0-evidence-freeze-2026-08-22",
+  "creationInfo": {
+    "created": "2026-08-22T12:43:56Z",
+    "creators": [
+      "Tool: openbot-phase0-provenance",
+      "Organization: acosmi"
+    ],
+    "licenseListVersion": "3.27",
+    "comment": "Phase 0 / Evidence Freeze 的来源与许可登记（v3 §19.3 产物清单、v3 §24 G0 闸门）。覆盖：v3 §1.2 固定源码基线表的每一行、GUI 设计系统文档 §4.3 / §4.6.1 的随包资产、GUI §12.1 的构建期工具、v3 §11.4 的 CrabCode 复用清单。每条 package 的 comment 里写的都是 2026-08-22 本轮亲自跑出来的命令结果：GitHub API commit 探测、raw.githubusercontent 取 LICENSE/NOTICE、crates.io `/api/v1/crates/<c>/<v>` 的 `.version.license`、index.crates.io 的 `cksum`、本机 `sha256sum`、python zipfile 读 zip 成员、以及一次真实的二进制下载与 `--version` 运行。没有本轮证据的字段一律 NOASSERTION 并在 comment 里写明缺什么、解除条件是什么，不写没跑过的结论。⚠️ 本文件不是法律意见：licenseConcluded 只表示『本轮取证支持这个结论』，发行前仍须按 v3 §16.3 跑 license/NOTICE/provenance verification 并由法务复核。"
+  },
+  "hasExtractedLicensingInfos": [
+    {
+      "licenseId": "LicenseRef-OpenBot-RS-Proprietary",
+      "name": "OpenBot-rs Proprietary (All Rights Reserved)",
+      "extractedText": "Copyright (c) 2026 acosmi. All rights reserved.\n\n本项目第一方新代码为专有、闭源、保留一切权利（v3 §23.2）。仓库在 GitHub 上 public 只是可见性设置，不构成任何开源许可、不授予任何使用、复制、修改或再分发许可。第三方组件按各自条款分区随包，见仓根 NOTICE。许可证全文见仓根 LICENSE。",
+      "comment": "对应仓根 LICENSE 文件。若未来开源须另立书面发布决议 + whole-tree license audit（v3 §23.2）。"
+    },
+    {
+      "licenseId": "LicenseRef-CrabCode-Proprietary",
+      "name": "CrabCode Proprietary (closed-source)",
+      "extractedText": "CrabCode 是闭源专有软件。其根 THIRD_PARTY_NOTICES 明示 closed-source proprietary；workspace 中的 `license = MIT` 是一条 metadata，不覆盖根声明，也不构成对任何文件的授权。复用任一文件都需要逐文件书面授权（含 SOURCE_PROVENANCE 八项），否则只能 clean-room 重写。",
+      "comment": "v3 §23.1 条 7 与 §11.4 末段。本文件不登记 CrabCode 的仓库地址与内部路径（本仓 public）。"
+    }
+  ],
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-openbot-rs",
+      "name": "openbot-rs",
+      "versionInfo": "0.0.0-phase0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "LicenseRef-OpenBot-RS-Proprietary",
+      "licenseDeclared": "LicenseRef-OpenBot-RS-Proprietary",
+      "copyrightText": "NOASSERTION",
+      "comment": "本仓第一方新代码。v3 §23.2：默认内部、闭源、all-rights-reserved；仓库在 GitHub 上 public 只是可见性，不是开源许可（见仓根 LICENSE）。第三方组件按各自条款分区随包（见仓根 NOTICE）。开源须另立书面发布决议 + whole-tree license audit，不在本次重写中自动发生。",
+      "homepage": "https://github.com/acosmi/OpenBot",
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-copilotkit-openbot",
+      "name": "CopilotKit/openbot",
+      "versionInfo": "891df72f1827454d8b353d108fe5dd2313b7e30d",
+      "downloadLocation": "git+https://github.com/CopilotKit/openbot.git@891df72f1827454d8b353d108fe5dd2313b7e30d",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2026 CopilotKit",
+      "comment": "v3 §1.2 的固定源码基线；本次重写的 parity 唯一真源。v3 §23.1 条 1：逐语言翻译仍按衍生实现治理，发行包必须保留 `Copyright (c) 2026 CopilotKit` 与 MIT 全文。本轮证据：(a) GitHub API `/repos/CopilotKit/openbot/commits/891df72f…` HTTP 200；(b) 只读克隆的 `.git/refs/heads/main` 逐字为该 commit；(c) 克隆内 `LICENSE` 为 MIT，SHA256 f758c9848289ffecfcf65d1a6b078ccc96f53148c4e773f24b817dbc83e80b55，版权行逐字为 `Copyright (c) 2026 CopilotKit`；(d) 同 commit 的 `NOTICE` HTTP 404（无 NOTICE 文件，正向对照见 openai/codex 的 200）。",
+      "supplier": "Organization: CopilotKit",
+      "sourceInfo": "无 SHA256：本条的身份是 git commit 本身（externalRefs 的 purl 已带 @<commit>），没有钉死的 release tarball 可算摘要。发行前若要打包快照，须在 §16.3 的 SBOM 步骤补 tarball 摘要。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d"
+        }
+      ],
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-ag-ui",
+      "name": "ag-ui-protocol/ag-ui",
+      "versionInfo": "e42bdbedc27cdf982ed9b5de904215acd73a17fb",
+      "downloadLocation": "git+https://github.com/ag-ui-protocol/ag-ui.git@e42bdbedc27cdf982ed9b5de904215acd73a17fb",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2025",
+      "comment": "v3 §1.2 固定基线；AG-UI 事件族与 `HttpAgent` 行为 oracle（v3 §7.5）。本轮证据：GitHub API commit HTTP 200；同 commit 的 `LICENSE` 首行 `MIT License`，版权行逐字为 `Copyright (c) 2025`。⚠️ 该 MIT 版权行**没有权利人姓名**（只有年份），照抄进 NOTICE 会得到一条不完整的声明；随包前必须向上游确认权利人写法，见 NOTICE 的补全条件。",
+      "sourceInfo": "无 SHA256：本条的身份是 git commit 本身（externalRefs 的 purl 已带 @<commit>），没有钉死的 release tarball 可算摘要。发行前若要打包快照，须在 §16.3 的 SBOM 步骤补 tarball 摘要。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/ag-ui-protocol/ag-ui@e42bdbedc27cdf982ed9b5de904215acd73a17fb"
+        }
+      ],
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rmcp",
+      "name": "rmcp (modelcontextprotocol/rust-sdk)",
+      "versionInfo": "3.1.4",
+      "downloadLocation": "git+https://github.com/modelcontextprotocol/rust-sdk.git@4a738b9dd99eaca418b614afa433a0cbdaf8d056",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §1.2 固定基线：commit `4a738b9dd99eaca418b614afa433a0cbdaf8d056`，发布版 `3.1.4`。本轮证据：(a) GitHub API commit HTTP 200；(b) crates.io `/api/v1/crates/rmcp/3.1.4` 的 `.version.license` = `Apache-2.0`；(c) 同 commit 的 `LICENSE` **不是**一份许可证全文，原文首段为：『The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 (\"Apache-2.0\")… Contributions made by authors who originally licensed their work under the MIT License and who have not yet granted explicit permission to relicense remain licensed under the MIT License.』；(d) 同 commit 的 `NOTICE` HTTP 404。因此 licenseConcluded = NOASSERTION：这正是 v3 §23.1 条 4『不能给整个仓库套一个猜测』所指的情形，逐文件 license 判定须在实际复用任何文件之前完成。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/rmcp@3.1.4"
+        },
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/modelcontextprotocol/rust-sdk@4a738b9dd99eaca418b614afa433a0cbdaf8d056"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-openai-codex",
+      "name": "openai/codex",
+      "versionInfo": "4f39251a010a8bd7d692d25fb33832ff06f1635a",
+      "downloadLocation": "git+https://github.com/openai/codex.git@4f39251a010a8bd7d692d25fb33832ff06f1635a",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "Copyright 2025 OpenAI",
+      "comment": "v3 §1.2『OpenAI Codex 研究快照』。使用边界见 v3 §7.6。本轮证据：(a) GitHub API commit HTTP 200；(b) 同 commit 的 `LICENSE` 首三行为 Apache License / Version 2.0, January 2004；(c) 同 commit **存在** `NOTICE`（HTTP 200，242 字节，SHA256 9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915），内容为『OpenAI Codex / Copyright 2025 OpenAI』加一条 Ratatui（MIT，Copyright (c) 2016-2022 Florian Dehau；Copyright (c) 2023-2025 The Ratatui Developers）的派生声明。⚠️ Apache-2.0 §4(d)：这份 NOTICE 在分发衍生作品时必须随包重现——它是本轮四个上游里唯一有 NOTICE 的，v3 §23.1 条 2 的『适用 NOTICE』在这里有具体落点。v3 §26 未给出 Codex 源码仓 URL，本条的 `openai/codex` 是本轮用该 commit 反查 GitHub API 命中的结果，不是从 v3 抄的。",
+      "supplier": "Organization: OpenAI",
+      "sourceInfo": "无 SHA256：本条的身份是 git commit 本身（externalRefs 的 purl 已带 @<commit>），没有钉死的 release tarball 可算摘要。发行前若要打包快照，须在 §16.3 的 SBOM 步骤补 tarball 摘要。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/openai/codex@4f39251a010a8bd7d692d25fb33832ff06f1635a"
+        }
+      ],
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-xai-grok-build",
+      "name": "xai-org/grok-build",
+      "versionInfo": "19d42e35c07a9c9244f03f6df0c4c353f970d4f9",
+      "downloadLocation": "git+https://github.com/xai-org/grok-build.git@19d42e35c07a9c9244f03f6df0c4c353f970d4f9",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "Copyright 2023-2026 SpaceXAI",
+      "comment": "v3 §1.2『xAI Grok Build 研究快照』。使用边界见 v3 §7.6。本轮证据：(a) GitHub API commit HTTP 200；(b) 同 commit 的 `LICENSE` 首行为 `Copyright 2023-2026 SpaceXAI`，其后是 Apache License Version 2.0 全文——权利人字面是 **SpaceXAI** 而不是 xAI，NOTICE 里不得写成 xAI；(c) 同 commit 的 `NOTICE` 与 `NOTICES` 均 HTTP 404（正向对照：同一条探测在 openai/codex 上得 200）。licenseConcluded = NOASSERTION 的理由是 v3 §23.1 条 3：第一方代码 Apache-2.0，但部分工具源自 Codex/OpenCode，必须回溯原始来源与第三方声明，不能只记 xAI；上游既然没有 NOTICE，这份回溯只能由本项目自己做，无处可抄。",
+      "supplier": "Organization: xAI",
+      "sourceInfo": "无 SHA256：本条的身份是 git commit 本身（externalRefs 的 purl 已带 @<commit>），没有钉死的 release tarball 可算摘要。发行前若要打包快照，须在 §16.3 的 SBOM 步骤补 tarball 摘要。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/xai-org/grok-build@19d42e35c07a9c9244f03f6df0c4c353f970d4f9"
+        }
+      ],
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-tauri",
+      "name": "tauri",
+      "versionInfo": "2.11.5",
+      "downloadLocation": "https://crates.io/api/v1/crates/tauri/2.11.5/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0 OR MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "Desktop 宿主（v3 §13.1）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/tauri/2.11.5` 的 `.version.license` 字段（原样返回 `Apache-2.0 OR MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/tauri@2.11.5"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-leptos",
+      "name": "leptos",
+      "versionInfo": "0.8.19",
+      "downloadLocation": "https://crates.io/api/v1/crates/leptos/0.8.19/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "GUI 框架（v3 §13.1）；v3 §1.2 明记 crates.io 已有 0.8.20 / 0.9.0-beta，本文件仍固定 0.8.19，升级走 delta audit。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/leptos/0.8.19` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/leptos@0.8.19"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-leptos-router",
+      "name": "leptos_router",
+      "versionInfo": "0.8.13",
+      "downloadLocation": "https://crates.io/api/v1/crates/leptos_router/0.8.13/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "**必须钉 `=0.8.13`**：v3 §1.2 实测 0.8.14 / 0.8.15 依赖 `leptos ^0.8.20`，在 0.8.19 上解析不出来；0.8.13 要求 `^0.8.17`。升 Leptos 的 delta audit 必须同 PR 升 router。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/leptos_router/0.8.13` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/leptos_router@0.8.13"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-leptos-meta",
+      "name": "leptos_meta",
+      "versionInfo": "0.8.6",
+      "downloadLocation": "https://crates.io/api/v1/crates/leptos_meta/0.8.6/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "Leptos 生态（v3 §1.2）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/leptos_meta/0.8.6` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/leptos_meta@0.8.6"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-leptos-i18n",
+      "name": "leptos_i18n",
+      "versionInfo": "0.6.2",
+      "downloadLocation": "https://crates.io/api/v1/crates/leptos_i18n/0.6.2/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "i18n（GUI §8.1）；依赖 `leptos ^0.8`、`icu_locale ^2.2`。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/leptos_i18n/0.6.2` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/leptos_i18n@0.6.2"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-leptos-i18n-build",
+      "name": "leptos_i18n_build",
+      "versionInfo": "0.6.2",
+      "downloadLocation": "https://crates.io/api/v1/crates/leptos_i18n_build/0.6.2/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "i18n 构建期（GUI §8.1）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/leptos_i18n_build/0.6.2` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/leptos_i18n_build@0.6.2"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-cel",
+      "name": "cel",
+      "versionInfo": "0.14.3",
+      "downloadLocation": "https://crates.io/api/v1/crates/cel/0.14.3/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "CEL 引擎（v3 §8.3）。仓库 `cel-rust/cel-rust`；旧名 `cel-interpreter` 0.10.0 已停更，不用。golden oracle 是上游锁定的 `cel-js@0.8.2`。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/cel/0.14.3` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/cel@0.14.3"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-openidconnect",
+      "name": "openidconnect",
+      "versionInfo": "4.0.1",
+      "downloadLocation": "https://crates.io/api/v1/crates/openidconnect/4.0.1/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "OIDC（v3 §6.2）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/openidconnect/4.0.1` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/openidconnect@4.0.1"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-samael",
+      "name": "samael",
+      "versionInfo": "0.0.22",
+      "downloadLocation": "https://crates.io/api/v1/crates/samael/0.0.22/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "SAML（v3 §6.2，`njaremko/samael`）。0.0.x 版号即『未稳定』信号，v3 §6.2 的独立外审因此不可免。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/samael/0.0.22` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/samael@0.0.22"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-pulldown-cmark",
+      "name": "pulldown-cmark",
+      "versionInfo": "0.13.4",
+      "downloadLocation": "https://crates.io/api/v1/crates/pulldown-cmark/0.13.4/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "GUI 运行时：markdown 渲染（v3 §1.2 / GUI §6.4）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/pulldown-cmark/0.13.4` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/pulldown-cmark@0.13.4"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-syntect",
+      "name": "syntect",
+      "versionInfo": "5.3.0",
+      "downloadLocation": "https://crates.io/api/v1/crates/syntect/5.3.0/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "GUI 运行时：代码高亮（`default-fancy`）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/syntect/5.3.0` 的 `.version.license` 字段（原样返回 `MIT`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/syntect@5.3.0"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-sys-locale",
+      "name": "sys-locale",
+      "versionInfo": "0.3.2",
+      "downloadLocation": "https://crates.io/api/v1/crates/sys-locale/0.3.2/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT OR Apache-2.0",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "GUI 运行时：locale 解析，仅 desktop（GUI §8.4）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/sys-locale/0.3.2` 的 `.version.license` 字段（原样返回 `MIT OR Apache-2.0`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/sys-locale@0.3.2"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-image",
+      "name": "image",
+      "versionInfo": "0.25.10",
+      "downloadLocation": "https://crates.io/api/v1/crates/image/0.25.10/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT OR Apache-2.0",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "仅 testkit：golden 截图比对（GUI §10）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/image/0.25.10` 的 `.version.license` 字段（原样返回 `MIT OR Apache-2.0`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/image@0.25.10"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crate-xcap",
+      "name": "xcap",
+      "versionInfo": "0.9.8",
+      "downloadLocation": "https://crates.io/api/v1/crates/xcap/0.9.8/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "仅 testkit：desktop golden 截屏（GUI §10.1）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/xcap/0.9.8` 的 `.version.license` 字段（原样返回 `Apache-2.0`）。",
+      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/xcap@0.9.8"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-electron",
+      "name": "Electron",
+      "versionInfo": "43.3.0",
+      "downloadLocation": "https://github.com/electron/electron/releases/tag/v43.3.0",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) Electron contributors; Copyright (c) 2013-2020 GitHub Inc.",
+      "comment": "CrabCode browser kernel 的宿主版本（v3 §1.2）。本轮证据：(a) 同 tag 的 `LICENSE` 首两行逐字为上面的 copyrightText；(b) GitHub API `/releases/tags/v43.3.0` published_at = 2026-08-04T18:52:37Z，release body 内两行为 `Updated Chromium to 150.0.7871.212.` 与 `Updated Node.js to v24.18.1.` —— v3 §1.2 写的 Chromium `150.0.7871.212` 由此独立复现。v3 §23.1 条 5：Electron 自身 MIT，但 Chromium / Node / FFmpeg 等随其发行包的第三方 notices 必须原样交付。",
+      "sourceInfo": "无 SHA256：本条钉的是 release tag，不是某一件平台资产；实际随包的 Electron 字节由 browser kernel 的 pin 文件按平台校验（v3 §16.2），SBOM 在打包腿补该平台资产摘要。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/electron/electron@v43.3.0"
+        }
+      ],
+      "primaryPackagePurpose": "FRAMEWORK"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-chromium",
+      "name": "Chromium",
+      "versionInfo": "150.0.7871.212",
+      "downloadLocation": "https://chromium.googlesource.com/chromium/src/+/150.0.7871.212",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "Copyright 2015 The Chromium Authors",
+      "comment": "随 Electron 43.3.0 发行（v3 §1.2）。本轮证据：`raw.githubusercontent.com/chromium/chromium/150.0.7871.212/LICENSE` 取回成功，首行 `// Copyright 2015 The Chromium Authors`，正文是三条款 BSD。licenseConcluded = NOASSERTION：Chromium 发行包内含数百个第三方组件、各自许可不同，顶层 LICENSE 只覆盖 Chromium 自身代码；v3 §23.1 条 5 要求的『第三方 notices 原样交付』指的是 Chromium 自带的 credits 文件，须在打包腿整份随包，不能用这一条 BSD 顶替。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:generic/chromium@150.0.7871.212"
+        }
+      ],
+      "primaryPackagePurpose": "FRAMEWORK"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-nodejs",
+      "name": "Node.js",
+      "versionInfo": "24.18.1",
+      "downloadLocation": "https://nodejs.org/download/release/v24.18.1/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "随 Electron 43.3.0 发行。本轮证据：Electron v43.3.0 release body 明写 `Updated Node.js to v24.18.1.`。许可证本轮**未取证**（未拉取 Node 的 LICENSE），故两个 license 字段与 copyrightText 均为 NOASSERTION。解除条件 = 打包腿把 Node 随包 LICENSE 原样收进 NOTICE 后回填。v3 §23.1 条 5 点名 Node 是必须交付 notices 的对象之一。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:generic/nodejs@24.18.1"
+        }
+      ],
+      "primaryPackagePurpose": "FRAMEWORK"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-postgresql",
+      "name": "PostgreSQL",
+      "versionInfo": "17",
+      "downloadLocation": "https://www.postgresql.org/ftp/source/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "PostgreSQL",
+      "licenseDeclared": "PostgreSQL",
+      "copyrightText": "Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group; Portions Copyright (c) 1994, The Regents of the University of California",
+      "comment": "唯一数据库（v3 §14.1）。上游 compose 用 `pgvector/pgvector:pg17`；Rust 版不需要 pgvector，平装 `postgres:17` 即可。本轮证据：`raw.githubusercontent.com/postgres/postgres/REL_17_STABLE/COPYRIGHT` 取回成功，前六行逐字给出上面的 copyrightText 与 `Permission to use, copy, modify, and distribute…` 起始的许可正文（SPDX id `PostgreSQL`）。注意本条钉的是主版本 17，不是某个补丁号。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:generic/postgresql@17"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rust-toolchain",
+      "name": "Rust toolchain",
+      "versionInfo": "1.94.1",
+      "downloadLocation": "https://static.rust-lang.org/dist/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0 OR MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §1.2 钉死的工具链，edition 2024；仓根 `rust-toolchain.toml` 是唯一真源。本轮证据：`raw.githubusercontent.com/rust-lang/rust/1.94.1/LICENSE-APACHE` HTTP 200（tag 存在且双许可布局成立）。构建期工具，不进发行物。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:generic/rust@1.94.1"
+        }
+      ],
+      "primaryPackagePurpose": "OTHER"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-inter",
+      "name": "Inter",
+      "versionInfo": "4.1",
+      "downloadLocation": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+      "filesAnalyzed": false,
+      "licenseConcluded": "OFL-1.1",
+      "licenseDeclared": "OFL-1.1",
+      "copyrightText": "Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)",
+      "comment": "UI 字体，随包（GUI §4.3）。本轮证据：(a) 本机 `sha256sum Inter-4.1.zip` = 9883fdd4…b11e，与 GUI §4.3 逐字相等；(b) GitHub API `/releases/tags/v4.1` 的唯一资产 `Inter-4.1.zip` size = 33,707,794 B，与本机文件大小逐字相等；(c) zip 内 `LICENSE.txt`（4,380 B，SHA256 262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a）为 SIL OFL 1.1 全文，已整份收进仓根 NOTICE。OFL-1.1 §Reserved Font Name 与『不得单独售卖』两条在随包场景下都满足；改名/改造字体须重新评估。",
+      "supplier": "Organization: The Inter Project Authors",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/rsms/inter@v4.1"
+        }
+      ],
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-inter-intervariable-woff2",
+      "name": "web/InterVariable.woff2",
+      "versionInfo": "4.1",
+      "downloadLocation": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+      "filesAnalyzed": false,
+      "licenseConcluded": "OFL-1.1",
+      "licenseDeclared": "OFL-1.1",
+      "copyrightText": "Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)",
+      "comment": "GUI §4.3 明写 Inter-4.1.zip 里**只取两文件**，这是其中之一（352240 字节）。本轮证据：用 python zipfile 从本机 Inter-4.1.zip 读出该成员，字节数与 SHA256 均与 GUI §4.3 逐字相等。这两件才是真正进发行物的字节；上面的 zip 条目只是它们的来源容器。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3"
+        }
+      ],
+      "primaryPackagePurpose": "FILE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-inter-intervariable-italic-woff2",
+      "name": "web/InterVariable-Italic.woff2",
+      "versionInfo": "4.1",
+      "downloadLocation": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+      "filesAnalyzed": false,
+      "licenseConcluded": "OFL-1.1",
+      "licenseDeclared": "OFL-1.1",
+      "copyrightText": "Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)",
+      "comment": "GUI §4.3 明写 Inter-4.1.zip 里**只取两文件**，这是其中之一（387976 字节）。本轮证据：用 python zipfile 从本机 Inter-4.1.zip 读出该成员，字节数与 SHA256 均与 GUI §4.3 逐字相等。这两件才是真正进发行物的字节；上面的 zip 条目只是它们的来源容器。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "e564f652916db6c139570fefb9524a77c4d48f30c92928de9db19b6b5c7a262a"
+        }
+      ],
+      "primaryPackagePurpose": "FILE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-lucide",
+      "name": "Lucide",
+      "versionInfo": "1.33.0",
+      "downloadLocation": "https://github.com/lucide-icons/lucide/releases/download/1.33.0/lucide-icons-1.33.0.zip",
+      "filesAnalyzed": false,
+      "licenseConcluded": "ISC AND MIT",
+      "licenseDeclared": "ISC AND MIT",
+      "copyrightText": "Copyright (c) 2026 Lucide Icons and Contributors; Copyright (c) 2013-present Cole Bemis",
+      "comment": "图标集，只随包 allowlist 内用到的 SVG（GUI §4.6.1）。本轮证据：(a) 本机 `sha256sum` 该 zip = 53831c8d…0a98，与 GUI §4.6.1 逐字相等；(b) GitHub API `/releases/tags/1.33.0` 里 `lucide-icons-1.33.0.zip` size = 1,320,159 B，与本机文件大小逐字相等；(c) **zip 内没有任何 LICENSE 文件**（python zipfile 遍历 3,553 个成员，文件名含 `licen` 的为 0；正向对照：同一段代码在 Inter-4.1.zip 上命中 `LICENSE.txt`）——许可证正文只能取自仓库，本轮从 `raw.githubusercontent.com/lucide-icons/lucide/1.33.0/LICENSE` 取回（3,208 B，SHA256 b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57）。⚠️ 那份 LICENSE **不是单一 ISC**：正文后半段列出 110 个源自 Feather 项目的图标名，这批图标另受 MIT（Copyright (c) 2013-present Cole Bemis）约束。所以 licenseDeclared = `ISC AND MIT`，NOTICE 必须同时带两段；只写 ISC（GUI §4.6.1 的表述）会漏掉 Feather 那半边。随包 allowlist 若命中任一 Feather 图标，MIT 那段就是必须项而非可选项。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "53831c8def65621f88cae315cdb38ac70db1d937062df35c93546efb00260a98"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/lucide-icons/lucide@1.33.0"
+        }
+      ],
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-tailwindcss-linux-x64",
+      "name": "tailwindcss standalone CLI (linux-x64)",
+      "versionInfo": "4.3.3",
+      "downloadLocation": "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-linux-x64",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，**不进发行物**（GUI §12.1 末段 / v3 §16.3）。SHA256 来源 = 同 release 的 `sha256sums.txt`（HTTP 200），本轮与 GUI §12.1 表格逐字比对全部 MATCH。资产 URL 本轮 HEAD 探测 HTTP 200。musl 两件（linux-x64-musl / linux-arm64-musl）确实存在于同一份 sha256sums.txt 中但按 GUI §12.1 裁决不收。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "dc61b3ac6b8c9ca874c0cc4c57b2409791a64c5540404ca5f5367360babc313a"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tailwindlabs/tailwindcss@v4.3.3"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-tailwindcss-linux-arm64",
+      "name": "tailwindcss standalone CLI (linux-arm64)",
+      "versionInfo": "4.3.3",
+      "downloadLocation": "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-linux-arm64",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，**不进发行物**（GUI §12.1 末段 / v3 §16.3）。SHA256 来源 = 同 release 的 `sha256sums.txt`（HTTP 200），本轮与 GUI §12.1 表格逐字比对全部 MATCH。资产 URL 本轮 HEAD 探测 HTTP 200。musl 两件（linux-x64-musl / linux-arm64-musl）确实存在于同一份 sha256sums.txt 中但按 GUI §12.1 裁决不收。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "55fd0b241214eff3de1e8ee4f22796662f2d2e7a49bcfca7477cfd0bac398195"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tailwindlabs/tailwindcss@v4.3.3"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-tailwindcss-macos-arm64",
+      "name": "tailwindcss standalone CLI (macos-arm64)",
+      "versionInfo": "4.3.3",
+      "downloadLocation": "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-macos-arm64",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，**不进发行物**（GUI §12.1 末段 / v3 §16.3）。SHA256 来源 = 同 release 的 `sha256sums.txt`（HTTP 200），本轮与 GUI §12.1 表格逐字比对全部 MATCH。资产 URL 本轮 HEAD 探测 HTTP 200。musl 两件（linux-x64-musl / linux-arm64-musl）确实存在于同一份 sha256sums.txt 中但按 GUI §12.1 裁决不收。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "cdf646702987a743464dff4d9c60fd4480d1c1e73dd819a9a67f1078815dce9d"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tailwindlabs/tailwindcss@v4.3.3"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-tailwindcss-macos-x64",
+      "name": "tailwindcss standalone CLI (macos-x64)",
+      "versionInfo": "4.3.3",
+      "downloadLocation": "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-macos-x64",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，**不进发行物**（GUI §12.1 末段 / v3 §16.3）。SHA256 来源 = 同 release 的 `sha256sums.txt`（HTTP 200），本轮与 GUI §12.1 表格逐字比对全部 MATCH。资产 URL 本轮 HEAD 探测 HTTP 200。musl 两件（linux-x64-musl / linux-arm64-musl）确实存在于同一份 sha256sums.txt 中但按 GUI §12.1 裁决不收。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "7922e0953f2110c05976e3bf58f14e643d90427575e766b7d433f5f80cbee7e1"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tailwindlabs/tailwindcss@v4.3.3"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-tailwindcss-windows-x64",
+      "name": "tailwindcss standalone CLI (windows-x64)",
+      "versionInfo": "4.3.3",
+      "downloadLocation": "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-windows-x64.exe",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，**不进发行物**（GUI §12.1 末段 / v3 §16.3）。SHA256 来源 = 同 release 的 `sha256sums.txt`（HTTP 200），本轮与 GUI §12.1 表格逐字比对全部 MATCH。资产 URL 本轮 HEAD 探测 HTTP 200。musl 两件（linux-x64-musl / linux-arm64-musl）确实存在于同一份 sha256sums.txt 中但按 GUI §12.1 裁决不收。 这一件本轮**实际下载并运行**：文件 112,503,296 B，本机 sha256sum 与上面逐字相等（端到端闭环）；`--version` exit=0，stderr 86 B 含 ANSI 着色的 `≈ tailwindcss v4.3.3`，stdout 是 98,986 B 的编译 CSS，首行 `/*! tailwindcss v4.3.3 | MIT License | https://tailwindcss.com */`——MIT 这一条 licenseDeclared 就是这么取到的，不是猜的。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "e0e260ce048014e9268f6237ff18f8ccf02cef521cbd0ae04e82c2cdf7aa3955"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tailwindlabs/tailwindcss@v4.3.3"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-binaryen-linux-x64",
+      "name": "binaryen / wasm-opt (linux-x64)",
+      "versionInfo": "version_132",
+      "downloadLocation": "https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-x86_64-linux.tar.gz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，不进发行物。GUI §12.1 只写了『各平台 sha256 进 pins.toml』**没有给出任何值**（正向对照：同一张表的 Tailwind 行列了五个），所以这个 117057408 字节资产的 SHA256 是本轮新取的：同 release 的 `binaryen-version_132-x86_64-linux.tar.gz.sha256` 边车文件。许可证证据：`raw.githubusercontent.com/WebAssembly/binaryen/version_132/LICENSE` 首三行为 Apache License Version 2.0。release published_at = 2026-08-12T21:53:49Z，与 GUI §12.1 的 2026-08-12 相符。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "195ddc94f9bc89f45abdabb0b9eea86023d727ba90eac8b35b80f2544fc30572"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/WebAssembly/binaryen@version_132"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-binaryen-linux-arm64",
+      "name": "binaryen / wasm-opt (linux-arm64)",
+      "versionInfo": "version_132",
+      "downloadLocation": "https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-aarch64-linux.tar.gz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，不进发行物。GUI §12.1 只写了『各平台 sha256 进 pins.toml』**没有给出任何值**（正向对照：同一张表的 Tailwind 行列了五个），所以这个 111061229 字节资产的 SHA256 是本轮新取的：同 release 的 `binaryen-version_132-aarch64-linux.tar.gz.sha256` 边车文件。许可证证据：`raw.githubusercontent.com/WebAssembly/binaryen/version_132/LICENSE` 首三行为 Apache License Version 2.0。release published_at = 2026-08-12T21:53:49Z，与 GUI §12.1 的 2026-08-12 相符。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "c58562417836c5d0493d89bdefc434933bdc097db641b483df86bcfa557a107f"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/WebAssembly/binaryen@version_132"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-binaryen-macos-arm64",
+      "name": "binaryen / wasm-opt (macos-arm64)",
+      "versionInfo": "version_132",
+      "downloadLocation": "https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-arm64-macos.tar.gz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，不进发行物。GUI §12.1 只写了『各平台 sha256 进 pins.toml』**没有给出任何值**（正向对照：同一张表的 Tailwind 行列了五个），所以这个 7640117 字节资产的 SHA256 是本轮新取的：同 release 的 `binaryen-version_132-arm64-macos.tar.gz.sha256` 边车文件。许可证证据：`raw.githubusercontent.com/WebAssembly/binaryen/version_132/LICENSE` 首三行为 Apache License Version 2.0。release published_at = 2026-08-12T21:53:49Z，与 GUI §12.1 的 2026-08-12 相符。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "98aad827847af7ef990ed7098d885725c8e5b5aae75073403635617ae4e259aa"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/WebAssembly/binaryen@version_132"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-binaryen-macos-x64",
+      "name": "binaryen / wasm-opt (macos-x64)",
+      "versionInfo": "version_132",
+      "downloadLocation": "https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-x86_64-macos.tar.gz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，不进发行物。GUI §12.1 只写了『各平台 sha256 进 pins.toml』**没有给出任何值**（正向对照：同一张表的 Tailwind 行列了五个），所以这个 9069142 字节资产的 SHA256 是本轮新取的：同 release 的 `binaryen-version_132-x86_64-macos.tar.gz.sha256` 边车文件。许可证证据：`raw.githubusercontent.com/WebAssembly/binaryen/version_132/LICENSE` 首三行为 Apache License Version 2.0。release published_at = 2026-08-12T21:53:49Z，与 GUI §12.1 的 2026-08-12 相符。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "40c3de90bb3766bd0282a895e139a6f50253dba49b4f5bb89e66faca162d832e"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/WebAssembly/binaryen@version_132"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-binaryen-windows-x64",
+      "name": "binaryen / wasm-opt (windows-x64)",
+      "versionInfo": "version_132",
+      "downloadLocation": "https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-x86_64-windows.tar.gz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，不进发行物。GUI §12.1 只写了『各平台 sha256 进 pins.toml』**没有给出任何值**（正向对照：同一张表的 Tailwind 行列了五个），所以这个 113548735 字节资产的 SHA256 是本轮新取的：同 release 的 `binaryen-version_132-x86_64-windows.tar.gz.sha256` 边车文件。许可证证据：`raw.githubusercontent.com/WebAssembly/binaryen/version_132/LICENSE` 首三行为 Apache License Version 2.0。release published_at = 2026-08-12T21:53:49Z，与 GUI §12.1 的 2026-08-12 相符。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "2089428ec98c899b45ee5d00636ddd6e2da8636cc473ef50b165cc25793ef7cb"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/WebAssembly/binaryen@version_132"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-trunk",
+      "name": "trunk",
+      "versionInfo": "0.21.14",
+      "downloadLocation": "https://crates.io/api/v1/crates/trunk/0.21.14/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT OR Apache-2.0",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，不进发行物。装法 `cargo install --locked trunk --version 0.21.14`。SHA256 = index.crates.io 稀疏索引里该版本的 `cksum`（即 cargo 自己校验的那一个），本轮取回。许可证证据：crates.io API `.version.license` 原样返回 `MIT/Apache-2.0`；仓库 tag v0.21.14 下 `LICENSE-MIT` 与 `LICENSE-APACHE` 各 HTTP 200，而单文件 `LICENSE` 为 404（同一条探测的负向对照，说明双许可布局是真的而不是探测口径问题）。trunk 的工具查找行为（`find_system` 用 which 找 PATH 上同名二进制比对 `[tools]` 钉的版本，`offline` 下不符即报错不下载）是 GUI §12.1 的既有实读结论，本轮未复跑。",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "4f7fe1b23957a580be9a7a8b305c331b2977989f33695128d663380d09eaea37"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/trunk@0.21.14"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tool-wasm-bindgen-cli",
+      "name": "wasm-bindgen-cli",
+      "versionInfo": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "构建期工具，不进发行物。版本按 GUI §12.1 = 本仓 `Cargo.lock` 里 `wasm-bindgen` 的版本。**当前无法登记具体版本**：本轮实测本仓 Cargo.lock 共 37 个 `[[package]]`，`grep -c 'name = \"wasm-bindgen\"' Cargo.lock` = 0（正向对照：同形 grep 对 `serde` 得 1），因为 Phase 0 的十个业务 crate 尚未引入 Leptos。GUI §12.1 提到的『当前最新 0.2.127』是文档写作时的观察值而非本仓事实，抄进 versionInfo 就是把没有落点的数字伪造成当前行为，故此处为 NOASSERTION。解除条件 = openbot-ui 引入 leptos/wasm-bindgen 依赖后由 `xtask tools verify` 从 lock 回填。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/wasm-bindgen-cli"
+        }
+      ],
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crabcode",
+      "name": "CrabCode",
+      "versionInfo": "98f971bcf7411f056e8489e6e5a8e826f6672d38",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-CrabCode-Proprietary",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §1.2 固定基线『本机 CrabCode』。**闭源专有软件**：v3 §23.1 条 7 明确其根 THIRD_PARTY_NOTICES 声明为 closed-source proprietary，workspace 里的 `license = MIT` 只是一条 metadata，不能覆盖根声明或单文件来源。downloadLocation = NOASSERTION：源码仓私有，本仓 public，不登记地址。本条及其下属复用条目**当前一律无授权**；粒度刻意不超过 v3 §11.4 已有水平（只写资产名与用途，不写内部路径、错误字符串或私有 URL）。",
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crabcode-reuse-supervisor",
+      "name": "CrabCode reuse candidate: `acosmi-supervisor` / daemon launcher / heartbeat",
+      "versionInfo": "98f971bcf7411f056e8489e6e5a8e826f6672d38",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-CrabCode-Proprietary",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §11.4 复用清单逐行登记。状态 = **权属清理后可用、当前无授权**。\n正确用途：进程 registry、PID identity、watchdog、shutdown、socket lock。\n禁止做法：整 crate 无审计复制。\nlicenseConcluded = NOASSERTION 是硬结论不是占位：在拿到**逐文件书面授权**之前不得复制任何字节。\n复制任一文件的前置条件（v3 §11.4 末段 + §23.1 末段）——该文件必须带 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原 hash、目标 hash、许可证、修改声明、书面授权编号，八项缺一不可。\n没有书面授权时唯一合法路径是 **clean-room 重写**：只依据行为契约与黑盒可观察结果实现，不看、不引、不改上游源码（v3 §23.3 对 Intelligence 用的是同一条口径）。\n本条**不记录任何内部路径、错误字符串字面量或私有 URL**：本仓 public，粒度上限 = v3 §11.4 已经公开的那一行（CLAUDE.md §8 末条）。",
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crabcode-reuse-permission-sandbox",
+      "name": "CrabCode reuse candidate: permission / shell parser / sandbox / exec",
+      "versionInfo": "98f971bcf7411f056e8489e6e5a8e826f6672d38",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-CrabCode-Proprietary",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §11.4 复用清单逐行登记。状态 = **权属清理后可用、当前无授权**。\n正确用途：平台 sandbox、command plan、process tree、fidelity。\n禁止做法：把 CrabCode 单用户路径语义当 OpenBot ACL。\nlicenseConcluded = NOASSERTION 是硬结论不是占位：在拿到**逐文件书面授权**之前不得复制任何字节。\n复制任一文件的前置条件（v3 §11.4 末段 + §23.1 末段）——该文件必须带 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原 hash、目标 hash、许可证、修改声明、书面授权编号，八项缺一不可。\n没有书面授权时唯一合法路径是 **clean-room 重写**：只依据行为契约与黑盒可观察结果实现，不看、不引、不改上游源码（v3 §23.3 对 Intelligence 用的是同一条口径）。\n本条**不记录任何内部路径、错误字符串字面量或私有 URL**：本仓 public，粒度上限 = v3 §11.4 已经公开的那一行（CLAUDE.md §8 末条）。",
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crabcode-reuse-cmd-browser",
+      "name": "CrabCode reuse candidate: `acosmi-cmd-browser`",
+      "versionInfo": "98f971bcf7411f056e8489e6e5a8e826f6672d38",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-CrabCode-Proprietary",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §11.4 复用清单逐行登记。状态 = **权属清理后可用、当前无授权**。\n正确用途：Rust browser request adapter、explicit target、timeouts。\n禁止做法：暴露自由 method/path。\nlicenseConcluded = NOASSERTION 是硬结论不是占位：在拿到**逐文件书面授权**之前不得复制任何字节。\n复制任一文件的前置条件（v3 §11.4 末段 + §23.1 末段）——该文件必须带 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原 hash、目标 hash、许可证、修改声明、书面授权编号，八项缺一不可。\n没有书面授权时唯一合法路径是 **clean-room 重写**：只依据行为契约与黑盒可观察结果实现，不看、不引、不改上游源码（v3 §23.3 对 Intelligence 用的是同一条口径）。\n本条**不记录任何内部路径、错误字符串字面量或私有 URL**：本仓 public，粒度上限 = v3 §11.4 已经公开的那一行（CLAUDE.md §8 末条）。",
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crabcode-reuse-browser-shell",
+      "name": "CrabCode reuse candidate: `components/browser-shell`",
+      "versionInfo": "98f971bcf7411f056e8489e6e5a8e826f6672d38",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-CrabCode-Proprietary",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §11.4 复用清单逐行登记。状态 = **权属清理后可用、当前无授权**。\n正确用途：Electron/Chromium lifecycle、tab、snapshot、input、download、framing。\n禁止做法：复制完整 desktop host、Design/账号/Office 能力。\nlicenseConcluded = NOASSERTION 是硬结论不是占位：在拿到**逐文件书面授权**之前不得复制任何字节。\n复制任一文件的前置条件（v3 §11.4 末段 + §23.1 末段）——该文件必须带 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原 hash、目标 hash、许可证、修改声明、书面授权编号，八项缺一不可。\n没有书面授权时唯一合法路径是 **clean-room 重写**：只依据行为契约与黑盒可观察结果实现，不看、不引、不改上游源码（v3 §23.3 对 Intelligence 用的是同一条口径）。\n本条**不记录任何内部路径、错误字符串字面量或私有 URL**：本仓 public，粒度上限 = v3 §11.4 已经公开的那一行（CLAUDE.md §8 末条）。",
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crabcode-reuse-app-server-protocol",
+      "name": "CrabCode reuse candidate: app-server protocol/transport",
+      "versionInfo": "98f971bcf7411f056e8489e6e5a8e826f6672d38",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-CrabCode-Proprietary",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §11.4 复用清单逐行登记。状态 = **权属清理后可用、当前无授权**。\n正确用途：framing、origin、auth、thread/turn fixture。\n禁止做法：复制 200+ method 的产品专属 dispatcher。\nlicenseConcluded = NOASSERTION 是硬结论不是占位：在拿到**逐文件书面授权**之前不得复制任何字节。\n复制任一文件的前置条件（v3 §11.4 末段 + §23.1 末段）——该文件必须带 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原 hash、目标 hash、许可证、修改声明、书面授权编号，八项缺一不可。\n没有书面授权时唯一合法路径是 **clean-room 重写**：只依据行为契约与黑盒可观察结果实现，不看、不引、不改上游源码（v3 §23.3 对 Intelligence 用的是同一条口径）。\n本条**不记录任何内部路径、错误字符串字面量或私有 URL**：本仓 public，粒度上限 = v3 §11.4 已经公开的那一行（CLAUDE.md §8 末条）。",
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crabcode-reuse-tauri-host",
+      "name": "CrabCode reuse candidate: 历史 Tauri host",
+      "versionInfo": "98f971bcf7411f056e8489e6e5a8e826f6672d38",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-CrabCode-Proprietary",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §11.4 复用清单逐行登记。状态 = **权属清理后可用、当前无授权**。\n正确用途：path/artifact/log/menu/deep-link/single-instance/cleanup 模式。\n禁止做法：回滚整个已删除提交。\nlicenseConcluded = NOASSERTION 是硬结论不是占位：在拿到**逐文件书面授权**之前不得复制任何字节。\n复制任一文件的前置条件（v3 §11.4 末段 + §23.1 末段）——该文件必须带 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原 hash、目标 hash、许可证、修改声明、书面授权编号，八项缺一不可。\n没有书面授权时唯一合法路径是 **clean-room 重写**：只依据行为契约与黑盒可观察结果实现，不看、不引、不改上游源码（v3 §23.3 对 Intelligence 用的是同一条口径）。\n本条**不记录任何内部路径、错误字符串字面量或私有 URL**：本仓 public，粒度上限 = v3 §11.4 已经公开的那一行（CLAUDE.md §8 末条）。",
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-crabcode-reuse-ts-agent-mcp",
+      "name": "CrabCode reuse candidate: TS Agent/MCP",
+      "versionInfo": "98f971bcf7411f056e8489e6e5a8e826f6672d38",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-CrabCode-Proprietary",
+      "copyrightText": "NOASSERTION",
+      "comment": "v3 §11.4 复用清单逐行登记。状态 = **权属清理后可用、当前无授权**。\n正确用途：行为 fixture、错误语义。\n禁止做法：进入最终生产控制面。\nlicenseConcluded = NOASSERTION 是硬结论不是占位：在拿到**逐文件书面授权**之前不得复制任何字节。\n复制任一文件的前置条件（v3 §11.4 末段 + §23.1 末段）——该文件必须带 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原 hash、目标 hash、许可证、修改声明、书面授权编号，八项缺一不可。\n没有书面授权时唯一合法路径是 **clean-room 重写**：只依据行为契约与黑盒可观察结果实现，不看、不引、不改上游源码（v3 §23.3 对 Intelligence 用的是同一条口径）。\n本条**不记录任何内部路径、错误字符串字面量或私有 URL**：本仓 public，粒度上限 = v3 §11.4 已经公开的那一行（CLAUDE.md §8 末条）。",
+      "primaryPackagePurpose": "SOURCE"
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-copilotkit-openbot",
+      "comment": "全量 Rust 重写的 parity 对象；不是二进制依赖。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-ag-ui",
+      "comment": "协议 oracle。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-rmcp",
+      "comment": "MCP runtime（v3 §9.1）。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-openai-codex",
+      "comment": "研究快照；复制/改造任一文件都须保留 SPDX、copyright、来源 commit、显著修改声明与 NOTICE（v3 §23.1 条 2）。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-build",
+      "comment": "研究快照；复用前须逐文件回溯 Codex/OpenCode 来源（v3 §23.1 条 3）。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-tauri"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-leptos"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-leptos-router"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-leptos-meta"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-leptos-i18n"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-leptos-i18n-build"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-cel"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-openidconnect"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-samael"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-pulldown-cmark"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-syntect"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-sys-locale"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-image"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-crate-xcap"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-electron"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-electron",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-chromium"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-electron",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-nodejs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-postgresql"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-rust-toolchain",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-inter"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-inter",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-inter-intervariable-woff2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-inter-intervariable-woff2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-inter",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-inter-intervariable-italic-woff2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-inter-intervariable-italic-woff2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-lucide"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-tailwindcss-linux-x64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-tailwindcss-linux-arm64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-tailwindcss-macos-arm64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-tailwindcss-macos-x64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-tailwindcss-windows-x64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-binaryen-linux-x64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-binaryen-linux-arm64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-binaryen-macos-arm64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-binaryen-macos-x64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-binaryen-windows-x64",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-trunk",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-tool-wasm-bindgen-cli",
+      "relationshipType": "BUILD_TOOL_OF",
+      "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode",
+      "comment": "复用候选来源；当前无授权。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-crabcode",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-supervisor"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-supervisor",
+      "comment": "复用候选；当前无授权，默认走 clean-room 重写。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-crabcode",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-permission-sandbox"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-permission-sandbox",
+      "comment": "复用候选；当前无授权，默认走 clean-room 重写。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-crabcode",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-cmd-browser"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-cmd-browser",
+      "comment": "复用候选；当前无授权，默认走 clean-room 重写。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-crabcode",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-browser-shell"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-browser-shell",
+      "comment": "复用候选；当前无授权，默认走 clean-room 重写。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-crabcode",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-app-server-protocol"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-app-server-protocol",
+      "comment": "复用候选；当前无授权，默认走 clean-room 重写。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-crabcode",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-tauri-host"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-tauri-host",
+      "comment": "复用候选；当前无授权，默认走 clean-room 重写。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-crabcode",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-ts-agent-mcp"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "OTHER",
+      "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-ts-agent-mcp",
+      "comment": "复用候选；当前无授权，默认走 clean-room 重写。"
+    }
+  ]
+}

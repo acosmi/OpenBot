@@ -1,0 +1,13 @@
+[package]
+name = "openbot-server"
+description = "Axum HTTP/SSE/WS、static GUI、health/readiness（v3 §5.1）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
