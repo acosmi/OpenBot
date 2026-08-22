@@ -30,6 +30,8 @@
 
 最终生产发行物中允许存在的第一方非 Rust 源码只有最小 Electron browser-engine shim。该 shim 不拥有产品身份、策略、审批、审计、模型/MCP/OIDC 凭据、任意文件或任意命令能力；其职责限定为 Chromium 生命周期、CDP、画面帧和封闭输入指令。除此之外，不保留 React、Hono、Bun、TypeScript Agent、TypeScript MCP runtime 或 JavaScript 业务控制面。
 
+构建期工具链（Tailwind CSS standalone CLI、trunk、wasm-bindgen CLI、wasm-opt）是钉 sha256 的二进制，只在构建机运行、不进发行物、不引入 Node/npm；它们按 §16.3 的供应链条目登记，版本与校验和见 `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md` §12.1（2026-08-22 裁决：零 Node）。
+
 ### 0.2 最终产品形态
 
 固定交付两个发行物，共用同一个 Rust Domain/Application Core 和同一份 Leptos GUI：
@@ -91,6 +93,10 @@ Electron/Chromium browser engine（无业务裁决权）
 | RMCP Rust SDK | `4a738b9dd99eaca418b614afa433a0cbdaf8d056`；发布版 `3.1.4` |
 | Tauri | 稳定版 `2.11.5` |
 | Leptos | `0.8.19`（2026-08-22 crates.io 最高稳定版已是 `0.8.20`，`0.9.0-beta` 在飞；本文件仍固定 0.8.19，升级走 delta audit） |
+| Leptos 生态 | `leptos_router` **`=0.8.13`**（`0.8.14` / `0.8.15` 的依赖是 `leptos ^0.8.20`，在 0.8.19 上无法解析；`0.8.13` 要求 `^0.8.17`。升 Leptos 的 delta audit 必须同 PR 升 router）；`leptos_meta` `0.8.6`；`leptos_i18n` / `leptos_i18n_build` `0.6.2`（依赖 `leptos ^0.8`、`icu_locale ^2.2`） |
+| GUI 构建工具（不进发行物） | Tailwind CSS standalone CLI `4.3.3`（七平台 sha256 见设计系统文档 §12.1）；trunk `0.21.14`（`--offline` + `[tools]` 钉版，PATH 上的同版本二进制即用、缺失即红不下载）；wasm-bindgen CLI = `Cargo.lock` 的 `wasm-bindgen` 版本；binaryen `version_132` |
+| GUI 运行时 / 测试 crate | `pulldown-cmark` `0.13.4`；`syntect` `5.3.0`（`default-fancy`）；`sys-locale` `0.3.2`（仅 desktop）；仅 testkit：`image` `0.25.10`、`xcap` `0.9.8` |
+| GUI 资产与视觉真源 | Inter Variable `4.1`（OFL-1.1，两份 woff2 sha256 见设计系统文档 §4.3）；Lucide `1.33.0`（ISC，zip sha256 见其 §4.6.1）；视觉 / token / 布局 / 主题 / i18n / a11y 的唯一真源 = `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md` |
 | CEL 引擎 | crate **`cel`** `0.14.3`（仓库 `cel-rust/cel-rust`；旧名 `cel-interpreter` 0.10.0 已停更，不用）；golden oracle = 上游锁定的 `cel-js@0.8.2` |
 | OIDC / SAML | `openidconnect` `4.0.1`；`samael` `0.0.22`（`njaremko/samael`，0.0.x 版号即"未稳定"信号，§6.2 的独立外审因此不可免） |
 | CrabCode browser kernel | Electron `43.3.0` / Chromium `150.0.7871.212` |
@@ -214,6 +220,8 @@ Electron/Chromium browser engine（无业务裁决权）
 10. compiled components、sandboxed component playground、draft/publish/unpublish、HITL decision。
 
 31 个现有 route 文件全部映射到一个 Leptos route 或 layout。路由可以合并代码，不能删除用户可观察能力。
+
+视觉、布局、主题、国际化与无障碍的真源是 `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（2026-08-22 用户裁决：自有设计系统、Tailwind v4 standalone CLI 零 Node、中英双语带 i18n 框架）；本节只定义旅程与能力。其中主题的 `system` 第三态与 UI 双语都是**新增**，不得冒充 parity：上游主题是手动两态且不跟随系统（`prefers-color-scheme` 在 `app/src/lib/theme.ts` / `components/theme-provider.tsx` / `styles.css` 均 0 命中），上游零 i18n 框架。31 个 route 文件 = 26 个页面 + 5 个 layout（`__root` / `_authed` / `_authed/_app` / `admin/route` / `settings/route`）；golden 截图对象 = 26 页 + memory 页 = 27 页。
 
 ### 3.2 Coworker、Channel、Routing 与 Tenant Package
 
@@ -974,7 +982,11 @@ paste 使用 `Input.insertText`，不读取系统 clipboard；secret 使用独�
 - strict CSP，无 `eval`、无远程 script、无宽泛 `connect-src`；
 - deep link、file association、clipboard 和 external URL 都当不可信输入；
 - Tauri capability 按 window label 单独配置，禁止 `windows:["*"]`、宽泛 filesystem 和 remote API access；
-- production 禁用 devtools，所有 command 枚举注册并生成审计清单。
+- production 禁用 devtools，所有 command 枚举注册并生成审计清单；
+- CSS 由 Tailwind v4 standalone CLI（钉 sha256 的单文件二进制）经 trunk `--offline` 编译，仓库零 `package.json` / Node（§0.1）；
+- `index.html` 零内联脚本；主题 class 与 `lang` 在首帧由 Rust 改写（Axum 从 cookie、Tauri custom protocol 从本地设置），不靠 JavaScript 防闪烁；
+- 字体（Inter Variable 4.1）与图标（Lucide 1.33.0 allowlist）随 bundle 打包，零远程资产；
+- 视觉、token、布局、i18n、a11y 的全部契约见 `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`。
 
 ### 13.2 typed in-process，不复制 JSON-RPC
 
@@ -1239,13 +1251,13 @@ mcp_server_id / transport / release_sha
 | MCP | agent | RMCP 3.1.4 Streamable HTTP tools/OAuth/per-call | 官方相关 client conformance 100%；恶意 server suite |
 | Google Drive | agent | REST adapter、per-user OAuth、disconnect、read-only result | live sandbox tenant contract；撤权下一调用生效 |
 | Skills/grants | application | ownership、grant、stale suspension、catalog generation | 授予/撤销/消失/重现全状态测试 |
-| Components | ui/application | compiled Leptos、sandboxed HTML/CSS/JS、publish/withhold/data function/HITL | render/schema/visual/a11y；sandbox escape 0 |
+| Components | ui/application | compiled Leptos、sandboxed HTML/CSS/JS、publish/withhold/data function/HITL | render/schema/golden 截图（设计系统文档 §10）/a11y；sandbox escape 0 |
 | ComputerManager | computer | security scope、generation、driver、lease、quota、reconcile | 多用户同 Bot + 多 Bot 隔离；crash/reset/upgrade |
 | Supervisor | computer | server runsc containers；desktop process tree | socket 不在 API；digest/namespace/resource/cleanup |
 | Browser actions | computer | navigate/read/snapshot/click/type/key/scroll/screenshot（R1 无 download/upload，§11.2） | OpenBot + CrabCode fixture；旧 ref 100% 拒绝；Chromium 自发下载被取消并上报 `download_refused` |
 | Screen/input | computer/server/desktop | CDP、binary hub、ticket、coordinates、insertText（含 IME 合成文本）、human lease | latency/fps/backpressure/replay/race/跨 scope 注入 |
 | File/shell | computer | canonical handle、symlink/hardlink、env、timeout/cancel | path corpus；cancel 5 秒内进程树归零 |
-| Leptos GUI | ui | 31 route 对应旅程 + 1 个新增 memory 页（§3.1 条 7）、settings/admin/sign-in、web/desktop | route ledger 100%；visual/a11y/E2E（Desktop sandboxed component 的 a11y 豁免见 §3.3） |
+| Leptos GUI | ui | 31 route 对应旅程 + 1 个新增 memory 页（§3.1 条 7）、settings/admin/sign-in、web/desktop | route ledger 100%；golden 截图（设计系统文档 §10.1 矩阵 / §10.4 判据）/a11y（其 §9.2）/i18n（`xtask i18n-check`）/E2E（Desktop sandboxed component 的 a11y 豁免见 §3.3） |
 | Tauri | desktop | capability、typed in-process、multi-window、update/sidecar | XSS 模拟；queue saturation；签名安装/升级/回滚 |
 | Server/deployment | server/testkit | OCI/Compose/migration/health/readiness/multi-replica | clean checkout；8-Bot soak；backup/restore |
 | Observability | 全部 | OTel/metrics/log/redaction/support bundle | run→decision→tool→computer 全链可追踪；无 secret |
@@ -1274,7 +1286,7 @@ mcp_server_id / transport / release_sha
 | W5–10 | Rust Foundation | 10 crate、contracts、ApplicationService、Axum/Tauri adapter、Postgres read、OTel | 三平台编译；HTTP/in-process 同 use case 结果一致；DB read checksum 100% |
 | W11–20 | Data/Auth/Governance | repository、native thread base、Auth/Vault、CEL、audit、tenant package | 28 表映射；身份矩阵；v1 decrypt；audit-before-action 0 违规；第 20 周外审 |
 | W11–24 | Computer 并行线 | provenance-approved CrabCode substrate、scope、Supervisor、engine、file/shell | 同 Bot 不同用户 + 多 Bot 负向隔离；crash/reset/update；orphan 0 |
-| W11–28 | GUI 并行线 | Leptos shell、31 routes、compiled/sandboxed components | route journey 100%；web/Tauri parity；sandbox/a11y/visual gate |
+| W11–28 | GUI 并行线 | Leptos shell、31 routes、compiled/sandboxed components、设计系统 token / 原语 / i18n | route journey 100%；web/Tauri parity（同 bundle 摘要 + 各平台 golden）；sandbox/a11y/golden/i18n gate |
 | W21–32 | Agent/Protocol | native realtime/memory、3 providers、built-in Agent、remote AG-UI、MCP/Drive | trace/conformance；callback/stall/cancel/recovery；无 Intelligence 运行 |
 | W25–34 | Screen/Full Chain | binary screen、ticket、human/secret、tool/audit/computer/UI E2E | screen SLO；跨 scope frame 0；全主路径 E2E |
 | W33–40 | Parity Closure | 全部 AST 级 test inventory mapping、perf/soak/fault/security、signed packages | ledger coverage 100%；0 P0/P1；第 40 周外审通过 |
@@ -1300,7 +1312,14 @@ fixtures/provider/*.jsonl
 fixtures/mcp/*.json
 fixtures/policy/*.json
 fixtures/browser/*.json
+parity/ui.yaml
+fixtures/ui/seed.json
+fixtures/ui/golden/MANIFEST.toml
+fixtures/ui/golden/{web,macos-arm64,windows-x64}/*.png
+tools/pins.toml
 ```
+
+`parity/ui.yaml`（21 原语 + 45 业务组件 + 47 图标 + 6 运行时库 + 27 页，每项标 parity / 新增 / 替代）、`fixtures/ui/**` 与 `tools/pins.toml` 的 schema 与内容见设计系统文档 §11 / §12.1。
 
 每个条目具有 owner、source link+commit、Rust target、test ID、migration rule、status。CI 拒绝未归类项和没有证据的 `done`。
 
@@ -1537,7 +1556,10 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - 31 route journey 100% + 新增 memory 页 journey；
 - compiled gallery全部 Leptos；sandbox escape=0；
 - multi-window ACL、Tauri XSS、queue saturation/shutdown；
-- web/desktop visual/a11y parity（唯一豁免：Desktop sandboxed component 的 a11y，§3.3 已写死）。
+- 视觉：设计系统文档 §10.1 矩阵的 golden 全部通过（Web 110 张、Desktop 每平台 54 张；判据 = 差异像素 ≤ 0.1% 且无 8×8 全差异块），三平台 bundle 摘要相等；**不做跨引擎逐像素比对**（这是 "web/desktop visual parity" 的可判定定义）；
+- a11y：设计系统文档 §9.2 四项机械判据全绿（唯一豁免：Desktop sandboxed component，§3.3 已写死）；
+- i18n：`xtask i18n-check` 绿（`en` / `zh-CN` 键集合逐字相等），`zh-CN` 27 页 golden 另录一套；
+- `xtask design-lint` / `css-check` / `bundle-budget` 绿。
 
 ### G7：Screen/Handover
 
@@ -1611,6 +1633,11 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [CDP Page.startScreencast](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast)
 - [CDP Input](https://chromedevtools.github.io/devtools-protocol/tot/Input/)
 - [gVisor Security Model](https://gvisor.dev/docs/architecture_guide/security/)
+- [Tailwind CSS standalone CLI v4.3.3](https://github.com/tailwindlabs/tailwindcss/releases/tag/v4.3.3)
+- [trunk v0.21.14](https://github.com/trunk-rs/trunk/tree/v0.21.14)
+- [leptos_i18n](https://github.com/Baptistemontan/leptos_i18n)
+- [Lucide 1.33.0](https://github.com/lucide-icons/lucide/releases/tag/1.33.0)
+- [Inter 4.1](https://github.com/rsms/inter/releases/tag/v4.1)
 
 ### 论文与评测
 
@@ -1662,6 +1689,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R17 | §8.3 | 多 replica 下 policy 传播未写 | 上游 `policy-listener.ts` 以 LISTEN/NOTIFY 唤醒 + 整表重读解决"规则只在 N 分之一 replica 生效"的已知事故 | 形态写死，`policy_version` 进每个 decision | `computer/policy-listener.ts`；`CHANGELOG.md:319` |
 | R18 | §3.2 | routing 失败语义只写"失败用默认" | 上游 router 还在置信度低于阈值、id 不在 roster、JSON 不可解析时落默认，且 routing 发生在 channel 创建时一次性钉定 | 四种落默认情形与钉定时机写死 | `routing/classify.ts:1–46, 124–152` |
 | R19 | §15.4（新增） | 环境变量处置全部推给 Phase 0 | 影响关联方的 remove/rename（Intelligence 四项、Better Auth 两项、`NODE_ENV`、`AGENT_TOOL_TOKEN`、遥测开关）不能等 Phase 0 | 新增处置表；`NODE_ENV` → `OPENBOT_ENV` 并钉示例 key 的拒绝语义 | `config.ts` 读 32 个变量；`docs/configuration.md` 记 48 个 |
+| R20 | §0.1 / §1.2 / §3.1 / §13.1 / §18 / §19.2 / §19.3 / §24 G6 / §26（2026-08-22 第二次修订） | GUI 只有旅程与架构；视觉 / token / 字体 / 主题 / 响应式 / i18n / a11y 零定义（`样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应式` / `i18n` 全文 0 次）；G6 的 "visual parity" 没有判据 | 上游 UI 栈实测：Tailwind `^4.3.3` + shadcn `base-nova`（`@base-ui/react`）+ 21 原语 + 45 业务组件 + 47 Tabler 图标 + 6 个运行时 JS 库（base-ui / motion / streamdown / prompt-area / boring-avatars / tw-animate-css）+ 手动两态主题不跟随系统 + 0 i18n 框架；v3 对它们既无 parity 裁决也无替代方案，且 `leptos_router` 最新版要求 `leptos ^0.8.20` 与钉死的 0.8.19 冲突 | 用户裁决：自有设计系统 / Tailwind v4 standalone CLI 零 Node / 中英双语带 i18n；新增 `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md` 作为视觉真源；G6 的 visual 改为 golden 截图的可判定定义；§1.2 补 GUI 工具链、生态（`leptos_router =0.8.13`）与资产钉版；§19.3 补 `parity/ui.yaml` 等产物 | 设计系统文档 §1 / §17（上游计数命令）；`app/components.json`；`app/src/styles.css`；crates.io `leptos_router` 0.8.13–0.8.15 的依赖声明 |
 
 ### 28.2 复核通过、原样保留的断言
 
@@ -1698,6 +1726,15 @@ grep -c 'DROP EXTENSION IF EXISTS "vector"' server/drizzle/0010_drop_the_documen
 grep -rn 'knowledgeSources' server/src app/src --include=*.ts --include=*.tsx | grep -v test | wc -l   # 2（定义 + 赋值，零消费者）
 grep -rlE 'page\.on\(|setInputFiles|filechooser' agent-computer/src | wc -l     # 0（无下载/上传/对话框处理）
 grep -c 'legacyToken && sameToken' server/src/agents/callback-token.ts        # 1（共享 token 旧路径仍在）
+# R20（2026-08-22）GUI 基线，全文见设计系统文档 §17
+( cd app/src && find routes -name '*.tsx' | wc -l )                                                   # 31
+( cd app/src && find routes -name '*.tsx' | grep -vE '(__root|_authed|_app|route)\.tsx$' | wc -l )    # 26（页面；其余 5 个是 layout）
+( cd app/src && ls components/ui | wc -l )                                                            # 21
+( cd app/src && find components -name '*.tsx' -not -path 'components/ui/*' | wc -l )                  # 45
+( cd app/src && grep -rhoE '\bIcon[A-Z][A-Za-z0-9]+' --include=*.tsx --include=*.ts . | sort -u | wc -l )   # 47
+( cd app/src && grep -c 'prefers-color-scheme' lib/theme.ts components/theme-provider.tsx styles.css )        # 各 0（主题不跟随系统）
+( cd app/src && grep -rlE 'useTranslation|i18next|react-intl|next-intl|<Trans\b' --include=*.tsx --include=*.ts . | wc -l )   # 0（零 i18n 框架）
+grep -cE '"@shikijs/core@' bun.lock                                                                   # 1（streamdown 的高亮器）
 ```
 
 对不上 = 上游 commit 变了或本文件漂了 → 先核 `git rev-parse HEAD`，再按 §1.2 走 delta audit。

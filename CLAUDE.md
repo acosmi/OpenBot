@@ -2,7 +2,7 @@
 
 OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这一份**。本仓 **public**。
 
-> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（v3）。本文件只摘约束与理由，细节一律以方案章节为准；两者冲突时以方案为准，并同 PR 修订本文件。
+> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（v3，架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归 v3），并同 PR 修订本文件。
 
 ---
 
@@ -16,7 +16,7 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 
 "全量 Rust"的定义固定为：GUI、业务、内置 Agent、策略、数据库访问、线程与记忆、实时事件、认证、凭据、审计、Supervisor 与全部高权限控制面由 Rust 实现（§0.1）。
 
-允许的非 Rust 例外**只有**：Leptos/WASM 由系统 WebView 渲染；PostgreSQL / Chromium / Electron / OS keychain 作为外部引擎；用户自己的 HTML/CSS/JS 组件作为**不可信数据**在零权限沙箱里跑；用户接入的远程 AG-UI Agent 任意语言；第一方非 Rust 源码只剩**最小 Electron browser-engine shim**（只管 Chromium 生命周期、CDP、画面帧、封闭输入，无任何业务裁决权）。
+允许的非 Rust 例外**只有**：Leptos/WASM 由系统 WebView 渲染；PostgreSQL / Chromium / Electron / OS keychain 作为外部引擎；用户自己的 HTML/CSS/JS 组件作为**不可信数据**在零权限沙箱里跑；用户接入的远程 AG-UI Agent 任意语言；第一方非 Rust 源码只剩**最小 Electron browser-engine shim**（只管 Chromium 生命周期、CDP、画面帧、封闭输入，无任何业务裁决权）。构建期工具（Tailwind CSS standalone CLI、trunk、wasm-bindgen CLI、wasm-opt）是钉 sha256 的二进制，不进发行物；**仓库零 `package.json` / Node**（§0.1，2026-08-22 裁决）。
 
 理由：TypeScript 控制面、CopilotKit Intelligence 真源、跨用户 profile、MCP 过度实现、双数据库、多 driver 是上游的结构性风险（§27）；Rust 不做唯一控制面就不叫重写。
 
@@ -28,6 +28,9 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 | --- | --- |
 | Rust | `1.94.1`，edition 2024 |
 | Tauri / Leptos | `2.11.5` / `0.8.19`（0.8.20 已存在，不升） |
+| Leptos 生态 | `leptos_router` **`=0.8.13`**（0.8.14+ 要求 `leptos ^0.8.20`，升 Leptos 必须同 PR 升 router）；`leptos_meta 0.8.6`；`leptos_i18n 0.6.2` |
+| GUI 构建工具 | Tailwind CSS standalone CLI `4.3.3`（sha256 表在设计系统文档 §12.1）；trunk `0.21.14`（`--offline`，缺工具即红不下载）；binaryen `version_132`；wasm-bindgen CLI = `Cargo.lock` 版本 |
+| GUI 资产 | Inter Variable `4.1`（OFL-1.1）；Lucide `1.33.0`（ISC），只随包 allowlist 里的图标 |
 | RMCP | `3.1.4` |
 | CEL | crate **`cel`** `0.14.3`（"cel-rust"是仓库名，不是 crate）；oracle = `cel-js@0.8.2` |
 | OIDC / SAML | `openidconnect 4.0.1` / `samael 0.0.22` |
@@ -48,6 +51,17 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 - **Schema 兼容期只允许 expand**：新表、nullable column、backfill、index、非破坏性 constraint；禁止 drop / rename / 类型收紧 / 主键改写；无 downgrade migration（§14.3）。审计表不做分区，hash chain 以追加 nullable 列落地（§8.6）。
 - **环境变量三档** preserve / rename / remove 已在 §15.4 裁决；被 remove 的变量出现在生产配置里必须**启动报错**，禁止"读不到就当没设"。
 - **错误语义固定**（§15.3）：未登录 401；角色不足 403；资源不可见统一 404（防枚举）；policy refusal 403 + stable code；stale generation / lease 冲突 409；空 thread history 200 + 空列表。文案可本地化，code / status / audit 类型不变。
+
+## 4a. GUI 视觉约束（真源 = 设计系统文档；2026-08-22 三条裁决：自有设计系统 / Tailwind v4 standalone 零 Node / 中英双语）
+
+- **视觉不是 parity 对象**：旅程 / route / 组件行为对上游 parity，外观是本项目自有设计系统；视觉 oracle = 自家 golden 截图（设计系统文档 §10），不是上游截图。v3 G6 的 "web/desktop visual parity" 指同一 bundle 在两宿主一致，已改写为可判定定义（同 bundle 摘要 + 各平台各自 golden，不做跨引擎逐像素比对）。
+- **7 条设计原则**（设计系统文档 §3）：chrome 恒中性，零彩色背景 / 边框，唯一实心按钮 = primary；语义色只落文字 / 图标 / 状态点；选中态 = 文字色 + 对勾；卡片无边框不上浮，阴影只有 popover / dialog 两级；图标一律 Lucide 矢量（品牌标唯一例外）；密度偏紧（正文 14/20）；动效只解释状态变化，`prefers-reduced-motion` 下全静止。
+- **token 单一来源** `crates/openbot-ui/design/tokens.toml` → 生成 CSS 三块与 Rust 常量；组件只用 token utility，禁止字面颜色 / 任意值 / `dark:` 变体；改 token 必过 `token_contrast_wcag_aa`（文字对背景 ≥ 4.5:1，ring / chart ≥ 3:1）。
+- **主题三态** `system`（默认，新增）/ `light` / `dark`：`<html class>` 由 Rust 在首帧改写（Axum 读 cookie、Tauri 读本地设置），`index.html` 零内联脚本。
+- **i18n**：`leptos_i18n`，`en` 为源、`zh-CN` 首版；缺键在库里只是 warning，闸门是 `xtask i18n-check`（两份 locale 键集合逐字相等）；文案不进 domain / application，错误以 code 穿越边界后在 GUI 本地化；术语表 `locales/GLOSSARY.md`。
+- **a11y** WCAG 2.2 AA 的机械子集（对比度单测 + CDP AX 树检查 + 键盘旅程 + reduced-motion 终态相等）；唯一豁免 = Desktop sandboxed component（v3 §3.3）。
+- **上游的 6 个运行时 JS 库**（base-ui / motion / streamdown / prompt-area / boring-avatars / tw-animate-css）全部有替代方案（设计系统文档 §6.3），新增第 7 个即需修订该表。
+- 反向 grep 闸门 `xtask design-lint`（禁 `dark:`、禁字面色、语义色不落背景 / 边框、阴影只两级、图标 allowlist 两向零漂移、生产无 `/_design` 画廊）、`css-check`（class 必须是源码字面量）、`bundle-budget`（wasm gz ≤ 3.5 MiB / css ≤ 96 KiB / 字体 ≤ 800 KiB）。
 
 ## 5. 发布级不变量（任一违反 = P0，立即停发，不允许风险接受豁免；§17.2）
 
@@ -94,6 +108,8 @@ Firecracker / youki · Restate / Temporal 等 durable execution 平台 · Codex 
 ## 10. 闸门
 
 CI 固定（§16.3）：`cargo fmt --check` · `cargo clippy --all-targets --all-features -D warnings` · `cargo test --locked` · `cargo deny` · `cargo audit` · `cargo vet` · OSV / secret scan · license / NOTICE / provenance 校验 · SBOM · 可复现构建 · 签名校验。`Cargo.lock` 与 engine lockfile 提交；git 依赖必须钉 commit；核心 crate `unsafe_code = "deny"`。
+
+GUI 另加（设计系统文档 §15）：`cargo test -p openbot-ui` · `xtask i18n-check` · `xtask design-lint` · `xtask css-check` · `xtask bundle-budget` · golden 截图（Web 110 张 / Desktop 每平台 54 张，差异像素 ≤ 0.1% 且无 8×8 全差异块；更新只能随 PR 附 diff 图人工批准）· CDP AX 树检查。
 
 Go/No-Go 走 G0–G8（§24），**任何闸门失败只能修复后重跑，不能以"后续补齐"进入下一阶段**。DoD 十条见 §25——没有 parity ledger 100% 归类、跨 scope 泄漏 = 0、audit-before-action 违规 = 0，不得宣称"全量完成"。
 
