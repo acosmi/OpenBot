@@ -6,9 +6,27 @@
 # 本文件由 `cargo deny check` 在本机实跑验证过，验证结果与残留问题见交付报告。
 
 [graph]
-# 刻意**不**限定 targets。限定 targets 会让 deny 只看被选中的那几个三元组的依赖子图 ——
-# 本项目要同时出 Server（linux）、Desktop（macos / windows）和 WASM GUI，漏掉任一目标
-# 都等于漏掉一整棵依赖子树。全目标扫描慢一点，但"答案取决于跑在哪台机器上"的闸门不是闸门。
+# targets 显式列出**本项目真正发行的全部平台**（v3 §16.1 / §16.2）。
+#
+# 这条与"答案取决于跑在哪台机器上的命令不是闸门"不冲突：那条反对的是让**宿主机**决定
+# 扫描面（不写 targets 时 deny 也只是全目标扫描，不随宿主变——但会把我们根本不发的平台
+# 的依赖子树也拖进来）。显式清单在任何机器上逐字相同，且**只能变严不会变松**：漏列一个
+# 真发的平台会漏掉一整棵子树，所以这份清单宁可多列。
+#
+# 2026-08-22 收敛的实证理由：不限定 targets 时，`wit-bindgen 0.57.1` 被拖进依赖图并因
+# 自带 build.rs 判红。实测 `cargo tree --target wasm32-unknown-unknown -i wit-bindgen` 与
+# 本机原生目标下都是 "nothing to print" —— 它只服务 wasip2，而本项目不发 wasip2。
+# 它的 build.rs 会把 crate 内随附的**预编译静态库** `libwit_bindgen_cabi.a` 拷进 OUT_DIR
+# 并 `rustc-link-lib=static`。为一个我们根本不构建的平台放行一份随包二进制，是把供应链
+# 面白扩一块；正确做法是把扫描面收敛到真实发行面。
+targets = [
+    "x86_64-unknown-linux-gnu",     # Server OCI image + Linux x64 desktop（§16.1 / §16.2）
+    "aarch64-unknown-linux-gnu",    # Server OCI arm64。§16.1 未点名架构，保守多列一个（只会更严）
+    "x86_64-apple-darwin",          # macOS x64（§16.2 signed + notarized）
+    "aarch64-apple-darwin",         # macOS arm64（同上）
+    "x86_64-pc-windows-msvc",       # Windows 11 x64 Authenticode installer（§16.2）
+    "wasm32-unknown-unknown",       # Leptos CSR/WASM GUI（§13.1）
+]
 all-features = true
 
 # ---------------------------------------------------------------------------
@@ -33,6 +51,17 @@ allow = [
     #   声明是 `(MIT OR Apache-2.0) AND Unicode-3.0` —— 这是 AND，MIT 满足不了它。
     #   `unicode-ident` 是 `syn` 的依赖，`serde_derive` 依赖 `syn`，所以它此刻就在图里。
     "Unicode-3.0",
+
+    # 同样不在 §23.1 的枚举里，同样是"当前依赖图已经必须要它"而非预留：
+    #   `foldhash 0.2.0` 声明 `license = "Zlib"`，经 hashbrown <- metrics-util <-
+    #   metrics-exporter-prometheus 进入依赖图（`cargo deny check licenses` 打出的
+    #   依赖链原文如此）。
+    # 为什么接受：Zlib 是 OSI 认可、FSF 认定自由的宽松许可，义务只有三条 —— 不得歪曲
+    #   来源、修改版本须标注、不得移除声明 —— 无 copyleft、不传染、不妨碍闭源分发，
+    #   与 §23.1 条 6 已经接受的 "Apache/BSD 等" 属同一族。
+    # 边界：这是**传递依赖**带来的，不是第一方选型。若将来某个第一方组件想直接依赖
+    #   Zlib 许可的 crate，那是另一次决定，不由这一行背书。
+    "Zlib",
 ]
 # 双许可表达式（`MIT OR Apache-2.0`）只要有一支命中 allow 即通过，无需在这里逐条列出组合。
 # 置信度阈值：低于它 cargo-deny 会认为"没看懂这份 LICENSE 文本"并按 unknown 处理（= 拒绝）。
@@ -54,6 +83,11 @@ multiple-versions = "warn"
 # 通配符依赖（`foo = "*"`）直接拒绝：它让 `Cargo.lock` 之外再无版本约束，
 # 与 CLAUDE.md §3"禁止静默升 lockfile"直接冲突。
 wildcards = "deny"
+# 但**工作区内部的 path 依赖除外**。`openbot-contracts = { path = "..." }` 没有版本号，
+# cargo-deny 按 wildcard 处理；而 wildcards 这条判据要挡的是"从 registry 拉任意版本"，
+# 内部 crate 根本不经 registry、版本恒等于本仓当前源码，不存在那个风险。
+# 全仓 crate 都是 `publish = false`（见根 [workspace.package]），不会外发。
+allow-wildcard-paths = true
 deny = []
 allow = []
 skip = []
@@ -94,6 +128,76 @@ allow-build-scripts = [
     "num-traits",
     "owo-colors",
     "rustversion",
+    # 2026-08-22 第三批：随 G1 的 PostgreSQL / async / wasm 依赖面进入依赖图。
+    # 闸门当场判红把这六份逼了出来，逐份读过（`cat $CARGO_HOME/registry/src/*/<crate>/build.rs`）。
+    # 三类行为，逐个点名：
+    #
+    # (a) 纯 cfg 探测，零 I/O、零外部进程：
+    #   - getrandom 0.4.3（11 行）：读 `CARGO_CFG_SANITIZE`，含 "memory" 就 emit
+    #     `cargo:rustc-cfg=getrandom_msan`。全文只有这一件事。
+    #   - parking_lot_core 0.9.12（11 行）：同一形态，探 tsan。
+    #   - wasm-bindgen 0.2.127（49 行）：只读 `CARGO_CFG_TARGET_{ARCH,OS,FEATURE}` 与
+    #     `rustversion::cfg!`，emit cfg 与（仅 emscripten 目标）一条 `rustc-link-arg`。
+    #     无 `Command::new`、无 `fs::write`、无网络（危险模式 grep 零命中）。
+    #
+    # (b) 执行外部二进制做版本探测 —— 逐个确认执行的是什么：
+    #   - libc 0.2.189（393 行）：`Command::new(rustc)`（经 `RUSTC_WRAPPER` 时用 wrapper，
+    #     这与 cargo 自身的行为一致，不是新增面）取版本；另有两条**只在对应目标上**触发的
+    #     探测 `freebsd-version` 与 `emcc -dumpversion` —— 这两个平台不在本项目发行面
+    #     （见上面 [graph].targets），本仓构建不会命中。无网络、无下载。
+    #   - thiserror 2.0.20（195 行）：dtolnay 系的编译期探测。`Command::new(rustc)` 取版本
+    #     并做试编，另向 **OUT_DIR** 写一份几行的 `private.rs`（`fs::write(out_dir.join(...))`，
+    #     落点在 OUT_DIR 内，不写源码树）。文件里出现的 `https://` 全部在注释的 blog/issue
+    #     链接里，不是请求。
+    #
+    # (c) 需要单独记一笔的一份：
+    #   - wasm-bindgen-shared 0.2.127（37 行）：除了对自己的 `src/lib.rs` 求 hash 之外，
+    #     **会执行 `git rev-parse HEAD`** 并把前 9 位作为 `WBG_VERSION` emit。这是六份里
+    #     唯一执行 `git` 的。行为无害（`.ok()` 兜底，取不到就不 emit，且只当版本字符串用），
+    #     但它确实在构建期起了一个外部进程 —— 记在这里是为了下次有人 review 时不用重新发现。
+    #
+    # 六份均无网络请求、无下载、不引入第三方可执行文件。
+    "getrandom",
+    "libc",
+    "parking_lot_core",
+    "thiserror",
+    "wasm-bindgen",
+    "wasm-bindgen-shared",
+    # 2026-08-22 第四批：随 openbot-server 的 axum/hyper 依赖面进入。逐字读过（133 行）：
+    #   - httparse 1.10.1：`Command::new(RUSTC).arg("--version")` 取版本 + 读 `CARGO_CFG_TARGET_FEATURE`
+    #     等环境变量，据此 emit `httparse_simd*` 系列 cfg 决定走编译期还是运行期 SIMD 检测。
+    #     与 libc / thiserror 同族：无网络、无下载、不执行第三方二进制、不写源码树。
+    "httparse",
+    # 2026-08-22 第五批：随 metrics 面（metrics-exporter-prometheus）进入依赖图。
+    # 六份逐字读过，按行为分三类：
+    #
+    # (a) 纯 cfg 探测，零进程零文件（`Command::new` / `fs::write` / `File::create` 均 0 命中）：
+    #   - crossbeam-epoch 0.9.20（14 行）：读 `CARGO_CFG_SANITIZE`，含 thread 就 emit
+    #     `crossbeam_sanitize_thread`。全文只有这一件事。
+    #   - crossbeam-utils 0.8.22（48 行）：同族。
+    #   - portable-atomic 1.15.0（629 行）：按目标与 rustc 版本 emit 一大批 `cargo:rustc-cfg`。
+    #     文件里所有 `https://` **全部在注释里**（rust-lang 的 issue/PR 链接），
+    #     实测非注释行仅 1 处命中且那是 `#![allow(...)]` 的行尾注释，不是请求。
+    #   - winapi 0.3.9（527 行）：只有 `https://` 出现在头部的双许可声明里，零进程零文件。
+    #
+    # (b) 执行 rustc 做版本探测（与 libc / thiserror / httparse 同族）：
+    #   - zerocopy 0.8.56（261 行）：`Command::new(env RUSTC).arg("--version")`，
+    #     解析版本后 emit cfg。无网络、无下载。
+    #
+    # (c) 需要单独记一笔的一份：
+    #   - metrics-exporter-prometheus 0.18.3：build.rs 只有 6 行，整个函数体被
+    #     `#[cfg(feature = "protobuf")]` 包住，里面是 `prost_build::compile_protos(...)`
+    #     —— 那会在构建期调用 `protoc`。**本仓用 `default-features = false` 且不开
+    #     `protobuf`**，所以它是空函数。根 Cargo.toml 的那行 `default-features = false`
+    #     因此不只是瘦身，它同时把一个构建期外部工具调用挡在门外；改动那一行必须重审本条。
+    #
+    # 六份均无网络请求、无下载、不引入第三方可执行文件。
+    "crossbeam-epoch",
+    "crossbeam-utils",
+    "metrics-exporter-prometheus",
+    "portable-atomic",
+    "winapi",
+    "zerocopy",
 ]
 # 依赖里夹带的可执行文件 / 解释型脚本一律拒绝：供应链攻击最常见的载荷形态。
 executables = "deny"
@@ -103,7 +207,39 @@ interpreted = "deny"
 include-dependencies = false
 include-workspace = false
 include-archives = false
-bypass = []
+
+# bypass 是**逐 crate 逐路径**的窄放行，不是把 executables / interpreted 关掉。
+#
+# libc 0.2.189 在发布包里夹带 `etc/libc-util.py`（`#!/usr/bin/env python3` 的维护者工具，
+# 用来生成 / 校验它自己的平台常量表）。2026-08-22 实测它**不在任何构建路径上**：
+#   - `grep -c "libc-util\|etc/" build.rs` = 0
+#   - 正向对照：同一文件 `grep -c "Command::new"` = 5（证明 grep 对该文件有效，
+#     零命中不是因为文件读不到）
+#   - 全 crate 的 *.rs / *.toml / *.md 对 `libc-util` 零引用
+# 也就是说它是随包发布的死重量，构建期不会被解释器碰到。
+#
+# 仍然只放行这一个 glob 而不是整个 crate：libc 将来若再夹带别的脚本，闸门要照旧判红。
+[[bans.build.bypass]]
+crate = "libc"
+allow-globs = ["etc/*"]
+
+# zerocopy 0.8.56 在发布包里夹带 ci/ 目录下 7 份维护者 shell 脚本
+# （check_fmt / check_msrv_is_minimal / release_crate_version 等），全部带 bash shebang。
+# 2026-08-22 实测它们**不在任何构建路径上**：
+#   - build.rs 对 "ci/" 与 "release_crate_version" 零引用
+#   - 正向对照：同一文件 grep "Command::new|env::var" = 2（证明 grep 对该文件有效）
+#   - 全 crate 的 *.rs / *.toml 对 release_crate_version 零引用
+# 与 libc 那条同理：只放行这一个 glob，将来夹带别处的脚本照旧判红。
+[[bans.build.bypass]]
+crate = "zerocopy"
+# 除 ci/ 外，crate 根还有一份 cargo.sh。它与 libc 那条**不完全同类**，如实区分：
+#   - build.rs 对它零引用（正向对照：同文件 Command::new|env::var 命中 2）；
+#   - 但它确实被引用了两处：src/lib.rs 里一条 #[deprecated] 提示文案（纯文本），
+#     以及 **zerocopy 自己的** tests/codegen.rs 里的 Command::new("./cargo.sh")。
+#   - 后者是该 crate 自身测试套件的一部分。把 zerocopy 当依赖构建时，cargo **不会**
+#     编译或运行依赖的 tests target，所以它在本仓的构建与测试路径上都到不了。
+# 也就是说：这份脚本不是"没人用"，而是"用它的那条路径本仓永远不会走"。
+allow-globs = ["ci/*", "cargo.sh"]
 
 [bans.workspace-dependencies]
 # 同一个依赖在多个 crate 里写不同版本 = 版本真源分裂。workspace 根的

@@ -10,4 +10,27 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# 打开 `AuthContext::for_test`。默认关：`AuthContext` 的构造受限性有一半靠“测试构造器
+# 不在生产 feature 图里”来兑现（v3 §5.3）。生产 transport 即使想绕过 `AuthContextBuilder`
+# 也拿不到那个函数 —— 它压根没被编译进去。
+testkit = []
+
+# 依赖面必须 wasm 可编（`openbot-ui` 是 Leptos CSR/WASM 且只依赖本 crate，设计系统文档 §13）。
+# 禁止 tokio / axum / tokio-postgres / 任何做 I/O 的 crate。闸门：
+#   cargo check -p openbot-contracts --target wasm32-unknown-unknown
 [dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+# 在 workspace 的 feature 之上追加 `serde-well-known`：它提供 `time::serde::rfc3339`，
+# 让跨边界时间戳有一个**显式且稳定**的线上格式。不加它就会落到 `time` 默认的 serde
+# 实现 —— 一个由 crate 内部决定、没写进任何契约文档的复合形状，升 `time` 小版本就可能变。
+# 纯格式化代码，不引入任何 I/O。
+time = { workspace = true, features = ["serde-well-known"] }
+
+# `serde_json` 只用于测试断言线上形状（空页必须是 {"items":[],"next_cursor":null} 等）。
+# 刻意不进 `[dependencies]`：本 crate 的命令面是封闭 enum，业务侧没有任何需要自由 JSON
+# 的地方，把 `serde_json::Value` 放进依赖等于给“自由 params”留了一扇门（§5.2）。
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -10,7 +10,56 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# 打开本 crate 的测试固定身份（`testing` 模块），并连带打开 contracts 的同名 feature ——
+# `AuthContext::for_test` 就住在那后面。默认关：G1 的 Desktop **没有**任何真实认证，
+# 而“默认放行的构造器”正是那种会在 G2 之前被顺手接进生产路径的东西。
+testkit = ["openbot-contracts/testkit"]
+
 [dependencies]
-# Phase 0 刻意不引 Tauri（CLAUDE.md §3 固定基线 `2.11.5`）—— G0 不打桌面包，
-# 引进来只会让 `cargo build --workspace` 拖一棵与本轮闸门无关的原生依赖树。
-# 桌面宿主是 G6 的产物。仅本 crate 使用的 `sys-locale = "0.3.2"`（设计系统文档 §8.4）同样留到 G6。
+# 唯一业务入口。transport 只穿过它，不实现任何业务规则（v3 §5.2）。
+openbot-application.workspace = true
+# AuthContext / AppCommand / AppReply / AppEvent / AppError / ID newtype / Transport label。
+openbot-contracts.workspace = true
+
+# `AppEventStream` 是 `Pin<Box<dyn Stream<Item = AppEvent> + Send>>`；把它抽干需要 `Stream`
+# trait 本身。只依赖 `futures-core`（trait 定义），不拉 `futures-util`。
+futures-core.workspace = true
+
+# 有界队列（`mpsc`）、取消广播（`watch`）、command 并发预算（`Semaphore`）、
+# 关停 deadline（`time::sleep`）、事件泵（`task::JoinHandle`）。
+tokio.workspace = true
+
+# `PublishRejected` / `OpenSessionError` / `SequenceError` 的错误分层。
+thiserror.workspace = true
+
+# v3 §16.4：丢弃 / 合并 / 断开都必须留痕。tracing 是全链真源；**只依赖 facade**，
+# 库不替二进制决定日志去向。
+tracing.workspace = true
+
+# ---------------------------------------------------------------------------
+# 刻意**没有**的依赖，每一条都是一次裁决：
+#
+# - `tauri`：G1 不引 Tauri 本体（裁决见 `lib.rs` 的〈G1 不引 Tauri 本体〉）。
+# - `serde` / `serde_json`：typed in-process 的定义就是“不复制 JSON-RPC”（§13.2）。
+#   本 crate 依赖图里没有任何序列化器，于是“这条路径不会把 DTO 抄成 JSON 再抄回来”
+#   是构造性事实，不是注释。由 `transport` 里的 `the_in_process_lane_has_no_json_codec`
+#   读本文件钉住。
+# - `tokio-util`：只为一个 `CancellationToken` 引一棵新依赖树。它此刻虽在 `Cargo.lock`
+#   里，但那是 `tokio-postgres` 的实现细节，不是本 crate 可以依赖的事实。等价语义由
+#   `cancel::CancellationToken`（`tokio::sync::watch`）承担。
+# ---------------------------------------------------------------------------
+
+[dev-dependencies]
+# `AuthContext::for_test` 只在 contracts 的 `testkit` feature 下存在。dev 侧打开它不影响
+# 生产构建：dev-dependencies 不进 `cargo build` 的依赖图。
+openbot-contracts = { workspace = true, features = ["testkit"] }
+
+# 测试里实现 `ApplicationService` / `ChannelReader` 两个 `#[async_trait]` trait。
+# 生产侧一个都不实现 —— transport 是它们的**调用方**，不是实现方。
+async-trait.workspace = true
+
+# `ChannelSummary` 里的 RFC 3339 时间戳（测试用的内存 port 要造真行）。
+# 生产侧不需要 —— 本 crate 不解释任何 DTO 内容。
+time.workspace = true

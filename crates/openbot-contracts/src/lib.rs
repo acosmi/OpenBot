@@ -23,8 +23,45 @@
 //!   同名字段一律是普通不可信输入。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # Phase 0 状态
+//! # G1 状态（Rust Foundation，W5–10）
 //!
-//! 本 crate 在 Phase 0（Evidence Freeze）刻意为空：G0 只冻结证据与骨架，类型定义是 G1
-//! （Rust Core 与 PostgreSQL）的产物。禁止在这里提前塞占位类型 —— 没有 parity ledger 条目
-//! 背书的类型无法判定 parity / 新增 / 替代。
+//! Phase 0（Evidence Freeze）本 crate 刻意为空；G1 起它承载五个模块：
+//!
+//! | 模块 | 内容 | 方案出处 |
+//! | --- | --- | --- |
+//! | [`ids`] | 十五个核心 ID（十三个 string newtype + 两个 generation 计数器） | §5.3 |
+//! | [`auth`] | [`auth::AuthContext`]、[`auth::Role`]、受限构造入口 | §5.3 / §5.2 |
+//! | [`error`] | [`error::AppError`]、稳定 code、HTTP status、audit 类型 | §15.3 |
+//! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent` | §5.2 |
+//! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
+//!
+//! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：G1 只落了垂直切片
+//! 需要的两个用例（列出可见 channel + 探活），thread 订阅、工具管线、browser 协议分别是
+//! G3 及之后的工作，届时随各自 ledger 条目一起加。本 crate 里凡是与上游行为对齐的取值
+//! （如 [`command::MAX_CHANNEL_PAGE`]）都在注释里标了 parity 出处，新增项同理 —— 把新增
+//! 写成"当前行为"是 v2 审计里最重的一类错误（§28.1 R1）。
+//!
+//! # 依赖面为什么这么窄
+//!
+//! 本 crate 必须编到 `wasm32-unknown-unknown`（`openbot-ui` 是 Leptos CSR/WASM 且只依赖它）。
+//! 所以依赖只有 `serde` / `thiserror` / `time`，`serde_json` 只在 dev-dependencies 里供测试
+//! 断言线上形状。**禁止**引入 `tokio` / `axum` / `tokio-postgres` 或任何做 I/O 的 crate ——
+//! 那会让整个 GUI 编译失败，或者更糟：编过了但在浏览器里运行期炸。闸门是
+//! `cargo check -p openbot-contracts --target wasm32-unknown-unknown`，它必须与
+//! `cargo test` 同批次跑：只跑 native 那一半，wasm 破裂要到 G6 打包时才会被发现。
+//!
+//! # feature
+//!
+//! - `testkit`（默认**关**）：打开 [`auth::AuthContext::for_test`]。生产 transport 的
+//!   feature 图里没有它，于是那条测试构造器根本不会被编译进发行物。
+
+// 本 crate 的每个公开条目都必须有中文文档：协议层是跨 crate 的契约面，一个没有文档的
+// 公开类型等于一个只有作者知道语义的契约。用 deny 而不是 warn —— warn 在 `cargo test`
+// 的输出里会被淹没，只有 clippy 的 `-D warnings` 拦得住，那是半道闸门。
+#![deny(missing_docs)]
+
+pub mod auth;
+pub mod command;
+pub mod error;
+pub mod ids;
+pub mod telemetry;

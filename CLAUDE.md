@@ -9,7 +9,10 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 ## 1. 真源与现状
 
 - **唯一实施真源**是上述方案 v3（§28 为第二轮审计修订记录）。两份输入文档仓内不存在，只登记了 SHA-256；在 Phase 0 把原件归档到 `docs/inputs/` 之前，**不得**以"输入文档里写过"作为依据（§1.1）。
-- 当前仓库处于**方案归档阶段，零实现代码**。第一批代码 = Phase 0 的机器可检查产物：`parity/*.yaml`、`provenance/sources.spdx.json`、`fixtures/**`（§19.3）。CI 必须拒绝未归类项与没有证据的 `done`。
+- 阶段进度：**Phase 0（Evidence Freeze）产物已落地** —— `parity/*.yaml`（9 份；条目数随实施推进增长，真源是各台账自己的 recount，由 `cargo xtask recount` 逐条实跑，**不在本文件钉死**）、`provenance/sources.spdx.json`、`fixtures/**`、`tools/pins.toml`、10 crate 骨架、`cargo xtask parity-check`（§19.3）。CI 必须拒绝未归类项与没有证据的 `done`。
+  **G0 仍有一项未闭合**：§1.1 要求把两份输入文档原件归档到 `docs/inputs/`，仓内与本机都不存在原件，只有 SHA-256 —— 在补齐之前不得宣称 G0 通过。
+- **G1（Rust Core 与 PostgreSQL）四条判据本轮全部达成**（§24，四条缺一不可）：① 10 crate workspace + `cargo build --workspace --all-features --locked` 绿；② 同一个 `Arc<dyn ApplicationService>` 经 Axum 与 in-process 两条 transport 结果一致（`cargo test -p openbot-testkit --test transport_parity` = 7 passed，含"递到 port 上的调用逐字段相同"这条比结果更强的断言）；③ 28 表 / 13 migration 映射对走完 13 条 migration 的真参照库逐字段相等，read checksum 168/168 行逐字节相同（两条腿都在 PostgreSQL 侧渲染，避免"两边都用同一份 Rust 代码算"的自证）；④ tracing span + 关联字段 + 脱敏 + Prometheus metrics 从首个 vertical slice 生效。
+  **以下仍未闭合，不得算进 G1**：`AuthResolver` 没有生产实现（属 G2 的 method/origin 面），所以还没有可独立运行的 Server 二进制；`/metrics` 的访问控制同属 G2；read checksum 只覆盖 seed 造出来的取值形态，不是全量数据证明；`InfraError::Connect` 只实测过鉴权失败一种形态；迁移账本只数条目不校验内容；跨 transport 对拍跑在 fake port 上（真库那条腿的 harness 在 infra 侧）；`subscribe` / `AppEventStream` 不在对拍矩阵内；span / metrics 尚无 `route` 维度；目标 PostgreSQL 17 未实测（本机 18.1）。
 - 上游对照固定在 `CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`，不引用会漂移的 `main`（§1.2）。
 
 ## 2. 目标定义（为什么是这条线）
@@ -36,6 +39,8 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 | OIDC / SAML | `openidconnect 4.0.1` / `samael 0.0.22` |
 | Browser kernel | Electron `43.3.0` / Chromium `150.0.7871.212` |
 | 数据库 | PostgreSQL 17，**唯一**语义；Desktop 由 Rust 监管本机 sidecar；不需要 pgvector |
+| 数据库驱动 | `tokio-postgres 0.7.18` + `deadpool-postgres 0.14.1` + `postgres-types 0.2`。**不用 `sqlx`** —— 它的 `query!` 宏让 `cargo build --locked` 的答案取决于跑在哪台机器上（构建期连库或 `.sqlx` 离线元数据二选一）。SQL 手写，由对真库的集成测试验证（G1 裁决 D3） |
+| ID 类型 | §5.3 的十五个 ID 里，`ComputerGeneration` / `DocumentGeneration` 是 **`u64` newtype**（§11.2 `EngineCommand`、§12.3 `FrameHeader` 本来就写作 `u64`；"旧 generation 失效"依赖数值序，字典序会判错），其余 13 个是 `String` newtype 且**不做 UUID 校验**（G1 裁决 D7 / §28.1 R23） |
 
 上游 oracle 运行时版本（copilotkit 1.68.3、ag-ui 0.0.57、better-auth 1.7.1、mcp sdk 1.30.0、playwright 1.62.1 …）以 §1.2 表为准，fixture 与 golden 只认这些版本。
 
@@ -86,7 +91,7 @@ Firecracker / youki · Restate / Temporal 等 durable execution 平台 · Codex 
 
 ## 7. 上游缺陷不得照译（§2.4）
 
-#36 redirect/DNS rebinding · #44 malformed AG-UI content 崩 UI · #53 credential rotate 孤儿 · #72 空 history 500 · #106 stale grant 复活 · Drive disconnect 未实现 · **`allowed_groups` 从 no-op 变为真控制**（`all` / 具名组 / 空列表三档，单用户模式语义见 §6.5；上游包声明的 channel 对所有人不可达，官方示例用的就是 `[all]`）· MCP 审计在 vendor 调用之后。每条的 Rust 版确定语义以 §2.4 表为准，实现时不得"先照译再修"。
+#36 redirect/DNS rebinding · #44 malformed AG-UI content 崩 UI · #53 credential rotate 孤儿 · #72 空 history 500 · #106 stale grant 复活 · Drive disconnect 未实现 · **`allowed_groups` 从 no-op 变为真控制**（`all` / 具名组 / 空列表三档，单用户模式语义见 §6.5；上游包声明的 channel 对所有人不可达，官方示例用的就是 `[all]`）· MCP 审计在 vendor 调用之后 · **channel 可见性不得 join `intelligence_channel_mappings`**（上游 `list` 的分页段只 join membership、hydration 段多 join 它，两处判据不一致；Intelligence 退役后这个 join 会把 §6.5 刚补上 membership 的包 channel 原样过滤回不可达，等于静默撤销 §6.5 的修复。Rust 版只查 materialized membership，且分页与 hydration 共用同一判据 —— §28.1 R22）。每条的 Rust 版确定语义以 §2.4 表为准，实现时不得"先照译再修"。
 
 ## 8. 证据与文档纪律
 
@@ -108,6 +113,8 @@ Firecracker / youki · Restate / Temporal 等 durable execution 平台 · Codex 
 ## 10. 闸门
 
 CI 固定（§16.3）：`cargo fmt --check` · `cargo clippy --all-targets --all-features -D warnings` · `cargo test --locked` · `cargo deny` · `cargo audit` · `cargo vet` · OSV / secret scan · license / NOTICE / provenance 校验 · SBOM · 可复现构建 · 签名校验。`Cargo.lock` 与 engine lockfile 提交；git 依赖必须钉 commit；核心 crate `unsafe_code = "deny"`。
+
+本机单一入口 = `cargo xtask ci`（fmt → clippy → `cargo test --locked` → parity-check → recount，5 段）。驱动器**必须**建在 `target-xtask/`（`.cargo/config.toml` 的 alias 已配 `--target-dir`），与子构建的 `target/` 互不包含：否则第 3 步会去重链正在运行的驱动器自己，Windows 报 `os error 5` 恒红、Linux 恒绿（§28.1 R25）。摆放错了 `cmd_ci` 当场拒跑并打印两条路径，不会退化成"某台机器上能过"。
 
 GUI 另加（设计系统文档 §15）：`cargo test -p openbot-ui` · `xtask i18n-check` · `xtask design-lint` · `xtask css-check` · `xtask bundle-budget` · golden 截图（Web 110 张 / Desktop 每平台 54 张，差异像素 ≤ 0.1% 且无 8×8 全差异块；更新只能随 PR 附 diff 图人工批准）· CDP AX 树检查。
 

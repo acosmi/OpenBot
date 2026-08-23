@@ -4,4 +4,11 @@
 # 刻意不是第 11 个 crate —— 理由见仓根 Cargo.toml 顶部注释与 v3 §5.1。
 # 结尾的 `--` 把用户参数原样透传给二进制，而不是被 `cargo run` 自己吃掉。
 [alias]
-xtask = "run -p openbot-testkit --features xtask --bin xtask --"
+# `--target-dir target-xtask`：驱动器**必须**建在 `target/` 之外。
+# `cargo xtask ci` 的第 3 步是 `cargo test --workspace --all-features`，它会重新链接
+# 驱动器自己（xtask 的 `required-features = ["xtask"]` 恰好被 `--all-features` 满足），
+# 而 Windows 不允许删除正在运行的 exe —— cargo 的 uplift 报
+# `failed to remove file target/debug/xtask.exe: 拒绝访问 (os error 5)`，
+# 同一条命令在 Linux 上却恒绿。判据本身钉在 `xtask.rs::driver_conflicts_with_child_target`，
+# 改了这里而没改那里，`cargo xtask ci` 会当场拒跑并打印两条路径。
+xtask = "run -p openbot-testkit --features xtask --target-dir target-xtask --bin xtask --"
