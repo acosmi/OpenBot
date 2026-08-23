@@ -7,6 +7,10 @@
 # —— sha256 表在 tools/pins.toml 里，那份表才是真源。上面的 /target/ 已经覆盖，写出来是为了
 # 让"为什么二进制不入库"这件事在 .gitignore 里可查。
 /target/tools/
+# `cargo xtask` 驱动器自己的构建树。它**必须**在 `/target/` 之外：`cargo xtask ci`
+# 第 3 步的 `cargo test` 会重链驱动器，而 Windows 不允许删除正在运行的 exe。
+# 判据在 xtask.rs::driver_conflicts_with_child_target，alias 在 .cargo/config.toml。
+/target-xtask/
 # trunk 的 WASM 产物目录（设计系统文档 §12.3）。
 /dist/
 /crates/openbot-ui/dist/

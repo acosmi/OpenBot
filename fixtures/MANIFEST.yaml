@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 26
+    expect: 28
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 23
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 3
+    expect: 5
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 26 26
+    expect: 28 28
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 9 17 0
+    expect: 10 18 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -64,6 +64,43 @@ entries:
     notes: >-
       image.digest 与 cjk_font_package_version 是 TBD 占位，由 CI 第一次跑完 Web 腿时固化。
       占位不构成 T-FIX-0008 的 done —— 那条要的是固化后的真实 digest 与同批 PNG。
+
+  - id: db-schema-0012
+    upstream: server/drizzle/0000_schema.sql .. server/drizzle/0012_truncate_is_not_a_way_around_append_only.sql
+    label: parity
+    target: fixtures/db/schema-0012.json -> openbot_infra::db::baseline
+    owner: openbot-infra
+    test_id: T-FIX-0027
+    migration_rule: "preserve: Rust baseline 建出的库必须与走完 13 条 migration 的库 schema 事实逐字段相等；兼容期只允许 expand（v3 §14.3）"
+    status: done
+    evidence: "13 条 migration 按序 psql -v ON_ERROR_STOP=1 应用全部成功；pg_catalog 实测 28 表 / 204 列 / 212 约束 / 44 索引 / 2 触发器 / 4 enum / 1 函数 / 0 extension"
+    done_evidence: "fixtures/db/schema-0012.json（2998 行，sort_keys 规范化）；表名集合与 parity/tables.yaml 的 28 条上游表条目双向差集为空；chunks 与 vector 两条不存在断言各配正向对照（users=1、role=1）"
+    notes: >-
+      不是手写产物，来自真实迁移库的 pg_catalog 提取，提取查询是 crates/openbot-infra/sql/schema_facts.sql。
+      本机未装 pgvector，故 0000 里的 CREATE EXTENSION vector 与 chunks.embedding 的 vector(1536) 两处被替换；
+      diff --strip-trailing-cr 实证替换恰好 2 行，且两处都落在 0010 会 DROP 的 chunks 上，0012 终态实测无 chunks 无 vector。
+      已知未消除差异：v3 §14.1 钉 PostgreSQL 17，本文件生成于本机 18.1，见 fixtures/db/README.md 的〈已知差异：PostgreSQL 版本〉节。
+
+  - id: db-seed-0012
+    upstream: "-"
+    label: 新增
+    target: fixtures/db/seed-0012.sql -> openbot_infra::db::tables
+    owner: openbot-infra
+    test_id: T-FIX-0028
+    migration_rule: "n/a: 上游没有对抗性数据集，这是为验证类型映射保真而新造的"
+    status: done
+    evidence: "psql -v ON_ERROR_STOP=1 应用到由 13 条 migration 建成的库，28 张表各 6 行共 168 行全部落库；集成测试 every_seeded_row_decodes_through_its_row_struct 与 adversarial_values_survive_the_round_trip_intact 对真库跑绿"
+    done_evidence: "fixtures/db/seed-0012.sql（171 行 INSERT，外键拓扑序）；生成器带覆盖率断言，7 个值池 + 4 个 enum 的每一项都至少出现一次，缺一即判红"
+    notes: >-
+      目的不是"有数据"，而是专挑会让类型映射悄悄出错的值：空串 vs NULL、空数组 vs 含 NULL 元素的数组、
+      jsonb 里超 f64 精度的整数 9007199254740993、timestamptz 亚秒 + 非 UTC 偏移、
+      CJK / emoji / 组合字符 / 引号 / 反斜杠 / 换行制表 / RTL、boolean 的 false、integer 的 0 / 负数 / i32::MAX、
+      以及 4 个 enum 的每一个取值（credential_kind 有 6 个）。
+      两条实测记录，避免后人误以为它测了没测的东西：
+      (1) jsonb 键序**测不了** —— PostgreSQL 的 jsonb 按定义无序，写入 {"b":1,"a":2} 读出来就是 {"a":2,"b":1}；
+      (2) 最初每表只 3 行时，值池里 emoji / 组合字符 / 反斜杠 / 含 NULL 元素的数组全都从未出现，
+      是覆盖率断言把这个洞照出来的，行数因此提到 6（最大的 enum credential_kind 有 6 个值，少于 6 不可能全覆盖）。
+      它同时是 openbot-infra 那条 text[] -> Vec<Option<String>> 映射修正的触发者：Vec<String> 在 {NULL,x} 上当场判红。
 
   # ===========================================================================
   # golden PNG 与镜像固化（依赖 openbot-ui / openbot-server 存在）

@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 146
+    expect: 148
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 141
@@ -66,21 +66,57 @@ recount:
     expect: 5
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 0
+    expect: 2
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 146
+    expect: 148
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
     label: "parity"
-    target: "openbot-server::http::health (GET /health)"
+    target: "openbot-server::http::health::health (GET /health)"
     owner: "openbot-server"
     test_id: "T-API-0001"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "cargo test -p openbot-server --all-features health_ => 2 passed（http::tests::health_is_public_and_always_ok 走完整 router 断言 200 且不经鉴权；http::health::tests::health_body_matches_the_upstream_wire_shape 钉住上游 {status:\"ok\"} 的线格式）"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "public。上游返回 {status:\"ok\"}。Rust 版按 §16.1 拆 health/readiness，/health 语义不变。错误码：无（恒 200）"
+  - id: "readiness-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::health::readiness (GET /readiness)"
+    owner: "openbot-server"
+    test_id: "T-API-0147"
+    migration_rule: "n/a: 上游没有 readiness 端点，95 条静态 route 里只有 health"
+    status: "done"
+    done_evidence: "cargo test -p openbot-server --all-features readiness => 10 passed（三态在线上两两可分、Unverified 既不谎报 ok 也不当硬故障、无探针时 not ready、readiness_body_never_names_the_dependency 证明依赖名不外泄）"
+    evidence: "v3 §5.1 把 openbot-server 的职责写作「Axum HTTP/SSE/WS、static GUI、health/readiness」，§16.1 Server 发行物同样点名；本条目上方的 health-get 条目 notes 早已写明「Rust 版按 §16.1 拆 health/readiness」，本条把那半边登记出来"
+    notes: >-
+      与 health 的分工：health 只答「进程活着」，不碰任何依赖；readiness 答「能不能接流量」，把依赖状态如实呈现。
+      必须承载 openbot-infra::db::compat 的三态迁移判定：Applied 该项 ok；Incomplete 判 not ready；
+      Unverifiable 既不谎报 ok 也不当故障，给第三种取值并 warn 一次。
+      理由见 v3 §28.1 R24 —— 13 条 migration 里 0003 是纯数据迁移，跑没跑过在 schema 上不留痕迹，
+      账本缺失时只能如实报「无法验证」，不得用数据形状去猜（那一版判据本轮已被推翻）。
+      把三态压成布尔就等于把 infra 侧那套设计白做。
+  - id: "metrics-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::metrics::render (GET /metrics)"
+    owner: "openbot-server"
+    test_id: "T-API-0148"
+    migration_rule: "n/a: 上游没有 metrics 端点。它的可观测性是 @copilotkit/runtime 自带的 Segment/Scarf 使用分析（外发），v3 §16.4 已裁决删除并写死零 phone-home"
+    evidence: "v3 §16.4 逐字「Rust 全链使用 tracing + OpenTelemetry；Server 暴露 Prometheus metrics」；§24 G1 判据第四条「tracing/metrics/redaction 从首个 vertical slice 生效」"
+    status: "done"
+    done_evidence: "cargo test -p openbot-server --all-features metrics_ => 2 passed（metrics_endpoint_serves_the_prometheus_snapshot 经真 router 取到文本；metrics_without_a_recorder_handle_is_fail_closed 证明没装 recorder 时不静默给空串）"
+    notes: >-
+      由本仓自己的 Axum 路由渲染 metrics-exporter-prometheus 的文本，**不另开监听端口** ——
+      第二个监听端口是一块没经过评审的网络面，而 §16.4 的零 phone-home 要求 exporter 只在
+      管理员显式配置时才建连；把它做成本进程的一条路由，就没有任何主动外发。
+      label 基数由 openbot_contracts::telemetry::METRICS_LABEL_ALLOWLIST 白名单承担：
+      §16.4 逐字「高基数 actor/thread 不进入 metrics label，只进入受控 trace/log」，
+      actor_id / thread_id 必须不在白名单里（contracts 侧已有负向 + 正向对照测试钉死）。
+      访问控制：G1 未实现。生产部署必须把它挡在内网或鉴权之后 —— 这一条属 G2 的 method/origin 面。
   - id: "api-capabilities-get"
     upstream: "server/src/app.ts::createApp"
     label: "parity"
@@ -387,8 +423,9 @@ entries:
     target: "openbot-server::http::channels::list (GET /api/channels)"
     owner: "openbot-server"
     test_id: "T-API-0032"
-    migration_rule: "preserve"
-    status: "todo"
+    migration_rule: "preserve: 两处刻意收紧（均非 parity，逐条记）：(1) 未知 query 键判 400 而不是像上游 zod 那样静默丢弃 —— §5.2 逐字禁止 transport 接受 renderer 自报 principal，静默丢弃会让 ?principal=admin 这类尝试无声无息；(2) 游标解码失败判 400 而不是像上游那样 fail-open 回第一页 —— 上游 decodeChannelCursor 解析失败返回 undefined，下游 where 子句整个省掉，客户端会无限重读第一页且永远看不到错误（§15.3 malformed payload 400 压过照译）"
+    status: "done"
+    done_evidence: "cargo test -p openbot-server --all-features http::tests => 28 passed（含 list_returns_camel_case_channel_page 的线格式、unknown_query_parameters_are_rejected 与 tampered_cursor_is_four_hundred_with_a_stable_code 两处刻意收紧、out_of_range_limit_is_clamped_by_the_application_not_the_transport 证明夹取在 application 侧）；跨 transport 一致由 cargo test -p openbot-testkit --test transport_parity => 7 passed 承担"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "session。错误码：401 未登录 / 404 不可见（Bot、channel、component 一律 404 不区分不存在与无权）/ 400 malformed"
   - id: "api-channels-activity-post"

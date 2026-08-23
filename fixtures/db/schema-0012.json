@@ -1,0 +1,2998 @@
+{
+  "enums": [
+    {
+      "name": "agent_type",
+      "values": [
+        "built_in",
+        "remote_ag_ui"
+      ]
+    },
+    {
+      "name": "agent_visibility",
+      "values": [
+        "public",
+        "private"
+      ]
+    },
+    {
+      "name": "credential_kind",
+      "values": [
+        "model",
+        "connector",
+        "agent",
+        "mcp",
+        "mcp_oauth_client",
+        "mcp_user_token"
+      ]
+    },
+    {
+      "name": "role",
+      "values": [
+        "admin",
+        "user"
+      ]
+    }
+  ],
+  "extensions": [],
+  "functions": [
+    {
+      "def": "CREATE OR REPLACE FUNCTION public.prevent_audit_event_mutation()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n  retention_days integer;\nBEGIN\n  -- Answered before anything else is read, so no setting and no missing OLD record can change it.\n  IF TG_OP = 'TRUNCATE' OR TG_OP = 'UPDATE' THEN\n    RAISE EXCEPTION 'Audit events are append-only';\n  END IF;\n\n  -- `true` so a session that never set it reads NULL instead of raising, which is the ordinary case\n  -- and has to stay a plain refusal.\n  BEGIN\n    retention_days := nullif(current_setting('openbot.audit_retention_days', true), '')::integer;\n  EXCEPTION WHEN others THEN\n    retention_days := NULL;\n  END;\n\n  IF retention_days IS NULL OR retention_days < 1 THEN\n    RAISE EXCEPTION 'Audit events are append-only';\n  END IF;\n\n  IF OLD.created_at >= now() - (retention_days || ' days')::interval THEN\n    RAISE EXCEPTION 'Audit events are append-only within the retention window';\n  END IF;\n\n  RETURN OLD;\nEND;\n$function$\n",
+      "name": "prevent_audit_event_mutation"
+    }
+  ],
+  "tables": [
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "account_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "provider_id",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "access_token",
+          "notnull": false,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "refresh_token",
+          "notnull": false,
+          "ordinal": 6,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id_token",
+          "notnull": false,
+          "ordinal": 7,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "access_token_expires_at",
+          "notnull": false,
+          "ordinal": 8,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "refresh_token_expires_at",
+          "notnull": false,
+          "ordinal": 9,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "scope",
+          "notnull": false,
+          "ordinal": 10,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "password",
+          "notnull": false,
+          "ordinal": 11,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 12,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 13,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "issuer",
+          "notnull": false,
+          "ordinal": 14,
+          "type": "text"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL account_id",
+          "name": "accounts_account_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "accounts_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "accounts_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "accounts_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL provider_id",
+          "name": "accounts_provider_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "accounts_updated_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL user_id",
+          "name": "accounts_user_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+          "name": "accounts_user_id_users_id_fk",
+          "type": "f"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX accounts_pkey ON public.accounts USING btree (id)",
+          "name": "accounts_pkey"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX accounts_provider_account_idx ON public.accounts USING btree (provider_id, account_id)",
+          "name": "accounts_provider_account_idx"
+        }
+      ],
+      "name": "accounts",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "deny",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text[]"
+        },
+        {
+          "default": null,
+          "name": "allow",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text[]"
+        },
+        {
+          "default": null,
+          "name": "updated_by",
+          "notnull": false,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL allow",
+          "name": "action_policy_allow_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL deny",
+          "name": "action_policy_deny_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "action_policy_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL mode",
+          "name": "action_policy_mode_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "action_policy_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "action_policy_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX action_policy_pkey ON public.action_policy USING btree (id)",
+          "name": "action_policy_pkey"
+        }
+      ],
+      "name": "action_policy",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "user_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "agent_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "hidden_at",
+          "notnull": false,
+          "ordinal": 3,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE",
+          "name": "agent_preferences_agent_id_agents_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL agent_id",
+          "name": "agent_preferences_agent_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (user_id, agent_id)",
+          "name": "agent_preferences_user_id_agent_id_pk",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL user_id",
+          "name": "agent_preferences_user_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+          "name": "agent_preferences_user_id_users_id_fk",
+          "type": "f"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX agent_preferences_user_id_agent_id_pk ON public.agent_preferences USING btree (user_id, agent_id)",
+          "name": "agent_preferences_user_id_agent_id_pk"
+        }
+      ],
+      "name": "agent_preferences",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "agent_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "owner_user_id",
+          "notnull": false,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "title",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "role_description",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "avatar_seed",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "visibility",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "agent_visibility"
+        },
+        {
+          "default": null,
+          "name": "deleted_at",
+          "notnull": false,
+          "ordinal": 7,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 8,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 9,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "callback_token_hash",
+          "notnull": false,
+          "ordinal": 10,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "callback_token_issued_at",
+          "notnull": false,
+          "ordinal": 11,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE",
+          "name": "agent_profiles_agent_id_agents_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL agent_id",
+          "name": "agent_profiles_agent_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL avatar_seed",
+          "name": "agent_profiles_avatar_seed_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "agent_profiles_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL",
+          "name": "agent_profiles_owner_user_id_users_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "PRIMARY KEY (agent_id)",
+          "name": "agent_profiles_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL role_description",
+          "name": "agent_profiles_role_description_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL title",
+          "name": "agent_profiles_title_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "agent_profiles_updated_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL visibility",
+          "name": "agent_profiles_visibility_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX agent_profiles_pkey ON public.agent_profiles USING btree (agent_id)",
+          "name": "agent_profiles_pkey"
+        },
+        {
+          "def": "CREATE INDEX agent_profiles_visibility_deleted_idx ON public.agent_profiles USING btree (visibility, deleted_at)",
+          "name": "agent_profiles_visibility_deleted_idx"
+        }
+      ],
+      "name": "agent_profiles",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "type",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "agent_type"
+        },
+        {
+          "default": null,
+          "name": "configuration",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "package_id",
+          "notnull": false,
+          "ordinal": 5,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "override",
+          "notnull": false,
+          "ordinal": 6,
+          "type": "jsonb"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 7,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 8,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL configuration",
+          "name": "agents_configuration_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "agents_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "agents_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL name",
+          "name": "agents_name_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (package_id) REFERENCES deployment_packages(id) ON DELETE SET NULL",
+          "name": "agents_package_id_deployment_packages_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "agents_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL type",
+          "name": "agents_type_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "agents_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX agents_pkey ON public.agents USING btree (id)",
+          "name": "agents_pkey"
+        }
+      ],
+      "name": "agents",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": "gen_random_uuid()",
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "actor_user_id",
+          "notnull": false,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "event_type",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "target_type",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "target_id",
+          "notnull": false,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "payload",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "jsonb"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 7,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "audit_events_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL event_type",
+          "name": "audit_events_event_type_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "audit_events_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL payload",
+          "name": "audit_events_payload_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "audit_events_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL target_type",
+          "name": "audit_events_target_type_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE INDEX audit_events_actor_time_idx ON public.audit_events USING btree (actor_user_id, created_at DESC NULLS LAST, id DESC NULLS LAST)",
+          "name": "audit_events_actor_time_idx"
+        },
+        {
+          "def": "CREATE INDEX audit_events_created_at_idx ON public.audit_events USING btree (created_at)",
+          "name": "audit_events_created_at_idx"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX audit_events_pkey ON public.audit_events USING btree (id)",
+          "name": "audit_events_pkey"
+        },
+        {
+          "def": "CREATE INDEX audit_events_target_time_idx ON public.audit_events USING btree (target_type, target_id, created_at DESC NULLS LAST, id DESC NULLS LAST)",
+          "name": "audit_events_target_time_idx"
+        },
+        {
+          "def": "CREATE INDEX audit_events_type_time_idx ON public.audit_events USING btree (event_type, created_at DESC NULLS LAST, id DESC NULLS LAST)",
+          "name": "audit_events_type_time_idx"
+        }
+      ],
+      "name": "audit_events",
+      "triggers": [
+        {
+          "def": "CREATE TRIGGER audit_events_append_only BEFORE DELETE OR UPDATE ON public.audit_events FOR EACH ROW EXECUTE FUNCTION prevent_audit_event_mutation()",
+          "name": "audit_events_append_only"
+        },
+        {
+          "def": "CREATE TRIGGER audit_events_no_truncate BEFORE TRUNCATE ON public.audit_events FOR EACH STATEMENT EXECUTE FUNCTION prevent_audit_event_mutation()",
+          "name": "audit_events_no_truncate"
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "channel_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "agent_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE",
+          "name": "channel_agents_agent_id_agents_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL agent_id",
+          "name": "channel_agents_agent_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (channel_id, agent_id)",
+          "name": "channel_agents_channel_id_agent_id_pk",
+          "type": "p"
+        },
+        {
+          "def": "FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE",
+          "name": "channel_agents_channel_id_channels_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL channel_id",
+          "name": "channel_agents_channel_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "channel_agents_created_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX channel_agents_channel_id_agent_id_pk ON public.channel_agents USING btree (channel_id, agent_id)",
+          "name": "channel_agents_channel_id_agent_id_pk"
+        }
+      ],
+      "name": "channel_agents",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "channel_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE",
+          "name": "channel_memberships_channel_id_channels_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL channel_id",
+          "name": "channel_memberships_channel_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (channel_id, user_id)",
+          "name": "channel_memberships_channel_id_user_id_pk",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "channel_memberships_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL user_id",
+          "name": "channel_memberships_user_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+          "name": "channel_memberships_user_id_users_id_fk",
+          "type": "f"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX channel_memberships_channel_id_user_id_pk ON public.channel_memberships USING btree (channel_id, user_id)",
+          "name": "channel_memberships_channel_id_user_id_pk"
+        }
+      ],
+      "name": "channel_memberships",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "description",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": "'{}'::text[]",
+          "name": "suggested_prompts",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text[]"
+        },
+        {
+          "default": "'{}'::text[]",
+          "name": "allowed_groups",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "text[]"
+        },
+        {
+          "default": null,
+          "name": "package_id",
+          "notnull": false,
+          "ordinal": 6,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "override",
+          "notnull": false,
+          "ordinal": 7,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "last_message",
+          "notnull": false,
+          "ordinal": 8,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "last_message_at",
+          "notnull": false,
+          "ordinal": 9,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "last_message_agent_id",
+          "notnull": false,
+          "ordinal": 10,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 11,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 12,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL allowed_groups",
+          "name": "channels_allowed_groups_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "channels_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL description",
+          "name": "channels_description_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "channels_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (last_message_agent_id) REFERENCES agents(id) ON DELETE SET NULL",
+          "name": "channels_last_message_agent_id_agents_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL name",
+          "name": "channels_name_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (package_id) REFERENCES deployment_packages(id) ON DELETE SET NULL",
+          "name": "channels_package_id_deployment_packages_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "channels_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL suggested_prompts",
+          "name": "channels_suggested_prompts_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "channels_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX channels_pkey ON public.channels USING btree (id)",
+          "name": "channels_pkey"
+        },
+        {
+          "def": "CREATE INDEX channels_recent_activity_idx ON public.channels USING btree (COALESCE(last_message_at, created_at) DESC)",
+          "name": "channels_recent_activity_idx"
+        }
+      ],
+      "name": "channels",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "component_name",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "agent_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "withheld_by",
+          "notnull": false,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE",
+          "name": "component_exclusions_agent_id_agents_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL agent_id",
+          "name": "component_exclusions_agent_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (component_name, agent_id)",
+          "name": "component_exclusions_component_name_agent_id_pk",
+          "type": "p"
+        },
+        {
+          "def": "FOREIGN KEY (component_name) REFERENCES components(name) ON DELETE CASCADE",
+          "name": "component_exclusions_component_name_components_name_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL component_name",
+          "name": "component_exclusions_component_name_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "component_exclusions_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "component_exclusions_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX component_exclusions_component_name_agent_id_pk ON public.component_exclusions USING btree (component_name, agent_id)",
+          "name": "component_exclusions_component_name_agent_id_pk"
+        }
+      ],
+      "name": "component_exclusions",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "component_name",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "function_name",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "granted_by",
+          "notnull": false,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "FOREIGN KEY (component_name) REFERENCES components(name) ON DELETE CASCADE",
+          "name": "component_functions_component_name_components_name_fk",
+          "type": "f"
+        },
+        {
+          "def": "PRIMARY KEY (component_name, function_name)",
+          "name": "component_functions_component_name_function_name_pk",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL component_name",
+          "name": "component_functions_component_name_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "component_functions_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL function_name",
+          "name": "component_functions_function_name_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "component_functions_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX component_functions_component_name_function_name_pk ON public.component_functions USING btree (component_name, function_name)",
+          "name": "component_functions_component_name_function_name_pk"
+        }
+      ],
+      "name": "component_functions",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "name",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "title",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "draft_description",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "published_description",
+          "notnull": false,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": "false",
+          "name": "published",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "published_at",
+          "notnull": false,
+          "ordinal": 7,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "updated_by",
+          "notnull": false,
+          "ordinal": 8,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 9,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 10,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "components_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL draft_description",
+          "name": "components_draft_description_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL kind",
+          "name": "components_kind_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL name",
+          "name": "components_name_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (name)",
+          "name": "components_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL published",
+          "name": "components_published_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL title",
+          "name": "components_title_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "components_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX components_pkey ON public.components USING btree (name)",
+          "name": "components_pkey"
+        }
+      ],
+      "name": "components",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "computer_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "snapshot_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "url",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "elements",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "jsonb"
+        },
+        {
+          "default": "now()",
+          "name": "taken_at",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL computer_id",
+          "name": "computer_snapshot_computer_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL elements",
+          "name": "computer_snapshot_elements_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (computer_id)",
+          "name": "computer_snapshot_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL snapshot_id",
+          "name": "computer_snapshot_snapshot_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL taken_at",
+          "name": "computer_snapshot_taken_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL url",
+          "name": "computer_snapshot_url_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX computer_snapshot_pkey ON public.computer_snapshot USING btree (computer_id)",
+          "name": "computer_snapshot_pkey"
+        }
+      ],
+      "name": "computer_snapshot",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": "gen_random_uuid()",
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "credential_kind"
+        },
+        {
+          "default": null,
+          "name": "provider",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "encrypted_value",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "key_id",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "metadata",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "revoked_at",
+          "notnull": false,
+          "ordinal": 7,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 8,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 9,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "credentials_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL encrypted_value",
+          "name": "credentials_encrypted_value_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "credentials_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL key_id",
+          "name": "credentials_key_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL kind",
+          "name": "credentials_kind_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL metadata",
+          "name": "credentials_metadata_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "credentials_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL provider",
+          "name": "credentials_provider_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "credentials_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX credentials_pkey ON public.credentials USING btree (id)",
+          "name": "credentials_pkey"
+        }
+      ],
+      "name": "credentials",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": "gen_random_uuid()",
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "tenant_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "source_path",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "checksum",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "loaded_at",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL checksum",
+          "name": "deployment_packages_checksum_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "deployment_packages_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL loaded_at",
+          "name": "deployment_packages_loaded_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "deployment_packages_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL source_path",
+          "name": "deployment_packages_source_path_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL tenant_id",
+          "name": "deployment_packages_tenant_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "UNIQUE (tenant_id)",
+          "name": "deployment_packages_tenant_id_unique",
+          "type": "u"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX deployment_packages_pkey ON public.deployment_packages USING btree (id)",
+          "name": "deployment_packages_pkey"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX deployment_packages_tenant_id_unique ON public.deployment_packages USING btree (tenant_id)",
+          "name": "deployment_packages_tenant_id_unique"
+        }
+      ],
+      "name": "deployment_packages",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "user_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "channel_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "thread_id",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE",
+          "name": "intelligence_channel_mappings_channel_id_channels_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL channel_id",
+          "name": "intelligence_channel_mappings_channel_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "intelligence_channel_mappings_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL thread_id",
+          "name": "intelligence_channel_mappings_thread_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "intelligence_channel_mappings_updated_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (user_id, channel_id)",
+          "name": "intelligence_channel_mappings_user_id_channel_id_pk",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL user_id",
+          "name": "intelligence_channel_mappings_user_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+          "name": "intelligence_channel_mappings_user_id_users_id_fk",
+          "type": "f"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX intelligence_channel_mappings_thread_idx ON public.intelligence_channel_mappings USING btree (thread_id)",
+          "name": "intelligence_channel_mappings_thread_idx"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX intelligence_channel_mappings_user_id_channel_id_pk ON public.intelligence_channel_mappings USING btree (user_id, channel_id)",
+          "name": "intelligence_channel_mappings_user_id_channel_id_pk"
+        }
+      ],
+      "name": "intelligence_channel_mappings",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "title",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "vendor",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "url",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": "'first-party'::text",
+          "name": "provenance",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "credential_id",
+          "notnull": false,
+          "ordinal": 6,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "tools_refreshed_at",
+          "notnull": false,
+          "ordinal": 7,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "last_error",
+          "notnull": false,
+          "ordinal": 8,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "added_by",
+          "notnull": false,
+          "ordinal": 9,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 10,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 11,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "mcp_servers_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE RESTRICT",
+          "name": "mcp_servers_credential_id_credentials_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "mcp_servers_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "mcp_servers_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL provenance",
+          "name": "mcp_servers_provenance_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL title",
+          "name": "mcp_servers_title_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "mcp_servers_updated_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL url",
+          "name": "mcp_servers_url_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL vendor",
+          "name": "mcp_servers_vendor_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX mcp_servers_pkey ON public.mcp_servers USING btree (id)",
+          "name": "mcp_servers_pkey"
+        }
+      ],
+      "name": "mcp_servers",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "server_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": "''::text",
+          "name": "description",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "input_schema",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "jsonb"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "mcp_tools_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL description",
+          "name": "mcp_tools_description_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL input_schema",
+          "name": "mcp_tools_input_schema_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL name",
+          "name": "mcp_tools_name_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE",
+          "name": "mcp_tools_server_id_mcp_servers_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "PRIMARY KEY (server_id, name)",
+          "name": "mcp_tools_server_id_name_pk",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL server_id",
+          "name": "mcp_tools_server_id_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX mcp_tools_server_id_name_pk ON public.mcp_tools USING btree (server_id, name)",
+          "name": "mcp_tools_server_id_name_pk"
+        }
+      ],
+      "name": "mcp_tools",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "server_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "credential_id",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "scope",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "connected_at",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL connected_at",
+          "name": "mcp_user_credentials_connected_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (credential_id) REFERENCES credentials(id)",
+          "name": "mcp_user_credentials_credential_id_credentials_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL credential_id",
+          "name": "mcp_user_credentials_credential_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL scope",
+          "name": "mcp_user_credentials_scope_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE",
+          "name": "mcp_user_credentials_server_id_mcp_servers_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL server_id",
+          "name": "mcp_user_credentials_server_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (server_id, user_id)",
+          "name": "mcp_user_credentials_server_id_user_id_pk",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "mcp_user_credentials_updated_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL user_id",
+          "name": "mcp_user_credentials_user_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+          "name": "mcp_user_credentials_user_id_users_id_fk",
+          "type": "f"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX mcp_user_credentials_server_id_user_id_pk ON public.mcp_user_credentials USING btree (server_id, user_id)",
+          "name": "mcp_user_credentials_server_id_user_id_pk"
+        },
+        {
+          "def": "CREATE INDEX mcp_user_credentials_user_idx ON public.mcp_user_credentials USING btree (user_id)",
+          "name": "mcp_user_credentials_user_idx"
+        }
+      ],
+      "name": "mcp_user_credentials",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "kind",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "ref",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "agent_id",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "granted_by",
+          "notnull": false,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE",
+          "name": "plugin_grants_agent_id_agents_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "NOT NULL agent_id",
+          "name": "plugin_grants_agent_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL created_at",
+          "name": "plugin_grants_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL kind",
+          "name": "plugin_grants_kind_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (kind, ref, agent_id)",
+          "name": "plugin_grants_kind_ref_agent_id_pk",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL ref",
+          "name": "plugin_grants_ref_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "plugin_grants_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE INDEX plugin_grants_agent_idx ON public.plugin_grants USING btree (agent_id)",
+          "name": "plugin_grants_agent_idx"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX plugin_grants_kind_ref_agent_id_pk ON public.plugin_grants USING btree (kind, ref, agent_id)",
+          "name": "plugin_grants_kind_ref_agent_id_pk"
+        }
+      ],
+      "name": "plugin_grants",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "email",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "revoked_at",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "revoked_by",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL email",
+          "name": "revoked_access_email_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (email)",
+          "name": "revoked_access_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL revoked_at",
+          "name": "revoked_access_revoked_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL revoked_by",
+          "name": "revoked_access_revoked_by_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX revoked_access_pkey ON public.revoked_access USING btree (email)",
+          "name": "revoked_access_pkey"
+        }
+      ],
+      "name": "revoked_access",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "name",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "title",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": "''::text",
+          "name": "draft_description",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": "''::text",
+          "name": "draft_html",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": "''::text",
+          "name": "draft_css",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": "''::text",
+          "name": "draft_js_functions",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "text"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "draft_argument_schema",
+          "notnull": true,
+          "ordinal": 7,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "published_description",
+          "notnull": false,
+          "ordinal": 8,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "published_html",
+          "notnull": false,
+          "ordinal": 9,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "published_css",
+          "notnull": false,
+          "ordinal": 10,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "published_js_functions",
+          "notnull": false,
+          "ordinal": 11,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "published_argument_schema",
+          "notnull": false,
+          "ordinal": 12,
+          "type": "jsonb"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "sample_arguments",
+          "notnull": true,
+          "ordinal": 13,
+          "type": "jsonb"
+        },
+        {
+          "default": "0",
+          "name": "revision",
+          "notnull": true,
+          "ordinal": 14,
+          "type": "integer"
+        },
+        {
+          "default": "false",
+          "name": "published",
+          "notnull": true,
+          "ordinal": 15,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "published_at",
+          "notnull": false,
+          "ordinal": 16,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "authored_by",
+          "notnull": false,
+          "ordinal": 17,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 18,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 19,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "sandboxed_components_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL draft_argument_schema",
+          "name": "sandboxed_components_draft_argument_schema_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL draft_css",
+          "name": "sandboxed_components_draft_css_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL draft_description",
+          "name": "sandboxed_components_draft_description_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL draft_html",
+          "name": "sandboxed_components_draft_html_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL draft_js_functions",
+          "name": "sandboxed_components_draft_js_functions_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL name",
+          "name": "sandboxed_components_name_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (name)",
+          "name": "sandboxed_components_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL published",
+          "name": "sandboxed_components_published_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL revision",
+          "name": "sandboxed_components_revision_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL sample_arguments",
+          "name": "sandboxed_components_sample_arguments_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL title",
+          "name": "sandboxed_components_title_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "sandboxed_components_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX sandboxed_components_pkey ON public.sandboxed_components USING btree (name)",
+          "name": "sandboxed_components_pkey"
+        }
+      ],
+      "name": "sandboxed_components",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "token",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "ip_address",
+          "notnull": false,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_agent",
+          "notnull": false,
+          "ordinal": 6,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 7,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 8,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "sessions_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL expires_at",
+          "name": "sessions_expires_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "sessions_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "sessions_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL token",
+          "name": "sessions_token_not_null",
+          "type": "n"
+        },
+        {
+          "def": "UNIQUE (token)",
+          "name": "sessions_token_unique",
+          "type": "u"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "sessions_updated_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL user_id",
+          "name": "sessions_user_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+          "name": "sessions_user_id_users_id_fk",
+          "type": "f"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX sessions_pkey ON public.sessions USING btree (id)",
+          "name": "sessions_pkey"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX sessions_token_unique ON public.sessions USING btree (token)",
+          "name": "sessions_token_unique"
+        }
+      ],
+      "name": "sessions",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "owner_user_id",
+          "notnull": false,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "slug",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "title",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "summary",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "instructions",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "text"
+        },
+        {
+          "default": "'yours'::text",
+          "name": "origin",
+          "notnull": true,
+          "ordinal": 7,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "installed_by",
+          "notnull": false,
+          "ordinal": 8,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 9,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 10,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "skills_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "skills_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL instructions",
+          "name": "skills_instructions_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL origin",
+          "name": "skills_origin_not_null",
+          "type": "n"
+        },
+        {
+          "def": "FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE",
+          "name": "skills_owner_user_id_users_id_fk",
+          "type": "f"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "skills_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL slug",
+          "name": "skills_slug_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL summary",
+          "name": "skills_summary_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL title",
+          "name": "skills_title_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "skills_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE INDEX skills_owner_idx ON public.skills USING btree (owner_user_id)",
+          "name": "skills_owner_idx"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX skills_pkey ON public.skills USING btree (id)",
+          "name": "skills_pkey"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX skills_slug_key ON public.skills USING btree (slug)",
+          "name": "skills_slug_key"
+        }
+      ],
+      "name": "skills",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "issuer",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "oidc_config",
+          "notnull": false,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "saml_config",
+          "notnull": false,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "notnull": false,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "provider_id",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "organization_id",
+          "notnull": false,
+          "ordinal": 7,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "domain",
+          "notnull": true,
+          "ordinal": 8,
+          "type": "text"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL domain",
+          "name": "sso_providers_domain_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "sso_providers_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL issuer",
+          "name": "sso_providers_issuer_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "sso_providers_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL provider_id",
+          "name": "sso_providers_provider_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "UNIQUE (provider_id)",
+          "name": "sso_providers_provider_id_unique",
+          "type": "u"
+        },
+        {
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL",
+          "name": "sso_providers_user_id_users_id_fk",
+          "type": "f"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX sso_providers_pkey ON public.sso_providers USING btree (id)",
+          "name": "sso_providers_pkey"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX sso_providers_provider_id_unique ON public.sso_providers USING btree (provider_id)",
+          "name": "sso_providers_provider_id_unique"
+        }
+      ],
+      "name": "sso_providers",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "user_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "role",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "role"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "user_roles_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL role",
+          "name": "user_roles_role_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL user_id",
+          "name": "user_roles_user_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (user_id, role)",
+          "name": "user_roles_user_id_role_pk",
+          "type": "p"
+        },
+        {
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+          "name": "user_roles_user_id_users_id_fk",
+          "type": "f"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX user_roles_user_id_role_pk ON public.user_roles USING btree (user_id, role)",
+          "name": "user_roles_user_id_role_pk"
+        }
+      ],
+      "name": "user_roles",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "email",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "notnull": false,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "image",
+          "notnull": false,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": "false",
+          "name": "email_verified",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "boolean"
+        },
+        {
+          "default": "'{}'::text[]",
+          "name": "groups",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "text[]"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 7,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 8,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "users_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL email",
+          "name": "users_email_not_null",
+          "type": "n"
+        },
+        {
+          "def": "UNIQUE (email)",
+          "name": "users_email_unique",
+          "type": "u"
+        },
+        {
+          "def": "NOT NULL email_verified",
+          "name": "users_email_verified_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL groups",
+          "name": "users_groups_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "users_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "users_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "users_updated_at_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX users_email_unique ON public.users USING btree (email)",
+          "name": "users_email_unique"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)",
+          "name": "users_pkey"
+        }
+      ],
+      "name": "users",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "identifier",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "NOT NULL created_at",
+          "name": "verifications_created_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL expires_at",
+          "name": "verifications_expires_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL id",
+          "name": "verifications_id_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL identifier",
+          "name": "verifications_identifier_not_null",
+          "type": "n"
+        },
+        {
+          "def": "PRIMARY KEY (id)",
+          "name": "verifications_pkey",
+          "type": "p"
+        },
+        {
+          "def": "NOT NULL updated_at",
+          "name": "verifications_updated_at_not_null",
+          "type": "n"
+        },
+        {
+          "def": "NOT NULL value",
+          "name": "verifications_value_not_null",
+          "type": "n"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX verifications_pkey ON public.verifications USING btree (id)",
+          "name": "verifications_pkey"
+        }
+      ],
+      "name": "verifications",
+      "triggers": []
+    }
+  ]
+}

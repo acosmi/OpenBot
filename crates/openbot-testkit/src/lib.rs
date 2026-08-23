@@ -21,7 +21,29 @@
 //!   逐字把"测试"与 Axum、Tauri、迁移工具并列为只做认证 / framing / 限制 / 错误映射的一方）。
 //! - 替代 CI：`xtask ci` 只是把 v3 §16.3 的固定清单按顺序跑一遍，不新增也不删减判据。
 //!
-//! # Phase 0 状态
+//! # G1 状态
 //!
-//! 库面刻意为空；本轮只落地 bin target `xtask`（`parity-check` 与 `ci` 两个子命令）。
-//! golden trace / fault injection / fake provider 随各自闸门（G1 起）逐步落地。
+//! **库面仍然刻意为空。** 已落地的是两个 target：
+//!
+//! | target | 内容 | 出处 |
+//! | --- | --- | --- |
+//! | `src/bin/xtask.rs` | 仓库闸门驱动器（`parity-check` / `ci` / `test-inventory`） | §19.3 / §24 G0 |
+//! | `tests/transport_parity.rs` | **G1 判据第 2 条**的执行面：同一个 `ApplicationService` 经 Axum HTTP 与 in-process 两条 transport，结果一致 | §24 G1 / §5.2 |
+//!
+//! golden trace / fault injection / fake provider 随各自闸门逐步落地。
+//!
+//! ## 为什么对拍装置落在 `tests/` 而不是库面
+//!
+//! 它是一份**集成测试**，不是可复用工具：夹具（内存 `ChannelReader`、固定身份、
+//! 命令→路由台账）只对那一条判据有意义。把它们提到库面就得给每一样起一个公开名字、
+//! 定一份公开契约，而在下一个消费者出现之前，那份契约没有任何人在验证。
+//!
+//! 更实在的一条：库面一旦公开这些夹具，业务 crate 就可能反向依赖 testkit —— 而本 crate
+//! 「不进任何发行物」正是靠"没人依赖它"成立的。
+//!
+//! ## dev-dependencies 的方向
+//!
+//! `tests/transport_parity.rs` 依赖 `openbot-application` / `-contracts` / `-server` /
+//! `-desktop` 四个业务 crate，全部只在 `[dev-dependencies]` 里。所以依赖箭头是
+//! **testkit → 业务 crate**，且只在 `cargo test` 时存在；`cargo build --workspace` 的
+//! 依赖图里，本 crate 与它们零关系。

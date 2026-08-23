@@ -11,3 +11,38 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+# 端口定义。依赖箭头是 `openbot-infra -> openbot-application`：适配器依赖端口，
+# 这是六边形架构里唯一正确的方向（application 只依赖 contracts，无环）。
+openbot-application.workspace = true
+
+# `ChannelSummary` 与各 ID newtype。
+openbot-contracts.workspace = true
+
+# `ChannelReader` 是 `#[async_trait]` trait，实现侧必须同样标注。
+async-trait.workspace = true
+
+# `PortError` 只带静态字段（端口文档：数据库原值是不可信数据，不进错误）。
+# 真正的故障细节由实现侧自己 trace 出去 —— 只依赖 facade，不依赖 subscriber。
+tracing.workspace = true
+
+# PostgreSQL 访问（v3 §14.1，裁决 D3：tokio-postgres + deadpool，无编译期查询宏）。
+deadpool-postgres.workspace = true
+postgres-types.workspace = true
+tokio-postgres.workspace = true
+
+# schema facts 的规范 JSON 形态（与 psql 侧 jsonb_build_object 逐字段一致）。
+serde.workspace = true
+serde_json.workspace = true
+
+# `timestamp with time zone` 的行类型；tokio-postgres 已开 `with-time-0_3`。
+time.workspace = true
+
+# 7 个 `uuid` 列的行类型；tokio-postgres / postgres-types 已开 `with-uuid-1`。
+# 刻意不降级成 `String`：那样「文本表示不同但值相同」的差异会从类型映射的比对里漏过去。
+uuid.workspace = true
+
+# InfraError 的错误分层。
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
