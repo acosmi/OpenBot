@@ -143,7 +143,7 @@ fn auth() -> AuthContext {
         TenantId::new("tenant-1"),
         ActorId::new("single-user"),
         [Role::Admin, Role::User],
-        0,
+        openbot_contracts::auth::AuthGeneration::new(0),
         true,
     )
 }

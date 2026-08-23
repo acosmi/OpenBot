@@ -392,7 +392,8 @@ Axum、Tauri、测试和迁移工具只做认证、framing、输入大小限制�
 
 ### 5.3 核心 ID
 
-所有 ID 是 string newtype，不擅自限定为 UUID；创建端可以使用 UUIDv7/ULID，兼容端必须接受上游既有字符串。
+本节下列核心 ID 是 string newtype（R23 裁决的两个 generation 除外），不擅自限定为 UUID；
+创建端可以使用 UUIDv7/ULID，兼容端必须接受上游既有字符串。
 
 ```text
 DeploymentId
@@ -411,6 +412,13 @@ DocumentGeneration
 PolicyDecisionId
 AuditEventId
 ```
+
+跨 crate 的内部状态轴不伪装成上述第 16+ 个公开 wire ID，但也不允许每层自建
+同名 newtype。`AttemptId` / `CapabilityId` / `CatalogGeneration` 由
+`openbot-contracts::ids`唯一定义，`AuthGeneration` 由 `openbot-contracts::auth`唯一定义并直接
+存入 `AuthContext`；四者都不 serde，外部不能自报这些内部授权状态。`SecretId` 与
+`CredentialGeneration` 当前没有任何 domain 外消费者，因此继续留在 vault；第一条
+真实 repository/application 用例出现时再与用例同批上收。（§28.1 R47）
 
 `AuthContext` 只能由 Rust 根据 session、连接 peer、数据库 ACL 和资源映射构造。模型、renderer、MCP server、remote Agent 或 browser engine 传来的同名字段一律视为普通不可信输入。
 
@@ -1778,6 +1786,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R44 | §16.3（2026-08-23 D-1 供应链裁决） | `cargo deny check` / `cargo audit` 唯一命中 RUSTSEC-2023-0071：`rsa 0.9.10` 由钉版 `openidconnect 4.0.1` 非可选引入，且 advisory `patched=[]` | 无说明地忽略是隐藏风险；无限期保留一条必红闸门则会训练所有人忽略红灯；换掉 openidconnect 又会偏离已钉选型 | 仅对该 ID 记一条 owner=security 的窄豁免：本仓只以 `CoreJsonWebKey`/`RsaPublicKey` 做 RP 公钥验签，无 RSA 私签/解密。`tools/check-rustsec-waivers.sh` 先锁死 rsa/openidconnect 精确版本、反向生产链、feature 零扩张和私钥符号零命中；版本/feature/消费者/private-key JWT 或 patched 状态任一变化必须重审 | 本轮 `cargo tree -i rsa -e normal --all-features` 精确四节；guard exit 0 且内置正向对照；`cargo deny check` = advisories/bans/licenses/sources 全 ok；`cargo audit --no-fetch --deny warnings --ignore RUSTSEC-2023-0071` 加载 1225 条 advisory、扫描 374 个 crate 依赖、exit 0 |
 | R45 | §16.3（2026-08-23 D-5 供应链棘轮） | CI 固定要求 `cargo vet`，但本机无工具、仓内无 policy/audits/import lock；直接接线会让全部依赖恒红 | 一条恒红闸门等于没有闸门；反过来把 `init` 生成的 exemptions 称为“已审计”也是造假。正确起点是显式标记存量未审，但对任何增量立即判红 | 钉 `cargo-vet 0.10.0`；提交 `supply-chain/config.toml` / `audits.toml` / `imports.lock`。只导入 Google exact/delta audits 并锁定 14 个 fully audited；350 个精确版本保留 bootstrap exemption 且文档明说“不是审计结论”。CI 仅跑 `cargo vet --locked`、不自动 regenerate；checkout/rust-cache/install-action 也收窄到已实查 patch tag | `cargo vet --version` = 0.10.0；正向 `cargo vet --locked` = `14 fully audited, 350 exempted`；负向临时删除 `aead 0.5.2` exemption 实得 exit 255 / `Vetting Failed` / 精确 missing `safe-to-deploy`；exemption 数可由一条 tomllib 命令复算 |
 | R46 | §6.4（2026-08-23 D-3 密钥擦除裁决） | `SecretBytes::drop` 只是 `Vec::fill(0) + compiler_fence`，模块文档自身也诚实标为“尽力”；`zeroize 1.9.0` 已经由既有密码学树锁定 | 手写普通写没有“不被优化掉”的稳定保证；但把 zeroize 说成“清除进程内所有历史副本”同样是造假 | workspace 显式钉 `zeroize 1.9.0` 且只开 `alloc`；`SecretBytes` 改持有 `Zeroizing<Vec<u8>>` 并标记 `ZeroizeOnDrop`，删除手写 Drop。保证只到当前 Vec length+capacity；历史扩容和调用方副本仍明示不保证 | `cargo tree -i zeroize -e normal --all-features` 证明 1.9.0 已在图；domain 325 unit + 6 integration + 7 doctest 全绿；trait 编译期断言 `SecretBytes: ZeroizeOnDrop`；`cargo vet --locked` 仍 14 audited / 350 exempted，没有绕过 R45 |
+| R47 | §5.3（2026-08-23 D-2 类型所有权裁决） | `AttemptId` / `CapabilityId` / `CatalogGeneration` 已在 domain 定义却被 application/infra 消费；`AuthGeneration` 同时以 domain newtype 和 `AuthContext` 裸 `u64` 存在；`SecretId` / `CredentialGeneration` 则仍只在 vault domain | 六个全上收会把无跨层消费者的类型塞进 contracts；全不上收则让前四个跨层概念继续多真源。contracts 所有权应由真实消费者裁决，不是名字看起来像 ID 就搬 | 上收 Attempt/Capability/Catalog/Auth 四类型，保持原有窄 trait 面且全部不 serde；`AuthContext` 字段/构造/getter 全程改用 `AuthGeneration`，domain 旧路径只做 re-export。Secret/Credential generation 明确留 domain，第一条跨 crate 用例出现时同批移动 | 全仓 `pub struct` 复算实得六个名字每个恰一个定义；跨 crate 旧 domain path 零命中；contracts 负向测试锁死三个内部 ID 与 AuthGeneration 均不 serde、ActorId 正向仍可 serde；WASM contracts check 与 workspace 全闸门通过 |
 
 ### 28.2 复核通过、原样保留的断言
 

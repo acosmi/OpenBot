@@ -115,7 +115,8 @@ async fn keyed_cookie_resolves_authoritative_acl_generation_and_live_session() {
                 .map_err(|error| error.to_string())?;
             if resolved.context().actor().as_str() != "actor-1"
                 || !resolved.context().has_role(Role::Admin)
-                || resolved.context().auth_generation() != 2
+                || resolved.context().auth_generation()
+                    != openbot_contracts::auth::AuthGeneration::new(2)
                 || resolved.live_session().is_none()
             {
                 return Err(format!("解析出的权威身份不符：{resolved:?}"));

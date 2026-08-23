@@ -56,6 +56,7 @@
 use core::time::Duration;
 
 use openbot_contracts::ids::{ActorId, BotId, PolicyDecisionId, RunId, ToolCallId};
+pub use openbot_contracts::ids::{AttemptId, CapabilityId};
 
 use super::approval::{
     ApprovalBinding, ApprovalInvalidation, ApprovalObservation, ApprovalTarget, ApprovalValidity,
@@ -66,50 +67,6 @@ use super::commit::CommitState;
 use super::metadata::{Effect, ToolMetadata, ToolMetadataError, ToolName};
 use crate::audit::hash::Sha256Digest;
 use crate::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
-
-/// 一次尝试的标识（`attempt` 行的主键）。
-///
-/// §17.2 条 2 说的是「durable decision **+ attempt**」——两者是两行，decision 说"允许"，
-/// attempt 说"开始做了"。分开是因为一次 decision 可能对应多次 attempt（重放），而把它们
-/// 压成一行就再也回答不了"这次放行到底动手了几次"。
-///
-/// 本模块的本地 newtype：`openbot_contracts::ids` 的 §5.3 十五个 ID 里没有它（本轮实读
-/// `crates/openbot-contracts/src/ids.rs`）。加进 contracts 是改跨 crate 契约的动作，
-/// 已写进交付报告的遗留项。
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AttemptId(String);
-
-impl AttemptId {
-    /// 由标识构造。与 §5.3 一致：**不做格式校验**。
-    #[must_use]
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// 借出底层字符串。
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// 单次能力券的标识。同样是本模块的本地 newtype，理由见 [`AttemptId`]。
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CapabilityId(String);
-
-impl CapabilityId {
-    /// 由标识构造。
-    #[must_use]
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// 借出底层字符串。
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 /// policy 规则 ID。拒绝时必须带上（§15.3「policy refusal 403 + stable error code/rule ID」）。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

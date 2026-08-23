@@ -27,7 +27,7 @@ use std::collections::BTreeSet;
 
 use core::fmt;
 
-use openbot_contracts::auth::AuthContext;
+use openbot_contracts::auth::{AuthContext, AuthGeneration};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
 
 /// 窗口标签 —— 宿主给每个窗口的进程内唯一名字（Tauri 的 `WebviewWindow::label()`）。
@@ -75,7 +75,7 @@ pub struct WindowIdentity {
     deployment: DeploymentId,
     tenant: TenantId,
     actor: ActorId,
-    auth_generation: u64,
+    auth_generation: AuthGeneration,
 }
 
 impl WindowIdentity {
@@ -126,7 +126,7 @@ impl WindowIdentity {
     /// 外面（[`FilterReason::StaleAuthGeneration`]），直到 G2 的 session 层把它重建。
     #[must_use]
     pub fn auth_generation(&self) -> u64 {
-        self.auth_generation
+        self.auth_generation.get()
     }
 }
 
@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(identity.deployment(), auth.deployment());
         assert_eq!(identity.tenant(), auth.tenant());
         assert_eq!(identity.actor(), auth.actor());
-        assert_eq!(identity.auth_generation(), auth.auth_generation());
+        assert_eq!(identity.auth_generation(), auth.auth_generation().get());
     }
 
     /// 正向对照：定向到本窗口 / 本 actor 的帧确实进得来。

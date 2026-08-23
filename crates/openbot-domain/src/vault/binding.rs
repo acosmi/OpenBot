@@ -77,9 +77,9 @@ impl KeyVersion {
 ///
 /// # 为什么它在 vault 里而不在 `openbot-contracts::ids`
 ///
-/// §5.3 那张表固定了十五个核心 ID 的名字，`secret_id` 不在其中。把它塞进 contracts 需要
-/// 修订 §5.3 的表并改 `crates/openbot-contracts/src/ids.rs` —— 那是本次实施的文件范围之外的
-/// 动作，已记进交付报告。语义上它与 §5.3 的 string newtype 一致：**不做 UUID 校验**，
+/// D-2 复算时它的全部消费者都在 `openbot-domain::vault`，没有第一条真实跨 crate
+/// 契约。提前上收只会让 contracts 占一个无消费者的名字；将来 repository/application
+/// 第一次使用时必须与那条用例同批移动。语义上它与 §5.3 的 string newtype 一致：**不做 UUID 校验**，
 /// 因为上游 `credentials.id` 是 `uuid defaultRandom`，而兼容端必须接受上游既有字符串。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SecretId(String);

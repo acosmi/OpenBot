@@ -412,7 +412,7 @@ mod tests {
             TenantId::new("tenant-1"),
             ActorId::new(actor),
             [role],
-            1,
+            openbot_contracts::auth::AuthGeneration::new(1),
             false,
         )
     }

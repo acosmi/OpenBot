@@ -5,14 +5,13 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use deadpool_postgres::{GenericClient, Pool};
 use openbot_application::{PeopleAdministration, PeoplePageRequest, PeoplePortError};
-use openbot_contracts::auth::Role;
+use openbot_contracts::auth::{AuthGeneration, Role};
 use openbot_contracts::error::IdentityConflictReason;
 use openbot_contracts::ids::ActorId;
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
 use openbot_domain::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
 use openbot_domain::identity::email::NormalizedEmail;
-use openbot_domain::identity::generation::AuthGeneration;
 use openbot_domain::identity::revocation::{
     AccessChangeEffect, AccessChangeRejection, AccessChangeRequest, RestoreStep, RevocationStep,
     authorize_access_change,

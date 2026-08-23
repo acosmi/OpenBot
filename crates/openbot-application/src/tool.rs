@@ -6,7 +6,7 @@ use core::time::Duration;
 use async_trait::async_trait;
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::error::AppError;
-use openbot_contracts::ids::{ActorId, BotId, RunId, ToolCallId};
+use openbot_contracts::ids::{ActorId, BotId, CapabilityId, CatalogGeneration, RunId, ToolCallId};
 use openbot_contracts::tool::{ToolCommitState, ToolInvocation, ToolResult};
 use openbot_domain::audit::hash::Sha256Digest;
 use openbot_domain::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
@@ -16,10 +16,10 @@ use openbot_domain::tool::args::{ToolArguments, ToolArgumentsError};
 use openbot_domain::tool::commit::{CommitState, IdempotencyKey};
 use openbot_domain::tool::metadata::{ToolMetadata, ToolName};
 use openbot_domain::tool::pipeline::{
-    AbortReason, ApprovalOutcome, ApprovalSettled, AuthoritativeActor, CapabilityId,
-    DecisionWriteFailed, DurableDecisionReceipt, OutcomeWriteFailed, PolicyRuleId, PolicyVerdict,
-    RedeemedCapability, RefusalReason, Requested, RequestedToolCall, SingleUseCapability,
-    ToolCallTerminal, ToolOutcome, ValidationRejection,
+    AbortReason, ApprovalOutcome, ApprovalSettled, AuthoritativeActor, DecisionWriteFailed,
+    DurableDecisionReceipt, OutcomeWriteFailed, PolicyRuleId, PolicyVerdict, RedeemedCapability,
+    RefusalReason, Requested, RequestedToolCall, SingleUseCapability, ToolCallTerminal,
+    ToolOutcome, ValidationRejection,
 };
 
 /// Tool port 的封闭失败分类；不携带 vendor/数据库原文。
@@ -140,7 +140,7 @@ pub struct ToolApprovalRequest {
     /// target。
     pub target: ApprovalTarget,
     /// catalog generation。
-    pub catalog_generation: openbot_domain::tool::metadata::CatalogGeneration,
+    pub catalog_generation: CatalogGeneration,
     /// policy version。
     pub policy_version: PolicyVersionTag,
 }
@@ -790,15 +790,15 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use openbot_contracts::auth::Role;
-    use openbot_contracts::ids::{DeploymentId, PolicyDecisionId, TenantId};
+    use openbot_contracts::ids::{
+        AttemptId, CatalogGeneration, DeploymentId, PolicyDecisionId, TenantId,
+    };
     use openbot_domain::policy::context::{ActorRef, BotRef, PageRef, ToolRef};
     use openbot_domain::policy::{ActionPolicy, CompiledActionPolicy, PolicyMode, evaluate};
     use openbot_domain::tool::approval::ApprovalInvalidation;
     use openbot_domain::tool::metadata::{
-        ApprovalClass, CatalogGeneration, Effect, EffectClassification, Idempotency,
-        SandboxRequirement, ToolLimits,
+        ApprovalClass, Effect, EffectClassification, Idempotency, SandboxRequirement, ToolLimits,
     };
-    use openbot_domain::tool::pipeline::AttemptId;
     use serde_json::json;
 
     use super::*;
@@ -873,7 +873,7 @@ mod tests {
             TenantId::new("tenant-1"),
             ActorId::new("actor-1"),
             [Role::User],
-            9,
+            openbot_contracts::auth::AuthGeneration::new(9),
             false,
         )
     }

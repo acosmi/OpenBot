@@ -319,7 +319,7 @@ mod tests {
             TenantId::new("tenant-g1"),
             ActorId::new(ACTOR),
             [Role::Admin, Role::User],
-            SENTINEL_AUTH_GENERATION,
+            openbot_contracts::auth::AuthGeneration::new(SENTINEL_AUTH_GENERATION),
             false,
         )
     }

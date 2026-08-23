@@ -40,10 +40,9 @@
 use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use http::request::Parts;
-use openbot_contracts::auth::{AuthContext, AuthContextBuilder, Role};
+use openbot_contracts::auth::{AuthContext, AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
-use openbot_domain::identity::generation::AuthGeneration;
 use openbot_domain::identity::roles::resolve_effective_role;
 use openbot_domain::identity::session::{
     LiveSession, SensitiveWriteApproved, SensitiveWriteRejection, SensitiveWriteRequest,
@@ -371,7 +370,7 @@ impl PostgresSessionAuthResolver {
             self.deployment.clone(),
             self.tenant.clone(),
             ActorId::new(user_id),
-            current_generation,
+            AuthGeneration::new(current_generation),
             false,
         )
         .with_role(effective)
@@ -454,9 +453,15 @@ impl SingleUserAuthResolver {
         lifetime: SessionLifetimePolicy,
     ) -> Self {
         Self {
-            context: AuthContextBuilder::from_verified_session(deployment, tenant, actor, 0, true)
-                .with_roles([Role::Admin, Role::User])
-                .build(),
+            context: AuthContextBuilder::from_verified_session(
+                deployment,
+                tenant,
+                actor,
+                AuthGeneration::new(0),
+                true,
+            )
+            .with_roles([Role::Admin, Role::User])
+            .build(),
             lifetime,
         }
     }

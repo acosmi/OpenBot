@@ -47,6 +47,8 @@ use super::secret::SecretClass;
 ///
 /// 用 `u64` 而不是字符串，与 `openbot_contracts::ids` 里两个 generation 计数器同一条理由：
 /// "是不是更新的一代"依赖**数值序**，字符串的字典序会判 `"10" < "9"`。
+/// D-2 复算时它仍只在 vault domain 内流动，所以留在此处；第一条跨 crate 凭据/连接
+/// 用例出现时再与用例同批上收，不先造空契约。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CredentialGeneration(u64);
 
@@ -72,8 +74,8 @@ impl CredentialGeneration {
     /// —— generation 0 会让一把早已被轮换掉的旧凭据重新成为"最新"。饱和的最坏结果是停在
     /// `u64::MAX` 不再前进，此时任何 stale 判定仍然为真（fail-closed）。
     ///
-    /// 这条推理与 `openbot_contracts::ids` 里两个 generation 计数器逐字相同 —— 同一条不变量
-    /// 在两处各写一遍不是重复，是因为**两处都可能被单独改坏**。
+    /// 这条推理与 contracts 的 generation 计数器相同；本类型仍独立是因为它尚未跨层，
+    /// 不是因为回绕语义可以另写一份。
     #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))

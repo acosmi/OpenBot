@@ -1,7 +1,9 @@
 //! 核心 ID（v3 §5.3）。
 //!
 //! §5.3 逐字规定：「所有 ID 是 string newtype，不擅自限定为 UUID；创建端可以使用
-//! UUIDv7/ULID，兼容端必须接受上游既有字符串。」十五个名字由 §5.3 的表固定。
+//! UUIDv7/ULID，兼容端必须接受上游既有字符串。」十五个**核心/对外**名字由 §5.3 的表
+//! 固定。D-2 另把已经跨 crate 的 `AttemptId` / `CapabilityId` / `CatalogGeneration`
+//! 收口到本模块；它们是内部跨层 contract，不冒充第十六至十八个公开 wire ID。
 //!
 //! # 为什么 `ComputerGeneration` / `DocumentGeneration` 是 `u64` 而不是 `String`
 //!
@@ -135,6 +137,71 @@ macro_rules! define_u64_ids {
     };
 }
 
+/// 一次工具执行尝试的标识。
+///
+/// §17.2 条 2 的 durable decision 与 attempt 是两行：decision 说“允许”，attempt 说
+/// “本次开始做了”；一次 decision 可对应多次安全重放尝试。
+/// 跨 domain/application/infra，因此由 contracts 单点定义；不实现 serde / Display，
+/// 避免被顺手塞进对外 DTO 或日志。
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AttemptId(String);
+
+impl AttemptId {
+    /// 从既有标识构造；兼容端不加格式限制。
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// 借出底层字符串。
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+/// 单次能力券的内部标识。
+///
+/// 它参与 repository CAS 与 application 调用，但不是模型/浏览器可铸造的 wire 值，
+/// 所以与 [`AttemptId`] 一样刻意不实现 serde / Display。
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CapabilityId(String);
+
+impl CapabilityId {
+    /// 从内部铸造值构造。
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// 借出底层字符串。
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+/// tool catalog 的数值代际。refresh 后旧 approval/capability 必须失效。
+///
+/// 用 `u64` 是因为失效判定依赖数值序；字典序会错判 `"10" < "9"`。
+/// 不实现 serde：它是 Rust 内部状态轴，不是让外部声明“我属于第几代”的输入。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CatalogGeneration(u64);
+
+impl CatalogGeneration {
+    /// 从权威计数值构造。
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// 取出数值。
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
 define_string_ids! {
     /// 一次部署的身份。`DEPLOYMENT_ID` 是 thread id 六字节指纹的来源（§15.4），
     /// 改它等于放弃对既有 thread 的 `owns` 判定。
@@ -176,6 +243,63 @@ define_u64_ids! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct SerializeProbe<T>(core::marker::PhantomData<T>);
+
+    impl<T> SerializeProbe<T> {
+        const fn new() -> Self {
+            Self(core::marker::PhantomData)
+        }
+    }
+
+    impl<T: serde::Serialize> SerializeProbe<T> {
+        fn is_implemented(&self) -> bool {
+            true
+        }
+    }
+
+    trait SerializeProbeFallback {
+        fn is_implemented(&self) -> bool {
+            false
+        }
+    }
+
+    impl<T> SerializeProbeFallback for SerializeProbe<T> {}
+
+    struct DeserializeProbe<T>(core::marker::PhantomData<T>);
+
+    impl<T> DeserializeProbe<T> {
+        const fn new() -> Self {
+            Self(core::marker::PhantomData)
+        }
+    }
+
+    impl<T: serde::de::DeserializeOwned> DeserializeProbe<T> {
+        fn is_implemented(&self) -> bool {
+            true
+        }
+    }
+
+    trait DeserializeProbeFallback {
+        fn is_implemented(&self) -> bool {
+            false
+        }
+    }
+
+    impl<T> DeserializeProbeFallback for DeserializeProbe<T> {}
+
+    /// 内部跨层 ID 进 contracts 不等于进 wire；核心 ID 作正向对照仍可 serde。
+    #[test]
+    fn internal_contract_ids_are_not_serializable_wire_types() {
+        assert!(!SerializeProbe::<AttemptId>::new().is_implemented());
+        assert!(!SerializeProbe::<CapabilityId>::new().is_implemented());
+        assert!(!SerializeProbe::<CatalogGeneration>::new().is_implemented());
+        assert!(!DeserializeProbe::<AttemptId>::new().is_implemented());
+        assert!(!DeserializeProbe::<CapabilityId>::new().is_implemented());
+        assert!(!DeserializeProbe::<CatalogGeneration>::new().is_implemented());
+        assert!(SerializeProbe::<ActorId>::new().is_implemented());
+        assert!(DeserializeProbe::<ActorId>::new().is_implemented());
+    }
 
     /// §5.3「兼容端必须接受上游既有字符串」的直接兑现：一个明显不是 UUID 的上游风格
     /// 字符串必须构造成功且**逐字节原样保留**。

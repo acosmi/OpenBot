@@ -14,7 +14,9 @@ use openbot_application::{
 };
 use openbot_contracts::auth::{AuthContext, AuthContextBuilder, Role};
 use openbot_contracts::error::AppError;
-use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ToolCallId};
+use openbot_contracts::ids::{
+    ActorId, BotId, CatalogGeneration, DeploymentId, RunId, TenantId, ToolCallId,
+};
 use openbot_contracts::tool::ToolInvocation;
 use openbot_domain::audit::hash::Sha256Digest;
 use openbot_domain::policy::context::{ActorRef, BotRef, PageRef, PolicyContext, ToolRef};
@@ -23,8 +25,8 @@ use openbot_domain::tool::approval::ApprovalTarget;
 use openbot_domain::tool::args::ToolArguments;
 use openbot_domain::tool::commit::CommitState;
 use openbot_domain::tool::metadata::{
-    ApprovalClass, CatalogGeneration, Effect, EffectClassification, Idempotency,
-    SandboxRequirement, ToolLimits, ToolMetadata, ToolName,
+    ApprovalClass, Effect, EffectClassification, Idempotency, SandboxRequirement, ToolLimits,
+    ToolMetadata, ToolName,
 };
 use openbot_domain::tool::pipeline::ApprovalOutcome;
 use serde_json::json;
@@ -180,7 +182,7 @@ fn auth() -> AuthContext {
         DeploymentId::new("dep-1"),
         TenantId::new("tenant-1"),
         ActorId::new("actor-1"),
-        1,
+        openbot_contracts::auth::AuthGeneration::new(1),
         false,
     )
     .with_role(Role::User)

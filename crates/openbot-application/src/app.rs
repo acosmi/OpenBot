@@ -574,7 +574,7 @@ mod tests {
             TenantId::new("tenant-g1"),
             ActorId::new("actor-1"),
             [],
-            1,
+            openbot_contracts::auth::AuthGeneration::new(1),
             false,
         );
         assert!(roleless.roles().is_empty());

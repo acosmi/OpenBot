@@ -22,7 +22,8 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
   **D-1 已正式裁决**：RUSTSEC-2023-0071 只做一条窄豁免；`tools/check-rustsec-waivers.sh` 在 deny/audit 前锁死精确四节生产依赖链、openidconnect feature 零扩张和 RSA 私钥符号零命中。`cargo deny check` 四段全绿；`cargo audit --deny warnings --ignore RUSTSEC-2023-0071` 扫描其余 advisory 全绿。见 R44。
   **D-5 已建立棘轮**：CI 钉 `cargo-vet 0.10.0` 并跑 `cargo vet --locked`；Google exact/delta import 锁定 14 个 fully audited，其余 350 个精确版本是明示未审的 bootstrap exemptions。新增/升级未覆盖版本当场判红，CI 不自动 regenerate。见 R45。
   **D-3 已正式采用 `zeroize`**：`SecretBytes` 内层是 `Zeroizing<Vec<u8>>` 并标记 `ZeroizeOnDrop`，drop 清除当前 length+capacity；历史扩容 allocation 与调用方副本仍不冒充可擦除。见 R46。
-- v3 §28.1 当前 **46** 条（R1–R46）。实施时除 R23/R26–R34 外还必须读 R35–R46，尤其 R42（session keyed hash/0015）、R43（Server production slice 边界）、R44（RustSec 窄豁免）、R45（cargo-vet 棘轮）与 R46（密钥擦除的保证/不保证边界）。
+  **D-2 已按真实消费者裁决**：Attempt/Capability/Catalog/Auth 四类型收口到 contracts 且不 serde，`AuthContext` 不再用裸 `u64` 表示代际；尚无跨 crate 消费者的 SecretId/CredentialGeneration 留在 vault domain。见 R47。
+- v3 §28.1 当前 **47** 条（R1–R47）。实施时除 R23/R26–R34 外还必须读 R35–R47，尤其 R42（session keyed hash/0015）、R43（Server production slice 边界）、R44（RustSec 窄豁免）、R45（cargo-vet 棘轮）、R46（密钥擦除边界）与 R47（内部跨层 contract 的所有权）。
 - 上游对照固定在 `CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`，不引用会漂移的 `main`（§1.2）。
 
 ## 2. 目标定义（为什么是这条线）
@@ -50,7 +51,7 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 | Browser kernel | Electron `43.3.0` / Chromium `150.0.7871.212` |
 | 数据库 | PostgreSQL 17，**唯一**语义；Desktop 由 Rust 监管本机 sidecar；不需要 pgvector |
 | 数据库驱动 | `tokio-postgres 0.7.18` + `deadpool-postgres 0.14.1` + `postgres-types 0.2`。**不用 `sqlx`** —— 它的 `query!` 宏让 `cargo build --locked` 的答案取决于跑在哪台机器上（构建期连库或 `.sqlx` 离线元数据二选一）。SQL 手写，由对真库的集成测试验证（G1 裁决 D3） |
-| ID 类型 | §5.3 的十五个 ID 里，`ComputerGeneration` / `DocumentGeneration` 是 **`u64` newtype**（§11.2 `EngineCommand`、§12.3 `FrameHeader` 本来就写作 `u64`；"旧 generation 失效"依赖数值序，字典序会判错），其余 13 个是 `String` newtype 且**不做 UUID 校验**（G1 裁决 D7 / §28.1 R23） |
+| ID 类型 | §5.3 的十五个核心 ID 里，`ComputerGeneration` / `DocumentGeneration` 是 **`u64` newtype**，其余 13 个是 `String` newtype 且**不做 UUID 校验**（R23）。另有四个不 serde 的内部跨层 contract：Attempt/Capability/Catalog/Auth generation（R47） |
 
 上游 oracle 运行时版本（copilotkit 1.68.3、ag-ui 0.0.57、better-auth 1.7.1、mcp sdk 1.30.0、playwright 1.62.1 …）以 §1.2 表为准，fixture 与 golden 只认这些版本。
 

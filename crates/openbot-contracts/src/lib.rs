@@ -9,6 +9,8 @@
 //!   `ComputerId` / `ComputerGeneration` / `TabId` / `DocumentGeneration` / `PolicyDecisionId` /
 //!   `AuditEventId`）。ID 一律不擅自限定为 UUID；创建端可以用 UUIDv7/ULID，兼容端必须接受
 //!   上游既有字符串。
+//! - 已经真实跨 crate 的内部 contract：`AttemptId` / `CapabilityId` /
+//!   `CatalogGeneration` 与 [`auth::AuthGeneration`]。它们刻意不 serde，不扩张上述公开 ID 清单。
 //! - 跨边界 DTO、event 族、错误码与 schema。错误以 **code** 穿越边界（CLAUDE.md §4a），
 //!   状态码与 audit 类型固定（v3 §15.3），文案不在这里。
 //! - 唯一一个既编 native 又编 wasm 的 crate：`openbot-ui` 只依赖它（设计系统文档 §13）。
@@ -29,8 +31,8 @@
 //!
 //! | 模块 | 内容 | 方案出处 |
 //! | --- | --- | --- |
-//! | [`ids`] | 十五个核心 ID（十三个 string newtype + 两个 generation 计数器） | §5.3 |
-//! | [`auth`] | [`auth::AuthContext`]、[`auth::Role`]、受限构造入口 | §5.3 / §5.2 |
+//! | [`ids`] | 十五个核心 ID + 三个不 serde 的跨层内部 ID/generation | §5.3 / R47 |
+//! | [`auth`] | [`auth::AuthContext`]、[`auth::AuthGeneration`]、[`auth::Role`]、受限构造入口 | §5.3 / §5.2 / R47 |
 //! | [`error`] | [`error::AppError`]、稳定 code、HTTP status、audit 类型 | §15.3 |
 //! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent` | §5.2 |
 //! | [`people`] | current user / admin status / people page 与 person 公开 DTO | §6.2 / R40 |

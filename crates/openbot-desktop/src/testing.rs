@@ -18,7 +18,7 @@
 //! [`crate::transport::InProcessTransport::open_session`] —— 本 crate 的签名一行都不用改，
 //! 本模块也不会被牵进生产路径（它不在默认 feature 图里）。
 
-use openbot_contracts::auth::AuthContext;
+use openbot_contracts::auth::{AuthContext, AuthGeneration};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 
 /// 测试部署 id。
@@ -55,7 +55,7 @@ pub fn auth_with(actor: &str, auth_generation: u64) -> AuthContext {
         TenantId::new(TEST_TENANT),
         ActorId::new(actor),
         [],
-        auth_generation,
+        AuthGeneration::new(auth_generation),
         false,
     )
 }
@@ -68,7 +68,7 @@ pub fn auth_in_tenant(tenant_id: &str, actor: &str, auth_generation: u64) -> Aut
         TenantId::new(tenant_id),
         ActorId::new(actor),
         [],
-        auth_generation,
+        AuthGeneration::new(auth_generation),
         false,
     )
 }

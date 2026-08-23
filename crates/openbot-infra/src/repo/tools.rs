@@ -13,11 +13,11 @@ use deadpool_postgres::{GenericClient, Pool};
 use openbot_application::{
     ToolDecisionDraft, ToolJournal, ToolOutcomeDraft, ToolPortError, ToolRefusalDraft,
 };
-use openbot_contracts::ids::{PolicyDecisionId, ToolCallId};
+use openbot_contracts::ids::{AttemptId, CapabilityId, PolicyDecisionId, ToolCallId};
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
 use openbot_domain::audit::payload::{AuditIdentifier, AuditLabel};
 use openbot_domain::tool::commit::CommitState;
-use openbot_domain::tool::pipeline::{AttemptId, DurableDecisionReceipt};
+use openbot_domain::tool::pipeline::DurableDecisionReceipt;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -292,7 +292,7 @@ impl ToolJournal for PostgresToolJournal {
     async fn attach_capability(
         &self,
         call_id: &ToolCallId,
-        capability: &openbot_domain::tool::pipeline::CapabilityId,
+        capability: &CapabilityId,
     ) -> Result<(), ToolPortError> {
         let row = ToolAttemptRepo::new(self.pool.clone())
             .attach_capability(
