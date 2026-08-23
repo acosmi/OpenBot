@@ -173,18 +173,20 @@ base64 = "0.22.1"         # channel keyset 游标的 base64url 编解码
 # §8.3 原文允许「标准 CEL 方法形式作为超集存在」，是**允许**不是**要求**，所以按 parity 取窄的那侧。
 cel = { version = "0.14.3", default-features = false }
 
-# 密码学原语（RustCrypto 系，纯 Rust，无 C / 汇编构建脚本）。四个用途，逐个点名：
+# 密码学原语（RustCrypto 系，纯 Rust，无 C / 汇编构建脚本）。五个用途，逐个点名：
 #   - `sha2`：审计 hash chain 的 row_hash / prev_hash（§8.6）、policy 文档的内容版本
 #     （§8.3「policy version 进入 approval 和 capability」）。
 #   - `hmac`：session token 的 keyed hash（§6.3「数据库只保存 keyed hash」），以及上游
 #     server/src/auth/signed-value.ts 那套「按标签派生子密钥再签名」的签名值。
 #   - `subtle`：常量时间比较。token 比较提前返回会泄漏「前几个字节对了」。
 #   - `aes-gcm`：Vault v1 信封读兼容（12 字节 IV、无 AAD）与 v2 AEAD（§6.4）。
+#   - `zeroize`：Vault 明文/密钥容器 drop 时清除当前整个 Vec allocation，并防优化器删写。
 # 刻意不用 `ring`：它带 C / 汇编构建脚本，会把一整套非 Rust 工具链拉进本项目的可复现构建面（§16.3）。
 sha2 = "0.10.9"
 hmac = "0.12.1"
 subtle = "2.6.1"
 aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
+zeroize = { version = "1.9.0", default-features = false, features = ["alloc"] }
 
 # CSPRNG。直接用 `getrandom` 而不是 `rand`：本项目需要的全部随机数都是「给我 N 个密码学随机
 # 字节」（DEK、IV、session token、state / nonce / PKCE verifier），没有一处需要分布、采样或

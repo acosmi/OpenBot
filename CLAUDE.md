@@ -21,7 +21,8 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
   **W-1/W-2 已闭合** native/repository 地基；**W-3a** people 原子 slice、**W-3b** tool application boundary 已闭合。**W-4 Server production slice 已闭合**：native 0015 + production resolver + 五条 auth/admin HTTP + protected metrics/route label + main/readiness；真实单用户进程冒烟得到账本3/principal1/roles2及四端点200。**仍未闭合项**：上述 OIDC/SAML/group/session issuance、其它 application/API、G4 executor、G5 isolation。
   **D-1 已正式裁决**：RUSTSEC-2023-0071 只做一条窄豁免；`tools/check-rustsec-waivers.sh` 在 deny/audit 前锁死精确四节生产依赖链、openidconnect feature 零扩张和 RSA 私钥符号零命中。`cargo deny check` 四段全绿；`cargo audit --deny warnings --ignore RUSTSEC-2023-0071` 扫描其余 advisory 全绿。见 R44。
   **D-5 已建立棘轮**：CI 钉 `cargo-vet 0.10.0` 并跑 `cargo vet --locked`；Google exact/delta import 锁定 14 个 fully audited，其余 350 个精确版本是明示未审的 bootstrap exemptions。新增/升级未覆盖版本当场判红，CI 不自动 regenerate。见 R45。
-- v3 §28.1 当前 **45** 条（R1–R45）。实施时除 R23/R26–R34 外还必须读 R35–R45，尤其 R42（session keyed hash/0015）、R43（Server production slice 的达成与明确边界）、R44（RustSec 窄豁免）与 R45（cargo-vet 棘轮的“已审计/存量豁免”边界）。
+  **D-3 已正式采用 `zeroize`**：`SecretBytes` 内层是 `Zeroizing<Vec<u8>>` 并标记 `ZeroizeOnDrop`，drop 清除当前 length+capacity；历史扩容 allocation 与调用方副本仍不冒充可擦除。见 R46。
+- v3 §28.1 当前 **46** 条（R1–R46）。实施时除 R23/R26–R34 外还必须读 R35–R46，尤其 R42（session keyed hash/0015）、R43（Server production slice 边界）、R44（RustSec 窄豁免）、R45（cargo-vet 棘轮）与 R46（密钥擦除的保证/不保证边界）。
 - 上游对照固定在 `CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`，不引用会漂移的 `main`（§1.2）。
 
 ## 2. 目标定义（为什么是这条线）

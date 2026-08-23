@@ -1,5 +1,5 @@
 //! 明文本身的容器：[`SecretClass`]（v3 §6.4 那份"永不外泄"清单）、[`SecretBytes`]
-//! （落地时尽力擦除的字节缓冲）、[`SealedSecret`]（打不出来、序列化不出去的包装）。
+//! （drop 时清除当前 allocation 的字节缓冲）、[`SealedSecret`]（打不出来、序列化不出去的包装）。
 //!
 //! # 为什么复用 `openbot_contracts::telemetry::Redacted` 而不是造第二个
 //!
@@ -118,30 +118,25 @@ impl fmt::Display for SecretClass {
     }
 }
 
-/// 一段明文字节，落地时尽力擦除。
+/// 一段明文字节，drop 时由 `zeroize` 擦除当前 allocation。
 ///
 /// # 它保证什么，不保证什么
 ///
 /// **保证**：`Debug` 只打 `[redacted]`；没有 `Serialize` / `Display` / `PartialEq`；
 /// 没有 `Clone`（复制一份密钥就是多一份需要擦除的副本，而"多出来的那份在哪"很快就没人答得出，
 /// 所以复制这件事必须写出 `SecretBytes::new(bytes.expose().to_vec())` 那么长一句，在 review 里
-/// 是看得见的）；`Drop` 时把缓冲清零并插一道 `compiler_fence`。
+/// 是看得见的）；[`zeroize::Zeroizing`] 在 `Drop` 时清除 `Vec` 当前长度与整个
+/// capacity，并用稳定 Rust 优化屏障保证这些写不被优化掉。
 ///
-/// **不保证**：这不是 `zeroize`。三处差距，逐条说清楚：
+/// **不保证**：两处类型边界外的副本仍无法追回：
 ///
-/// 1. 本 crate 的 workspace lint 是 `unsafe_code = "deny"`，写不出 `write_volatile`。清零用的是
-///    普通写 + [`core::sync::atomic::compiler_fence`]。fence 挡住的是**编译器**的重排与消除，
-///    它不是一条"优化器绝不会删掉这些写"的语言级保证 —— `zeroize` 用 volatile 才拿得到那条
-///    保证。实测口径：本轮没有反汇编验证过这些写确实留在了产物里，所以这里写的是"尽力"，
-///    不是"保证"。
-/// 2. `Vec` 在扩容时会搬家，旧缓冲的内容留在堆上，本类型够不着。所以构造时应当一次给足
+/// 1. `Vec` 在交给本类型**之前**若经历扩容，旧 allocation 可能留下内容。所以构造时应当一次给足
 ///    （[`SecretBytes::new`] 收的就是一个已经成型的 `Vec`），不要先建空的再 `push`。
-/// 3. 调用方在把 `Vec` 交出来**之前**的那些副本（例如它是从一个更大的读缓冲里 `to_vec()`
+/// 2. 调用方在把 `Vec` 交出来**之前**的那些副本（例如它是从一个更大的读缓冲里 `to_vec()`
 ///    出来的），本类型同样够不着。
-///
-/// 真正的修法是给 `openbot-domain` 加 `zeroize` 依赖。那需要改 `Cargo.toml`，不在本次实施的
-/// 文件范围内，已记进交付报告。
-pub struct SecretBytes(Vec<u8>);
+pub struct SecretBytes(zeroize::Zeroizing<Vec<u8>>);
+
+impl zeroize::ZeroizeOnDrop for SecretBytes {}
 
 impl SecretBytes {
     /// 接管一段明文字节。
@@ -150,7 +145,7 @@ impl SecretBytes {
     /// 不会被擦 —— 接口形状本身就该逼调用方交出所有权。
     #[must_use]
     pub fn new(bytes: Vec<u8>) -> Self {
-        Self(bytes)
+        Self(zeroize::Zeroizing::new(bytes))
     }
 
     /// **显式**借出明文。
@@ -158,7 +153,7 @@ impl SecretBytes {
     /// 名字是 `expose` 不是 `as_slice`：调用点读起来就是一句"我在此处暴露明文"，grep 得到。
     #[must_use]
     pub fn expose(&self) -> &[u8] {
-        &self.0
+        self.0.as_slice()
     }
 
     /// 明文字节数。
@@ -184,7 +179,7 @@ impl SecretBytes {
     /// 长度不同时 `subtle` 会短路返回 `false` —— 长度本来就不是秘密，见 [`Self::len`]。
     #[must_use]
     pub fn ct_eq(&self, other: &Self) -> bool {
-        self.0.ct_eq(&other.0).into()
+        self.expose().ct_eq(other.expose()).into()
     }
 }
 
@@ -192,17 +187,6 @@ impl fmt::Debug for SecretBytes {
     /// 只打占位。与 `Redacted` 用同一个常量 —— 两处各写各的字符串就是两份会漂的实现。
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(REDACTED_PLACEHOLDER)
-    }
-}
-
-impl Drop for SecretBytes {
-    fn drop(&mut self) {
-        // `fill` 而不是手写循环：clippy 的 `manual_slice_fill` 要求如此，语义相同 ——
-        // 两者都是**普通**写，都不是 volatile。
-        self.0.fill(0);
-        // 挡住编译器把这些"反正马上就要回收了"的写消掉。它挡的是编译器，不是一条语言级
-        // 保证；局限逐条见类型文档。
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -322,6 +306,13 @@ mod tests {
             !CloneProbe::<SecretBytes>::new().is_implemented(),
             "复制一份明文就是多一份没人负责擦除的副本"
         );
+    }
+
+    /// 类型层明示承诺 drop 清零；内层 `Zeroizing<Vec<u8>>` 承担实际 Drop。
+    #[test]
+    fn secret_bytes_is_marked_zeroize_on_drop() {
+        fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        assert_zeroize_on_drop::<SecretBytes>();
     }
 
     /// **正向对照**：同一对探测器在确实实现了这些 trait 的类型上返回 `true`。

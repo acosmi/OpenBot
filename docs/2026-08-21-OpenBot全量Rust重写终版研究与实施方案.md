@@ -478,6 +478,12 @@ record AEAD 的 AAD 固定绑定 `tenant_id + secret_id + kind + owner + consume
 
 以下值永不进入 Leptos state、Agent prompt、AG-UI、browser event、普通日志、trace、metric、crash dump 或 screen URL：model key、MCP/OAuth refresh token、OIDC/SAML secret、computer bootstrap secret、run signing key、updater key。
 
+持有这些明文/密钥字节的 `SecretBytes` 内部固定为 `zeroize::Zeroizing<Vec<u8>>`：
+drop 时清除 `Vec` 当前长度和整个 capacity，并以稳定 Rust 优化屏障保证写不被删。
+它仍不伪称能擦除所有副本：调用方交出所有权之前的读缓冲/拷贝，以及该 `Vec`
+交出前扩容留下的旧 allocation，都不在类型可达范围。`SecretBytes` 仍无 Clone /
+Serialize / Display / PartialEq，只能显式 `expose`。（§28.1 R46）
+
 ### 6.5 Group access 的修正
 
 当前 `users.groups` 与 `channels.allowed_groups` 不是生效的控制（[#82](https://github.com/CopilotKit/openbot/issues/82)），而且包声明的 channel 没有任何 membership 写入路径，对所有人不可达（§2.4）。Rust 版作确定修正：
@@ -1771,6 +1777,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R43 | §5.2 / §6.3 / §16.1 / §16.4（2026-08-23 W-4 实施轮） | 全仓无 `main.rs`，唯一 AuthResolver 是 testkit；`/metrics` public；span/metrics 无 route；people 五条 application command 没有 HTTP 腿 | 没有可运行二进制就无法证明启动/migration/readiness/监听；给 metrics 单独 token 会造第二个认证脑；原始 URL path 进 label 会让对端制造无界 series；把 tenant package 目录路径当包 ID 会永久铸错 deployment/thread 归属 | 新增 `openbot-server` main：单一 DATABASE_URL parser 对不能兑现的 TLS/拓扑选项拒绝而不降级，fresh baseline/legacy boundary/native 链，显式单用户 loopback 或 PostgreSQL session resolver、DB readiness、graceful shutdown；tenant package loader 未落地前要求显式 `DEPLOYMENT_ID`。接 `/api/me` 与 admin status/people 三面，role/access 强制 fresh+Origin；metrics 共用 session。route 只取 Axum MatchedPath，未匹配统一 `unmatched`；非 loopback 明文 HTTP 在 readiness 投影 `insecure_transport:true`。多用户在 G5 isolation 未接前 readiness 刻意红；OIDC/SAML 登录/session 签发仍属 G2，不能冒充闭合 | server 单测含 HTTP framing/sensitive/route/metrics/readiness；DB parser 负例含 `sslmode=require`/read-write/channel-binding/hostaddr；testkit `transport_people_parity` 五命令同一 Arc 对拍；真实进程冒烟：fresh 库账本 3、single principal 1/roles 2，health/readiness/me/metrics 均 200，route label 静态，Ctrl-C exit 0；临时库已删除 |
 | R44 | §16.3（2026-08-23 D-1 供应链裁决） | `cargo deny check` / `cargo audit` 唯一命中 RUSTSEC-2023-0071：`rsa 0.9.10` 由钉版 `openidconnect 4.0.1` 非可选引入，且 advisory `patched=[]` | 无说明地忽略是隐藏风险；无限期保留一条必红闸门则会训练所有人忽略红灯；换掉 openidconnect 又会偏离已钉选型 | 仅对该 ID 记一条 owner=security 的窄豁免：本仓只以 `CoreJsonWebKey`/`RsaPublicKey` 做 RP 公钥验签，无 RSA 私签/解密。`tools/check-rustsec-waivers.sh` 先锁死 rsa/openidconnect 精确版本、反向生产链、feature 零扩张和私钥符号零命中；版本/feature/消费者/private-key JWT 或 patched 状态任一变化必须重审 | 本轮 `cargo tree -i rsa -e normal --all-features` 精确四节；guard exit 0 且内置正向对照；`cargo deny check` = advisories/bans/licenses/sources 全 ok；`cargo audit --no-fetch --deny warnings --ignore RUSTSEC-2023-0071` 加载 1225 条 advisory、扫描 374 个 crate 依赖、exit 0 |
 | R45 | §16.3（2026-08-23 D-5 供应链棘轮） | CI 固定要求 `cargo vet`，但本机无工具、仓内无 policy/audits/import lock；直接接线会让全部依赖恒红 | 一条恒红闸门等于没有闸门；反过来把 `init` 生成的 exemptions 称为“已审计”也是造假。正确起点是显式标记存量未审，但对任何增量立即判红 | 钉 `cargo-vet 0.10.0`；提交 `supply-chain/config.toml` / `audits.toml` / `imports.lock`。只导入 Google exact/delta audits 并锁定 14 个 fully audited；350 个精确版本保留 bootstrap exemption 且文档明说“不是审计结论”。CI 仅跑 `cargo vet --locked`、不自动 regenerate；checkout/rust-cache/install-action 也收窄到已实查 patch tag | `cargo vet --version` = 0.10.0；正向 `cargo vet --locked` = `14 fully audited, 350 exempted`；负向临时删除 `aead 0.5.2` exemption 实得 exit 255 / `Vetting Failed` / 精确 missing `safe-to-deploy`；exemption 数可由一条 tomllib 命令复算 |
+| R46 | §6.4（2026-08-23 D-3 密钥擦除裁决） | `SecretBytes::drop` 只是 `Vec::fill(0) + compiler_fence`，模块文档自身也诚实标为“尽力”；`zeroize 1.9.0` 已经由既有密码学树锁定 | 手写普通写没有“不被优化掉”的稳定保证；但把 zeroize 说成“清除进程内所有历史副本”同样是造假 | workspace 显式钉 `zeroize 1.9.0` 且只开 `alloc`；`SecretBytes` 改持有 `Zeroizing<Vec<u8>>` 并标记 `ZeroizeOnDrop`，删除手写 Drop。保证只到当前 Vec length+capacity；历史扩容和调用方副本仍明示不保证 | `cargo tree -i zeroize -e normal --all-features` 证明 1.9.0 已在图；domain 325 unit + 6 integration + 7 doctest 全绿；trait 编译期断言 `SecretBytes: ZeroizeOnDrop`；`cargo vet --locked` 仍 14 audited / 350 exempted，没有绕过 R45 |
 
 ### 28.2 复核通过、原样保留的断言
 
