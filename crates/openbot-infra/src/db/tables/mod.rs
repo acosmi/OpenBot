@@ -9,8 +9,8 @@
 //! - `COLUMN_SPECS: &[ColumnSpec]` —— 逐列的 SQL 形态（列名 / `format_type()` 文本 / 是否 NOT NULL）；
 //! - `struct Row` + `impl TryFrom<&tokio_postgres::Row>` —— 类型化行与解码。
 //!
-//! 列的真源是 `fixtures/db/schema-0012.json`（上游第 13 条 migration 跑完之后的真实库导出）。
-//! 与真库的一致性由 [`crate::db::compat::check_migration_boundary`] 机械核对，不靠人读。
+//! 上游 28 表的列真源是 `fixtures/db/schema-0012.json`；0013 新增表的列真源是
+//! `fixtures/db/schema-0013.json`。与真库的一致性由集成测试机械核对，不靠人读。
 //!
 //! # 类型映射
 //!
@@ -18,6 +18,7 @@
 //! | --- | --- |
 //! | `text` | `String` / `Option<String>` |
 //! | `boolean` | `bool` |
+//! | `bigint` | `i64` |
 //! | `integer` | `i32` |
 //! | `jsonb` | `serde_json::Value` / `Option<serde_json::Value>` |
 //! | `timestamp with time zone` | `time::OffsetDateTime` / `Option<_>` |
@@ -42,8 +43,8 @@
 //! [`SECRET_COLUMN_NAME_ROOTS`] 却既不在 [`SECRET_COLUMNS`] 也不在 [`SECRET_SCAN_EXEMPTIONS`]
 //! 的，当场判红。将来有人加一列 `refresh_token` 而忘了登记，闸门会拦住。
 //!
-//! **不在这里的**：`parity/tables.yaml` 里 12 张 `label: 新增` 的 native 表
-//! （`threads` / `messages` / `runs` / …）。它们不属于 0012 终态，`status` 仍是 `todo`。
+//! 0013 已落的三张 native 表单列在 [`NATIVE_0013_TABLES`]；§4.3 余下 10 张 native 表
+//! （`threads` / `messages` / `runs` / …）尚未实现，不得混进 0012 的 [`ALL_TABLES`]。
 
 use std::fmt;
 
@@ -80,10 +81,14 @@ pub const SECRET_COLUMNS: &[(&str, &str)] = &[
     ("accounts", "password"),
     ("accounts", "refresh_token"),
     ("agent_profiles", "callback_token_hash"),
+    ("audit_checkpoints", "signature"),
     ("credentials", "encrypted_value"),
     ("sessions", "token"),
     ("sso_providers", "oidc_config"),
     ("sso_providers", "saml_config"),
+    ("tool_attempts", "capability_id"),
+    ("tool_calls", "args_hash"),
+    ("tool_calls", "idempotency_key"),
     ("verifications", "value"),
 ];
 
@@ -134,6 +139,16 @@ pub const SECRET_SCAN_EXEMPTIONS: &[(&str, &str, &str)] = &[
         "timestamptz：令牌的签发时刻，不含令牌本身",
     ),
     (
+        "audit_checkpoints",
+        "first_row_hash",
+        "SHA-256 链边界摘要是公开完整性证据，不是 secret 或可用认证物",
+    ),
+    (
+        "audit_checkpoints",
+        "last_row_hash",
+        "SHA-256 链边界摘要是公开完整性证据，不是 secret 或可用认证物",
+    ),
+    (
         "agents",
         "configuration",
         // 这条豁免有上游写入侧的实证，不是"看着像公开配置"的推断。
@@ -172,6 +187,11 @@ pub const SECRET_SCAN_EXEMPTIONS: &[(&str, &str, &str)] = &[
         "mcp_user_credentials",
         "credential_id",
         "uuid：指向 credentials 表的外键，是指针不是凭据",
+    ),
+    (
+        "tool_calls",
+        "schema_hash",
+        "SHA-256 catalog schema 摘要是公开版本标识，不由运行期 secret 输入派生",
     ),
 ];
 
@@ -370,9 +390,36 @@ table_registry!(
     verifications,
 );
 
+pub mod audit_checkpoints;
+pub mod tool_attempts;
+pub mod tool_calls;
+
+/// native 0013 新增的三张 public 表，按表名升序。
+pub const NATIVE_0013_TABLES: &[TableSpec] = &[
+    TableSpec {
+        name: audit_checkpoints::TABLE_NAME,
+        columns: audit_checkpoints::COLUMNS,
+        column_specs: audit_checkpoints::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: tool_attempts::TABLE_NAME,
+        columns: tool_attempts::COLUMNS,
+        column_specs: tool_attempts::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: tool_calls::TABLE_NAME,
+        columns: tool_calls::COLUMNS,
+        column_specs: tool_calls::COLUMN_SPECS,
+    },
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn current_table_specs() -> impl Iterator<Item = &'static TableSpec> {
+        ALL_TABLES.iter().chain(NATIVE_0013_TABLES.iter())
+    }
 
     /// 每张表的列数。数值取自参照库（`fixtures/db/schema-0012.json`），合计必须是 204。
     ///
@@ -464,7 +511,7 @@ mod tests {
         }
     }
 
-    /// 每个 `sql_type` 都必须落在实测出来的 11 个类型里。
+    /// 每个 `sql_type` 都必须落在实测出来的 12 个类型里。
     ///
     /// 反面：写错成 `varchar` / `timestamptz` 这类"看起来对"的别名会被当场判红 ——
     /// `format_type()` 不会输出它们，比对时只会得到一堆"类型不符"。
@@ -473,6 +520,7 @@ mod tests {
         const KNOWN: &[&str] = &[
             "agent_type",
             "agent_visibility",
+            "bigint",
             "boolean",
             "credential_kind",
             "integer",
@@ -484,7 +532,7 @@ mod tests {
             "uuid",
         ];
         let mut unseen: Vec<&str> = KNOWN.to_vec();
-        for table in ALL_TABLES {
+        for table in current_table_specs() {
             for column in table.column_specs {
                 assert!(
                     KNOWN.contains(&column.sql_type),
@@ -496,7 +544,7 @@ mod tests {
                 unseen.retain(|t| *t != column.sql_type);
             }
         }
-        // 正向对照：11 个类型每一个都真的被某一列用到，否则 KNOWN 里混进了不存在的类型。
+        // 正向对照：12 个类型每一个都真的被某一列用到，否则 KNOWN 里混进了不存在的类型。
         assert!(
             unseen.is_empty(),
             "KNOWN 里有没被任何列用到的类型：{unseen:?}"
@@ -510,7 +558,7 @@ mod tests {
             .flat_map(|t| t.column_specs.iter())
             .filter(|c| c.not_null)
             .count();
-        // 参照库 212 个约束 = 153 NOT NULL + 28 PRIMARY KEY + 27 FOREIGN KEY + 4 UNIQUE。
+        // 0012 fixture 的 59 个 constraint 不重复计 NOT NULL；153 个非空事实在列上独立核对。
         assert_eq!(not_null, 153);
     }
 
@@ -685,7 +733,7 @@ mod tests {
     fn every_column_matching_a_secret_word_root_is_classified() {
         let mut unclassified: Vec<String> = Vec::new();
         let mut hits = 0usize;
-        for table in ALL_TABLES {
+        for table in current_table_specs() {
             for column in table.columns {
                 if !SECRET_COLUMN_NAME_ROOTS
                     .iter()
@@ -710,10 +758,26 @@ mod tests {
             "这些列命中 secret 词根却既没登记也没豁免，请补进 SECRET_COLUMNS 或 \
              SECRET_SCAN_EXEMPTIONS（豁免必须带书面理由）：{unclassified:?}",
         );
-        // 可复算：命中总数 = 10 条登记 + 7 条豁免。对不上说明列集变了而两张表没跟。
-        assert_eq!(hits, SECRET_COLUMNS.len() + SECRET_SCAN_EXEMPTIONS.len());
-        assert_eq!(SECRET_COLUMNS.len(), 10);
-        assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 7);
+        // signature / capability_id 不含词根但仍是主动登记项，所以只比较会命中词根的子集。
+        let registered_root_hits = SECRET_COLUMNS
+            .iter()
+            .filter(|(_, column)| {
+                SECRET_COLUMN_NAME_ROOTS
+                    .iter()
+                    .any(|root| column.contains(root))
+            })
+            .count();
+        let exemption_root_hits = SECRET_SCAN_EXEMPTIONS
+            .iter()
+            .filter(|(_, column, _)| {
+                SECRET_COLUMN_NAME_ROOTS
+                    .iter()
+                    .any(|root| column.contains(root))
+            })
+            .count();
+        assert_eq!(hits, registered_root_hits + exemption_root_hits);
+        assert_eq!(SECRET_COLUMNS.len(), 14);
+        assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 10);
     }
 
     /// 两张名单都必须指向真实存在的 `(表, 列)`，且互不重叠。
@@ -722,8 +786,7 @@ mod tests {
     #[test]
     fn secret_registry_entries_all_name_real_columns() {
         let exists = |table: &str, column: &str| {
-            ALL_TABLES
-                .iter()
+            current_table_specs()
                 .find(|t| t.name == table)
                 .is_some_and(|t| t.columns.contains(&column))
         };

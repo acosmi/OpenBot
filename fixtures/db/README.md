@@ -18,7 +18,8 @@ CI 里没有上游克隆（本仓与上游是两个仓库，且 §16.3 的供应
 | --- | ---: |
 | 表 | 28 |
 | 列 | 204 |
-| 约束 | 212 |
+| NOT NULL 列 | 153 |
+| 约束（不重复计 NOT NULL） | 59 |
 | 索引 | 44 |
 | 触发器 | 2 |
 | enum 类型 | 4 |
@@ -50,22 +51,65 @@ CI 里没有上游克隆（本仓与上游是两个仓库，且 §16.3 的供应
 
 另外 `0000` 头部注释点名"必须存活"的 append-only 触发器实测存活两个：`audit_events_append_only` 与 `audit_events_no_truncate`。
 
-## 已知差异：PostgreSQL 版本
+## PostgreSQL 17 重验与跨版本归一化（2026-08-23）
 
-v3 §14.1 把数据库钉在 **PostgreSQL 17**；本文件是在本机 **PostgreSQL 18.1** 上生成的（`x86_64-windows, compiled by msvc`）。
+v3 §14.1 把数据库钉在 **PostgreSQL 17**。本轮在 PostgreSQL **17.11** 上重跑 baseline 与
+`schema_facts.sql`，原先由 PostgreSQL 18.1 生成的 fixture 在 28 张表上都只差约束集合：
 
-这条差异**未消除**，如实登记：本文件里的 `format_type()` 输出、`pg_get_constraintdef()` / `pg_get_indexdef()` 的文本形态理论上可能随服务端版本变化。解除条件 = 在 PostgreSQL 17 上重跑一次生成过程并 diff；差异为空则把本节改成"已在 17 与 18.1 上各生成一次，结果相同"。在那之前，任何"本文件等价于 17 上的结果"的说法都是未验证的。
+- 18.1 fixture：`f=27 / n=153 / p=28 / u=4`，合计 212；
+- 17.11 活库：`f=27 / p=28 / u=4`，合计 59；
+- 18.1 多出的 153 条 `contype='n'` 全部是 `NOT NULL <列名>`，数量与
+  `columns[].notnull=true` 的 153 列逐项相等。
+
+这不是 DDL 语义差异，而是 PostgreSQL 18 把已经存在于列事实里的 NOT NULL 又暴露为
+`pg_constraint` 对象。提取器现显式排除 `contype='n'`，NOT NULL 仍由 `columns[].notnull`
+逐列验证。把旧 fixture 的 153 条 `n` 对象移除后，与 17.11 活库提取结果整棵 JSON
+结构化比较为 `True`（59 / 59）；本文件据此由 PostgreSQL 17.11 重生成。这样既以目标版本为准，
+也避免同一事实重复计数。
+
+## `schema-0013.json`：Rust-owned expand 终态
+
+`schema-0013.json` 是在同一 PostgreSQL **17.11** 一次性事实库上按
+`baseline_0012.sql → native_0013.sql → schema_facts.sql` 顺序实跑生成的 post-migration
+fixture。它不改写 `schema-0012.json`：前者回答“当前 Rust schema 是什么”，后者继续回答
+“固定上游 13 条 migration 的终态是什么”。
+
+| 项 | 0013 数量 | 相对 0012 |
+| --- | ---: | ---: |
+| public 表 | 31 | +3 |
+| 列 | 248 | +44（含 `audit_events` 两个 nullable hash 列） |
+| 约束（不重复计 NOT NULL） | 93 | +34 |
+| 索引 | 53 | +9 |
+| 触发器 | 4 | +2 |
+| enum 类型 | 4 | 0 |
+| public 函数 | 1 | 0 |
+| extension | 0 | 0 |
+
+三张新增 public 表恰好是 `audit_checkpoints` / `tool_attempts` / `tool_calls`。
+`openbot_internal.schema_migrations` 与 `openbot_internal.prevent_append_only_mutation()` 位于
+internal schema，按定义不进只扫描 `public` 的 schema fixture；它们由
+`tests/native_0013.rs` 的账本、并发与回滚用例独立核对。
+
+expand-only 不是靠读 SQL 猜：真库测试
+`post_0013_fixture_is_exact_and_every_0012_object_survives` 先提取 0012 事实，再逐表断言原列、
+约束、索引、触发器以及 enum/function/extension 全是 0013 的结构化子集，最后才与本 fixture
+整棵相等。`object_collision_rolls_back_every_0013_change_and_does_not_forge_ledger` 再制造同名异形
+表，实证失败事务不会留下 hash 列、checkpoint 表或伪账本。
 
 ## 复算命令
 
 ```bash
-# 摘要表里的七个数
+# 0012 摘要表里的八个数
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('tables',len(d['tables']))"                                    # 28
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('columns',sum(len(t['columns']) for t in d['tables']))"       # 204
-python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('constraints',sum(len(t['constraints']) for t in d['tables']))" # 212
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('notnull',sum(c['notnull'] for t in d['tables'] for c in t['columns']))" # 153
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('constraints',sum(len(t['constraints']) for t in d['tables']))" # 59
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('indexes',sum(len(t['indexes']) for t in d['tables']))"       # 44
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('triggers',sum(len(t['triggers']) for t in d['tables']))"     # 2
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('enums',len(d['enums']),'functions',len(d['functions']),'ext',d['extensions'])"  # 4 1 []
+
+# post-0013 八个数
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0013.json',encoding='utf-8'));print('tables',len(d['tables']),'columns',sum(len(t['columns']) for t in d['tables']),'constraints',sum(len(t['constraints']) for t in d['tables']),'indexes',sum(len(t['indexes']) for t in d['tables']),'triggers',sum(len(t['triggers']) for t in d['tables']),'enums',len(d['enums']),'functions',len(d['functions']),'ext',len(d['extensions']))"  # 31 248 93 53 4 4 1 0
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

@@ -49,7 +49,7 @@ recount:
   - command: "grep -rnE '^\\s*(app|routes)\\.use\\(' server/src --include=*.ts | grep -v '\\.test\\.' | wc -l"
     cwd: "upstream"
     expect: 2
-  - command: "grep -rcE '^\\s*app\\.on\\(\\[\"GET\", \"POST\"\\], \"/api/auth/\\*\"' server/src/app.ts"
+  - command: "grep -cE '^\\s*app\\.on\\(\\[\"GET\", \"POST\"\\], \"/api/auth/\\*\"' server/src/app.ts"
     cwd: "upstream"
     expect: 1
   - command: "grep -rn 'api/copilotkit' --include=*.ts --include=*.tsx . | grep -v node_modules | wc -l"

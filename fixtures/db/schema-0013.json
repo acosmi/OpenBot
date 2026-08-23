@@ -471,6 +471,155 @@
     {
       "columns": [
         {
+          "default": null,
+          "name": "sequence",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "checkpoint_kind",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "first_event_id",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "first_row_hash",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "last_event_id",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "last_row_hash",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "event_count",
+          "notnull": true,
+          "ordinal": 7,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "unlinked_rows_before",
+          "notnull": false,
+          "ordinal": 8,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "retention_days",
+          "notnull": false,
+          "ordinal": 9,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "signature",
+          "notnull": true,
+          "ordinal": 10,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 11,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "CHECK ((event_count > 0))",
+          "name": "audit_checkpoints_event_count_positive",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((first_row_hash ~ '^[0-9a-f]{64}$'::text))",
+          "name": "audit_checkpoints_first_hash_lower_hex",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((((checkpoint_kind = 'genesis'::text) AND (first_event_id = last_event_id) AND (first_row_hash = last_row_hash) AND (event_count = 1) AND (unlinked_rows_before IS NOT NULL) AND (retention_days IS NULL)) OR ((checkpoint_kind = 'periodic'::text) AND (unlinked_rows_before IS NULL) AND (retention_days IS NULL)) OR ((checkpoint_kind = 'closure'::text) AND (unlinked_rows_before IS NULL) AND (retention_days IS NOT NULL))))",
+          "name": "audit_checkpoints_kind_shape",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((last_row_hash ~ '^[0-9a-f]{64}$'::text))",
+          "name": "audit_checkpoints_last_hash_lower_hex",
+          "type": "c"
+        },
+        {
+          "def": "PRIMARY KEY (sequence)",
+          "name": "audit_checkpoints_pkey",
+          "type": "p"
+        },
+        {
+          "def": "CHECK (((retention_days IS NULL) OR (retention_days >= 1)))",
+          "name": "audit_checkpoints_retention_days_positive",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((sequence >= 0))",
+          "name": "audit_checkpoints_sequence_nonnegative",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((signature ~ '^[0-9a-f]{64}$'::text))",
+          "name": "audit_checkpoints_signature_lower_hex",
+          "type": "c"
+        },
+        {
+          "def": "CHECK (((unlinked_rows_before IS NULL) OR (unlinked_rows_before >= 0)))",
+          "name": "audit_checkpoints_unlinked_rows_nonnegative",
+          "type": "c"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE INDEX audit_checkpoints_created_at_idx ON public.audit_checkpoints USING btree (created_at, sequence)",
+          "name": "audit_checkpoints_created_at_idx"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX audit_checkpoints_pkey ON public.audit_checkpoints USING btree (sequence)",
+          "name": "audit_checkpoints_pkey"
+        }
+      ],
+      "name": "audit_checkpoints",
+      "triggers": [
+        {
+          "def": "CREATE TRIGGER audit_checkpoints_append_only BEFORE DELETE OR UPDATE ON public.audit_checkpoints FOR EACH ROW EXECUTE FUNCTION openbot_internal.prevent_append_only_mutation()",
+          "name": "audit_checkpoints_append_only"
+        },
+        {
+          "def": "CREATE TRIGGER audit_checkpoints_no_truncate BEFORE TRUNCATE ON public.audit_checkpoints FOR EACH STATEMENT EXECUTE FUNCTION openbot_internal.prevent_append_only_mutation()",
+          "name": "audit_checkpoints_no_truncate"
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
           "default": "gen_random_uuid()",
           "name": "id",
           "notnull": true,
@@ -518,13 +667,42 @@
           "notnull": true,
           "ordinal": 7,
           "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "prev_hash",
+          "notnull": false,
+          "ordinal": 8,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "row_hash",
+          "notnull": false,
+          "ordinal": 9,
+          "type": "text"
         }
       ],
       "constraints": [
         {
+          "def": "CHECK (((row_hash IS NOT NULL) OR (prev_hash IS NULL)))",
+          "name": "audit_events_hash_pair_shape",
+          "type": "c"
+        },
+        {
           "def": "PRIMARY KEY (id)",
           "name": "audit_events_pkey",
           "type": "p"
+        },
+        {
+          "def": "CHECK (((prev_hash IS NULL) OR (prev_hash ~ '^[0-9a-f]{64}$'::text)))",
+          "name": "audit_events_prev_hash_lower_hex",
+          "type": "c"
+        },
+        {
+          "def": "CHECK (((row_hash IS NULL) OR (row_hash ~ '^[0-9a-f]{64}$'::text)))",
+          "name": "audit_events_row_hash_lower_hex",
+          "type": "c"
         }
       ],
       "indexes": [
@@ -2037,6 +2215,381 @@
         }
       ],
       "name": "sso_providers",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "tool_call_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "attempt_seq",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "attempt_id",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "capability_id",
+          "notnull": false,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "commit_state",
+          "notnull": false,
+          "ordinal": 6,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "output_bytes",
+          "notnull": false,
+          "ordinal": 7,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "duration_ms",
+          "notnull": false,
+          "ordinal": 8,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "error_code",
+          "notnull": false,
+          "ordinal": 9,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "notnull": false,
+          "ordinal": 10,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "finished_at",
+          "notnull": false,
+          "ordinal": 11,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "notnull": true,
+          "ordinal": 12,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "UNIQUE (attempt_id)",
+          "name": "tool_attempts_attempt_id_key",
+          "type": "u"
+        },
+        {
+          "def": "CHECK ((attempt_seq >= 0))",
+          "name": "tool_attempts_attempt_seq_nonnegative",
+          "type": "c"
+        },
+        {
+          "def": "UNIQUE (capability_id)",
+          "name": "tool_attempts_capability_id_key",
+          "type": "u"
+        },
+        {
+          "def": "CHECK (((commit_state IS NULL) OR (commit_state = ANY (ARRAY['committed'::text, 'not_committed'::text, 'unknown'::text]))))",
+          "name": "tool_attempts_commit_state_known",
+          "type": "c"
+        },
+        {
+          "def": "CHECK (((duration_ms IS NULL) OR (duration_ms >= 0)))",
+          "name": "tool_attempts_duration_nonnegative",
+          "type": "c"
+        },
+        {
+          "def": "CHECK (((output_bytes IS NULL) OR ((output_bytes >= 0) AND (output_bytes <= '4294967295'::bigint))))",
+          "name": "tool_attempts_output_bytes_u32",
+          "type": "c"
+        },
+        {
+          "def": "PRIMARY KEY (tool_call_id, attempt_seq)",
+          "name": "tool_attempts_pkey",
+          "type": "p"
+        },
+        {
+          "def": "CHECK (((status <> 'reconciliation_required'::text) OR (commit_state = 'unknown'::text)))",
+          "name": "tool_attempts_reconciliation_is_unknown",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((status = ANY (ARRAY['decision_recorded'::text, 'executing'::text, 'completed'::text, 'reconciliation_required'::text, 'aborted'::text])))",
+          "name": "tool_attempts_status_known",
+          "type": "c"
+        },
+        {
+          "def": "CHECK (((finished_at IS NULL) OR ((started_at IS NOT NULL) AND (finished_at >= started_at))))",
+          "name": "tool_attempts_time_order",
+          "type": "c"
+        },
+        {
+          "def": "FOREIGN KEY (tool_call_id) REFERENCES tool_calls(tool_call_id) ON DELETE CASCADE",
+          "name": "tool_attempts_tool_call_id_fkey",
+          "type": "f"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX tool_attempts_attempt_id_key ON public.tool_attempts USING btree (attempt_id)",
+          "name": "tool_attempts_attempt_id_key"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX tool_attempts_capability_id_key ON public.tool_attempts USING btree (capability_id)",
+          "name": "tool_attempts_capability_id_key"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX tool_attempts_pkey ON public.tool_attempts USING btree (tool_call_id, attempt_seq)",
+          "name": "tool_attempts_pkey"
+        },
+        {
+          "def": "CREATE INDEX tool_attempts_status_idx ON public.tool_attempts USING btree (status, created_at)",
+          "name": "tool_attempts_status_idx"
+        }
+      ],
+      "name": "tool_attempts",
+      "triggers": []
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "tool_call_id",
+          "notnull": true,
+          "ordinal": 1,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "run_id",
+          "notnull": true,
+          "ordinal": 2,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "call_seq",
+          "notnull": true,
+          "ordinal": 3,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "decision_id",
+          "notnull": true,
+          "ordinal": 4,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "actor_id",
+          "notnull": true,
+          "ordinal": 5,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "bot_id",
+          "notnull": true,
+          "ordinal": 6,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "tool_name",
+          "notnull": true,
+          "ordinal": 7,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "schema_hash",
+          "notnull": true,
+          "ordinal": 8,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "catalog_generation",
+          "notnull": true,
+          "ordinal": 9,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "args_hash",
+          "notnull": true,
+          "ordinal": 10,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "target_kind",
+          "notnull": true,
+          "ordinal": 11,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "target_id",
+          "notnull": true,
+          "ordinal": 12,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "effect",
+          "notnull": true,
+          "ordinal": 13,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "effect_downgraded",
+          "notnull": true,
+          "ordinal": 14,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "idempotency",
+          "notnull": true,
+          "ordinal": 15,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "idempotency_key",
+          "notnull": false,
+          "ordinal": 16,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "approval_class",
+          "notnull": true,
+          "ordinal": 17,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "policy_version",
+          "notnull": true,
+          "ordinal": 18,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "decided_at",
+          "notnull": true,
+          "ordinal": 19,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        {
+          "def": "CHECK ((approval_class = ANY (ARRAY['not_required'::text, 'once_per_run'::text, 'every_call'::text])))",
+          "name": "tool_calls_approval_class_known",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((args_hash ~ '^[0-9a-f]{64}$'::text))",
+          "name": "tool_calls_args_hash_lower_hex",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((call_seq >= 0))",
+          "name": "tool_calls_call_seq_nonnegative",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((catalog_generation >= 0))",
+          "name": "tool_calls_catalog_generation_nonnegative",
+          "type": "c"
+        },
+        {
+          "def": "UNIQUE (decision_id)",
+          "name": "tool_calls_decision_id_key",
+          "type": "u"
+        },
+        {
+          "def": "CHECK ((effect = ANY (ARRAY['read'::text, 'write'::text, 'execute'::text, 'network'::text, 'credential'::text])))",
+          "name": "tool_calls_effect_known",
+          "type": "c"
+        },
+        {
+          "def": "CHECK (((idempotency_key IS NULL) OR (idempotency_key <> ''::text)))",
+          "name": "tool_calls_idempotency_key_nonempty",
+          "type": "c"
+        },
+        {
+          "def": "CHECK ((idempotency = ANY (ARRAY['idempotent'::text, 'keyed'::text, 'non_idempotent'::text])))",
+          "name": "tool_calls_idempotency_known",
+          "type": "c"
+        },
+        {
+          "def": "PRIMARY KEY (tool_call_id)",
+          "name": "tool_calls_pkey",
+          "type": "p"
+        },
+        {
+          "def": "UNIQUE (run_id, call_seq)",
+          "name": "tool_calls_run_call_seq_key",
+          "type": "u"
+        },
+        {
+          "def": "CHECK ((schema_hash ~ '^[0-9a-f]{64}$'::text))",
+          "name": "tool_calls_schema_hash_lower_hex",
+          "type": "c"
+        }
+      ],
+      "indexes": [
+        {
+          "def": "CREATE UNIQUE INDEX tool_calls_decision_id_key ON public.tool_calls USING btree (decision_id)",
+          "name": "tool_calls_decision_id_key"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX tool_calls_pkey ON public.tool_calls USING btree (tool_call_id)",
+          "name": "tool_calls_pkey"
+        },
+        {
+          "def": "CREATE UNIQUE INDEX tool_calls_run_call_seq_key ON public.tool_calls USING btree (run_id, call_seq)",
+          "name": "tool_calls_run_call_seq_key"
+        }
+      ],
+      "name": "tool_calls",
       "triggers": []
     },
     {

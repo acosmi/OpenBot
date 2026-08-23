@@ -180,6 +180,17 @@ where
 {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER_DIRECTIVE));
+    subscriber_with_filter(format, make_writer, filter)
+}
+
+fn subscriber_with_filter<W>(
+    format: LogFormat,
+    make_writer: W,
+    filter: EnvFilter,
+) -> Box<dyn Subscriber + Send + Sync>
+where
+    W: for<'a> MakeWriter<'a> + Send + Sync + 'static,
+{
     let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(make_writer);
@@ -332,9 +343,16 @@ mod tests {
     #[test]
     fn text_and_json_formats_differ_and_json_parses() {
         let text_sink = BufferWriter::default();
-        tracing::subscriber::with_default(subscriber(LogFormat::Text, text_sink.clone()), || {
-            tracing::info!(marker = "openbot-format-probe", "hello");
-        });
+        tracing::subscriber::with_default(
+            subscriber_with_filter(
+                LogFormat::Text,
+                text_sink.clone(),
+                EnvFilter::new(DEFAULT_FILTER_DIRECTIVE),
+            ),
+            || {
+                tracing::info!(marker = "openbot-format-probe", "hello");
+            },
+        );
         let text = text_sink.contents();
         assert!(text.contains("openbot-format-probe"), "{text}");
         assert!(
@@ -343,9 +361,16 @@ mod tests {
         );
 
         let json_sink = BufferWriter::default();
-        tracing::subscriber::with_default(subscriber(LogFormat::Json, json_sink.clone()), || {
-            tracing::info!(marker = "openbot-format-probe", "hello");
-        });
+        tracing::subscriber::with_default(
+            subscriber_with_filter(
+                LogFormat::Json,
+                json_sink.clone(),
+                EnvFilter::new(DEFAULT_FILTER_DIRECTIVE),
+            ),
+            || {
+                tracing::info!(marker = "openbot-format-probe", "hello");
+            },
+        );
         let json = json_sink.contents();
         let parsed: serde_json::Value =
             serde_json::from_str(json.trim()).unwrap_or_else(|e| panic!("{json} 不是 JSON：{e}"));

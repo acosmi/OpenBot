@@ -7,10 +7,10 @@
 # 三类 entry：
 #   1. 上游 28 张表（表名取自 server/src/db/schema/*.ts 的 pgTable 实参，不抄文档）—— label: parity
 #   2. 上游 13 条 migration（server/drizzle/0000–0012）—— label: parity
-#   3. v3 §4.3 的 12 张 native 新表 —— label: 新增
+#   3. v3 §4.3 的 12 张 native 新表 + §8.6 的 audit_checkpoints —— label: 新增
 #
-# 全部 status: todo。本仓 crates/*/src/lib.rs 目前只有骨架，零表实现，
-# 所以没有任何一条能给出 done_evidence（v3 §19.3："CI 拒绝未归类项和没有证据的 done"）。
+# status 随实施推进；权威计数是 `cargo xtask parity-check --json`。done 只表示本条 target
+# 与证据已落地，不蕴含 notes 里的 repository 已实现。
 #
 # 【2026-08-22 G1 实施轮更正】这 13 条 migration 的 target 原本写作
 # `openbot-infra::db::migrations::m0000_schema` 等，那是 Phase 0 的一处错误：v3 §14.1 明写
@@ -62,15 +62,15 @@ recount:
     expect: 13
   - command: "grep -c '^  - id: ' parity/tables.yaml"
     cwd: repo
-    expect: 53
+    expect: 54
   - command: "grep -c 'label: \"parity\"' parity/tables.yaml"
     cwd: repo
     expect: 41
   - command: "grep -c 'label: \"新增\"' parity/tables.yaml"
     cwd: repo
-    expect: 12
+    expect: 13
   # 「上游没有这 12 张 native 表」的负向断言。
-  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|outbox|memories|memory_events|intelligence_import_cursors)\"'"
+  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(audit_checkpoints|threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|outbox|memories|memory_events|intelligence_import_cursors)\"'"
     cwd: upstream
     expect: 0
   # 上一条的正向对照：同一条管线在确实存在的表名上命中，证明它不是恒 0 的坏探测器。
@@ -591,11 +591,23 @@ entries:
     notes: "再次 CREATE OR REPLACE FUNCTION prevent_audit_event_mutation，并加 trigger audit_events_no_truncate 堵上 TRUNCATE 绕过 append-only 的路。v3 §14.1：升级前必须先把旧库迁到本条（第 13 条），Rust 不接收更早 schema"
 
   # =========================================================================
-  # (b) v3 §4.3 的 12 张 native 新表 —— label: 新增
+  # (b) v3 §4.3 的 12 张 native 新表 + §8.6 的 audit_checkpoints —— label: 新增
   #      上游零对应物（recount 已给负向断言 + 正向对照）。
   #      owner：带 §4.3 固定不变量的聚合归 openbot-domain，
   #              纯持久化 / 投递 / 游标表归 openbot-infra。
   # =========================================================================
+
+  - id: "native-audit-checkpoints"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-infra::db::tables::audit_checkpoints"
+    owner: "openbot-infra"
+    test_id: "T-TBL-0054"
+    migration_rule: "n/a: 0013 新表；旧审计行只追加 nullable hash 列，不回填伪造历史"
+    status: "done"
+    done_evidence: "openbot-infra::db::native 以单事务施加 native_0013.sql；audit_checkpoints::Row + COLUMNS + COLUMN_SPECS + TryFrom 已实现；PostgreSQL 17 真库测试 post_0013_fixture_is_exact_and_every_0012_object_survives 与 schema-0013.json 逐字段相等，database_constraints_preserve_chain_checkpoint_and_attempt_invariants 实证 kind/hex/区间约束与 UPDATE append-only trigger，object_collision_rolls_back_every_0013_change_and_does_not_forge_ledger 实证中途失败零残留"
+    evidence: "固定上游 28 表扫描 audit_checkpoints=0（同管线正向对照 users|channels=2）；v3 §8.6 点名本库 audit_checkpoints"
+    notes: "repo=openbot-infra::repo::audit::AuditEventRepo（同一事务面管理 audit event 与 checkpoint） | PK=sequence(bigint，调用方在事务锁内单调分配，避免 sequence rollback 空洞) | unique=主键 | FK=无（closure checkpoint 必须在对应 audit row retention 删除后继续存在） | delete=触发器拒绝 DELETE/UPDATE/TRUNCATE，append-only | 加密=无；signature 在 Row::Debug 中脱敏 | retention=作为链截断证据保留，不随 audit row 删除 | API owner=openbot-infra audit/retention 路径 | 三种 kind=genesis/periodic/closure 的字段形状由 CHECK 固定；外部不可变 sink 仍是可选，不影响 readiness"
 
   - id: "native-threads"
     upstream: "-"
@@ -670,9 +682,10 @@ entries:
     owner: "openbot-infra"
     test_id: "T-TBL-0048"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "openbot-infra::db::native 的 native_0013.sql 建 public.tool_calls；tool_calls::Row + COLUMNS + COLUMN_SPECS + TryFrom 已实现；PostgreSQL 17 fixture 钉死 19 列、主键(tool_call_id)、unique(run_id,call_seq) 与 unique(decision_id)，effect/idempotency/approval/hash/generation CHECK 全部进入 93 条 post-0013 约束；并发真库测试证明账本只施加一次，约束测试证明 durable call 可写且 args_hash/idempotency_key 的 Debug 脱敏"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"tool_calls\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::tools::ToolCallRepo | 计划 PK=tool_call_id | 计划 unique=(run_id, call_seq) | 计划 FK=run_id->runs | delete=计划 cascade | 加密=无（参数可能含敏感值，内容治理见 v3 §8.4） | retention=待产品裁决 | API owner=openbot-agent 的 tool runtime，经 §8.1 唯一执行管线 | §4.3 未给本表专属不变量，owner 落 openbot-infra | 一次 call 对应 0..N 次 attempt（见 tool_attempts）；上游把这些事实写进 audit_events.payload，Rust 版拆成结构化表，故是新增不是 parity"
+    notes: "repo=openbot-infra::repo::tools::ToolCallRepo | PK=tool_call_id | unique=(run_id, call_seq) 与 decision_id | FK=0013 暂无：run_id 已强类型落列，但 runs 属 G3 尚不存在；G3 建 runs 时只用 expand-only ADD FK，不为当前外键越界提前建整套 G3 schema | delete=待 runs 落地后与 FK 一并裁决 cascade；当前不允许悬空删除 call（attempt 侧 cascade 到 call） | 加密=不保存原始 args，只存 args_hash 且 Debug 脱敏；idempotency_key 同样脱敏 | retention=terminal + reconciliation 完成后按策略归档 | API owner=openbot-agent 的 tool runtime，经 §8.1 唯一执行管线 | 一次 call 对应 0..N 次 attempt；上游把这些事实写进 audit_events.payload，Rust 版拆成结构化表，故是新增不是 parity"
 
   - id: "native-tool-attempts"
     upstream: "-"
@@ -681,9 +694,10 @@ entries:
     owner: "openbot-infra"
     test_id: "T-TBL-0049"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "openbot-infra::db::native 的 native_0013.sql 建 public.tool_attempts；tool_attempts::Row + COLUMNS + COLUMN_SPECS + TryFrom 已实现；PostgreSQL 17 fixture 钉死 12 列、复合主键(tool_call_id,attempt_seq)、attempt_id/capability_id 两条 unique 与 tool_call_id→tool_calls ON DELETE CASCADE；真库负向对照证明 orphan attempt 命中 23503，reconciliation 必须 commit_state=unknown，capability_id 的 Debug 脱敏"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"tool_attempts\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::tools::ToolAttemptRepo | 计划 PK=(tool_call_id, attempt_seq) | 计划 unique=主键 | 计划 FK=tool_call_id->tool_calls | delete=计划 cascade | 加密=无 | retention=待产品裁决 | API owner=openbot-agent tool runtime | §4.3 未给本表专属不变量，owner 落 openbot-infra | 承载 v3 §7.4 的 retry / cancel / budget / commit：重试是 attempt 不是新 call，否则「这次工具调用发生过几次副作用」不可答"
+    notes: "repo=openbot-infra::repo::tools::ToolAttemptRepo | PK=(tool_call_id, attempt_seq) | unique=attempt_id、capability_id | FK=tool_call_id->tool_calls ON DELETE CASCADE | delete=随 call cascade | 加密=capability_id 是执行权凭证，Row::Debug 强制脱敏 | retention=随 tool_calls | API owner=openbot-agent tool runtime | status/commit_state/bytes/duration/time 的 CHECK 固定形状；承载 v3 §7.4 的 retry/cancel/budget/commit：重试是 attempt 不是新 call，否则无法回答一次工具调用发生过几次副作用"
 
   - id: "native-outbox"
     upstream: "-"

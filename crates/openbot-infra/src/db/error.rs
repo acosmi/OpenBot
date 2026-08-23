@@ -1,8 +1,9 @@
 //! 数据库层的错误分层。
 //!
-//! 四档刻意分开，因为调用方对它们的处置不同：连接失败可重试、查询失败要看 SQLSTATE、
+//! 五档刻意分开，因为调用方对它们的处置不同：连接失败可重试、查询失败要看 SQLSTATE、
 //! 行解码失败说明 Rust 侧的类型映射与真库漂了（属于本仓的 bug，不是运行期状况）、
-//! schema 不兼容则必须 fail-closed 停机并要求先把库迁到 0012。
+//! schema 不兼容则必须 fail-closed 停机并要求先把库迁到 0012，native migration 账本漂移
+//! 则拒绝继续施加并要求人工调查。
 //!
 //! # 错误里**只留标识符，不留自由文本**（CLAUDE.md §5 不变量 8）
 //!
@@ -31,6 +32,7 @@ use std::fmt;
 use thiserror::Error;
 
 use crate::db::compat::MigrationBoundaryViolation;
+use crate::db::native::NativeMigrationViolation;
 
 /// `openbot-infra` 数据库层对外暴露的错误。
 #[derive(Debug, Error)]
@@ -66,6 +68,10 @@ pub enum InfraError {
     /// 库的 schema 不是 0012 终态（v3 §14.1：Rust 不接收更早 schema）。
     #[error(transparent)]
     IncompatibleDatabase(#[from] MigrationBoundaryViolation),
+
+    /// Rust-owned native migration 的账本漂移或版本空洞。
+    #[error(transparent)]
+    NativeMigration(#[from] NativeMigrationViolation),
 }
 
 impl InfraError {

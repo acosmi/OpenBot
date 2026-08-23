@@ -80,7 +80,7 @@ recount:
     cwd: "upstream"
     expect: 852
   # §17 倒数第 2 条：六库各自的引用文件数，(d) 组 5 条 + (c) 组作用域锚点
-  - command: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done"
+  - command: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done"
     cwd: "upstream"
     expect: "13 8 4 3 1 32 "
   # tw-animate-css 是 CSS `@import` 不是 JS `from`，所以上一条的 for 循环照不到它；(d) 第 6 条靠这条
@@ -1490,7 +1490,7 @@ entries:
     test_id: "T-UI-0120"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 13 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 13 个文件）"
     notes: "替代物：—（自研，不引入替代库）。无头原语。上游 13 个文件引用（Button / Combobox / Dialog / Input / Menu / Select / Separator / Switch / Tooltip / merge-props / use-render 等）。替代 = §6.1 自研 21 个 Leptos 原语（本 ledger (a) 组），键盘 / ARIA 模式按 WAI-ARIA APG 逐条兑现。**不引入任何 Rust 无头组件库**：现成库会把它自己的 DOM 结构与 class 约定带进来，与 §12.5 的 class 字面量规则和 §10 的 golden 冲突。"
 
   - id: "lib-motion"
@@ -1501,7 +1501,7 @@ entries:
     test_id: "T-UI-0121"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 8 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 8 个文件）"
     notes: "替代物：—（CSS transition/animation + Web Animations API）。动效。上游 8 个文件引用；`app/src/lib/motion.ts` 定义 EASE_OUT = [0.23, 1, 0.32, 1]、ENTRANCE_SECONDS = 0.2。替代 = CSS transition/animation + 必要时 Web Animations API（§4.5），自写 @keyframes 清单。`styles.css` 有 1 个 prefers-reduced-motion 块（grep -c = 1，本轮实跑），本项目必须把 reduced-motion 做成**全局静止**而不是单块特例，否则 §10.2 的 golden 确定性条件（CDP 模拟 reduce）拍不到稳定画面。target 落在 CSS 不是 Rust 模块。"
 
   - id: "lib-streamdown"
@@ -1512,7 +1512,7 @@ entries:
     test_id: "T-UI-0122"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 1 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 1 个文件）"
     notes: "替代物：pulldown-cmark 0.13.4 + syntect 5.3.0（default-fancy，纯 Rust，WASM 可用）。Bot 正文流式 markdown 与代码高亮。上游 1 个文件引用 streamdown，高亮经 @shikijs/core 3.23.0（grep -cE '\"@shikijs/core@' bun.lock = 1，本轮实跑）。替代规则见 §6.4：**不开 raw HTML**（Event::Html 一律按文本渲染，模型输出是不可信输入）；增量按 (message_id, block_index) memo 尾块重解析，单测 streaming_render_equals_batch_render 断言与一次性完整渲染逐节点相等；代码块固定 24 种语言，scope → 6 个 token 色，不用 syntect 自带主题。**差异登记**：远程 `![]()` 只渲染成带域名的链接芯片、不发起请求，这是本项目裁决（§6.4 自标新增），上游 streamdown 的远程图片行为本轮**未核**（缺该库源码）。"
 
   - id: "lib-prompt-area"
@@ -1523,7 +1523,7 @@ entries:
     test_id: "T-UI-0123"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 4 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 4 个文件）"
     notes: "替代物：—（自研 Composer，§6.5）。composer 输入区。上游 4 个文件引用。替代 = §6.5 的 Composer（(b) 组 T-UI-0043 记的是上游那个 composer.tsx 业务组件，本条记的是它依赖的库）。两条不重复：一条的单位是上游文件，一条的单位是上游 npm 依赖。"
 
   - id: "lib-boring-avatars"
@@ -1534,7 +1534,7 @@ entries:
     test_id: "T-UI-0124"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 3 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 3 个文件）"
     notes: "替代物：—（自研 Avatar，§6.6）。生成式头像。上游 3 个文件引用。替代 = §6.6 的确定性 Avatar：SHA-256(principal_id) 前 8 位映射到 8 个预设中性低饱和底色（亮暗各一组，与 fg 对比 ≥ 4.5:1）。\"同一 id 在任何平台任何时间得到同一头像\"是 golden 的前置条件（§10.2），不是锦上添花——上游库的随机性会让每次截图都不同。"
 
   - id: "lib-tw-animate-css"
