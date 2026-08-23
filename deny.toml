@@ -198,6 +198,44 @@ allow-build-scripts = [
     "portable-atomic",
     "winapi",
     "zerocopy",
+    # 2026-08-22 第六批：随 G2 的 CEL 与密码学依赖面进入依赖图。**只多出一份** ——
+    # `cel` / `sha2` / `hmac` / `subtle` / `aes-gcm` 以及它们拉进来的
+    # antlr4rust / better_any / murmur3 / typed-arena / pastey / aes / cipher / ghash /
+    # polyval / digest / typenum 等**全都没有 build.rs**（`cargo metadata` 逐包查
+    # `targets[].kind == ["custom-build"]` 实测）。
+    #
+    #   - generic-array 0.14.7（**5 行**，全文只有一个 if）：调
+    #     `version_check::is_min_version("1.41.0")`，真就 `println!("cargo:rustc-cfg=relaxed_coherence")`，
+    #     否则什么都不做。危险模式（`Command::new` / `reqwest` / `ureq` / `https?://` /
+    #     `fs::write` / `download`）grep **零命中**。它经 `cipher 0.4 -> inout -> generic-array`
+    #     随 `aes-gcm` 进图。
+    #
+    # `getrandom` 已在第三批名单里，本轮它多出 0.3.4 / 0.4.3 两个版本 —— 白名单按 **crate 名**
+    # 生效，不必为版本再加一行；三个版本的 build.rs 是同一族的 cfg 探测。
+    "generic-array",
+    # 2026-08-22 第七批：随 `openidconnect 4.0.1`（OIDC，§6.2）进入依赖图。五份，逐份读过全文，
+    # 危险模式（`Command::new` / `reqwest` / `ureq` / `curl` / `https?://` / `download` /
+    # `fs::write` / `File::create` / `include_bytes`）**全部零命中**；同一条 grep 在
+    # `libc 0.2.189/build.rs` 上命中 5 次，证明它对 build.rs 这类文件确实有效（正向对照）。
+    #
+    #   - num-bigint-dig 0.8.6（**3 行**）：只 `println!("cargo:rustc-cfg=has_i128")`。经
+    #     `rsa -> openidconnect`（ID token 的 RS256 验签）。
+    #   - libm 0.2.16（18 行 + `configure.rs` 158 行，两份都读过）：读 `CARGO_CFG_*` 与
+    #     `ENSURE_NO_PANIC`，emit `rustc-cfg` / `rustc-check-cfg`。经 `num-traits` / `num-bigint-dig`。
+    #   - curve25519-dalek 4.1.3（126 行）：读 `CARGO_CFG_TARGET_ARCH` /
+    #     `CARGO_CFG_CURVE25519_DALEK_{BITS,BACKEND}` / `CARGO_CFG_TARGET_POINTER_WIDTH`，
+    #     据此 emit backend 与位宽 cfg，取不到时 `cargo:warning` 并回落 32 位。经
+    #     `ed25519-dalek -> openidconnect`（EdDSA 验签）。
+    #   - icu_normalizer_data / icu_properties_data 2.3.0（各 **11 行**）：读 `ICU4X_DATA_DIR`
+    #     决定是否 emit `icu4x_custom_data`。两份文件里的 `https://` 都在头部的 ICU4X 许可声明
+    #     注释里。经 `idna -> url`（redirect URI 与 issuer 的解析）。
+    #
+    # 五份均无网络请求、无下载、不执行外部进程、不写源码树。
+    "curve25519-dalek",
+    "icu_normalizer_data",
+    "icu_properties_data",
+    "libm",
+    "num-bigint-dig",
 ]
 # 依赖里夹带的可执行文件 / 解释型脚本一律拒绝：供应链攻击最常见的载荷形态。
 executables = "deny"
@@ -230,6 +268,24 @@ allow-globs = ["etc/*"]
 #   - 正向对照：同一文件 grep "Command::new|env::var" = 2（证明 grep 对该文件有效）
 #   - 全 crate 的 *.rs / *.toml 对 release_crate_version 零引用
 # 与 libc 那条同理：只放行这一个 glob，将来夹带别处的脚本照旧判红。
+[[bans.build.bypass]]
+crate = "num-bigint-dig"
+# 两份 shell（ci/rustup.sh、ci/test_full.sh）。2026-08-22 实测它们不在任何构建路径上：
+#   - build.rs 对 "ci/" / "rustup" / "test_full" 的引用命中 0（正向对照：同一文件
+#     grep "println!" 命中 1，证明 grep 对它有效 —— 那份 build.rs 全文只有 3 行）；
+#   - 全 crate 内唯一引用它们的是 .travis.yml 的 `./ci/test_full.sh`，那是该 crate 自己的
+#     CI 定义，把它当依赖构建时不会被读、更不会被执行。
+allow-globs = ["ci/*"]
+
+[[bans.build.bypass]]
+crate = "curve25519-dalek"
+# 一份 tests/build_tests.sh。2026-08-22 实测：
+#   - build.rs 对 "build_tests" / "tests/" 的引用命中 0（正向对照：同一文件 grep "println!"
+#     命中 5）；
+#   - 全 crate 内**零处**引用它（.rs / .toml / .yml 全扫一遍无命中）——它是维护者手跑的脚本。
+#   - 与 zerocopy 那条同族：依赖的 tests target 不会被 cargo 编译或运行。
+allow-globs = ["tests/*.sh"]
+
 [[bans.build.bypass]]
 crate = "zerocopy"
 # 除 ci/ 外，crate 根还有一份 cargo.sh。它与 libc 那条**不完全同类**，如实区分：

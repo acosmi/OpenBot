@@ -138,10 +138,11 @@ http = "1.5.0"
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 
-# read checksum（v3 §24 G1「read checksum 0 差异」）刻意**不在这里声明 sha2 / hex**：
-# 该判据的实现让 PostgreSQL 自己算 md5(ROW(...)::表::text) 并两侧对拍，摘要与十六进制
-# 编码都在服务端完成，Rust 侧一个字节都不用编。声明了没人用的依赖正是 deny.toml 的
-# [bans.workspace-dependencies] unused = "deny" 要挡的形态。真需要时再加。
+# read checksum（v3 §24 G1「read checksum 0 差异」）**不为它声明 sha2 / hex**：该判据的实现
+# 让 PostgreSQL 自己算 md5(ROW(...)::表::text) 并两侧对拍，摘要与十六进制编码都在服务端完成，
+# Rust 侧一个字节都不用编。G1 当时写的是"真需要时再加"——G2 的审计 hash chain 与 policy 内容
+# 版本确实需要，`sha2` 因此出现在下面的 G2 段；它**不是**回过头来给 read checksum 用的，
+# read checksum 的两条腿至今仍然都在数据库侧渲染。
 uuid = { version = "1.25.0", features = ["serde", "v7"] }
 
 # 这两条上收自 openbot-application（它原本直接写版本号）。**没有新增任何 crate**：
@@ -151,3 +152,58 @@ uuid = { version = "1.25.0", features = ["serde", "v7"] }
 # 成员 crate 各自写版本号会让"同一依赖两个版本真源"这条判据失去落点。
 futures-core = "0.3.34"   # AppEventStream = Pin<Box<dyn Stream<Item = AppEvent> + Send>>
 base64 = "0.22.1"         # channel keyset 游标的 base64url 编解码
+
+# ---------------------------------------------------------------------------
+# G2（W11–20 Data/Auth/Governance）依赖面
+# ---------------------------------------------------------------------------
+
+# CEL 求值器（v3 §1.2 / §8.3 钉版 `0.14.3`；"cel-rust" 是仓库名，Cargo 里的 crate 名是 `cel`）。
+#
+# **`default-features = false` 是一次有测量支撑的裁决，不是省依赖的顺手。** 它的默认 feature
+# 是 `["regex", "chrono"]`，其中 `regex` 会打开 cel 自己那份**大小写敏感**的 `matches` 字符串
+# 方法。本轮把 `fixtures/policy/cel-corpus.json` 的 69 条逐条在两种配置下实跑对照：
+#
+#   - 开 `regex`：`element.name.matches("sub.*")` 走 cel 内建方法，求值成 `false`，
+#     而 oracle（cel-js 0.8.2）在同一条上抛 `Unknown method: matches` = `error`。**分歧 7 条。**
+#   - 关掉：同一条落到本仓注册的全局 `matches`，以方法形式调用时只收到 1 个实参，
+#     报 `Invalid argument count: expected 2, got 1` = `error`，与 oracle **同类**。**分歧 6 条。**
+#
+# 少一条分歧就是少一条要管理员在迁移 preflight 里逐条确认的规则语义翻转（§8.3）。
+# 附带效果是依赖图从 67 个 crate 降到 41 个（`cargo tree -e normal` 实测），chrono 一并出图。
+# §8.3 原文允许「标准 CEL 方法形式作为超集存在」，是**允许**不是**要求**，所以按 parity 取窄的那侧。
+cel = { version = "0.14.3", default-features = false }
+
+# 密码学原语（RustCrypto 系，纯 Rust，无 C / 汇编构建脚本）。四个用途，逐个点名：
+#   - `sha2`：审计 hash chain 的 row_hash / prev_hash（§8.6）、policy 文档的内容版本
+#     （§8.3「policy version 进入 approval 和 capability」）。
+#   - `hmac`：session token 的 keyed hash（§6.3「数据库只保存 keyed hash」），以及上游
+#     server/src/auth/signed-value.ts 那套「按标签派生子密钥再签名」的签名值。
+#   - `subtle`：常量时间比较。token 比较提前返回会泄漏「前几个字节对了」。
+#   - `aes-gcm`：Vault v1 信封读兼容（12 字节 IV、无 AAD）与 v2 AEAD（§6.4）。
+# 刻意不用 `ring`：它带 C / 汇编构建脚本，会把一整套非 Rust 工具链拉进本项目的可复现构建面（§16.3）。
+sha2 = "0.10.9"
+hmac = "0.12.1"
+subtle = "2.6.1"
+aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
+
+# CSPRNG。直接用 `getrandom` 而不是 `rand`：本项目需要的全部随机数都是「给我 N 个密码学随机
+# 字节」（DEK、IV、session token、state / nonce / PKCE verifier），没有一处需要分布、采样或
+# 可复现种子。`rand` 会为此拉进 rand_core / rand_chacha 一整套，并且**多一个可以被误用成
+# 可复现种子的入口**。`getrandom` 本来就在依赖图里（经 `uuid` 的 v7），本条不新增 crate。
+getrandom = "0.4.3"
+
+# OIDC（v3 §1.2 / §6.2 钉版 `openidconnect 4.0.1`）。
+#
+# **`default-features = false` 关掉的是 `reqwest` + `rustls-tls`**，这是一次有理由的裁决：
+# `oauth2 5.0.0`（openidconnect 的底座）把 HTTP 抽象成 `AsyncHttpClient` trait
+# （`type Future`、`fn call(&self, HttpRequest) -> Self::Future`），协议实现与传输实现本来
+# 就是分开的。v3 §6.2 要求 OIDC discovery / JWKS「使用和 remote Agent/MCP 相同的 safe dialer、
+# redirect/IP 校验、大小/时间上限」—— 那个 dialer 是本项目自己的东西（SSRF 面在
+# `openbot-infra` 收口，§10.5），不是 `reqwest` 的默认行为。把 `reqwest` 拉进来只会得到
+# 第二条**绕过 safe dialer 的出网路径**，而它默认就带 TLS 栈（`rustls` 需要 `aws-lc-rs` 或
+# `ring`，两者都带 C / 汇编构建脚本 —— 与 §16.3 的可复现构建面是一次独立的、需要 delta audit
+# 的决定，不能作为加一个 OIDC 库的副作用悄悄发生）。
+openidconnect = { version = "4.0.1", default-features = false }
+# redirect URI 的精确比对与 issuer / audience 校验都要一个真正的 URL 解析器，不能用字符串前缀。
+# 它已经在依赖图里（经 `openidconnect` -> `oauth2`），本条不新增 crate，只是把版本钉在根上。
+url = "2.5.8"

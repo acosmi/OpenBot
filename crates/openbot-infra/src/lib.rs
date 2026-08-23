@@ -43,5 +43,6 @@
 //! `parity/tables.yaml` 里 12 张 native 新表与 `db::migrations::*` 的 13 条 migration 台账落点
 //! 同样仍是 `status: todo`。
 
+pub mod auth;
 pub mod db;
 pub mod repo;
