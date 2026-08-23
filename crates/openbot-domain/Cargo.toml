@@ -1,0 +1,13 @@
+[package]
+name = "openbot-domain"
+description = "纯领域状态、不变量、policy 类型、Agent reducer（v3 §5.1）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

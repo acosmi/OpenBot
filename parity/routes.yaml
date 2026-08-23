@@ -1,0 +1,375 @@
+# parity/routes.yaml —— 上游 31 个 route 文件（26 页 + 5 layout）逐个映射，外加 v3 §3.1 条 7
+# 明写的 1 个 31 之外的新增页（native memory 控制面）。合计 32 条 entry：parity 31 + 新增 1。
+#
+# 真源：v3 §3.1（GUI 与用户旅程十条、31 = 26 + 5 的口径）、v3 §3.2（无权访问统一 404）、
+# v3 §21.1 条 2（每个页面至少一个核心 journey 和权限可见性测试）、
+# 设计系统文档 §5.2（四类页面模板 Chat / List / Form / Focus）、§13（`openbot-ui` 内部结构：
+# `shell/` 放 App shell、路由表与 5 个 layout；页面视图组件来自 `features::<组>`）。
+#
+# 字段约定：
+# - target 写成 `<Rust 落点> -> <Leptos route 路径>`，两者都是本条的落点契约。
+#   Leptos 路径用 leptos_router 的 `:param` 写法；TanStack 的 pathless 段（`_authed` / `_app`）
+#   不进 URL，所以 layout 条目的路径写 `(pathless)`。
+# - notes 依次记：页面模板（设计系统文档 §5.2）、核心 journey（v3 §21.1 条 2）、权限可见性。
+# - status 全为 todo：本仓当前零实现代码（`find crates -name '*.rs'` 只有 10 个 `lib.rs`
+#   加 1 个 `bin/xtask.rs`），任何 done 都会是假 done。
+
+schema: routes
+schema_version: 1
+upstream_commit: 891df72f1827454d8b353d108fe5dd2313b7e30d
+generated_by: manual
+recount:
+  - command: "find app/src/routes -name '*.tsx' | wc -l"
+    cwd: upstream
+    expect: 31
+  - command: "find app/src/routes -name '*.tsx' | grep -vE '(__root|_authed|_app|route)\\.tsx$' | wc -l"
+    cwd: upstream
+    expect: 26
+  - command: "find app/src/routes -name '*.tsx' | grep -E '(__root|_authed|_app|route)\\.tsx$' | wc -l"
+    cwd: upstream
+    expect: 5
+  - command: "grep -c '^  - id: ' parity/routes.yaml"
+    cwd: repo
+    expect: 32
+  - command: "grep -c '^    label: parity$' parity/routes.yaml"
+    cwd: repo
+    expect: 31
+  - command: "grep -c '^    label: 新增$' parity/routes.yaml"
+    cwd: repo
+    expect: 1
+  - command: "grep -oE '^    upstream: app/src/routes/\\S+' parity/routes.yaml | sort -u | wc -l"
+    cwd: repo
+    expect: 31
+
+entries:
+  # ---------------------------------------------------------------------------
+  # 5 个 layout（v3 §3.1 末段点名：__root / _authed / _authed/_app / admin/route / settings/route）
+  # ---------------------------------------------------------------------------
+  - id: root-layout
+    upstream: app/src/routes/__root.tsx
+    label: parity
+    target: "openbot_ui::shell::layout::root -> (pathless) 根 layout"
+    owner: openbot-ui
+    test_id: T-ROUTE-0001
+    migration_rule: "preserve: ThemeProvider/TooltipProvider 两个 provider 由 openbot_ui::theme + primitives::Tooltip 承接；主题的 system 第三态是新增，登记在 parity/ui.yaml 不在本表"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/__root.tsx 得 createRootRouteWithContext<RouterContext>()"
+    notes: "模板 n/a（layout，非页面）。journey：任何页面渲染前先套上主题与 tooltip 上下文，min-h-dvh 全屏容器。权限：无守卫，sign 页也在其下——它是唯一在登录边界之外的 layout。"
+  - id: authed-guard-layout
+    upstream: app/src/routes/_authed.tsx
+    label: parity
+    target: "openbot_ui::shell::layout::authed -> (pathless) 登录守卫 layout"
+    owner: openbot-ui
+    test_id: T-ROUTE-0002
+    migration_rule: "preserve: beforeLoad 守卫保留；CopilotProvider 由 openbot-agent 的 AG-UI 客户端会话替代，仍必须挂在登录边界之内"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed.tsx 得 createFileRoute(\"/_authed\")；同文件 beforeLoad 内 `if (!user) throw redirect({ to: \"/sign\" })`"
+    notes: "模板 n/a（layout，非页面）。journey：未登录访问任何受保护页面 -> 重定向 /sign；已登录则建立运行时会话上下文。权限：这是登录边界本身；上游注释写明 provider 刻意挂在边界之内，避免未登录访客开出一个 run。"
+  - id: app-shell-layout
+    upstream: app/src/routes/_authed/_app.tsx
+    label: parity
+    target: "openbot_ui::shell::layout::app -> (pathless) 主应用壳 layout"
+    owner: openbot-ui
+    test_id: T-ROUTE-0003
+    migration_rule: "preserve: 侧栏 + 主区结构保留；--sidebar-width 340px 改为设计系统 §5.1 的 240px/48px rail（尺寸是新增契约，登记在 parity/ui.yaml）"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app.tsx 得 createFileRoute(\"/_authed/_app\")；同文件渲染 SidebarProvider + AppSidebar + main"
+    notes: "模板 n/a（layout，非页面）。journey：一屏不滚动、内部各窗格自己滚；左侧 AppSidebar 常驻（channel 列表与分页在 components/app-sidebar/app-sidebar.tsx 的 useInfiniteQuery(channelListQueryOptions())，不在任何 route 文件里）。权限：已登录即可见。"
+  - id: admin-shell-layout
+    upstream: app/src/routes/_authed/admin/route.tsx
+    label: parity
+    target: "openbot_ui::shell::layout::admin -> /admin（layout 段）"
+    owner: openbot-ui
+    test_id: T-ROUTE-0004
+    migration_rule: "preserve: admin 二级侧栏与守卫保留；非 admin 的可见性由上游的 redirect 改为 v3 §3.2 的统一 404（行为差异，不得写成 parity 的当前行为）"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/admin/route.tsx 得 createFileRoute(\"/_authed/admin\")；同文件 beforeLoad 内 `if (user?.role !== \"admin\") throw redirect({ to: \"/\" })`"
+    notes: "模板 n/a（layout，非页面）。journey：管理员进入 admin 区，左侧换成 AdminSidebar。权限：上游判据是 user.role === 'admin'，不满足时 redirect 到 /；v3 §3.2 要求无权访问统一 404 以避免资源枚举，重写时按 404 实现并单列测试。"
+  - id: settings-shell-layout
+    upstream: app/src/routes/_authed/settings/route.tsx
+    label: parity
+    target: "openbot_ui::shell::layout::settings -> /settings（layout 段）"
+    owner: openbot-ui
+    test_id: T-ROUTE-0005
+    migration_rule: "preserve: settings 二级侧栏保留；宽度改为设计系统 §5.1 的 200px（尺寸是新增契约）"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/settings/route.tsx 得 createFileRoute(\"/_authed/settings\")；同文件渲染 SidebarProvider + SettingsSidebar + main"
+    notes: "模板 n/a（layout，非页面）。journey：进入个人设置区，左侧换成 SettingsSidebar。权限：无额外守卫，已登录即可见（上游 beforeLoad 在本文件 0 命中）。"
+
+  # ---------------------------------------------------------------------------
+  # 26 个页面
+  # ---------------------------------------------------------------------------
+  - id: home-composer
+    upstream: app/src/routes/_authed/_app/index.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::home -> /"
+    owner: openbot-ui
+    test_id: T-ROUTE-0006
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/index.tsx 得 createFileRoute(\"/_authed/_app/\")；同文件 useQuery(agentListQueryOptions()) + Composer + useStartChannel + routeMessage"
+    notes: "模板 Chat（居中 Composer + 说明区，无 List 结构）。journey：在首页写第一条消息 -> 有 @ 则显式选定 coworker、无 @ 则走 routeMessage 自动 routing、routing 失败回落 fallback -> 创建 channel 并跳转。权限：已登录即可见；探索区只列 `!a.mine && a.visibility === 'public'` 的 coworker。**分歧登记**：设计系统文档 §5.2 的 List 行把「首页 channel 列表」归 List，但固定 commit 的本文件是 composer 起始页，channel 列表实际在 components/app-sidebar/app-sidebar.tsx；本条按实测结构归 Chat。"
+  - id: agents-index
+    upstream: app/src/routes/_authed/_app/agents/index.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::agents_index -> /agents"
+    owner: openbot-ui
+    test_id: T-ROUTE-0007
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/agents/index.tsx 得 createFileRoute(\"/_authed/_app/agents/\")；同文件 useQuery(agentListQueryOptions()) 与两个分组标题 \"Your agents\" / \"Explore agents\""
+    notes: "模板 List。journey：浏览「我的 coworker」与「可探索的公开 coworker」两组卡片，从这里创建 / 编辑 / 复制 / 隐藏 / 恢复 / 软删除 / 启动（v3 §3.1 条 3；创建与编辑在上游是本页内的对话框，不是独立 route）。权限：已登录即可见；私有 coworker 只对 owner/admin 可见，无权访问按 v3 §3.2 走 404。"
+  - id: bot-chat
+    upstream: app/src/routes/_authed/_app/bot.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::bot -> /bot?agent=<id>"
+    owner: openbot-ui
+    test_id: T-ROUTE-0008
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/bot.tsx 得 createFileRoute(\"/_authed/_app/bot\")；同文件 validateSearch 取 search.agent、useActiveBot / useBotThread(agentId) / useStoppedTurn(agentId)，标题 \"Browser Bot\""
+    notes: "模板 Chat。journey：直接与某个 Bot 对话 —— 从 ?agent= 选定 Bot、恢复历史线程、startNew 开新会话、停止中的回合可恢复（v3 §3.1 条 5）。权限：已登录即可见；上游在 search 缺省时回落到固定 agentId \"risk-analyst\"，重写时该缺省必须取自部署配置而非硬编码字面量。"
+  - id: channel-detail
+    upstream: app/src/routes/_authed/_app/channel/$channelId.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::channel_detail -> /channel/:channel_id"
+    owner: openbot-ui
+    test_id: T-ROUTE-0009
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/channel/$channelId.tsx 得 createFileRoute(\"/_authed/_app/channel/$channelId\")；同文件 useQuery(channelQueryOptions(channelId)) + ChannelChat + DetailPanel + ComputerView"
+    notes: "模板 Chat。journey：读 transcript、写 composer 草稿与队列、@coworker、stop/steer、失败恢复，并可把 Bot 的实时屏幕开进右侧 detail 面板（v3 §3.1 条 4）。权限：非 membership 一律 404 —— 上游 server/src/channels/routes.ts 已返回 `{\"error\":\"Channel not found.\"}` 404，与 v3 §3.2 同向，重写必须保持。"
+  - id: channel-new
+    upstream: app/src/routes/_authed/_app/channel/new.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::channel_new -> /channel/new"
+    owner: openbot-ui
+    test_id: T-ROUTE-0010
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/channel/new.tsx 得 createFileRoute(\"/_authed/_app/channel/new\")；同文件 useStartChannel + recipients + canSend"
+    notes: "模板 Chat。journey：先选收件人（可由 URL 预填，隐藏的 coworker 仍是合法收件人）再写第一条消息 -> start() 创建 channel；刷新不会创建空 channel。权限：已登录即可见；路由匹配上 /channel/new 必须先于 /channel/:channel_id。"
+  - id: skills-personal
+    upstream: app/src/routes/_authed/_app/skills.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::skills -> /skills"
+    owner: openbot-ui
+    test_id: T-ROUTE-0011
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/_app/skills.tsx 得 title=\"Agent Skills\" / \"Your skills\" / \"Workspace skills\"（后者 description 为 \"Written for everyone by an administrator...\"）"
+    notes: "模板 List。journey：查看并管理自己的 personal skills，同时只读地看到管理员下发的 deployment skills；`/` 命令选择消费同一份清单（v3 §3.1 条 6）。权限：已登录即可见；workspace 区只读，编辑入口在 /admin/skills。"
+  - id: admin-home
+    upstream: app/src/routes/_authed/admin/index.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_home -> /admin"
+    owner: openbot-ui
+    test_id: T-ROUTE-0012
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/index.tsx 得 title=\"Admin\" + description=\"Settings that apply to everybody in this deployment...\"；同文件按 section 渲染 Item 列表"
+    notes: "模板 List（分组 Item 列表构成的导航落地页）。journey：管理员进入 admin 区，从分组清单跳到具体管理页。权限：仅 admin；非 admin 按 admin-shell-layout 条的裁决走 404。"
+  - id: admin-audit
+    upstream: app/src/routes/_authed/admin/audit.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_audit -> /admin/audit"
+    owner: openbot-ui
+    test_id: T-ROUTE-0013
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/audit.tsx 得 title=\"Audit\" + description=\"Every action a Bot took, and every one this deployment's policy refused.\""
+    notes: "模板 List。journey：审计员按时间浏览每一次 Bot 动作与每一次策略拒绝（v3 §3.1 条 8、§8.6）。权限：仅 admin。"
+  - id: admin-boundaries
+    upstream: app/src/routes/_authed/admin/boundaries.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_boundaries -> /admin/boundaries"
+    owner: openbot-ui
+    test_id: T-ROUTE-0014
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/boundaries.tsx 得 title=\"Boundaries\" / \"When a rule matches\" + description=\"Enforce stops the action. Record it and allow it writes the same row and lets the action through...\""
+    notes: "模板 List（规则列表 + 就地编辑）。journey：管理员看规则清单、切 enforce / record-and-allow 两档，在真实流量上先试再拒。权限：仅 admin。"
+  - id: admin-components-index
+    upstream: app/src/routes/_authed/admin/components/index.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_components_index -> /admin/components"
+    owner: openbot-ui
+    test_id: T-ROUTE-0015
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/components/index.tsx 得 title=\"UI Components\" + description=\"What each Bot may answer with...Each change and each refusal is a row in Audit.\""
+    notes: "模板 List。journey：管理员看已发布的 compiled component 清单，逐个进入配置 per-Bot withholding（v3 §3.1 条 10、§3.3）。权限：仅 admin。"
+  - id: admin-component-detail
+    upstream: app/src/routes/_authed/admin/components/$name.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_component_detail -> /admin/components/:name"
+    owner: openbot-ui
+    test_id: T-ROUTE-0016
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/components/$name.tsx 得 title=\"Configuration\" + title=\"No such component\" / description=\"Nothing here answers to that name.\""
+    notes: "模板 Form。journey：管理员配置单个 component 的用途说明与哪些 Bot 可以用它答复；未知 name 走「没有这个 component」空态（上游在页内渲染 not-found 而不是抛 404，重写按 v3 §3.2 统一 404 语义时须单列测试）。权限：仅 admin。"
+  - id: admin-computers
+    upstream: app/src/routes/_authed/admin/computers.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_computers -> /admin/computers"
+    owner: openbot-ui
+    test_id: T-ROUTE-0017
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/computers.tsx 得 title=\"Computers\" / \"Computers in this deployment\" + description=\"Each Bot's browser and the profile it keeps...resetting one signs it out of everything.\""
+    notes: "模板 List。journey：管理员查看每个 Bot 的浏览器与其 profile，必要时重置（重置 = 该 Bot 从所有站点登出）。权限：仅 admin。"
+  - id: admin-credentials
+    upstream: app/src/routes/_authed/admin/credentials.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_credentials -> /admin/credentials"
+    owner: openbot-ui
+    test_id: T-ROUTE-0018
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/credentials.tsx 得 title=\"Credentials\" / \"Configured credentials\" + description=\"Credentials are write-only. OpenBot never displays their secret values.\""
+    notes: "模板 Form（设计系统文档 §5.2 Form 行点名 credential）。journey：管理员写入 / 轮换凭据；凭据只写不读，界面永不回显密文（v3 §6.4 Vault）。权限：仅 admin。"
+  - id: admin-identity-providers
+    upstream: app/src/routes/_authed/admin/identity-providers.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_identity_providers -> /admin/identity-providers"
+    owner: openbot-ui
+    test_id: T-ROUTE-0019
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/identity-providers.tsx 得 title=\"Identity providers\" / \"Registered\" + description=\"A company's own identity provider, by SAML or OpenID Connect...\" 与 \"Google, Microsoft and Okta are configured in the environment instead and do not appear here.\""
+    notes: "模板 Form（设计系统文档 §5.2 Form 行点名 identity provider）。journey：管理员按 SAML / OIDC 注册企业 IdP，并绑定 email domain 做 SSO routing（v3 §3.1 条 1 与条 8）。权限：仅 admin；Google/Microsoft/Okta 由环境变量配置，本页不列出。"
+  - id: admin-people
+    upstream: app/src/routes/_authed/admin/people.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_people -> /admin/people"
+    owner: openbot-ui
+    test_id: T-ROUTE-0020
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/people.tsx 得 title=\"People\" / \"Who is here\" + description=\"An address named in INITIAL_ADMIN_EMAILS is an administrator whatever this screen says, so it cannot be changed here.\""
+    notes: "模板 List。journey：管理员查看所有登录过的人并改其角色；INITIAL_ADMIN_EMAILS 命中的地址是环境授予的 admin，本页改不动。权限：仅 admin；该 env 的处置见 parity/env.yaml。"
+  - id: admin-playground
+    upstream: app/src/routes/_authed/admin/playground.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_playground -> /admin/playground"
+    owner: openbot-ui
+    test_id: T-ROUTE-0021
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -nE '<h1|Playground|sandbox' app/src/routes/_authed/admin/playground.tsx 得 <h1>Playground</h1>、useQuery(sandboxedListQueryOptions())，以及文件头注释 \"Browser-authored components are edited as drafts, previewed in the production sandbox renderer\""
+    notes: "模板 Focus（无 max-width 的编辑 + 预览工作区）。journey：作者写 HTML/CSS/JS 草稿 -> 在与生产同一个沙箱渲染器里预览（sample arguments 与组件代码在同一次沙箱求值中注入）-> draft/publish/revision（v3 §3.1 条 10、§3.3）。权限：仅 admin；沙箱脚本按 v3 §3.3 只能看到 window.__args 与自己的 DOM，无 data function、无网络、无回宿主通道。"
+  - id: admin-plugins-index
+    upstream: app/src/routes/_authed/admin/plugins/index.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_plugins_index -> /admin/plugins"
+    owner: openbot-ui
+    test_id: T-ROUTE-0022
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/plugins/index.tsx 得 title=\"Plugins\" / \"Connected\" + description=\"What this deployment can reach, and which Bots may reach it. Adding a plugin is account-wide...\""
+    notes: "模板 List。journey：管理员浏览已连接的 plugin 与可加的一方 catalog，添加是账户级的（v3 §3.1 条 9、§9.1）。权限：仅 admin。"
+  - id: admin-plugin-detail
+    upstream: app/src/routes/_authed/admin/plugins/$key.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_plugin_detail -> /admin/plugins/:key"
+    owner: openbot-ui
+    test_id: T-ROUTE-0023
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/plugins/$key.tsx 得 title=\"Plugin\" / \"Connection\" / \"Not a plugin\" + description=\"A Bot is told about a tool only when it holds it. Every call is decided again when it happens...\""
+    notes: "模板 Form（设计系统文档 §5.2 Form 行点名 plugin 配置与 OAuth client）。journey：管理员填 connector 所需配置 / 完成 OAuth，并决定哪些 Bot 持有它的 tool；未知 key 走「不是 plugin」空态。权限：仅 admin；discovery 不产生权限（v3 §3.2 末条、§9.3）。"
+  - id: admin-plugin-tool-grant
+    upstream: app/src/routes/_authed/admin/plugins/$key_.tools.$tool.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_plugin_tool_grant -> /admin/plugins/:key/tools/:tool"
+    owner: openbot-ui
+    test_id: T-ROUTE-0024
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -A2 -n 'createFileRoute($' app/src/routes/_authed/admin/plugins/$key_.tools.$tool.tsx 得路由串 \"/_authed/admin/plugins/$key_/tools/$tool\"；grep -oE 'title=\"[^\"]*\"' 同文件得 title=\"Tool\" / \"What it does\" / \"Bots\""
+    notes: "模板 Form。journey：管理员看单个 tool 的说明并逐个 Bot 开关 grant；关掉在下一次调用即生效、中间不缓存（v3 §3.1 条 9）。权限：仅 admin；上游 `$key_` 的下划线是 TanStack 的「脱离父路由布局」标记，Leptos 侧不需要该记号，URL 形状不变。"
+  - id: admin-skills
+    upstream: app/src/routes/_authed/admin/skills.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::admin_skills -> /admin/skills"
+    owner: openbot-ui
+    test_id: T-ROUTE-0025
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/skills.tsx 得 title=\"Skills\" / \"Installed\" + description=\"Named instructions anybody here can invoke with a slash. A skill adds no capability...\""
+    notes: "模板 List。journey：管理员编写 / 安装面向整个部署的 skill；skill 只能请 Bot 用它已持有的能力，每次调用仍单独判定并记录（v3 §3.1 条 6、§9.6）。权限：仅 admin；个人 skill 在 /skills。"
+  - id: settings-preferences
+    upstream: app/src/routes/_authed/settings/index.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::settings_index -> /settings"
+    owner: openbot-ui
+    test_id: T-ROUTE-0026
+    migration_rule: "preserve"
+    status: todo
+    evidence: "cat app/src/routes/_authed/settings/index.tsx 得 PageShell title=\"Preferences\" + PageSection title=\"General\" + 单个 Item「Dark theme」Switch（useTheme 的 dark/setDark）"
+    notes: "模板 List（Item 行 + 右侧控件）。journey：改自己的偏好；上游只有 Dark theme 一个开关（两态）。权限：已登录即可见，只影响本人。**新增登记**：主题的 system 第三态与 UI 双语（locale 切换）是新增，不得冒充 parity —— v3 §3.1 末段与设计系统文档 §7/§8 已裁决，本页会因此多出控件，具体项登记在 parity/ui.yaml。"
+  - id: settings-components-gallery-index
+    upstream: app/src/routes/_authed/settings/components-gallery/index.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::settings_components_gallery_index -> /settings/components-gallery"
+    owner: openbot-ui
+    test_id: T-ROUTE-0027
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/settings/components-gallery/index.tsx 得 title=\"Components gallery\" + description=\"The pieces a Bot can draw in a conversation instead of describing something in prose...\""
+    notes: "模板 List。journey：任何用户浏览 Bot 可以画出来的组件清单（只读画廊，能不能用由管理员决定）。权限：已登录即可见。"
+  - id: settings-components-gallery-detail
+    upstream: app/src/routes/_authed/settings/components-gallery/$name.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::settings_components_gallery_detail -> /settings/components-gallery/:name"
+    owner: openbot-ui
+    test_id: T-ROUTE-0028
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -c useMutation app/src/routes/_authed/settings/components-gallery/$name.tsx 得 0（纯只读）；同文件 PageSection title=\"Details\" 下两行 FactRow（Kind / Called as）+ ComponentPreview，未知 name 走 title=\"No such component\""
+    notes: "模板 List（只读详情：预览图 + FactRow 行；本页零 mutation，所以不按 Form 归类，这是按实测结构做的归类而非 §5.2 表里的点名项）。journey：从画廊点进一个组件，看它的预览、kind 与调用名。权限：已登录即可见。"
+  - id: settings-connected-accounts-index
+    upstream: app/src/routes/_authed/settings/connected-accounts/index.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::settings_connected_accounts_index -> /settings/connected-accounts"
+    owner: openbot-ui
+    test_id: T-ROUTE-0029
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/settings/connected-accounts/index.tsx 得 title=\"Connected accounts\" + description=\"Services a Bot reads as you, so it only ever sees what you can see. Connecting is yours to grant, and nobody can grant it for you.\""
+    notes: "模板 List。journey：本人查看自己已连接 / 可连接的服务（v3 §3.1 条 7、§9.4）。权限：只列本人的连接；授权只能本人给，管理员不能代授。"
+  - id: settings-connected-account-detail
+    upstream: app/src/routes/_authed/settings/connected-accounts/$key.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::settings_connected_account_detail -> /settings/connected-accounts/:key"
+    owner: openbot-ui
+    test_id: T-ROUTE-0030
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -A2 -n 'createFileRoute($' app/src/routes/_authed/settings/connected-accounts/$key.tsx 得路由串 \"/_authed/settings/connected-accounts/$key\"；同文件 useMutation(connect) 与 title=\"Account\" / \"Access\" + description=\"What you agreed to, as the vendor recorded it — not what was asked for.\""
+    notes: "模板 Form。journey：本人对单个服务做连接 / 断开，并看到厂商实际记录下来的授权范围（与请求范围可能不同）。权限：只本人；不是「为自己连接」的服务走「This is not a service you connect for yourself.」空态。"
+  - id: sign-in
+    upstream: app/src/routes/sign.tsx
+    label: parity
+    target: "openbot_ui::shell::routes::sign -> /sign"
+    owner: openbot-ui
+    test_id: T-ROUTE-0031
+    migration_rule: "preserve"
+    status: todo
+    evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/sign.tsx 得 createFileRoute(\"/sign\")；同文件 beforeLoad 内 `throw redirect({ to: \"/\" })`、useQuery(authProvidersQueryOptions())、signInWithEmailDomain(email)"
+    notes: "模板 Focus（无 sidebar，居中卡片，按钮纵排）。journey：点 Google/Microsoft/Okta 按钮，或输入企业邮箱按 email-domain 路由到该公司自建 IdP（v3 §3.1 条 1）。权限：唯一在登录边界之外的页面；已登录访问时 redirect 到 /。"
+
+  # ---------------------------------------------------------------------------
+  # 31 之外的新增页（v3 §3.1 条 7 明写：固定 commit 的 app/src 没有任何 memory UI/API）
+  # ---------------------------------------------------------------------------
+  - id: memory-controls
+    upstream: "-"
+    label: 新增
+    target: "openbot_ui::shell::routes::settings_memory -> /settings/memory"
+    owner: openbot-ui
+    test_id: T-ROUTE-0032
+    migration_rule: "n/a: 无上游对应物，不参与 31 的 parity 计数"
+    status: todo
+    evidence: "正向对照已跑：`grep -rniE 'memory' app/src/routes | wc -l` 与 `git ls-files 'app/src/**' | grep -i memory | wc -l` 均为 0，而同一条 grep 在 v3 文档里能命中 §3.1 条 7 与 §4.3 的 native memory 段落 —— 即命令本身有效，只是上游确实没有这个面"
+    notes: "模板 List（记忆条目列表 + 每条删除 + 全局禁用开关）。journey：用户查看 native memory 里关于自己的条目、删除单条、整体禁用记忆写入（v3 §3.1 条 7、§4.3）。权限：只本人可见自己的条目。**这是 31 之外的第 32 条，label 必须是新增**：上游 memory 只存在于 Intelligence 托管侧，v3 §4.1 退出 Intelligence 后本页是其替代面；golden 截图对象因此是 26 页 + 本页 = 27 页（设计系统文档 §10.1）。"

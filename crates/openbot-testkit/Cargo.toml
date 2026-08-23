@@ -1,0 +1,51 @@
+[package]
+name = "openbot-testkit"
+description = "golden trace、fault injection、fake provider、xtask（v3 §5.1）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# xtask 刻意不是第 11 个 crate（v3 §5.1 只允许四个理由建 crate，xtask 一个都不满足）。
+# 它是本 crate 的 bin target，靠 `required-features` 与库面隔离：
+#   - 不开 `xtask` feature 时，`cargo build --workspace` 完全不编译它，六个依赖一个都不进图；
+#   - `.cargo/config.toml` 的 alias `cargo xtask` 显式开这个 feature。
+[[bin]]
+name = "xtask"
+path = "src/bin/xtask.rs"
+required-features = ["xtask"]
+
+[features]
+xtask = [
+    "dep:serde",
+    "dep:serde_yaml",
+    "dep:serde_json",
+    "dep:anyhow",
+    "dep:regex",
+    "dep:walkdir",
+    "dep:oxc_allocator",
+    "dep:oxc_ast",
+    "dep:oxc_ast_visit",
+    "dep:oxc_parser",
+    "dep:oxc_span",
+]
+
+[dependencies]
+# 版本钉在 workspace 根的 [workspace.dependencies]，由本机 `cargo add` 解析出的真实版本写入。
+anyhow = { workspace = true, optional = true }
+# oxc 全家桶 —— 只服务 `xtask test-inventory`（v3 §24 G0 / G8 的 AST 级 test inventory）。
+# 同样受 `required-features = ["xtask"]` 隔离：`cargo build --workspace` 一个都不编译。
+oxc_allocator = { workspace = true, optional = true }
+oxc_ast = { workspace = true, optional = true }
+oxc_ast_visit = { workspace = true, optional = true }
+oxc_parser = { workspace = true, optional = true }
+oxc_span = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+serde_yaml = { workspace = true, optional = true }
+walkdir = { workspace = true, optional = true }

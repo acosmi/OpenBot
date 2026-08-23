@@ -1,0 +1,104 @@
+/* OpenBot GUI 的 CSS 入口。
+ *
+ * 真源：docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md §12.2。
+ * 文档里 `/* … 其余 token 一一映射 … *\/` 的省略号在这里按 design/tokens.toml 展开成全量；
+ * 除展开省略号外逐字落地，不加不改。
+ *
+ * 由 trunk 的 `tailwind-css` pipeline 交给 Tailwind standalone CLI 4.3.3 编译
+ * （参数只有 --input/--output/--minify，不传 --config，见 §12.1）。零 Node、零 npm。
+ *
+ * Phase 0 不跑 Tailwind，因此本文件的**可编译性尚未实测**；首次 `trunk build` 是它的第一道验证。
+ */
+
+@import "tailwindcss";
+@source "../src";                      /* 扫描 .rs 里的 class 字面量 */
+@import "./tokens.css";                /* build.rs 从 tokens.toml 生成，三块同源 */
+
+@theme inline {
+  /* ---- 颜色（tokens.toml [color.light] / [color.dark]，21 个 --color-*） ---- */
+  --color-bg: var(--bg);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-bg-chip: var(--bg-chip);
+  --color-bg-sidebar: var(--bg-sidebar);
+  --color-bg-popover: var(--bg-popover);
+  --color-bg-inverse: var(--bg-inverse);
+  --color-fg: var(--fg);
+  --color-fg-secondary: var(--fg-secondary);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-inverse: var(--fg-inverse);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-danger: var(--danger);
+  --color-caution: var(--caution);
+  --color-success: var(--success);
+  --color-info: var(--info);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* ---- 阴影（只有两级，值随主题，故落在 tokens.toml 的 [color.*] 里） ----
+   * 原始 token 叫 --elevation-*（见 tokens.toml 的 [color.css_var_overrides]）：
+   * 若原始 token 也叫 --shadow-popover，这里就成了 `--shadow-popover: var(--shadow-popover)`
+   * 自引用。utility 名仍是 shadow-popover / shadow-dialog，§12.6 的 rg 规则不受影响。
+   */
+  --shadow-popover: var(--elevation-popover);
+  --shadow-dialog: var(--elevation-dialog);
+
+  /* ---- 字体栈（§4.3） ---- */
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Noto Sans CJK SC", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Noto Sans Mono CJK SC", monospace;
+
+  /* ---- 字号阶（覆盖 Tailwind 默认值，§4.3） ---- */
+  --text-xs: 12px; --text-xs--line-height: 16px;
+  --text-sm: 13px; --text-sm--line-height: 18px;
+  --text-base: 14px; --text-base--line-height: 20px;
+  --text-lg: 16px; --text-lg--line-height: 24px;
+  --text-xl: 20px; --text-xl--line-height: 28px;
+  --text-2xl: 24px; --text-2xl--line-height: 32px;
+
+  /* ---- 圆角阶（§4.4） ---- */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  /* ---- 缓动（§4.5，本项目新增自定，不做 parity） ---- */
+  --ease-enter: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* ---- 断点（§5.3 唯一真源） ---- */
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+}
+
+/* TODO(Phase 1)：tokens.toml 的 [z_index] 与 [size] 还没有对应的 utility。
+ * Tailwind v4 的 @theme 没有 z-index 与控件高度的 namespace，而 §12.6 的 design-lint
+ * 又禁止任意值 `[Npx]`，两条规则夹在一起会让组件既不能用 token 也不能用字面量。
+ * 解除条件 = 在这里补一组 `@utility`（z-base/z-sticky/…、h-control-sm/md/lg 等），
+ * 名字由 build.rs 从 tokens.toml 生成并同步进 design-lint 的白名单。
+ * Phase 0 只把缺口写明，不擅自发明命名。
+ */
+
+@font-face {
+  font-family: "Inter Variable";
+  src: url("../assets/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter Variable";
+  font-style: italic;
+  src: url("../assets/fonts/InterVariable-Italic.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0ms !important;
+    animation: none !important;
+  }
+}

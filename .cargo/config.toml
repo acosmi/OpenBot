@@ -1,0 +1,7 @@
+# `cargo xtask <子命令>` 的唯一入口。
+#
+# xtask 是 `openbot-testkit` 的 bin target（`required-features = ["xtask"]`），
+# 刻意不是第 11 个 crate —— 理由见仓根 Cargo.toml 顶部注释与 v3 §5.1。
+# 结尾的 `--` 把用户参数原样透传给二进制，而不是被 `cargo run` 自己吃掉。
+[alias]
+xtask = "run -p openbot-testkit --features xtask --bin xtask --"

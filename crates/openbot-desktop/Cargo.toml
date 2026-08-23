@@ -1,0 +1,16 @@
+[package]
+name = "openbot-desktop"
+description = "Tauri、window ACL、in-process、sidecar/update（v3 §5.1）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Phase 0 刻意不引 Tauri（CLAUDE.md §3 固定基线 `2.11.5`）—— G0 不打桌面包，
+# 引进来只会让 `cargo build --workspace` 拖一棵与本轮闸门无关的原生依赖树。
+# 桌面宿主是 G6 的产物。仅本 crate 使用的 `sys-locale = "0.3.2"`（设计系统文档 §8.4）同样留到 G6。

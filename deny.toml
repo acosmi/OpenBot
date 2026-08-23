@@ -1,0 +1,151 @@
+# cargo-deny 配置 —— v3 §16.3〈Supply chain〉固定清单里的 `cargo deny` 一项。
+#
+# schema 面向 cargo-deny 0.18+（0.14–0.16 时代的 `version = 2` 过渡字段已移除，这里刻意不写）。
+# 四段齐全：licenses / bans / advisories / sources。
+#
+# 本文件由 `cargo deny check` 在本机实跑验证过，验证结果与残留问题见交付报告。
+
+[graph]
+# 刻意**不**限定 targets。限定 targets 会让 deny 只看被选中的那几个三元组的依赖子图 ——
+# 本项目要同时出 Server（linux）、Desktop（macos / windows）和 WASM GUI，漏掉任一目标
+# 都等于漏掉一整棵依赖子树。全目标扫描慢一点，但"答案取决于跑在哪台机器上"的闸门不是闸门。
+all-features = true
+
+# ---------------------------------------------------------------------------
+# licenses —— v3 §23.1〈代码许可〉
+# ---------------------------------------------------------------------------
+[licenses]
+# allow 是**白名单**：cargo-deny 0.18 里凡是不在 allow 内的许可（含无法识别的 unknown）
+# 一律判错，这就是"unknown 一律 deny"的落地方式，不需要额外开关。
+allow = [
+    # v3 §23.1 逐条点名的许可：
+    "MIT",                             # 上游 OpenBot（条 1）、AG-UI（条 4）、Electron（条 5）
+    "Apache-2.0",                      # Codex（条 2）、Grok Build 第一方（条 3）
+    "Apache-2.0 WITH LLVM-exception",  # Rust 生态里 Apache-2.0 的标准变体（wasi / linux-raw-sys 等）
+    "ISC",                             # Lucide 1.33.0（CLAUDE.md §3 GUI 资产）
+    "OFL-1.1",                         # Inter Variable 4.1（CLAUDE.md §3 GUI 资产）
+    "BSD-2-Clause",                    # §23.1 条 6 "Steel Browser/CDP 参考代码……Apache/BSD 等"
+    "BSD-3-Clause",                    # 同上
+    "0BSD",                            # BSD 系里最宽松的一支，Rust 生态常见（如 adler2）
+
+    # 下面这条不在 §23.1 的枚举里，但**当前依赖图已经必须要它**，不是预留：
+    #   `cargo metadata --all-features | jq '.packages[].license'` 实测 `unicode-ident` 的
+    #   声明是 `(MIT OR Apache-2.0) AND Unicode-3.0` —— 这是 AND，MIT 满足不了它。
+    #   `unicode-ident` 是 `syn` 的依赖，`serde_derive` 依赖 `syn`，所以它此刻就在图里。
+    "Unicode-3.0",
+]
+# 双许可表达式（`MIT OR Apache-2.0`）只要有一支命中 allow 即通过，无需在这里逐条列出组合。
+# 置信度阈值：低于它 cargo-deny 会认为"没看懂这份 LICENSE 文本"并按 unknown 处理（= 拒绝）。
+confidence-threshold = 0.93
+# 第一方 crate 全部 `publish = false`（见 workspace 根 Cargo.toml），
+# 它们的 `LicenseRef-OpenBot-Proprietary` 不需要、也不应该出现在上面的 allow 白名单里。
+private = { ignore = true }
+# 单 crate 豁免。**空**是刻意的：任何豁免都必须带书面理由与 owner（v3 §23.1 末段
+#"所有复用生成机器可读 provenance"），不允许为了让闸门变绿而顺手加一行。
+exceptions = []
+
+# ---------------------------------------------------------------------------
+# bans —— 依赖图形状
+# ---------------------------------------------------------------------------
+[bans]
+# 多版本共存只告警不拒绝：Rust 生态里 `windows-sys` / `syn` 这类 crate 长期多版本并存，
+# 判红会逼人写一长串 skip，那份 skip 名单反而会掩盖真正该合并的重复。
+multiple-versions = "warn"
+# 通配符依赖（`foo = "*"`）直接拒绝：它让 `Cargo.lock` 之外再无版本约束，
+# 与 CLAUDE.md §3"禁止静默升 lockfile"直接冲突。
+wildcards = "deny"
+deny = []
+allow = []
+skip = []
+skip-tree = []
+
+# v3 §16.3："build.rs、proc macro、FFI 和 `unsafe` crate 单列审计"。
+# 这里的 allow-build-scripts 就是那份"单列"名单：**新出现**的 build.rs 会让闸门当场变红，
+# 逼人去读它；已在名单里的则是本轮真读过源码的。
+#
+# 反面做法（本轮实测踩过）：`allow-build-scripts = []` 是"允许零个 crate 带 build.rs"，
+# 于是 serde_core / serde_json / zmij 三个正当依赖当场判红 —— 一条恒红的闸门等于没有闸门。
+[bans.build]
+allow-build-scripts = [
+    # 2026-08-22 本轮逐份读过源码（`cat $CARGO_HOME/registry/src/*/<crate>/build.rs`）。
+    # 七份全是同一族（dtolnay 系）的编译期能力探测：跑 `rustc --version` 拿 minor 版本、
+    # 读 `CARGO_CFG_*` / `OPT_LEVEL` 环境变量，然后 `println!("cargo:rustc-cfg=…")`。
+    # 无网络请求、无下载、无执行外部二进制。两处需要单独记的额外行为：
+    #   - serde / serde_core：另向 `OUT_DIR` 写一个几行的 `private.rs`（编译期常量拼接）；
+    #   - anyhow / proc-macro2：另做一次 "compile probe"（写临时 .rs 再调 rustc 试编），
+    #     调用的是 `RUSTC` 环境变量指向的编译器本身，不引入第三方可执行文件。
+    "anyhow",
+    "proc-macro2",
+    "quote",
+    "serde",
+    "serde_core",
+    "serde_json",
+    "zmij",
+    # 2026-08-22 第二批：随 `oxc` `0.139.0` → `0.146.0` 进入依赖图（工具链升 `1.98.0` 的连带
+    # 升级，delta audit 见 `docs/2026-08-22-Rust工具链1.94.1升1.98.0-delta审计.md` §5.3）。
+    # 闸门当场判红把它们逼了出来 —— 这正是这份名单存在的意义，不是噪声。四份同样逐字读过：
+    #   - dragonbox_ecma / owo-colors：`rustc --version` 取 minor 版本 → `cargo:rustc-cfg=…`；
+    #   - num-traits：经 `autocfg` 试编一个表达式，探测 `f64::total_cmp` 是否可用；
+    #   - rustversion：dtolnay 的版本探测，另向 `OUT_DIR` 写一份生成的版本判定源码。它的
+    #     build 脚本不在顶层（`Cargo.toml` 声明 `build = "build/build.rs"`），文件里两处
+    #     `https://` 都在注释的 issue 链接里，不是请求。
+    # 四份均无网络请求、无下载、不执行第三方二进制。
+    "dragonbox_ecma",
+    "num-traits",
+    "owo-colors",
+    "rustversion",
+]
+# 依赖里夹带的可执行文件 / 解释型脚本一律拒绝：供应链攻击最常见的载荷形态。
+executables = "deny"
+interpreted = "deny"
+# 只扫带 build.rs 的 crate（上面白名单里那三个），不递归扫全依赖树 ——
+# 全树扫描会把闸门时间拉到分钟级，而攻击面集中在能在构建期执行代码的那几个 crate。
+include-dependencies = false
+include-workspace = false
+include-archives = false
+bypass = []
+
+[bans.workspace-dependencies]
+# 同一个依赖在多个 crate 里写不同版本 = 版本真源分裂。workspace 根的
+# [workspace.dependencies] 是唯一钉版点，成员 crate 只能 `{ workspace = true }`。
+duplicates = "deny"
+include-path-dependencies = true
+unused = "deny"
+
+# ---------------------------------------------------------------------------
+# advisories —— RustSec
+# ---------------------------------------------------------------------------
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# 被 yank 的版本一律拒绝：yank 通常意味着该版本有已知严重问题。
+yanked = "deny"
+# unmaintained 显式写成 "all"，不吃默认值：默认只看 workspace 直接依赖，
+# 而供应链风险恰恰更常藏在传递依赖里。写死它也让"这条闸门到底管多宽"不随 cargo-deny 升版本漂移。
+unmaintained = "all"
+# 已知 advisory 的豁免。**空**是刻意的，而且是本轮实跑验证后的空，不是没查过的空：
+#
+# 2026-08-22 本机 `cargo deny check advisories` = ok。advisory-db 确实被拉下来了
+# （`find ~/.cargo/advisory-dbs -name 'RUSTSEC-*.md' | wc -l` = 1205，这是正向对照：
+#  空库同样会给出 "advisories ok"，不做这一步就分不清"没问题"和"没查"）。
+# 与本仓依赖图相关的两条通告都逐条核对过版本区间，都不命中：
+#   - serde_yaml / RUSTSEC-2018-0005（反序列化 alias 递归导致 abort）：patched >= 0.8.4，
+#     本仓锁 0.9.34+deprecated；
+#   - unsafe-libyaml / RUSTSEC-2023-0075（32/16 位平台 u64 非对齐写，informational=unsound）：
+#     patched >= 0.2.10，本仓 Cargo.lock 锁 0.2.11。
+# advisory-db 里目前**没有**针对 serde_yaml 的 unmaintained 通告（该 crate 目录下只有
+# RUSTSEC-2018-0005 一份），所以这里不需要任何豁免行。
+# 将来真需要加时，每一行都必须带 RUSTSEC 编号 + 书面理由 + owner，不允许为了让闸门变绿而顺手加。
+ignore = []
+
+# ---------------------------------------------------------------------------
+# sources —— 来源
+# ---------------------------------------------------------------------------
+[sources]
+# 非 crates.io 的 registry 一律拒绝。
+unknown-registry = "deny"
+# git 依赖一律拒绝。v3 §16.3："git dependency 必须固定 commit"——
+# 本项目此刻一个 git 依赖都没有，保持 deny 就不需要维护"哪些 commit 被批准过"的名单；
+# 将来确需 git 依赖时，在 allow-git 里写全 URL 并在 Cargo.toml 里钉 `rev = "<40 位 sha>"`。
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

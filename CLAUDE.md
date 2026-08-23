@@ -26,7 +26,7 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 
 | 项 | 钉死值 |
 | --- | --- |
-| Rust | `1.94.1`，edition 2024 |
+| Rust | `1.98.0`，edition 2024（2026-08-22 由 `1.94.1` 升级，delta audit 见 `docs/2026-08-22-Rust工具链1.94.1升1.98.0-delta审计.md`） |
 | Tauri / Leptos | `2.11.5` / `0.8.19`（0.8.20 已存在，不升） |
 | Leptos 生态 | `leptos_router` **`=0.8.13`**（0.8.14+ 要求 `leptos ^0.8.20`，升 Leptos 必须同 PR 升 router）；`leptos_meta 0.8.6`；`leptos_i18n 0.6.2` |
 | GUI 构建工具 | Tailwind CSS standalone CLI `4.3.3`（sha256 表在设计系统文档 §12.1）；trunk `0.21.14`（`--offline`，缺工具即红不下载）；binaryen `version_132`；wasm-bindgen CLI = `Cargo.lock` 版本 |
