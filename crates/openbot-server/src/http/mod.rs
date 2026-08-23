@@ -36,6 +36,7 @@
 //! **之外**：一次 413 也是一次真实请求，不计进延迟分布就等于把被拒流量藏起来。
 
 pub mod admin;
+pub mod auth_oidc;
 pub mod channels;
 pub mod health;
 pub mod metrics;
@@ -50,6 +51,8 @@ use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::{get, post};
 use openbot_application::ApplicationService;
+use openbot_domain::identity::session::TrustedOrigins;
+use openbot_infra::auth::oidc::{OidcLoginCoordinator, PreAuthSurface};
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::auth::{AuthResolver, ResolvedAuth, SensitiveWriteSecurity};
@@ -75,6 +78,10 @@ struct StateInner {
     metrics: Option<MetricsHandle>,
     sensitive_write: Option<SensitiveWriteSecurity>,
     insecure_transport: bool,
+    oidc: Option<Arc<OidcLoginCoordinator>>,
+    preauth: PreAuthSurface,
+    login_origins: Option<TrustedOrigins>,
+    secure_session_cookie: bool,
 }
 
 impl ServerState {
@@ -110,6 +117,33 @@ impl ServerState {
         self.inner.insecure_transport
     }
 
+    /// OIDC 协调器；单用户模式为 `None`，handler 必须 fail-closed 503。
+    #[must_use]
+    pub fn oidc_login(&self) -> Option<&OidcLoginCoordinator> {
+        self.inner.oidc.as_deref()
+    }
+
+    /// 匿名能力投影；类型本身装不下动态 provider/domain。
+    #[must_use]
+    pub fn preauth_surface(&self) -> &PreAuthSurface {
+        &self.inner.preauth
+    }
+
+    /// 登录 start POST 的 Origin 是否属于配置集合。
+    #[must_use]
+    pub fn trusts_login_origin(&self, origin: &str) -> bool {
+        self.inner
+            .login_origins
+            .as_ref()
+            .is_some_and(|trusted| trusted.trusts(origin))
+    }
+
+    /// `Secure` iff OPENBOT_PUBLIC_URL 是 https；与 resolver/cookie 共用同一配置事实。
+    #[must_use]
+    pub fn secure_session_cookie(&self) -> bool {
+        self.inner.secure_session_cookie
+    }
+
     /// 敏感写 guard；未注入时 fail-closed 503，不给 handler 任何“暂时跳过”路径。
     pub async fn authorize_sensitive_write(
         &self,
@@ -139,6 +173,10 @@ pub struct ServerBuilder {
     metrics: Option<MetricsHandle>,
     sensitive_write: Option<SensitiveWriteSecurity>,
     insecure_transport: bool,
+    oidc: Option<Arc<OidcLoginCoordinator>>,
+    preauth: PreAuthSurface,
+    login_origins: Option<TrustedOrigins>,
+    secure_session_cookie: bool,
 }
 
 impl ServerBuilder {
@@ -152,6 +190,10 @@ impl ServerBuilder {
             metrics: None,
             sensitive_write: None,
             insecure_transport: false,
+            oidc: None,
+            preauth: PreAuthSurface::default(),
+            login_origins: None,
+            secure_session_cookie: false,
         }
     }
 
@@ -192,6 +234,22 @@ impl ServerBuilder {
         self
     }
 
+    /// 注入完整 OIDC 登录面；四项来自同一份已验证启动配置。
+    #[must_use]
+    pub fn with_oidc_login(
+        mut self,
+        coordinator: Arc<OidcLoginCoordinator>,
+        preauth: PreAuthSurface,
+        trusted_origins: TrustedOrigins,
+        secure_cookie: bool,
+    ) -> Self {
+        self.oidc = Some(coordinator);
+        self.preauth = preauth;
+        self.login_origins = Some(trusted_origins);
+        self.secure_session_cookie = secure_cookie;
+        self
+    }
+
     /// 收口成 [`ServerState`]。
     #[must_use]
     pub fn build(self) -> ServerState {
@@ -203,6 +261,10 @@ impl ServerBuilder {
                 metrics: self.metrics,
                 sensitive_write: self.sensitive_write,
                 insecure_transport: self.insecure_transport,
+                oidc: self.oidc,
+                preauth: self.preauth,
+                login_origins: self.login_origins,
+                secure_session_cookie: self.secure_session_cookie,
             }),
         }
     }
@@ -247,6 +309,12 @@ pub fn router(state: ServerState) -> Router {
         .route("/health", get(health::health))
         .route("/readiness", get(health::readiness))
         .route("/metrics", get(metrics::render))
+        .route("/api/capabilities", get(auth_oidc::capabilities))
+        .route("/api/auth/oidc/{provider_id}/start", post(auth_oidc::start))
+        .route(
+            "/api/auth/oidc/{provider_id}/callback",
+            get(auth_oidc::callback),
+        )
         .route("/api/channels", get(channels::list))
         .route("/api/me", get(admin::me))
         .route("/api/admin/status", get(admin::status))
@@ -481,6 +549,26 @@ mod tests {
             FixedAuthResolver::granting(auth()),
             Vec::new(),
         ))
+    }
+
+    #[tokio::test]
+    async fn anonymous_capabilities_exposes_no_dynamic_provider_shape_and_is_no_store() {
+        let captured = send(
+            router_for(app_with_rows(Vec::new())),
+            get("/api/capabilities"),
+        )
+        .await;
+        assert_eq!(captured.status, StatusCode::OK);
+        assert_eq!(captured.headers.get("cache-control").unwrap(), "no-store");
+        assert_eq!(
+            captured.json(),
+            serde_json::json!({
+                "mode": "rust",
+                "durableHistory": true,
+                "authProviders": [],
+                "ssoConfigured": false,
+            })
+        );
     }
 
     struct Captured {

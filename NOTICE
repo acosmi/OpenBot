@@ -8,14 +8,14 @@ NOTICE —— 第三方组件声明
 - 本文件只声明**第三方**组件；它们各自按原始条款授权，LICENSE 的「保留一切权利」
   不适用于、也不能收紧它们。
 - 机器可读的完整来源登记（固定 commit、SHA-256、purl、逐条取证记录）在
-  `provenance/sources.spdx.json`（SPDX 2.3，49 个 package）。**那份是真源**，
+  `provenance/sources.spdx.json`（SPDX 2.3，50 个 package）。**那份是真源**，
   本文件是它面向发行包的人类可读投影；两者不一致时以 SPDX 文件与实际取证为准，
   并同 PR 修订本文件。
 - 契约依据：v3 方案 §23.1「代码许可」条 1–7、§23.2、§23.4。
 
 ## 本文件的诚实边界（务必先读）
 
-Phase 0 只做证据冻结，**尚未产出任何发行包**。因此本文件分两类内容：
+本文件起于 Phase 0 证据冻结；当前实施已到 W-7，但**尚未产出任何发行包**。因此本文件分两类内容：
 
 1. **已嵌入正文**的许可证：本轮拿到了原件、逐字读出、可复算 SHA-256。
 2. **声明位（待补全）**：本轮没有取到全文，或该组件此刻尚未真正进入发行包。
@@ -399,7 +399,85 @@ OFL-1.1 的两条硬约束在本项目的用法下均满足，但改变用法时
     2. 把该来源登记进 `provenance/sources.spdx.json`；
     3. 复用任一文件时按其许可补齐本节声明（BSD 类需保留版权与免责声明全文，
        Apache 类同第 4 节的四项义务）。
-  在第 1 步完成之前，任何「参考 Steel Browser 实现」的改动都不得合入。
+在第 1 步完成之前，任何「参考 Steel Browser 实现」的改动都不得合入。
+
+================================================================================
+6A. webpki-roots —— CDLA-Permissive-2.0
+================================================================================
+
+HTTP safe dialer 的锁定 Mozilla TLS 根证书数据（W-7 TLS delta audit）。
+
+  来源       : https://github.com/rustls/webpki-roots
+  crate      : webpki-roots 1.0.9
+  Cargo 摘要 : Cargo.lock 中该版本的 registry checksum（发行 SBOM 从 lock 机械生成）
+  许可证     : CDLA-Permissive-2.0
+  取证       : crates.io 包内 LICENSE（2,371 B），SHA-256
+               e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8
+
+该协议第 2.1 条要求：分享数据（含修改版）时，必须随数据提供协议文本。以下为包内 LICENSE
+全文，逐字取自上述精确版本：
+
+    # Community Data License Agreement - Permissive - Version 2.0
+
+    This is the Community Data License Agreement - Permissive, Version
+    2.0 (the "agreement"). Data Provider(s) and Data Recipient(s) agree
+    as follows:
+
+    ## 1. Provision of the Data
+
+    1.1. A Data Recipient may use, modify, and share the Data made
+    available by Data Provider(s) under this agreement if that Data
+    Recipient follows the terms of this agreement.
+
+    1.2. This agreement does not impose any restriction on a Data
+    Recipient's use, modification, or sharing of any portions of the
+    Data that are in the public domain or that may be used, modified,
+    or shared under any other legal exception or limitation.
+
+    ## 2. Conditions for Sharing Data
+
+    2.1. A Data Recipient may share Data, with or without modifications, so
+    long as the Data Recipient makes available the text of this agreement
+    with the shared Data.
+
+    ## 3. No Restrictions on Results
+
+    3.1. This agreement does not impose any restriction or obligations
+    with respect to the use, modification, or sharing of Results.
+
+    ## 4. No Warranty; Limitation of Liability
+
+    4.1. All Data Recipients receive the Data subject to the following
+    terms:
+
+    THE DATA IS PROVIDED ON AN "AS IS" BASIS, WITHOUT REPRESENTATIONS,
+    WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED
+    INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS OF TITLE,
+    NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+
+    NO DATA PROVIDER SHALL HAVE ANY LIABILITY FOR ANY DIRECT, INDIRECT,
+    INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING
+    WITHOUT LIMITATION LOST PROFITS), HOWEVER CAUSED AND ON ANY THEORY OF
+    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE DATA OR RESULTS,
+    EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+    ## 5. Definitions
+
+    5.1. "Data" means the material received by a Data Recipient under
+    this agreement.
+
+    5.2. "Data Provider" means any person who is the source of Data
+    provided under this agreement and in reliance on a Data Recipient's
+    agreement to its terms.
+
+    5.3. "Data Recipient" means any person who receives Data directly
+    or indirectly from a Data Provider and agrees to the terms of this
+    agreement.
+
+    5.4. "Results" means any outcome obtained by computational analysis
+    of Data, including for example machine learning models and models'
+    insights.
 
 ================================================================================
 7. 待补全清单（发布前检查表）
@@ -444,9 +522,9 @@ OFL-1.1 的两条硬约束在本项目的用法下均满足，但改变用法时
 
   ⚠️ Rust **依赖 crate**（tauri / leptos 生态 / cel / openidconnect / samael /
      pulldown-cmark / syntect / sys-locale / image / xcap / rmcp 等）是另一回事：
-     它们会被静态链接进发行物，**必须**随包声明。本文件此刻不逐条列出，
-     因为本仓 Cargo.lock 里这些依赖尚未引入（当前只有 37 个 `[[package]]`，
-     全部是 xtask 的构建期依赖）。
+     它们会被静态链接进发行物，**必须**随包声明。本文件不手工逐条列出一般 crate；
+     当前 Cargo.lock 已包含业务依赖，`webpki-roots` 因新增数据许可与逐字随附义务在 §6A
+     单独展开，其余由发行 SBOM 从 lock 机械生成。
      补全条件：依赖真正进入 lock 后，由 v3 §16.3 的 SBOM 步骤（CycloneDX/SPDX）
      从 lock 机器生成完整依赖声明并附于发行包；本文件届时改为索引那份生成结果，
      而不是手工维护一张会漂移的表。

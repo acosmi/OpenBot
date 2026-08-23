@@ -730,6 +730,16 @@ pub struct MembershipProvisioningPlan {
 }
 
 impl MembershipProvisioningPlan {
+    /// 从数据库当前 materialized membership 水合上一版计划。
+    ///
+    /// 这是 I/O adapter 的入口，不是第二条可见性判定：运行时仍只查物理 membership；本值只
+    /// 用来与本次 [`project_membership`] 结果求 diff。
+    pub fn from_materialized(channels: impl IntoIterator<Item = ChannelId>) -> Self {
+        Self {
+            channels: channels.into_iter().collect(),
+        }
+    }
+
     /// 应当持有 membership 的 channel。
     #[must_use]
     pub const fn channels(&self) -> &BTreeSet<ChannelId> {

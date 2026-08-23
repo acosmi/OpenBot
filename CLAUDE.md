@@ -12,18 +12,18 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 - 阶段进度：**Phase 0（Evidence Freeze）产物已落地** —— `parity/*.yaml`（9 份；条目数随实施推进增长，真源是各台账自己的 recount，由 `cargo xtask recount` 逐条实跑，**不在本文件钉死**）、`provenance/sources.spdx.json`、`fixtures/**`、`tools/pins.toml`、10 crate 骨架、`cargo xtask parity-check`（§19.3）。CI 必须拒绝未归类项与没有证据的 `done`。
   **G0 仍有一项未闭合**：§1.1 要求把两份输入文档原件归档到 `docs/inputs/`，仓内与本机都不存在原件，只有 SHA-256 —— 在补齐之前不得宣称 G0 通过。
 - **G1（Rust Core 与 PostgreSQL）四条判据本轮全部达成**（§24，四条缺一不可）：① 10 crate workspace + `cargo build --workspace --all-features --locked` 绿；② 同一个 `Arc<dyn ApplicationService>` 经 Axum 与 in-process 两条 transport 结果一致（`cargo test -p openbot-testkit --test transport_parity` = 7 passed，含"递到 port 上的调用逐字段相同"这条比结果更强的断言）；③ 28 表 / 13 migration 映射对走完 13 条 migration 的真参照库逐字段相等，read checksum 168/168 行逐字节相同（两条腿都在 PostgreSQL 侧渲染，避免"两边都用同一份 Rust 代码算"的自证）；④ tracing span + 关联字段 + 脱敏 + Prometheus metrics 从首个 vertical slice 生效。
-  **W-4 已关掉四项旧缺口**：production PostgreSQL/单用户 `AuthResolver`、独立 `main.rs`、`/metrics` session 访问控制、MatchedPath route span/metrics 均已落地；people 五命令另有同一 Arc 的 Axum/in-process 对拍；非 loopback 明文 HTTP 同时打启动告警并在 readiness 投影 `insecure_transport:true`。**以下仍未闭合，不得算进去**：read checksum 只覆盖 seed 取值形态；上游 Drizzle 账本仍只数条目不校验内容；`subscribe` / `AppEventStream` 不在跨 transport 对拍矩阵；active connections 与 OTel exporter 尚无；多用户在 G5 isolation 未接前 readiness 刻意 NotReady；tenant package loader 未落地前生产入口要求显式 `DEPLOYMENT_ID`，不用目录路径伪造包 ID。PG17 当前 infra+server 真库矩阵 **392/0/0**（infra 260 + server 132），fixture 已到 0015，见 R42/R43。
+  **W-4 已关掉四项旧缺口**：production PostgreSQL/单用户 `AuthResolver`、独立 `main.rs`、`/metrics` session 访问控制、MatchedPath route span/metrics 均已落地；people 五命令另有同一 Arc 的 Axum/in-process 对拍；非 loopback 明文 HTTP 同时打启动告警并在 readiness 投影 `insecure_transport:true`。**以下仍未闭合，不得算进去**：read checksum 只覆盖 seed 取值形态；上游 Drizzle 账本仍只数条目不校验内容；`subscribe` / `AppEventStream` 不在跨 transport 对拍矩阵；active connections 与 OTel exporter 尚无；多用户在 G5 isolation 未接前 readiness 刻意 NotReady；tenant package loader 未落地前生产入口要求显式 `DEPLOYMENT_ID`，不用目录路径伪造包 ID。PG17 当前 infra+server 真库矩阵 **435/0/0**（infra 300 + server 135），fixture 仍是 0015；W-7 复用 `verifications`，未伪造新 schema 数字，见 R42/R43/R49。
 - **G2（Auth/Vault/Policy/Audit）本轮交付的是「不依赖网络、不依赖 C 工具链」的那整块**，四条判据（§24 G2）逐条如实：
   ① **CEL corpus 对等 —— 达成**：`fixtures/policy/cel-corpus.json` 的 69 条逐条在 Rust `cel 0.14.3` 上实跑，与 `cel-js@0.8.2` oracle 的分歧集合**恰好等于**一张写死的 6 条台账（`BTreeMap` 双向相等 + `evaluated == 69` 防跳过：多一条 = 既有规则语义悄悄翻转，少一条 = `cel` 改了行为）。6 条全是 `error → 非 error`，deny 侧放宽 2 条、allow 侧放宽 4 条。
   ② **acting before durable decision = 0 —— 通用 application 边界达成，真实 G4 executor 仍未闭合**：`InvokeTool` 走 domain 十二段状态机；policy 结论只能由 domain 构造；decision+attempt commit 与 capability CAS 都发生在 `ToolControlPlane::execute(AuthorizedToolCall)` 之前；raw args 只能随该字段私有信封到 executor；outcome+audit 同事务。decision/attach 失败的 executor 调用数实得 0，audit/outcome 失败执行数恰 1 且不重试，已持久化 unknown 也恒进 reconciliation。`AgentToolGateway` 铸 UUIDv7/per-run sequence，actor 只来自 AuthContext；PG17 tool 矩阵 5/5。**仍不得宣称整项/G4 通过**：browser/file/shell/MCP/Drive 的真实 production executor 与第一次外部安全审计尚未发生（R41）。
   ③ **v1 credential/SSO decrypt + v2 rotation —— 达成**：v1 解密由**真跨语言互操作**证明（逐字节复制上游 `credentials.ts` 跑 node 产出 7 条信封 → Rust 解开明文逐字节相等 → 测试里内联的 fixture 再喂回上游 `decryptSecret`，双向闭合），每条正向断言配错密钥 / 翻密文位 / 翻 tag 位 / 翻 IV 位四种负向对照。
-  ④ **OIDC/SAML/session/role/group/revoke 全矩阵 —— 部分推进，仍未闭合**：W-4 已有 keyed-hash PostgreSQL session、0015 签发代际、deny/role/expiry/idle、fresh+Origin sensitive guard、真实 cookie HTTP 竖切；但 OIDC token endpoint/登录 callback/session 签发、真实 safe dialer、SAML XML 签名与 group refresh 全矩阵仍缺，且不得宣称闭合（R29/R42）。
-  **W-1/W-2 已闭合** native/repository 地基；**W-3a** people 原子 slice、**W-3b** tool application boundary 已闭合。**W-4 Server production slice 已闭合**：native 0015 + production resolver + 五条 auth/admin HTTP + protected metrics/route label + main/readiness；真实单用户进程冒烟得到账本3/principal1/roles2及四端点200。**仍未闭合项**：上述 OIDC/SAML/group/session issuance、其它 application/API、G4 executor、G5 isolation。
+  ④ **OIDC/SAML/session/role/group/revoke 全矩阵 —— 环境 OIDC 竖切已闭合，整项仍未闭合**：W-7 已有唯一 safe dialer、Google/Microsoft/Okta discovery、PostgreSQL 一次性 state、PKCE token POST、JWKS rotation、claims/Entra tenant+key issuer、group membership refresh、keyed session 与 capabilities/start/callback/cookie；真实本机 TLS IdP 全流程及重放负例通过。**仍缺动态 IdP 注册/SSO config v2、SAML XML 签名/外审与第一次整体外部安全审计**，不得宣称 G2 全矩阵闭合（R48/R49）。
+  **W-1/W-2 已闭合** native/repository 地基；**W-3a** people 原子 slice、**W-3b** tool application boundary、**W-4 Server production slice** 已闭合；**W-7a 环境 OIDC/safe-dialer 竖切已闭合**。**仍未闭合项**：动态 OIDC/SAML 管理与 SAML 签名外审、其它 application/API、G4 executor、G5 isolation。
   **D-1 已正式裁决**：RUSTSEC-2023-0071 只做一条窄豁免；`tools/check-rustsec-waivers.sh` 在 deny/audit 前锁死精确四节生产依赖链、openidconnect feature 零扩张和 RSA 私钥符号零命中。`cargo deny check` 四段全绿；`cargo audit --deny warnings --ignore RUSTSEC-2023-0071` 扫描其余 advisory 全绿。见 R44。
-  **D-5 已建立棘轮**：CI 钉 `cargo-vet 0.10.0` 并跑 `cargo vet --locked`；Google exact/delta import 锁定 14 个 fully audited，其余 350 个精确版本是明示未审的 bootstrap exemptions。新增/升级未覆盖版本当场判红，CI 不自动 regenerate。见 R45。
+  **D-5 已建立棘轮**：CI 钉 `cargo-vet 0.10.0` 并跑 `cargo vet --locked`；Google exact/delta import 锁定 14 个 fully audited。350 个是 R45 bootstrap exemptions；W-7 TLS 新增 20 个精确 exemption，逐条带 `owner=security` 与 `not a full source audit`，合计 **370**，不冒充审计。新增/升级未覆盖版本仍当场判红。见 R45/R48。
   **D-3 已正式采用 `zeroize`**：`SecretBytes` 内层是 `Zeroizing<Vec<u8>>` 并标记 `ZeroizeOnDrop`，drop 清除当前 length+capacity；历史扩容 allocation 与调用方副本仍不冒充可擦除。见 R46。
   **D-2 已按真实消费者裁决**：Attempt/Capability/Catalog/Auth 四类型收口到 contracts 且不 serde，`AuthContext` 不再用裸 `u64` 表示代际；尚无跨 crate 消费者的 SecretId/CredentialGeneration 留在 vault domain。见 R47。
-- v3 §28.1 当前 **47** 条（R1–R47）。实施时除 R23/R26–R34 外还必须读 R35–R47，尤其 R42（session keyed hash/0015）、R43（Server production slice 边界）、R44（RustSec 窄豁免）、R45（cargo-vet 棘轮）、R46（密钥擦除边界）与 R47（内部跨层 contract 的所有权）。
+- v3 §28.1 当前 **49** 条（R1–R49）。实施时除 R23/R26–R34 外还必须读 R35–R49，尤其 R42–R47 的既有边界，以及 R48（ring/C/汇编与 safe dialer）和 R49（OIDC/Entra/session/group 竖切与尚未闭合面）。
 - 上游对照固定在 `CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`，不引用会漂移的 `main`（§1.2）。
 
 ## 2. 目标定义（为什么是这条线）
@@ -48,6 +48,7 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 | RMCP | `3.1.4` |
 | CEL | crate **`cel`** `0.14.3`（"cel-rust"是仓库名，不是 crate）；oracle = `cel-js@0.8.2` |
 | OIDC / SAML | `openidconnect 4.0.1` / `samael 0.0.22` |
+| HTTP TLS | `rustls 0.23.43` + `ring 0.17.14` + `webpki-roots 1.0.9`；ring 非纯 Rust，38 Perl/17 预生成对象与 20 条非审计 exemption 由 R48 guard 锁定 |
 | Browser kernel | Electron `43.3.0` / Chromium `150.0.7871.212` |
 | 数据库 | PostgreSQL 17，**唯一**语义；Desktop 由 Rust 监管本机 sidecar；不需要 pgvector |
 | 数据库驱动 | `tokio-postgres 0.7.18` + `deadpool-postgres 0.14.1` + `postgres-types 0.2`。**不用 `sqlx`** —— 它的 `query!` 宏让 `cargo build --locked` 的答案取决于跑在哪台机器上（构建期连库或 `.sqlx` 离线元数据二选一）。SQL 手写，由对真库的集成测试验证（G1 裁决 D3） |
@@ -125,7 +126,7 @@ Firecracker / youki · Restate / Temporal 等 durable execution 平台 · Codex 
 
 CI 固定（§16.3）：`cargo fmt --check` · `cargo clippy --all-targets --all-features -D warnings` · `cargo test --locked` · `cargo deny` · `cargo audit` · `cargo vet` · OSV / secret scan · license / NOTICE / provenance 校验 · SBOM · 可复现构建 · 签名校验。`Cargo.lock` 与 engine lockfile 提交；git 依赖必须钉 commit；核心 crate `unsafe_code = "deny"`。
 
-本机单一入口 = `cargo xtask ci`（fmt → clippy → `cargo test --locked` → parity-check → recount，5 段）。驱动器**必须**建在 `target-xtask/`（`.cargo/config.toml` 的 alias 已配 `--target-dir`），与子构建的 `target/` 互不包含：否则第 3 步会去重链正在运行的驱动器自己，Windows 报 `os error 5` 恒红、Linux 恒绿（§28.1 R25）。摆放错了 `cmd_ci` 当场拒跑并打印两条路径，不会退化成"某台机器上能过"。
+本机单一入口 = `cargo xtask ci`（fmt → clippy → `cargo test --locked` → safe-dialer dependency guard → parity-check → recount，6 段）。驱动器**必须**建在 `target-xtask/`（`.cargo/config.toml` 的 alias 已配 `--target-dir`），与子构建的 `target/` 互不包含：否则第 3 步会去重链正在运行的驱动器自己，Windows 报 `os error 5` 恒红、Linux 恒绿（§28.1 R25）。摆放错了 `cmd_ci` 当场拒跑并打印两条路径，不会退化成"某台机器上能过"。
 
 GUI 另加（设计系统文档 §15）：`cargo test -p openbot-ui` · `xtask i18n-check` · `xtask design-lint` · `xtask css-check` · `xtask bundle-budget` · golden 截图（Web 110 张 / Desktop 每平台 54 张，差异像素 ≤ 0.1% 且无 8×8 全差异块；更新只能随 PR 附 diff 图人工批准）· CDP AX 树检查。
 

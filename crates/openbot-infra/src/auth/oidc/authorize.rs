@@ -10,14 +10,15 @@
 //! 消耗整个 attempt 才取得出来 —— 借用的这一侧根本够不到它。由
 //! `the_authorization_url_carries_the_challenge_and_never_the_verifier` 钉住。
 //!
-//! # 换 token 那一步不在本模块，也不在本轮
+//! # 换 token 那一步仍不在本模块
 //!
 //! Authorization Code 的后半段是向 token endpoint 发一次 **POST**，带上 `code`、
 //! `code_verifier` 与 client 认证。本模块的出网端口 [`super::transport::MetadataTransport`]
 //! 只有 GET，而且那是**刻意**的（见其模块文档：一个表达不出 POST 的端口，SSRF 面小一个
 //! 量级）。
-//! 把 token 交换接上去需要先决定给端口加一个受约束的 POST 方法、还是改用
-//! `oauth2::AsyncHttpClient` —— 那是一次要连着 safe dialer 一起做的决定，记在交付报告里。
+//! W-7 已把后半段落在 [`super::token`] + [`super::token_transport`]：后者只接受 oauth2
+//! 生成的精确 token request，再收敛到唯一 safe dialer。GET metadata port 仍不增加 POST，
+//! 因而 discovery/JWKS 调用点继续表达不出 body/header。
 
 use openidconnect::core::CoreProviderMetadata;
 use url::Url;

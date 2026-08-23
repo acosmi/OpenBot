@@ -38,9 +38,9 @@
 //!
 //! # 已知的重复与偏差，交付时请一并看
 //!
-//! - [`Secret`] 与 `openbot_server::config::Secret` 同名同形。两个 crate 是**兄弟**
-//!   （谁也不依赖谁），此刻没有共同落点；正确归宿是 `openbot-contracts` 或
-//!   `openbot-domain`，合并是集成层的动作。
+//! - [`Secret`] 与 `openbot_server::config::Secret` 同名但不再同形：本类型已以内层
+//!   [`SecretBytes`] 获得 zeroize/no-Clone 边界；server 配置 secret 的统一属于它自己的消费者
+//!   批次，不能靠复制本实现制造第二份秘密原语。
 //! - `KEY_ENCRYPTION_KEY` 的台账 `target` 写的是 `openbot-infra::vault::KeyEncryptionKey`，
 //!   而 `vault` 模块尚不存在。[`KeyEncryptionKey`] 暂落在本模块，**因此那条台账项没有被
 //!   它自己的 `target` 字符串闭合** —— 要么 vault 落地时搬过去，要么台账改字段。
@@ -67,7 +67,7 @@ use std::collections::BTreeMap;
 
 use openbot_domain::identity::roles::AdminFloor;
 use openbot_domain::identity::session::{OriginMalformed, SessionLifetimePolicy, TrustedOrigins};
-use openbot_domain::vault::WrappingKey;
+use openbot_domain::vault::{SecretBytes, WrappingKey};
 use time::Duration;
 
 /// 一次启动看见的全部环境变量。
@@ -201,24 +201,32 @@ fn comma_separated(env: &EnvMap, name: &str) -> Vec<String> {
 
 /// 一个不进日志的配置值。
 ///
-/// `Debug` 恒印 `Secret(***)`，且**刻意不实现 `Display`**。v3 §6.4 末段点名了一串
+/// 内层固定为 [`SecretBytes`]，所以 drop 擦除当前 allocation，且本类型不实现
+/// Clone/Serialize/Display/PartialEq；`Debug` 恒印 `Secret(***)`。v3 §6.4 末段点名了一串
 /// "永不进入普通日志、trace、metric、crash dump"的值，session secret 与 OAuth client secret
 /// 都在其中；而 [`AuthConfig`] 是个会被人顺手 `{:?}` 出来的启动产物。用类型兑现这条禁令，
 /// 于是"忘了"不再可能发生 —— 新增机密字段时也不必记得去改 `Debug` 实现。
-#[derive(Clone, PartialEq, Eq)]
-pub struct Secret(String);
+///
+/// ```compile_fail
+/// use openbot_infra::auth::config::Secret;
+/// let secret = Secret::new("one owned secret");
+/// let copied = secret.clone();
+/// # drop(copied);
+/// ```
+pub struct Secret(SecretBytes);
 
 impl Secret {
     /// 由已经 `trim` 过的非空值构造。
     #[must_use]
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(SecretBytes::new(value.into().into_bytes()))
     }
 
     /// 取出真值。**调用点即泄漏面**，只在真正要把它交给对端时使用。
     #[must_use]
     pub fn expose(&self) -> &str {
-        &self.0
+        core::str::from_utf8(self.0.expose())
+            .expect("Secret 只从有效 Rust String 接管字节，UTF-8 不变量不会失效")
     }
 
     /// 字符数。存在的唯一理由是长度校验不必先 [`Secret::expose`]。
@@ -228,7 +236,7 @@ impl Secret {
     /// 字符数比字节数更接近"他数了几个字符"。
     #[must_use]
     pub fn character_count(&self) -> usize {
-        self.0.chars().count()
+        self.expose().chars().count()
     }
 
     /// 是否为空。构造路径已排除空值，这里只是让 [`Secret::character_count`] 不孤零零地存在。
@@ -562,7 +570,7 @@ impl AuthProviderId {
 }
 
 /// 一副 OAuth 客户端凭据。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct OAuthClient {
     /// client id。**不是机密**（它会出现在浏览器地址栏里）。
     pub client_id: String,
@@ -571,7 +579,7 @@ pub struct OAuthClient {
 }
 
 /// Microsoft Entra ID，以及它放行哪个目录。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct MicrosoftAuth {
     /// 客户端凭据。
     pub client: OAuthClient,
@@ -580,7 +588,7 @@ pub struct MicrosoftAuth {
 }
 
 /// Okta。它是 OIDC provider 而不是具名 provider，所以由 issuer 标识。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct OktaAuth {
     /// 客户端凭据。
     pub client: OAuthClient,
@@ -591,7 +599,7 @@ pub struct OktaAuth {
 }
 
 /// 这个部署的认证配置。[`auth_config`] 返回 `None` 表示没有任何 IdP。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct AuthConfig {
     /// 本部署对外的公共地址，OAuth 回调回到这里。
     ///
@@ -1210,9 +1218,10 @@ mod tests {
     #[test]
     fn no_provider_at_all_is_a_valid_deployment() {
         let bare = env(&[("OPENBOT_SINGLE_USER", "true")]);
-        assert_eq!(
-            auth_config(&bare, None, default_session_lifetime()).expect("合法"),
-            None
+        assert!(
+            auth_config(&bare, None, default_session_lifetime())
+                .expect("合法")
+                .is_none()
         );
         assert!(single_user_enabled(&bare, false).expect("显式要了"));
     }
@@ -1449,14 +1458,14 @@ mod tests {
     #[test]
     fn a_public_url_alone_is_not_a_reason_to_refuse() {
         let single_user = env(&[("OPENBOT_SINGLE_USER", "true")]);
-        assert_eq!(
+        assert!(
             auth_config(
                 &single_user,
                 Some("https://openbot.example.com"),
                 default_session_lifetime()
             )
-            .expect("应当放行"),
-            None
+            .expect("应当放行")
+            .is_none()
         );
     }
 

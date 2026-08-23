@@ -25,6 +25,22 @@ openbot-domain.workspace = true
 openidconnect.workspace = true
 url.workspace = true
 
+# W-7 唯一出网实现。协议模块只持有窄 port；socket/DNS/TLS/HTTP 全部收口在
+# `net::safe_http`，并由 `tools/check-safe-dialer-dependencies.sh` 锁死依赖图与调用面。
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+ipnet.workspace = true
+rustls.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+
 # `ChannelReader` 是 `#[async_trait]` trait，实现侧必须同样标注。
 async-trait.workspace = true
 
@@ -53,4 +69,4 @@ uuid.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+ring.workspace = true

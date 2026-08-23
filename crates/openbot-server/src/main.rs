@@ -8,12 +8,19 @@ use openbot_application::{ApplicationService, OpenBotApplication};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_infra::auth::config::{
-    BindingExposure, ExampleKeyPolicy, KeyEncryptionKey, SingleUserAdmission, auth_config,
-    default_session_lifetime, single_user_binding_verdict, single_user_enabled,
+    AuthConfig, BindingExposure, ExampleKeyPolicy, KeyEncryptionKey, SingleUserAdmission,
+    auth_config, default_session_lifetime, single_user_binding_verdict, single_user_enabled,
+};
+use openbot_infra::auth::oidc::coordinator::{DEFAULT_IDP_TIMEOUT, DEFAULT_METADATA_MAX_BYTES};
+use openbot_infra::auth::oidc::{
+    FetchBudget, OidcLoginCoordinator, OidcProviderRuntime, PostgresLoginAttemptStore,
+    PostgresOidcRateLimiter, PostgresOidcSessionIssuer, PreAuthSurface, ProviderRegistry,
+    configured_oidc_providers,
 };
 use openbot_infra::db::compat::{DataMigrationVerdict, check_migration_boundary_on};
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::net::safe_http::{EgressPolicy, SafeDialer};
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_server::config::{DeploymentEnvironment, ServerConfig, env_map_from_process};
@@ -26,6 +33,18 @@ use openbot_server::{
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
+type OidcLoginAssembly = (
+    Arc<OidcLoginCoordinator>,
+    PreAuthSurface,
+    TrustedOrigins,
+    bool,
+);
+type AuthAssembly = (
+    Arc<dyn AuthResolver>,
+    SensitiveWriteSecurity,
+    Option<openbot_domain::identity::roles::AdminFloor>,
+    Option<OidcLoginAssembly>,
+);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -67,11 +86,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         provision_single_user(&pool).await?;
     }
 
-    let (auth, sensitive, floor): (
-        Arc<dyn AuthResolver>,
-        SensitiveWriteSecurity,
-        Option<openbot_domain::identity::roles::AdminFloor>,
-    ) = if let Some(config) = auth_config {
+    let (auth, sensitive, floor, oidc_login): AuthAssembly = if let Some(config) = auth_config {
+        let oidc = build_oidc_login(
+            &config,
+            &pool,
+            &tenant,
+            audit_key.as_slice(),
+            server.public_transport().cookie_secure(),
+        )
+        .await?;
         let resolver = PostgresSessionAuthResolver::new(
             pool.clone(),
             config.session_secret.expose().as_bytes(),
@@ -81,7 +104,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )?;
         let sensitive =
             SensitiveWriteSecurity::new(config.session_lifetime, config.trusted_origins.clone());
-        (Arc::new(resolver), sensitive, Some(config.admin_floor))
+        (
+            Arc::new(resolver),
+            sensitive,
+            Some(config.admin_floor),
+            Some(oidc),
+        )
     } else {
         if !single_user
             || single_user_binding_verdict(BindingExposure::Loopback) != SingleUserAdmission::Admit
@@ -98,6 +126,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 lifetime,
             )),
             SensitiveWriteSecurity::new(lifetime, origins),
+            None,
             None,
         )
     };
@@ -132,6 +161,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_metrics_handle(metrics)
         .with_insecure_transport(server.public_transport().insecure_transport())
         .with_readiness_probe(Arc::new(db_probe));
+    if let Some((coordinator, preauth, origins, secure_cookie)) = oidc_login {
+        builder = builder.with_oidc_login(coordinator, preauth, origins, secure_cookie);
+    }
     if !single_user {
         builder = builder.with_readiness_probe(Arc::new(FnReadinessProbe::new(
             "computer_isolation",
@@ -146,11 +178,70 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let listener = tokio::net::TcpListener::bind(&address).await?;
     tracing::info!(bind = %address, single_user, "OpenBot Server 已启动");
-    axum::serve(listener, builder.into_router())
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        builder
+            .into_router()
+            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     pool.close();
     Ok(())
+}
+
+async fn build_oidc_login(
+    config: &AuthConfig,
+    pool: &deadpool_postgres::Pool,
+    tenant: &TenantId,
+    audit_key: &[u8],
+    secure_cookie: bool,
+) -> Result<OidcLoginAssembly, Box<dyn Error>> {
+    let configured = configured_oidc_providers(config)?;
+    let registry =
+        ProviderRegistry::build(configured.iter().map(|provider| provider.config.clone()))?;
+    let preauth = PreAuthSurface::project(&registry);
+    let dialer = SafeDialer::new(EgressPolicy::default());
+    let budget = FetchBudget::new(DEFAULT_METADATA_MAX_BYTES, DEFAULT_IDP_TIMEOUT);
+    let mut runtimes = Vec::with_capacity(configured.len());
+    for provider in configured {
+        runtimes.push(
+            OidcProviderRuntime::discover(
+                provider.config,
+                Some(provider.client_secret),
+                None,
+                &dialer,
+                budget,
+            )
+            .await?,
+        );
+    }
+    let attempts = PostgresLoginAttemptStore::new(
+        pool.clone(),
+        config.session_secret.expose().as_bytes(),
+        tenant,
+        4096,
+    )?;
+    let sessions = PostgresOidcSessionIssuer::new(
+        pool.clone(),
+        config.session_secret.expose().as_bytes(),
+        config.session_lifetime,
+        config.admin_floor.clone(),
+        audit_key,
+    )?;
+    let rate_limiter = PostgresOidcRateLimiter::new(
+        pool.clone(),
+        config.session_secret.expose().as_bytes(),
+        tenant,
+    )?;
+    let coordinator =
+        OidcLoginCoordinator::new(runtimes, attempts, sessions, rate_limiter, dialer)?;
+    Ok((
+        Arc::new(coordinator),
+        preauth,
+        config.trusted_origins.clone(),
+        secure_cookie,
+    ))
 }
 
 async fn initialize_database(pool: &deadpool_postgres::Pool) -> Result<(), Box<dyn Error>> {

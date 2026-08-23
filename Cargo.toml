@@ -102,7 +102,7 @@ oxc_span = "0.146.0"
 
 async-trait = "0.1.92"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal", "io-util"] }
 
 # 可观测性（v3 §16.4）：tracing 是全链真源，Server 侧再由 openbot-server 暴露 Prometheus。
 # **刻意不在 G1 引入 opentelemetry SDK**：§16.4 要求 exporter「只在管理员显式配置 collector
@@ -128,6 +128,28 @@ axum = { version = "0.8.9", features = ["macros"] }
 tower = { version = "0.5.3", features = ["timeout", "limit"] }
 tower-http = { version = "0.6", features = ["trace", "limit"] }
 http = "1.5.0"
+
+# W-7 HTTP safe dialer（v3 §6.2 / §7.5 / §10.5，R29 delta audit）。这里不引入
+# reqwest：它会再带一层代理、自动 retry/redirect 与 resolver 组合，反而让「连接必须绑定
+# 已验证 IP」只能靠配置约定。dialer 直接把 `TcpStream` 连到已验证 `SocketAddr`，再交给
+# rustls（TLS SNI 仍用原 host）与 Hyper HTTP/1 framing；因此 DNS rebinding 边界在一处可证明。
+#
+# `hyper` / `hyper-util` / `http-body-util` / `bytes` 在 W-4 的 Axum 图中已锁定，本批只是把
+# 真实消费者上收为 workspace 直接依赖，不新增版本。新增 TLS 图刻意选择 rustls 0.23 的
+# `ring` provider，而不是默认 `aws-lc-rs`：rustls 官方将 ring 定位为更易跨平台构建的
+# first-party provider；代价是 ring 仍含 C/汇编 build.rs 与 Windows 预生成对象。该代价已在
+# `docs/2026-08-23-W7-safe-dialer-TLS-delta审计.md` 和 deny.toml 单列，绝不称为纯 Rust。
+# webpki-roots 是随 lock 固定的 Mozilla 根集合：不读宿主代理/根证书环境，构建与运行答案可复算；
+# 私有 CA 必须作为未来显式配置输入，不能靠隐藏的系统状态改变认证答案。
+bytes = "1.12.1"
+http-body-util = "0.1.5"
+hyper = { version = "1.11.0", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1.20", default-features = false, features = ["tokio"] }
+ipnet = { version = "2.12.1", default-features = false, features = ["std"] }
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
+ring = "0.17.14"
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1.0.9"
 
 # metrics（v3 §16.4「Server 暴露 Prometheus metrics」+ §24 G1 判据第四条）
 # 选门面 + exporter 两层，而不是直接依赖 prometheus 客户端库：库代码只调 metrics 门面，

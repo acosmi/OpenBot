@@ -122,6 +122,73 @@ pub struct LoginAttempt {
     expires_at: OffsetDateTime,
 }
 
+/// 持久化 adapter 唯一能取出的内部形态；不实现 Debug/Clone/Serialize。
+///
+/// 字段只在 `openbot-infra` crate 内可见，避免把 PKCE verifier/nonce 变成通用 DTO。
+pub(crate) struct LoginAttemptStorageRecord {
+    pub(crate) state: String,
+    pub(crate) provider: String,
+    pub(crate) nonce: String,
+    pub(crate) pkce_verifier: String,
+    pub(crate) pkce_method: &'static str,
+    pub(crate) redirect_uri: String,
+    pub(crate) expires_at: OffsetDateTime,
+}
+
+/// callback 消耗一次 state 后得到的最小能力。
+///
+/// 不含 state/challenge，且不 Clone/Serialize；`into_nonce_and_verifier` 消耗自身，保证一次
+/// callback 至多发起一次 token exchange。
+pub struct CallbackLoginAttempt {
+    provider: ProviderId,
+    nonce: Nonce,
+    verifier: PkceCodeVerifier,
+    redirect_uri: CanonicalRedirectUri,
+}
+
+impl CallbackLoginAttempt {
+    pub(crate) fn restore(
+        provider: ProviderId,
+        nonce: Nonce,
+        verifier: PkceCodeVerifier,
+        redirect_uri: CanonicalRedirectUri,
+    ) -> Self {
+        Self {
+            provider,
+            nonce,
+            verifier,
+            redirect_uri,
+        }
+    }
+
+    #[must_use]
+    pub const fn provider(&self) -> &ProviderId {
+        &self.provider
+    }
+
+    #[must_use]
+    pub const fn redirect_uri(&self) -> &CanonicalRedirectUri {
+        &self.redirect_uri
+    }
+
+    #[must_use]
+    pub fn into_nonce_and_verifier(self) -> (Nonce, PkceCodeVerifier) {
+        (self.nonce, self.verifier)
+    }
+}
+
+impl core::fmt::Debug for CallbackLoginAttempt {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("CallbackLoginAttempt")
+            .field("provider", &self.provider)
+            .field("nonce", &"[REDACTED]")
+            .field("verifier", &"[REDACTED]")
+            .field("redirect_uri", &self.redirect_uri)
+            .finish()
+    }
+}
+
 impl LoginAttempt {
     /// 发起一次登录尝试。
     ///
@@ -197,6 +264,19 @@ impl LoginAttempt {
     #[must_use]
     pub fn into_nonce_and_verifier(self) -> (Nonce, PkceCodeVerifier) {
         (self.nonce, self.pkce.into_verifier())
+    }
+
+    /// 交给 PostgreSQL 一次性 store。显式方法而非 serde，避免整个类型获得通用序列化能力。
+    pub(crate) fn into_storage_record(self) -> LoginAttemptStorageRecord {
+        LoginAttemptStorageRecord {
+            state: self.state.into_secret(),
+            provider: self.provider.as_str().to_owned(),
+            nonce: self.nonce.secret().clone(),
+            pkce_verifier: self.pkce.into_verifier().into_secret(),
+            pkce_method: PKCE_METHOD_S256,
+            redirect_uri: self.redirect_uri.as_str().to_owned(),
+            expires_at: self.expires_at,
+        }
     }
 }
 

@@ -26,7 +26,7 @@ use time::OffsetDateTime;
 use crate::db::InfraError;
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 
-const PEOPLE_CHANGE_LOCK_KEY: i64 = 0x4f50_454e_5045_4f31; // `OPENPEO1`
+pub(crate) const PEOPLE_CHANGE_LOCK_KEY: i64 = 0x4f50_454e_5045_4f31; // `OPENPEO1`
 
 const PERSON_SELECT: &str = "\
 SELECT u.id,u.email,u.name,u.image,
@@ -291,7 +291,9 @@ impl PeopleAdministration for PostgresPeopleAdministration {
     }
 }
 
-async fn lock_people(transaction: &tokio_postgres::Transaction<'_>) -> Result<(), InfraError> {
+pub(crate) async fn lock_people(
+    transaction: &tokio_postgres::Transaction<'_>,
+) -> Result<(), InfraError> {
     transaction
         .query_one(
             "SELECT pg_advisory_xact_lock($1)",
@@ -302,7 +304,7 @@ async fn lock_people(transaction: &tokio_postgres::Transaction<'_>) -> Result<()
         .map_err(|error| InfraError::query("获取 people change 锁", error))
 }
 
-async fn apply_role_plan(
+pub(crate) async fn apply_role_plan(
     transaction: &tokio_postgres::Transaction<'_>,
     plan: &openbot_domain::identity::roles::RoleAssignmentPlan,
 ) -> Result<(), InfraError> {
@@ -334,7 +336,7 @@ async fn apply_role_plan(
     Ok(())
 }
 
-async fn advance_generation(
+pub(crate) async fn advance_generation(
     transaction: &tokio_postgres::Transaction<'_>,
     subject: &ActorId,
     expected_next: Option<u64>,

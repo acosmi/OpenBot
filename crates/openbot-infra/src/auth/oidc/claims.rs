@@ -49,6 +49,10 @@
 //! 想让生产路径也能注入，唯一的办法是把 `chrono` 加进依赖面 —— 那是一次独立的依赖决定，
 //! 不在本轮授权内。
 
+use std::collections::BTreeSet;
+
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
 use openidconnect::core::{
@@ -63,6 +67,11 @@ use openidconnect::{
 use super::email::claim_looks_like_an_address;
 use super::error::OidcError;
 use super::provider::{OidcProviderConfig, ProviderKind};
+use openbot_domain::identity::groups::{
+    GroupName, GroupNormalization, IdpGroupMapping, resolve_group_claims,
+};
+
+const MAX_VERIFIED_CLAIMS_BYTES: usize = 256 * 1024;
 
 /// 本模块接受的 ID token 签名算法。
 ///
@@ -108,6 +117,9 @@ pub struct VerifiedIdentity {
     issuer: IssuerUrl,
     subject: SubjectIdentifier,
     email: String,
+    groups: BTreeSet<GroupName>,
+    group_normalization: GroupNormalization,
+    group_claim_present: bool,
 }
 
 impl VerifiedIdentity {
@@ -132,6 +144,23 @@ impl VerifiedIdentity {
     #[must_use]
     pub fn email(&self) -> &str {
         &self.email
+    }
+
+    /// 已按该 provider 显式规则规范化的 groups；无 mapping 时为空。
+    #[must_use]
+    pub const fn groups(&self) -> &BTreeSet<GroupName> {
+        &self.groups
+    }
+
+    #[must_use]
+    pub const fn group_normalization(&self) -> GroupNormalization {
+        self.group_normalization
+    }
+
+    /// mapping 路径在 token 中是否存在；与“存在但空数组”分开。
+    #[must_use]
+    pub const fn group_claim_present(&self) -> bool {
+        self.group_claim_present
     }
 }
 
@@ -187,6 +216,17 @@ pub fn verify_with(
     provider: &OidcProviderConfig,
     nonce: &Nonce,
 ) -> Result<VerifiedIdentity, OidcError> {
+    verify_with_group_mapping(raw_id_token, verifier, provider, nonce, None)
+}
+
+/// 在标准 token 验证成功后，于**同一份已签名 payload**上解析 provider 专属 group mapping。
+pub fn verify_with_group_mapping(
+    raw_id_token: &str,
+    verifier: &CoreIdTokenVerifier<'_>,
+    provider: &OidcProviderConfig,
+    nonce: &Nonce,
+    group_mapping: Option<&IdpGroupMapping>,
+) -> Result<VerifiedIdentity, OidcError> {
     let token: DirectoryIdToken = raw_id_token
         .parse()
         .map_err(|_| OidcError::IdTokenMalformed)?;
@@ -203,11 +243,102 @@ pub fn verify_with(
 
     let email = resolve_directory_email(claims)?;
 
+    let (groups, group_normalization, group_claim_present) = match group_mapping {
+        None => (BTreeSet::new(), GroupNormalization::Exact, false),
+        Some(mapping) => {
+            if mapping.provider().as_str() != provider.id().as_str() {
+                return Err(OidcError::GroupMappingMismatch);
+            }
+            let payload = verified_payload_json(raw_id_token)?;
+            let resolved = resolve_group_claims(&payload, mapping)
+                .map_err(|_| OidcError::GroupClaimRejected)?;
+            (
+                resolved.groups().clone(),
+                mapping.normalization(),
+                resolved.claim_present(),
+            )
+        }
+    };
+
     Ok(VerifiedIdentity {
         issuer: claims.issuer().clone(),
         subject: claims.subject().clone(),
         email,
+        groups,
+        group_normalization,
+        group_claim_present,
     })
+}
+
+fn verified_payload_json(raw_id_token: &str) -> Result<serde_json::Value, OidcError> {
+    let mut segments = raw_id_token.split('.');
+    let _header = segments.next().ok_or(OidcError::IdTokenMalformed)?;
+    let payload = segments.next().ok_or(OidcError::IdTokenMalformed)?;
+    let _signature = segments.next().ok_or(OidcError::IdTokenMalformed)?;
+    if segments.next().is_some() || payload.len() > MAX_VERIFIED_CLAIMS_BYTES * 2 {
+        return Err(OidcError::IdTokenMalformed);
+    }
+    let decoded = URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|_| OidcError::IdTokenMalformed)?;
+    if decoded.len() > MAX_VERIFIED_CLAIMS_BYTES {
+        return Err(OidcError::IdTokenMalformed);
+    }
+    serde_json::from_slice(&decoded).map_err(|_| OidcError::IdTokenMalformed)
+}
+
+#[derive(Deserialize)]
+struct EntraIssuerClaims {
+    iss: String,
+    tid: String,
+}
+
+/// 按 Microsoft tenant-independent metadata 规则，把不可信 `iss/tid` 先收敛成一个候选
+/// concrete issuer；随后必须用该 issuer 构造 verifier 对**同一原始 JWT**验签。
+pub(crate) fn validate_entra_token_issuer(
+    raw_id_token: &str,
+    provider: &OidcProviderConfig,
+    signing_key_issuer: &str,
+) -> Result<IssuerUrl, OidcError> {
+    let ProviderKind::Entra { tenants, .. } = provider.kind() else {
+        return Err(OidcError::IdTokenRejected);
+    };
+    let claims: EntraIssuerClaims = serde_json::from_value(verified_payload_json(raw_id_token)?)
+        .map_err(|_| OidcError::IdTokenRejected)?;
+    if !tenants.accepts(Some(&claims.tid)) {
+        return Err(OidcError::TenantNotAllowed);
+    }
+    let parsed_tid = uuid::Uuid::parse_str(&claims.tid).map_err(|_| OidcError::IdTokenRejected)?;
+    if parsed_tid.hyphenated().to_string() != claims.tid {
+        return Err(OidcError::IdTokenRejected);
+    }
+
+    let expected = substitute_tenant_template(provider.issuer().as_str(), &claims.tid)
+        .unwrap_or_else(|| provider.issuer().as_str().to_owned());
+    if expected != claims.iss {
+        return Err(OidcError::IdTokenRejected);
+    }
+    let key_expected = substitute_tenant_template(signing_key_issuer, &claims.tid)
+        .unwrap_or_else(|| signing_key_issuer.to_owned());
+    if key_expected != claims.iss {
+        return Err(OidcError::IdTokenRejected);
+    }
+    super::provider::parse_issuer(&claims.iss).map_err(|_| OidcError::IdTokenRejected)
+}
+
+fn substitute_tenant_template(template: &str, tenant: &str) -> Option<String> {
+    let lower = template.to_ascii_lowercase();
+    for marker in ["{tenantid}", "%7btenantid%7d"] {
+        if let Some(start) = lower.find(marker) {
+            let end = start + marker.len();
+            let mut replaced = String::with_capacity(template.len() - marker.len() + tenant.len());
+            replaced.push_str(&template[..start]);
+            replaced.push_str(tenant);
+            replaced.push_str(&template[end..]);
+            return Some(replaced);
+        }
+    }
+    None
 }
 
 /// [`build_verifier`] + [`verify_with`] 的便利组合。
@@ -256,13 +387,21 @@ pub fn resolve_directory_email(claims: &DirectoryIdTokenClaims) -> Result<String
 mod tests {
     use super::{
         DEFAULT_ID_TOKEN_SIGNING_ALGS, DirectoryClaims, DirectoryIdToken, DirectoryIdTokenClaims,
-        build_verifier, resolve_directory_email, verify_with,
+        build_verifier, resolve_directory_email, verify_with, verify_with_group_mapping,
     };
     use crate::auth::oidc::error::OidcError;
     use crate::auth::oidc::provider::fixtures::{config, entra_kind, okta_kind};
-    use crate::auth::oidc::provider::{EntraTenantPolicy, OidcProviderConfig, ProviderOrigin};
+    use crate::auth::oidc::provider::{
+        EntraTenantPolicy, OidcProviderConfig, ProviderKind, ProviderOrigin,
+    };
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    use openbot_domain::identity::groups::{
+        GroupClaimPath, GroupNormalization, IdentityProviderId, IdpGroupMapping,
+    };
     use openidconnect::core::{CoreHmacKey, CoreIdTokenVerifier, CoreJwsSigningAlgorithm};
     use openidconnect::{ClientSecret, JsonWebKeySet, Nonce};
+    use sha2::Sha256;
     use std::collections::BTreeSet;
 
     const ISSUER: &str = "https://example.okta-test.invalid/oauth2/default";
@@ -328,6 +467,18 @@ mod tests {
         .to_string()
     }
 
+    /// 保留任意 provider claim 的 HS256 JWT；`DirectoryIdToken::new` 会先把未知字段过滤掉，
+    /// 因而不能用来测试动态 group path。
+    fn sign_raw(claims_json: &str) -> String {
+        let header = super::URL_SAFE_NO_PAD.encode(br#"{"alg":"HS256"}"#);
+        let payload = super::URL_SAFE_NO_PAD.encode(claims_json.as_bytes());
+        let signing_input = format!("{header}.{payload}");
+        let mut mac = Hmac::<Sha256>::new_from_slice(SECRET.as_bytes()).unwrap();
+        mac.update(signing_input.as_bytes());
+        let signature = super::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        format!("{signing_input}.{signature}")
+    }
+
     /// 一个把「此刻」钉死在 `NOW` 的验证器 —— 时间来自一份 `exp == NOW` 的 claims，
     /// 于是无需命名 `DateTime<Utc>` 就能拿到那个类型的值。
     fn verifier_at_now(provider: &OidcProviderConfig) -> CoreIdTokenVerifier<'static> {
@@ -367,6 +518,158 @@ mod tests {
         assert_eq!(identity.email(), "someone@acme.example");
         assert_eq!(identity.subject().as_str(), "subject-1");
         assert_eq!(identity.issuer().as_str(), ISSUER);
+        assert!(identity.groups().is_empty());
+        assert!(!identity.group_claim_present());
+    }
+
+    #[test]
+    fn groups_are_resolved_only_after_token_verification_with_the_bound_mapping() {
+        let provider = okta_provider();
+        let claims = claims_json(
+            ISSUER,
+            "okta-client",
+            FAR_FUTURE,
+            Some("nonce-1"),
+            r#""email":"someone@acme.example","resource_access":{"roles":[" Finance ","Risk","Finance"]}"#,
+        );
+        let raw = sign_raw(&claims);
+        let mapping = IdpGroupMapping::new(
+            IdentityProviderId::new("okta"),
+            GroupClaimPath::from_dotted("resource_access.roles").unwrap(),
+            GroupNormalization::TrimLowercase,
+        );
+        let identity = verify_with_group_mapping(
+            &raw,
+            &verifier_at_now(&provider),
+            &provider,
+            &Nonce::new("nonce-1".to_owned()),
+            Some(&mapping),
+        )
+        .unwrap();
+        let groups: Vec<&str> = identity
+            .groups()
+            .iter()
+            .map(|group| group.as_str())
+            .collect();
+        assert_eq!(groups, vec!["finance", "risk"]);
+        assert_eq!(
+            identity.group_normalization(),
+            GroupNormalization::TrimLowercase
+        );
+        assert!(identity.group_claim_present());
+
+        let wrong_provider = IdpGroupMapping::new(
+            IdentityProviderId::new("another-provider"),
+            GroupClaimPath::from_dotted("resource_access.roles").unwrap(),
+            GroupNormalization::Exact,
+        );
+        assert_eq!(
+            verify_with_group_mapping(
+                &raw,
+                &verifier_at_now(&provider),
+                &provider,
+                &Nonce::new("nonce-1".to_owned()),
+                Some(&wrong_provider),
+            ),
+            Err(OidcError::GroupMappingMismatch)
+        );
+    }
+
+    #[test]
+    fn a_bad_group_shape_rejects_the_login_instead_of_inventing_memberships() {
+        let provider = okta_provider();
+        let raw = sign_raw(&claims_json(
+            ISSUER,
+            "okta-client",
+            FAR_FUTURE,
+            Some("nonce-1"),
+            r#""email":"someone@acme.example","groups":["risk",42]"#,
+        ));
+        let mapping = IdpGroupMapping::new(
+            IdentityProviderId::new("okta"),
+            GroupClaimPath::from_dotted("groups").unwrap(),
+            GroupNormalization::Exact,
+        );
+        assert_eq!(
+            verify_with_group_mapping(
+                &raw,
+                &verifier_at_now(&provider),
+                &provider,
+                &Nonce::new("nonce-1".to_owned()),
+                Some(&mapping),
+            ),
+            Err(OidcError::GroupClaimRejected)
+        );
+    }
+
+    #[test]
+    fn entra_tenant_template_binds_tid_token_issuer_and_signing_key_issuer_exactly() {
+        let authority = crate::auth::oidc::provider::parse_issuer(
+            "https://login.microsoftonline.com/common/v2.0",
+        )
+        .unwrap();
+        let template = crate::auth::oidc::provider::parse_issuer(
+            "https://login.microsoftonline.com/{tenantid}/v2.0",
+        )
+        .unwrap();
+        let provider = OidcProviderConfig::new(
+            crate::auth::oidc::ProviderId::parse("microsoft").unwrap(),
+            ProviderKind::Entra {
+                authority,
+                issuer: template,
+                tenants: EntraTenantPolicy::TenantIndependent {
+                    allow_personal: true,
+                },
+            },
+            ProviderOrigin::EnvironmentConfigured,
+            openidconnect::ClientId::new("microsoft-client".to_owned()),
+            crate::auth::oidc::CanonicalRedirectUri::parse(
+                "https://app.example.com/auth/callback",
+                crate::auth::oidc::redirect::HTTPS_ONLY,
+            )
+            .unwrap(),
+            BTreeSet::new(),
+            None,
+        );
+        let tid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        let issuer = format!("https://login.microsoftonline.com/{tid}/v2.0");
+        let raw = sign_raw(&claims_json(
+            &issuer,
+            "microsoft-client",
+            FAR_FUTURE,
+            Some("nonce-1"),
+            &format!(r#""email":"person@example.com","tid":"{tid}""#),
+        ));
+        let concrete = super::validate_entra_token_issuer(
+            &raw,
+            &provider,
+            "https://login.microsoftonline.com/{tenantid}/v2.0",
+        )
+        .unwrap();
+        assert_eq!(concrete.as_str(), issuer);
+
+        for bad_key_issuer in [
+            "https://login.microsoftonline.com/ffffffff-ffff-4fff-8fff-ffffffffffff/v2.0",
+            "https://evil.example/{tenantid}/v2.0",
+            "",
+        ] {
+            assert_eq!(
+                super::validate_entra_token_issuer(&raw, &provider, bad_key_issuer),
+                Err(OidcError::IdTokenRejected)
+            );
+        }
+    }
+
+    #[test]
+    fn entra_tenant_independent_policy_rejects_noncanonical_and_personal_when_organizations_only() {
+        let organizations = EntraTenantPolicy::TenantIndependent {
+            allow_personal: false,
+        };
+        assert!(organizations.accepts(Some("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")));
+        assert!(!organizations.accepts(Some(crate::auth::oidc::MICROSOFT_CONSUMER_TENANT_ID)));
+        assert!(!organizations.accepts(Some("not-a-guid")));
+        assert!(!organizations.accepts(Some("AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE")));
+        assert!(!organizations.accepts(None));
     }
 
     /// 负向：签名被换过的 token 被拒。

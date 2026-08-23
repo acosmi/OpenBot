@@ -122,6 +122,11 @@ jobs:
         # lock 不同步时这一步会直接失败，而不是静默改写 lock 后继续。
         run: cargo test --workspace --all-features --locked
 
+      - name: W-7 safe dialer dependency / C-FFI guard
+        # 精确锁定 rustls/ring feature、唯一 socket 调用面、ring build.rs hash、38 Perl、
+        # 17 个预生成对象与 20 条诚实的非审计 exemption；任一漂移先红再 delta audit。
+        run: bash tools/check-safe-dialer-dependencies.sh
+
       - name: xtask parity-check
         # v3 §19.3："CI 拒绝未归类项和没有证据的 `done`"。
         # parity/ 为空时它打印 "0 ledger" 并通过 —— Phase 0 早期这是正确行为，
@@ -156,6 +161,9 @@ jobs:
       - name: RUSTSEC waiver reachability guard
         # 豁免不只是 ignore 字符串：先锁定可达性前提，变了就先红。
         run: bash tools/check-rustsec-waivers.sh
+
+      - name: W-7 safe dialer dependency / C-FFI guard
+        run: bash tools/check-safe-dialer-dependencies.sh
 
       - name: cargo deny（licenses / bans / advisories / sources 四段）
         # 配置 = 仓根 deny.toml；RUSTSEC-2023-0071 的书面裁决与触发器同样在该文件。

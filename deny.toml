@@ -62,6 +62,13 @@ allow = [
     # 边界：这是**传递依赖**带来的，不是第一方选型。若将来某个第一方组件想直接依赖
     #   Zlib 许可的 crate，那是另一次决定，不由这一行背书。
     "Zlib",
+
+    # W-7 safe dialer 的锁定 Mozilla 根证书数据：webpki-roots 1.0.9 唯一使用。
+    # 在加本行前 `cargo deny check licenses` 精确判红该 crate（负向对照）。这是数据许可，
+    # 允许使用/修改/分享；分享时须随数据提供协议文本。原件 2,371 B、SHA-256
+    # e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8，已逐字进入 NOTICE。
+    # 不用 exceptions：这是一次明确接受的新许可族，未来再出现同标识仍需看真实消费者。
+    "CDLA-Permissive-2.0",
 ]
 # 双许可表达式（`MIT OR Apache-2.0`）只要有一支命中 allow 即通过，无需在这里逐条列出组合。
 # 置信度阈值：低于它 cargo-deny 会认为"没看懂这份 LICENSE 文本"并按 unknown 处理（= 拒绝）。
@@ -236,6 +243,22 @@ allow-build-scripts = [
     "icu_properties_data",
     "libm",
     "num-bigint-dig",
+    # 2026-08-23 W-7 TLS delta audit：真实 safe dialer 引入两份 custom-build；在放行前
+    # `cargo deny check bans` 实得二者均为 build-script-not-allowed（负向对照），逐份审完才加：
+    #
+    #   - rustls 0.23.43：build.rs **13 行**，默认 feature 图下 `main()` 是空函数；只有另开
+    #     本仓未开的 `read_buf` 且编译器为 nightly 时 emit `cargo:rustc-cfg=read_buf`。
+    #     零文件、零进程、零网络。SHA-256 =
+    #     380b9a051325baa7d4957bd9a4f1a637c27a663610b1b502f9524530f6995f4d。
+    #   - ring 0.17.14：build.rs **1044 行**，SHA-256 =
+    #     9d1928ffb1d8e15766c1c1b9ead73e4b81a21703dd25f7c27b87842a2e6e9cee。
+    #     它经 `cc::Build` 调目标 C compiler/ar，把 crate 内 C 与预生成汇编编成静态库；无
+    #     socket/HTTP/download。crates.io 包无 `.git`，正常构建走 `pregenerated/`，不执行
+    #     Perl/NASM；Windows NASM 目标会直接链接包内 **17 个 `.o`**。后者是实质供应链扩大，
+    #     不是“纯 Rust”；接受理由、三平台未验证边界与解除条件见
+    #     docs/2026-08-23-W7-safe-dialer-TLS-delta审计.md。
+    "ring",
+    "rustls",
 ]
 # 依赖里夹带的可执行文件 / 解释型脚本一律拒绝：供应链攻击最常见的载荷形态。
 executables = "deny"
@@ -244,7 +267,9 @@ interpreted = "deny"
 # 全树扫描会把闸门时间拉到分钟级，而攻击面集中在能在构建期执行代码的那几个 crate。
 include-dependencies = false
 include-workspace = false
-include-archives = false
+# W-7 ring 首次把预生成 `.o` 带进真实发行图；从本轮起 archive/object 也纳入扫描，
+# 否则“executables=deny”会对最需要看见的 17 个 Windows 对象失明。
+include-archives = true
 
 # bypass 是**逐 crate 逐路径**的窄放行，不是把 executables / interpreted 关掉。
 #
@@ -296,6 +321,15 @@ crate = "zerocopy"
 #     编译或运行依赖的 tests target，所以它在本仓的构建与测试路径上都到不了。
 # 也就是说：这份脚本不是"没人用"，而是"用它的那条路径本仓永远不会走"。
 allow-globs = ["ci/*", "cargo.sh"]
+
+[[bans.build.bypass]]
+crate = "ring@0.17.14"
+# crates.io 包内 38 份 Perl 是上游生成汇编用的源码，全部严格落在 crypto/**/*.pl；正常
+# Cargo 构建因包内无 `.git` 固定消费 pregenerated/，不执行 Perl/NASM。另有 17 个 Windows
+# NASM 预生成 `.o`，确会被 build.rs 直接交给 cc::Build::object。本例外把两族分别写出来：
+# 任一新脚本/对象换目录、版本改变或多出别的可执行格式，cargo-deny 仍判红。
+# 全包仍由 Cargo.lock registry checksum 固定；build.rs 的独立 SHA 与行为审计见 W-7 delta 文档。
+allow-globs = ["crypto/**/*.pl", "pregenerated/*.o"]
 
 [bans.workspace-dependencies]
 # 同一个依赖在多个 crate 里写不同版本 = 版本真源分裂。workspace 根的

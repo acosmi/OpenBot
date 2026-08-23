@@ -47,12 +47,14 @@
 //! - [`repo::tools::PostgresToolJournal`] —— application 的 decision/attempt/capability/outcome
 //!   journal；outcome 与 audit 同事务，unknown 固定进 reconciliation（R41）。
 //!
-//! 尚未落地，也不在此假装存在：safe dialer、联网 provider adapters，以及 G4 的真实
+//! W-7 已在独立 TLS delta audit 后落真实 safe dialer、OIDC token/callback/session/group 竖切；
+//! 仍未落地、也不在此假装存在：SAML XML 签名、动态 IdP 注册写面，以及 G4 的真实
 //! browser/file/shell/MCP/Drive executor。
 //! `thread/run/outbox/memory/import` 的 10 个 repo 名对应 G3 尚未创建的物理表，必须与建表同批实现，
 //! 不创建零方法空 struct 冒充完成。
 
 pub mod auth;
 pub mod db;
+pub mod net;
 pub mod repo;
 pub mod vault;

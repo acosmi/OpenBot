@@ -7,7 +7,9 @@
 ## 读口径
 
 - `imports.lock` 锁定 Google 公开的 exact/delta audits；当前机械覆盖 **14** 个依赖。
-- `config.toml` 的 **350** 条 exemptions 是“引入 Cargo Vet 时已存在的精确版本快照”，
+- `config.toml` 的 **370** 条 exemptions 中，350 条是“引入 Cargo Vet 时已存在的精确版本快照”；
+  另 20 条是 W-7 TLS delta 的精确版本、逐条带 `owner=security` 与
+  `not a full source audit` 说明，
   **不是安全审计结论**。
 - CI 不运行 `init` / `regenerate`。Cargo.lock 新增或升级一个未覆盖版本时，
   `cargo vet --locked` 直接判红，不会自动添加 exemption。
@@ -16,8 +18,8 @@
 
 ```bash
 cargo vet --version                                                   # cargo-vet 0.10.0
-cargo vet --locked                                                    # 14 fully audited, 350 exempted
-python3 -c 'import tomllib;d=tomllib.load(open("supply-chain/config.toml","rb"));print(sum(len(v) for v in d.get("exemptions",{}).values()))'  # 350
+cargo vet --locked                                                    # 14 fully audited, 370 exempted
+python3 -c 'import tomllib;d=tomllib.load(open("supply-chain/config.toml","rb"));print(sum(len(v) for v in d.get("exemptions",{}).values()))'  # 370
 ```
 
 ## 直接信任源裁决
@@ -37,5 +39,7 @@ python3 -c 'import tomllib;d=tomllib.load(open("supply-chain/config.toml","rb"))
    `cargo vet regenerate exemptions`。
 4. 运行 `cargo vet fmt` 和 `cargo vet --locked`，并把 audit/exemption 数字与本文同 PR 更新。
 
-负向对照：本轮在临时基线中只删除 `aead 0.5.2` exemption 后重跑 `--locked`，
+负向对照：R45 在临时基线中只删除 `aead 0.5.2` exemption 后重跑 `--locked`，
 实得 `Vetting Failed` 且精确报 `aead:0.5.2 missing ["safe-to-deploy"]`，证明该闸门会说“不”。
+W-7 加 TLS 依赖、写 exemption 前同一闸门又精确列出新增 **20/20** unvetted；Google imports
+刷新后仍全缺，未用“导入过”冒充“覆盖了”。
