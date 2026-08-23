@@ -119,6 +119,28 @@ fixture 相等，再施加 0014，逐旧列证明无改写，并实测 6 个 see
 负数命中 `users_auth_generation_nonnegative`。`two_replicas_apply_0013_and_0014_exactly_once`
 实得恰好 `Applied + AlreadyApplied`。
 
+## `schema-0015.json`：Rust session 签发代际
+
+上游 `sessions.token` 是可直接使用的明文 token，且 session 行没有“签发时 auth generation”。
+第一真源 §6.3 要求旧 Better Auth session 在切换时统一失效，并要求 role/access generation 更新
+立即让旧 session/ticket/capability 失效。0015 因此只在 `sessions` 末尾追加 nullable
+`auth_generation bigint` 与非负 CHECK：新 Rust session 写当前 generation；旧行保持 NULL，
+token 也没有 Rust keyed-hash 前缀，resolver fail-closed 要求重新登录。兼容窗口不回填、不
+`SET NOT NULL`。
+
+| 项 | 0015 数量 | 相对 0014 |
+| --- | ---: | ---: |
+| public 表 | 31 | 0 |
+| 列 | 250 | +1 |
+| 约束 | 95 | +1 |
+| 索引 | 53 | 0 |
+| 触发器 | 4 | 0 |
+
+PG17 测试 `post_0015_is_exact_expand_only_and_legacy_sessions_remain_unclaimed` 逐对象证明只有
+sessions 多一列/一约束，6 条旧 seed session 全为 NULL，typed 新值 0 可读回，负数命中具名
+CHECK；`two_replicas_apply_0013_through_0015_exactly_once` 实得恰好
+`Applied + AlreadyApplied`。
+
 ## 复算命令
 
 ```bash
@@ -136,6 +158,9 @@ python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0013.json',en
 
 # post-0014
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0014.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 31 249 94 53 4
+
+# post-0015
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0015.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 31 250 95 53 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

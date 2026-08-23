@@ -109,6 +109,7 @@ impl IntoResponse for HttpError {
             | AppError::StaleGeneration { .. }
             | AppError::LeaseConflict { .. }
             | AppError::IdentityConflict { .. }
+            | AppError::SensitiveWriteRefused { .. }
             | AppError::ReconciliationRequired { .. } => None,
         };
 
@@ -160,6 +161,9 @@ mod tests {
             },
             AppError::IdentityConflict {
                 reason: openbot_contracts::error::IdentityConflictReason::RoleLastAdmin,
+            },
+            AppError::SensitiveWriteRefused {
+                reason: openbot_contracts::error::SensitiveWriteReason::OriginUntrusted,
             },
             AppError::ReconciliationRequired { accepted: true },
             AppError::ReconciliationRequired { accepted: false },

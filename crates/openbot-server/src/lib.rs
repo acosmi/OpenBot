@@ -23,7 +23,7 @@
 //! - 把 computer token 交给浏览器（v3 §12.4）；Server 的 screen viewer 用同源 `wss` +
 //!   session cookie + CSRF-style origin check。
 //!
-//! # G1 状态（Rust Foundation，W5–10）
+//! # 当前状态（G1 + W-4 Server production slice）
 //!
 //! Phase 0 本 crate 刻意为空；G1 落**第一个垂直切片**所需的最小集合。四条 G1 判据里
 //! 「ApplicationService 经 Axum/Tauri 结果一致」与「tracing/metrics/redaction 从首个
@@ -39,7 +39,8 @@
 //! | [`telemetry`] | request span、request_id 消毒、subscriber 构造器 | §16.4 |
 //! | [`http`] | 路由表与 handler | parity ledger 四条，见下表 |
 //!
-//! G1 上四条路由，每条都能在 `parity/api.yaml` 里指名道姓：
+//! G1 四条路由之外，W-4 追加 `/api/me`、admin status/people list/role/access；它们仍只做
+//! framing，全部穿同一个 `ApplicationService`。
 //!
 //! - `GET /api/channels` —— 台账 `api-channels-list-get`（parity）把落点钉成
 //!   `openbot-server::http::channels::list`，[`http::channels::list`] 逐字兑现它。
@@ -55,16 +56,11 @@
 //! - **active connections**：§16.4 点名了它，但本 crate **从不拥有监听 socket**（`Router`
 //!   交给宿主去 accept），所以只记得了**在飞请求数**，那是另一件事、用的是另一个名字。
 //!   把在飞请求数改叫 connections 就是造假，见 [`metrics`] 模块文档。
-//! - **`/metrics` 的访问控制**：G1 不做，这条路由现在是 public 的。生产必须把它挡在内网或
-//!   鉴权之后 —— 属 G2 的 method/origin 面，见 [`http::metrics`] 模块文档。
-//! - **`route` label / span 字段**：安全的路由名只能来自 `MatchedPath`，而它只在路由之后
-//!   存在，本 crate 的两个中间件刻意装在路由之前好覆盖 404/413。二选一取"覆盖全部请求 +
-//!   不记不可信字符串"。
 //! - **OTel exporter**：§16.4 明说 exporter「只在管理员显式配置 collector 地址时才建连」，
 //!   而配置面是 G2（§15.4）。此刻引入只会得到一个零调用点的依赖，所以刻意不引入。
 //!   **本 crate 没有任何默认外发的遥测端点**（§16.4「零 phone-home」）。
 //! - **SSE / WebSocket / 静态 GUI bundle**：分别是 G3 与 GUI 线的工作。
-//! - 台账里其余 90 余条 HTTP 路由：各自随 ledger 条目单独落地。
+//! - OIDC/SAML 登录/session 签发、audit/IdP/credentials/computer 等其余 HTTP 路由仍未落地。
 
 #![deny(missing_docs)]
 
@@ -77,7 +73,10 @@ pub mod metrics;
 pub mod readiness;
 pub mod telemetry;
 
-pub use auth::AuthResolver;
+pub use auth::{
+    AuthResolver, PostgresSessionAuthResolver, ResolvedAuth, SensitiveAuthenticated,
+    SensitiveWriteSecurity, SingleUserAuthResolver,
+};
 pub use error::HttpError;
 pub use http::{ServerBuilder, ServerState, router};
 pub use limits::REQUEST_BODY_LIMIT_BYTES;

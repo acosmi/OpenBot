@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 30
+    expect: 31
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 22
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 8
+    expect: 9
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 30 30
+    expect: 31 31
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 20 0
+    expect: 10 21 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -110,6 +110,21 @@ entries:
       AuthContext/AccessChangeRequest 已要求权威 auth generation，但 0013 之前全仓无持久化落点；
       0014 在 users 末尾追加 nullable auth_generation，旧行 NULL 读作 0，角色/撤权事务以 coalesce+1 递增。
       兼容期不 SET NOT NULL，不新建未规划表；负数由具名 CHECK 拒绝。
+
+  - id: db-schema-0015
+    upstream: "-"
+    label: 新增
+    target: fixtures/db/schema-0015.json -> openbot_infra::db::native
+    owner: openbot-infra
+    test_id: T-FIX-0031
+    migration_rule: "n/a: W-4 session 签发代际；旧 Better Auth session 统一重新登录"
+    status: done
+    evidence: "PostgreSQL 17.11 上 0014 → native_0015.sql → schema_facts.sql 实跑；31 表 / 250 列 / 95 约束 / 53 索引 / 4 触发器"
+    done_evidence: "fixtures/db/schema-0015.json（sort_keys 规范化）；post_0015_is_exact_expand_only_and_legacy_sessions_remain_unclaimed 逐旧列相等，sessions 只追加一个 nullable bigint；双 replica 实得 Applied + AlreadyApplied"
+    notes: >-
+      上游 sessions.token 保存明文且没有签发 generation；Rust resolver 改存带前缀的 HMAC-SHA256，
+      并要求本列非 NULL 后与 users.auth_generation 逐请求比较。旧行保持 NULL/明文，不回填伪造
+      Rust session 身份，迁移后统一重新登录；兼容期不 SET NOT NULL。
 
   - id: db-seed-0012
     upstream: "-"

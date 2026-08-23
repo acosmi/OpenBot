@@ -73,6 +73,18 @@ impl ErrorCode {
         Self("identity_access_change_self_revocation");
     /// 不能撤销最后一个有效管理员的访问。
     pub const IDENTITY_ACCESS_LAST_ADMIN: Self = Self("identity_access_change_last_admin");
+    /// 敏感写要求 admin。
+    pub const SENSITIVE_WRITE_ROLE_INSUFFICIENT: Self =
+        Self("identity_sensitive_write_role_insufficient");
+    /// 敏感写缺 Origin。
+    pub const SENSITIVE_WRITE_ORIGIN_MISSING: Self =
+        Self("identity_sensitive_write_origin_missing");
+    /// 敏感写 Origin 不可信。
+    pub const SENSITIVE_WRITE_ORIGIN_UNTRUSTED: Self =
+        Self("identity_sensitive_write_origin_untrusted");
+    /// 敏感写 session 不再 fresh。
+    pub const SENSITIVE_WRITE_SESSION_NOT_FRESH: Self =
+        Self("identity_sensitive_write_session_not_fresh");
     /// commit 状态未知，需要和解（202 或 409）。
     pub const RECONCILIATION_REQUIRED: Self = Self("reconciliation_required");
 
@@ -222,6 +234,38 @@ impl fmt::Display for IdentityConflictReason {
     }
 }
 
+/// 敏感 admin 写的四种稳定拒绝原因。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SensitiveWriteReason {
+    /// 角色不足。
+    RoleInsufficient,
+    /// 缺 Origin。
+    OriginMissing,
+    /// Origin 不可信。
+    OriginUntrusted,
+    /// session 不 fresh。
+    SessionNotFresh,
+}
+
+impl SensitiveWriteReason {
+    /// 稳定错误码。
+    #[must_use]
+    pub const fn code(self) -> ErrorCode {
+        match self {
+            Self::RoleInsufficient => ErrorCode::SENSITIVE_WRITE_ROLE_INSUFFICIENT,
+            Self::OriginMissing => ErrorCode::SENSITIVE_WRITE_ORIGIN_MISSING,
+            Self::OriginUntrusted => ErrorCode::SENSITIVE_WRITE_ORIGIN_UNTRUSTED,
+            Self::SessionNotFresh => ErrorCode::SENSITIVE_WRITE_SESSION_NOT_FRESH,
+        }
+    }
+}
+
+impl fmt::Display for SensitiveWriteReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code().as_str())
+    }
+}
+
 /// 应用层错误。封闭 enum，恰好覆盖 §15.3 列举的每一条语义。
 ///
 /// # 三样东西必须与文案解耦
@@ -308,6 +352,13 @@ pub enum AppError {
         reason: IdentityConflictReason,
     },
 
+    /// fresh-session / CSRF / admin role 敏感写闸门拒绝。
+    #[error("{reason}")]
+    SensitiveWriteRefused {
+        /// 稳定拒绝原因。
+        reason: SensitiveWriteReason,
+    },
+
     /// commit 状态未知，需要和解（§15.3「unknown commit 202/409 对应 reconciliation，
     /// 不伪装 500 或 success」）。
     #[error("reconciliation_required accepted={accepted}")]
@@ -336,6 +387,7 @@ impl AppError {
             Self::StaleGeneration { .. } => ErrorCode::STALE_GENERATION,
             Self::LeaseConflict { .. } => ErrorCode::LEASE_CONFLICT,
             Self::IdentityConflict { reason } => reason.code(),
+            Self::SensitiveWriteRefused { reason } => reason.code(),
             Self::ReconciliationRequired { .. } => ErrorCode::RECONCILIATION_REQUIRED,
         }
     }
@@ -346,7 +398,10 @@ impl AppError {
     #[must_use]
     pub const fn http_status(&self) -> u16 {
         match self {
-            Self::Unauthenticated => 401,
+            Self::Unauthenticated
+            | Self::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            } => 401,
             Self::ForbiddenRole { .. } | Self::PolicyRefused { .. } => 403,
             Self::NotVisible => 404,
             Self::MalformedPayload { .. } => 400,
@@ -355,6 +410,7 @@ impl AppError {
             Self::StaleGeneration { .. }
             | Self::LeaseConflict { .. }
             | Self::IdentityConflict { .. } => 409,
+            Self::SensitiveWriteRefused { .. } => 403,
             // 「不伪装 500 或 success」：已受理 → 202（Accepted，明说还没定），
             // 未受理 → 409（Conflict，明说现在不能继续）。两个都不是 2xx 成功语义里的 200。
             Self::ReconciliationRequired { accepted } => {
@@ -382,6 +438,12 @@ impl AppError {
                 AuditKind::ConcurrencyConflict
             }
             Self::IdentityConflict { .. } => AuditKind::AuthorizationDenied,
+            Self::SensitiveWriteRefused { reason } => match reason {
+                SensitiveWriteReason::SessionNotFresh => AuditKind::AuthFailure,
+                SensitiveWriteReason::RoleInsufficient
+                | SensitiveWriteReason::OriginMissing
+                | SensitiveWriteReason::OriginUntrusted => AuditKind::AuthorizationDenied,
+            },
             Self::ReconciliationRequired { .. } => AuditKind::ReconciliationRequired,
         }
     }
@@ -400,7 +462,7 @@ mod tests {
 
     /// 变体总数。新增变体必须同 PR 改这里 —— 它与 [`variant_index`] 和
     /// [`all_variants_for_test`] 三者互相咬合，见下方三条测试。
-    const VARIANT_COUNT: usize = 11;
+    const VARIANT_COUNT: usize = 12;
 
     /// 无通配 `_` 的穷举 match：**新增变体在这里编译失败**，逼作者同 PR 更新下面的变体台账。
     ///
@@ -419,7 +481,8 @@ mod tests {
             AppError::StaleGeneration { .. } => 7,
             AppError::LeaseConflict { .. } => 8,
             AppError::IdentityConflict { .. } => 9,
-            AppError::ReconciliationRequired { .. } => 10,
+            AppError::SensitiveWriteRefused { .. } => 10,
+            AppError::ReconciliationRequired { .. } => 11,
         }
     }
 
@@ -474,6 +537,18 @@ mod tests {
             AppError::IdentityConflict {
                 reason: IdentityConflictReason::AccessLastAdmin,
             },
+            AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::RoleInsufficient,
+            },
+            AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::OriginMissing,
+            },
+            AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::OriginUntrusted,
+            },
+            AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            },
             AppError::ReconciliationRequired { accepted: true },
             AppError::ReconciliationRequired { accepted: false },
         ]
@@ -510,8 +585,8 @@ mod tests {
         }
         assert_eq!(
             codes.len(),
-            VARIANT_COUNT + 5,
-            "IdentityConflict 一个结构变体承载六个不同补救动作，所以稳定码比变体多 5",
+            VARIANT_COUNT + 8,
+            "IdentityConflict 多 5 个码，SensitiveWriteRefused 多 3 个码",
         );
     }
 
@@ -557,6 +632,18 @@ mod tests {
                     reason: IdentityConflictReason::RoleLastAdmin,
                 },
                 409,
+            ),
+            (
+                AppError::SensitiveWriteRefused {
+                    reason: SensitiveWriteReason::OriginUntrusted,
+                },
+                403,
+            ),
+            (
+                AppError::SensitiveWriteRefused {
+                    reason: SensitiveWriteReason::SessionNotFresh,
+                },
+                401,
             ),
             (AppError::ReconciliationRequired { accepted: true }, 202),
             (AppError::ReconciliationRequired { accepted: false }, 409),

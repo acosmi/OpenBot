@@ -9,6 +9,7 @@
 //! 不在这里留一个"传 None 就明文"的开关。
 
 use std::fmt;
+use std::str::FromStr;
 use std::time::Duration;
 
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod, Runtime};
@@ -44,6 +45,23 @@ pub struct DatabaseConfig {
     pub max_pool_size: usize,
     /// 单次建连超时。
     pub connect_timeout: Duration,
+}
+
+/// `DATABASE_URL` / libpq keyword 串无法映射成本项目单一 TCP 数据库配置。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum DatabaseConfigParseError {
+    /// libpq/URL 语法错误。
+    #[error("database_url_malformed")]
+    Malformed,
+    /// 缺 host/user/dbname，或给了多个/Unix host。
+    #[error("database_url_shape_unsupported")]
+    UnsupportedShape,
+    /// 连接串要求了本实现不能兑现且绝不能静默降级的 TLS/拓扑/会话选项。
+    #[error("database_url_option_unsupported")]
+    UnsupportedOption,
+    /// password 不是 UTF-8。
+    #[error("database_url_password_not_utf8")]
+    PasswordNotUtf8,
 }
 
 impl DatabaseConfig {
@@ -111,6 +129,69 @@ impl DatabaseConfig {
             cfg.application_name(name);
         }
         cfg
+    }
+}
+
+impl FromStr for DatabaseConfig {
+    type Err = DatabaseConfigParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let parsed = tokio_postgres::Config::from_str(value)
+            .map_err(|_| DatabaseConfigParseError::Malformed)?;
+        if parsed.get_hosts().len() != 1 {
+            return Err(DatabaseConfigParseError::UnsupportedShape);
+        }
+        if !parsed.get_hostaddrs().is_empty() || parsed.get_ports().len() > 1 {
+            return Err(DatabaseConfigParseError::UnsupportedShape);
+        }
+        let defaults = tokio_postgres::Config::new();
+        if parsed.get_options().is_some()
+            || matches!(
+                parsed.get_ssl_mode(),
+                tokio_postgres::config::SslMode::Require
+            )
+            || parsed.get_ssl_negotiation() != defaults.get_ssl_negotiation()
+            || parsed.get_tcp_user_timeout().is_some()
+            || parsed.get_keepalives() != defaults.get_keepalives()
+            || parsed.get_keepalives_idle() != defaults.get_keepalives_idle()
+            || parsed.get_keepalives_interval() != defaults.get_keepalives_interval()
+            || parsed.get_keepalives_retries() != defaults.get_keepalives_retries()
+            || parsed.get_target_session_attrs() != defaults.get_target_session_attrs()
+            || matches!(
+                parsed.get_channel_binding(),
+                tokio_postgres::config::ChannelBinding::Require
+            )
+            || parsed.get_load_balance_hosts() != defaults.get_load_balance_hosts()
+        {
+            return Err(DatabaseConfigParseError::UnsupportedOption);
+        }
+        let host = match &parsed.get_hosts()[0] {
+            tokio_postgres::config::Host::Tcp(host) if !host.is_empty() => host.clone(),
+            _ => return Err(DatabaseConfigParseError::UnsupportedShape),
+        };
+        let user = parsed
+            .get_user()
+            .filter(|value| !value.is_empty())
+            .ok_or(DatabaseConfigParseError::UnsupportedShape)?;
+        let dbname = parsed
+            .get_dbname()
+            .filter(|value| !value.is_empty())
+            .ok_or(DatabaseConfigParseError::UnsupportedShape)?;
+        let port = parsed.get_ports().first().copied().unwrap_or(5432);
+        let mut config = Self::new(host, port, user, dbname);
+        if let Some(password) = parsed.get_password() {
+            config = config.with_password(
+                std::str::from_utf8(password)
+                    .map_err(|_| DatabaseConfigParseError::PasswordNotUtf8)?,
+            );
+        }
+        if let Some(application_name) = parsed.get_application_name() {
+            config = config.with_application_name(application_name);
+        }
+        if let Some(connect_timeout) = parsed.get_connect_timeout() {
+            config.connect_timeout = *connect_timeout;
+        }
+        Ok(config)
     }
 }
 
@@ -222,5 +303,69 @@ mod tests {
         assert_eq!(pg.get_password(), Some(&b"s3cret"[..]));
         assert_eq!(pg.get_application_name(), Some("openbot-server"));
         assert_eq!(pg.get_connect_timeout(), Some(&DEFAULT_CONNECT_TIMEOUT));
+    }
+
+    #[test]
+    fn database_url_and_keyword_forms_share_one_parser_and_redact_password() {
+        for raw in [
+            "postgresql://openbot:secret@127.0.0.1:5544/openbot",
+            "host=127.0.0.1 port=5544 user=openbot password=secret dbname=openbot",
+        ] {
+            let config: DatabaseConfig = raw.parse().unwrap();
+            assert_eq!(config.host, "127.0.0.1");
+            assert_eq!(config.port, 5544);
+            assert_eq!(config.user, "openbot");
+            assert_eq!(config.dbname, "openbot");
+            assert_eq!(config.password.as_deref(), Some("secret"));
+            assert!(!format!("{config:?}").contains("secret"));
+        }
+    }
+
+    #[test]
+    fn malformed_or_ambiguous_database_shapes_are_refused_not_guessed() {
+        assert_eq!(
+            "not a database url".parse::<DatabaseConfig>(),
+            Err(DatabaseConfigParseError::Malformed),
+        );
+        assert_eq!(
+            "host=a,b user=u dbname=d".parse::<DatabaseConfig>(),
+            Err(DatabaseConfigParseError::UnsupportedShape),
+        );
+        assert_eq!(
+            "host=127.0.0.1 dbname=d".parse::<DatabaseConfig>(),
+            Err(DatabaseConfigParseError::UnsupportedShape),
+        );
+    }
+
+    #[test]
+    fn security_or_topology_options_are_never_silently_downgraded() {
+        for raw in [
+            "host=127.0.0.1 user=u dbname=d sslmode=require",
+            "host=127.0.0.1 user=u dbname=d target_session_attrs=read-write",
+            "host=127.0.0.1 user=u dbname=d channel_binding=require",
+            "host=127.0.0.1 user=u dbname=d options=-cstatement_timeout=10s",
+            "host=127.0.0.1 hostaddr=127.0.0.2 user=u dbname=d",
+        ] {
+            assert!(
+                matches!(
+                    raw.parse::<DatabaseConfig>(),
+                    Err(DatabaseConfigParseError::UnsupportedOption
+                        | DatabaseConfigParseError::UnsupportedShape)
+                ),
+                "不可兑现的连接要求被静默接受：{raw}",
+            );
+        }
+
+        // 正向对照：显式 NoTls 与默认 prefer 在本实现里都能如实兑现，不应被误拒。
+        assert!(
+            "host=127.0.0.1 user=u dbname=d sslmode=disable"
+                .parse::<DatabaseConfig>()
+                .is_ok()
+        );
+        assert!(
+            "host=127.0.0.1 user=u dbname=d sslmode=prefer"
+                .parse::<DatabaseConfig>()
+                .is_ok()
+        );
     }
 }

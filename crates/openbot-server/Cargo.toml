@@ -25,6 +25,8 @@ openbot-contracts.workspace = true
 openbot-application.workspace = true
 # G2 起启动配置要落成领域类型（retention 窗口等），而不是一堆裸字符串。
 openbot-domain.workspace = true
+# W-4 生产组装与 PostgreSQL session resolver；依赖方向 server -> infra -> application，无环。
+openbot-infra.workspace = true
 
 # `AuthResolver` / `ReadinessProbe` 都要对象安全（state 里持的是 `dyn`），
 # edition 2024 的 AFIT 仍不给对象安全，所以走 `async_trait`。
@@ -36,6 +38,8 @@ axum.workspace = true
 # 但直接依赖 `http` 让这个 port 的签名不绑定在 axum 上 —— 它是**认证边界**，
 # 不是 axum 的扩展点。
 http.workspace = true
+deadpool-postgres.workspace = true
+tokio-postgres.workspace = true
 # §5.2 点名的 transport 四件事之一：输入大小限制。
 tower-http.workspace = true
 
@@ -60,6 +64,11 @@ tracing-subscriber.workspace = true
 # request_id 的铸造源。UUIDv7 而不是自增计数：多副本 Server 下自增会重号，
 # 而 request_id 的唯一用途就是跨副本、跨进程把一次请求的日志串起来。
 uuid.workspace = true
+# production session resolver/main 需要墙钟与 Tokio runtime。
+time.workspace = true
+tokio.workspace = true
+hmac.workspace = true
+sha2.workspace = true
 
 # §16.4「Server 暴露 Prometheus metrics」。**门面 + exporter 两层**，不直接依赖 prometheus
 # 客户端库：库代码只调 `metrics` 门面，不知道 exporter 是谁 —— 没装 recorder 时每次调用
@@ -75,9 +84,6 @@ metrics-exporter-prometheus.workspace = true
 # 生产构建不受影响）。
 openbot-contracts = { workspace = true, features = ["testkit"] }
 
-# 测试里造 `ChannelSummary` 的时间戳。
-time.workspace = true
-
 # `ServiceExt::oneshot` —— 内存里跑 Axum service，不监听端口。它在 `util` feature 下，
 # 而 workspace 根给 `tower` 开的是 `timeout` / `limit`。feature 是可加的：这里追加
 # `util` 不改根 Cargo.toml，也不影响任何生产依赖图（`tower` 不在 `[dependencies]` 里）。
@@ -87,7 +93,3 @@ tower = { workspace = true, features = ["util"] }
 # 这里不再重复声明。它进生产依赖**不等于**放开"自由 params"：那条禁令针对的是
 # `AppCommand` 面接受任意 JSON，而 `AppCommand` 仍是封闭 enum，本 crate 的路由一个
 # `serde_json::Value` 参数都不收。
-
-# `#[tokio::test]`。生产侧不依赖 tokio：本 crate 不 spawn、不计时，
-# 运行时由宿主二进制提供。
-tokio.workspace = true

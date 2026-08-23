@@ -62,6 +62,7 @@ walkdir = { workspace = true, optional = true }
 [dev-dependencies]
 # 被测对象：唯一业务入口，以及 transport 必须穿过的那个 trait。
 openbot-application.workspace = true
+openbot-domain.workspace = true
 # `AuthContext::for_test` 只在 contracts 的 `testkit` feature 下存在（默认关）。
 openbot-contracts = { workspace = true, features = ["testkit"] }
 # in-process 腿（§13.2 的 typed in-process transport）。

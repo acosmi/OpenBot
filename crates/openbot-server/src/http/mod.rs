@@ -2,7 +2,8 @@
 //!
 //! # 落点逐字对齐 parity ledger
 //!
-//! `parity/api.yaml` 把四条 G1 路由的落点写死到**模块路径**这一级：
+//! `parity/api.yaml` 把路由落点写死到**模块路径**这一级；W-4 在 G1 四条之上追加
+//! `/api/me` 与 admin status/people 三面。
 //!
 //! ```text
 //! health-get              target: "openbot-server::http::health (GET /health)"
@@ -34,6 +35,7 @@
 //! "记了但被拒"的日志，在排障时是完全不同的证据。metrics 紧贴其内，同样在体积上限
 //! **之外**：一次 413 也是一次真实请求，不计进延迟分布就等于把被拒流量藏起来。
 
+pub mod admin;
 pub mod channels;
 pub mod health;
 pub mod metrics;
@@ -42,14 +44,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::Router;
+use axum::extract::MatchedPath;
 use axum::extract::{DefaultBodyLimit, Request};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::routing::get;
+use axum::routing::{get, post};
 use openbot_application::ApplicationService;
 use tower_http::limit::RequestBodyLimitLayer;
 
-use crate::auth::AuthResolver;
+use crate::auth::{AuthResolver, ResolvedAuth, SensitiveWriteSecurity};
 use crate::limits::REQUEST_BODY_LIMIT_BYTES;
 use crate::metrics::MetricsHandle;
 use crate::readiness::ReadinessProbe;
@@ -57,9 +60,9 @@ use crate::telemetry::trace_request;
 
 /// router 的共享状态。
 ///
-/// 四样东西，恰好对应 transport 的四个外部接缝：业务入口、认证边界、readiness 判据、
-/// metrics 渲染句柄。**没有第五样** —— 数据库连接、配置、密钥都不在这里，因为
-/// transport 都不该碰它们。
+/// 五样东西对应 transport 的受控外部接缝：业务入口、认证边界、readiness 判据、metrics
+/// 渲染句柄，以及已经由启动配置裁决好的 `insecure_transport` 布尔事实。数据库连接、原始
+/// 配置和密钥都不在这里，因为 transport 不该碰它们。
 #[derive(Clone)]
 pub struct ServerState {
     inner: Arc<StateInner>,
@@ -70,6 +73,8 @@ struct StateInner {
     auth: Arc<dyn AuthResolver>,
     readiness: Vec<Arc<dyn ReadinessProbe>>,
     metrics: Option<MetricsHandle>,
+    sensitive_write: Option<SensitiveWriteSecurity>,
+    insecure_transport: bool,
 }
 
 impl ServerState {
@@ -98,6 +103,27 @@ impl ServerState {
     pub fn metrics_handle(&self) -> Option<&MetricsHandle> {
         self.inner.metrics.as_ref()
     }
+
+    /// 非 loopback 明文 HTTP 是否正在承载会话；只投影到 readiness 元数据。
+    #[must_use]
+    pub fn insecure_transport(&self) -> bool {
+        self.inner.insecure_transport
+    }
+
+    /// 敏感写 guard；未注入时 fail-closed 503，不给 handler 任何“暂时跳过”路径。
+    pub async fn authorize_sensitive_write(
+        &self,
+        resolved: &ResolvedAuth,
+        origin: Option<&str>,
+    ) -> Result<(), openbot_contracts::error::AppError> {
+        let Some(security) = &self.inner.sensitive_write else {
+            return Err(openbot_contracts::error::AppError::DependencyUnavailable {
+                dependency: "sensitive_write_security",
+            });
+        };
+        let _approved = security.authorize(resolved, origin)?;
+        self.inner.auth.touch(resolved).await
+    }
 }
 
 /// [`ServerState`] 的构造器。
@@ -111,6 +137,8 @@ pub struct ServerBuilder {
     auth: Arc<dyn AuthResolver>,
     readiness: Vec<Arc<dyn ReadinessProbe>>,
     metrics: Option<MetricsHandle>,
+    sensitive_write: Option<SensitiveWriteSecurity>,
+    insecure_transport: bool,
 }
 
 impl ServerBuilder {
@@ -122,6 +150,8 @@ impl ServerBuilder {
             auth,
             readiness: Vec::new(),
             metrics: None,
+            sensitive_write: None,
+            insecure_transport: false,
         }
     }
 
@@ -148,6 +178,20 @@ impl ServerBuilder {
         self
     }
 
+    /// 注入 fresh-session + trusted-origin 敏感写配置。
+    #[must_use]
+    pub fn with_sensitive_write_security(mut self, security: SensitiveWriteSecurity) -> Self {
+        self.sensitive_write = Some(security);
+        self
+    }
+
+    /// 注入由 [`crate::config::PublicTransport`] 单点裁决出的明文暴露事实。
+    #[must_use]
+    pub const fn with_insecure_transport(mut self, insecure: bool) -> Self {
+        self.insecure_transport = insecure;
+        self
+    }
+
     /// 收口成 [`ServerState`]。
     #[must_use]
     pub fn build(self) -> ServerState {
@@ -157,6 +201,8 @@ impl ServerBuilder {
                 auth: self.auth,
                 readiness: self.readiness,
                 metrics: self.metrics,
+                sensitive_write: self.sensitive_write,
+                insecure_transport: self.insecure_transport,
             }),
         }
     }
@@ -175,15 +221,20 @@ impl ServerBuilder {
 async fn record_http_metrics(request: Request, next: Next) -> Response {
     let _in_flight = crate::metrics::track_in_flight();
     let method = request.method().clone();
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or(crate::metrics::ROUTE_UNMATCHED, MatchedPath::as_str)
+        .to_owned();
     let started = Instant::now();
     let response = next.run(request).await;
-    crate::metrics::record_http_request(&method, response.status(), started.elapsed());
+    crate::metrics::record_http_request(&method, response.status(), started.elapsed(), &route);
     response
 }
 
-/// 组装 G1 的路由表。
+/// 组装当前 Server 路由表。
 ///
-/// 四条路由，逐条的 ledger 出处见 crate 文档。层序见模块文档。
+/// 每条路由的 ledger 出处见 crate 文档。层序见模块文档。
 ///
 /// # 未匹配的路径
 ///
@@ -197,6 +248,14 @@ pub fn router(state: ServerState) -> Router {
         .route("/readiness", get(health::readiness))
         .route("/metrics", get(metrics::render))
         .route("/api/channels", get(channels::list))
+        .route("/api/me", get(admin::me))
+        .route("/api/admin/status", get(admin::status))
+        .route("/api/admin/people", get(admin::people_list))
+        .route("/api/admin/people/{user_id}/role", post(admin::people_role))
+        .route(
+            "/api/admin/people/{user_id}/access",
+            post(admin::people_access),
+        )
         // Axum 自带一个 2 MiB 的默认上限，且只对消费 body 的提取器生效。关掉它，让
         // `REQUEST_BODY_LIMIT_BYTES` 成为唯一真源 —— 两个上限就是两个答案。
         .layer(DefaultBodyLimit::disable())
@@ -212,11 +271,11 @@ mod tests {
     use crate::auth::FixedAuthResolver;
     use crate::metrics::{
         HTTP_METRIC_LABELS, HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_IN_FLIGHT, LABEL_METHOD,
-        LABEL_STATUS, LABEL_TRANSPORT, METHOD_OTHER,
+        LABEL_ROUTE, LABEL_STATUS, LABEL_TRANSPORT, METHOD_OTHER, ROUTE_UNMATCHED,
     };
     use crate::readiness::{ReadinessStatus, ReadinessVerdict};
     use crate::telemetry::{
-        ACTOR_ID_FIELD, REQUEST_ID_HEADER, REQUEST_SPAN_FIELDS, REQUEST_SPAN_NAME,
+        ACTOR_ID_FIELD, HTTP_ROUTE_FIELD, REQUEST_ID_HEADER, REQUEST_SPAN_FIELDS, REQUEST_SPAN_NAME,
     };
     use metrics_exporter_prometheus::PrometheusBuilder;
     use std::collections::BTreeSet;
@@ -782,6 +841,30 @@ mod tests {
         );
     }
 
+    /// 非 loopback 明文暴露必须在线上 readiness 里可见；安全档位不能多一个 false 字段。
+    #[tokio::test]
+    async fn readiness_projects_only_a_real_insecure_transport_flag() {
+        let application: Arc<dyn ApplicationService> = app_with_rows(Vec::new());
+        let state = ServerBuilder::new(
+            Arc::clone(&application),
+            Arc::new(FixedAuthResolver::granting(auth())),
+        )
+        .with_readiness_probe(Arc::new(StaticProbe("database", ReadinessVerdict::Ready)))
+        .with_insecure_transport(true)
+        .build();
+        let exposed = send(router(state), get("/readiness")).await;
+        assert_eq!(exposed.status, StatusCode::OK);
+        assert_eq!(exposed.json()["insecure_transport"], true);
+
+        let safe = state_with(
+            application,
+            FixedAuthResolver::granting(auth()),
+            vec![Arc::new(StaticProbe("database", ReadinessVerdict::Ready))],
+        );
+        let safe = send(router(safe), get("/readiness")).await;
+        assert!(safe.json().get("insecure_transport").is_none());
+    }
+
     /// 依赖名进日志、不进响应体。
     #[tokio::test]
     async fn readiness_body_never_names_the_dependency() {
@@ -1007,7 +1090,7 @@ mod tests {
         (out, captured)
     }
 
-    /// 正向对照：请求 span 确实带着台账里那四个字段，值也对。
+    /// 正向对照：请求 span 确实带着台账里的字段，值也对。
     ///
     /// 没有这一条，下面"span 里没有凭据"的断言在"捕获层什么都没看见"的世界里恒真。
     #[test]
@@ -1024,6 +1107,10 @@ mod tests {
         assert_eq!(request_span.value_of("request_id").map(str::len), Some(36));
         assert_eq!(request_span.value_of("http.method"), Some("GET"));
         assert_eq!(request_span.value_of("http.status_code"), Some("200"));
+        assert_eq!(
+            request_span.value_of(HTTP_ROUTE_FIELD),
+            Some("/api/channels")
+        );
         // 身份**只**取 ID 字段，而且确实取到了（§16.4）。
         assert_eq!(request_span.value_of(ACTOR_ID_FIELD), Some(ACTOR));
 
@@ -1187,6 +1274,20 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn metrics_endpoint_uses_the_same_session_auth_boundary() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let state = ServerBuilder::new(
+            app_with_rows(Vec::new()),
+            Arc::new(FixedAuthResolver::rejecting(AppError::Unauthenticated)),
+        )
+        .with_metrics_handle(MetricsHandle::new(recorder.handle()))
+        .build();
+        let captured = send(router(state), get("/metrics")).await;
+        assert_eq!(captured.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(captured.json()["code"], "unauthenticated");
+    }
+
     /// §16.4 点名的两组指标确实被记下来了：**latency 与 status**、在飞数。
     ///
     /// 判据是渲染出来的文本，不是"我调用了 histogram!" —— 后者在 recorder 从未被接上
@@ -1216,6 +1317,7 @@ mod tests {
         assert!(rendered.contains(r#"status="200""#), "{rendered}");
         assert!(rendered.contains(r#"method="GET""#), "{rendered}");
         assert!(rendered.contains(r#"transport="http""#), "{rendered}");
+        assert!(rendered.contains(r#"route="/api/channels""#), "{rendered}");
         // 请求结束后在飞数回到 0（守卫真的执行了）。
         assert!(
             rendered.contains(&format!(
@@ -1330,8 +1432,8 @@ mod tests {
                 "{forbidden} 出现在 metrics label 里：{rendered}"
             );
         }
-        // 正向对照：台账里那三个确实都在渲染文本里出现过。
-        for label in [LABEL_TRANSPORT, LABEL_METHOD, LABEL_STATUS] {
+        // 正向对照：台账里的四个确实都在渲染文本里出现过。
+        for label in [LABEL_TRANSPORT, LABEL_METHOD, LABEL_STATUS, LABEL_ROUTE] {
             assert!(rendered.contains(&format!("{label}=")), "{rendered}");
         }
     }
@@ -1346,5 +1448,28 @@ mod tests {
         assert_eq!(captured.status, StatusCode::NOT_FOUND);
         // 刻意不套 §15.3 的错误信封：路由不存在 ≠ 资源不可见（见 `router` 的文档）。
         assert!(!captured.body.contains("not_visible"), "{}", captured.body);
+    }
+
+    #[test]
+    fn unmatched_paths_collapse_to_one_safe_route_label() {
+        let hostile = "/attacker-controlled-unique-path-987654";
+        let rendered = with_metrics(|handle| async move {
+            let state = ServerBuilder::new(
+                app_with_rows(Vec::new()),
+                Arc::new(FixedAuthResolver::granting(auth())),
+            )
+            .with_metrics_handle(handle)
+            .build();
+            let captured = send(router(state), get(hostile)).await;
+            assert_eq!(captured.status, StatusCode::NOT_FOUND);
+        });
+        assert!(
+            rendered.contains(&format!(r#"route="{ROUTE_UNMATCHED}""#)),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains(hostile),
+            "原始 path 泄漏进 label：{rendered}"
+        );
     }
 }

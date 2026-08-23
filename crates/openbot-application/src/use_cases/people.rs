@@ -37,7 +37,7 @@ pub async fn list_people<P: PeopleAdministration>(
     auth: &AuthContext,
     search: Option<String>,
     cursor: Option<String>,
-    limit: Option<u32>,
+    limit: Option<i64>,
 ) -> Result<PeoplePage, AppError> {
     require_admin(auth)?;
     let search = search.and_then(|value| {
@@ -45,8 +45,8 @@ pub async fn list_people<P: PeopleAdministration>(
         (!trimmed.is_empty()).then(|| trimmed.to_owned())
     });
     let limit = limit
-        .unwrap_or(DEFAULT_PEOPLE_PAGE)
-        .clamp(1, MAX_PEOPLE_PAGE);
+        .unwrap_or(i64::from(DEFAULT_PEOPLE_PAGE))
+        .clamp(1, i64::from(MAX_PEOPLE_PAGE)) as u32;
     people
         .list_people(PeoplePageRequest {
             search,
@@ -140,7 +140,7 @@ mod tests {
             &auth("admin-1", [Role::Admin]),
             Some("  user  ".to_owned()),
             Some("opaque".to_owned()),
-            Some(u32::MAX),
+            Some(i64::MAX),
         )
         .await
         .unwrap();

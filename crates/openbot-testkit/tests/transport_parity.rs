@@ -402,8 +402,8 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
             }
             Some(uri)
         }
-        // W-3 已有 typed application 腿，W-4 才接 Axum 路由；显式 None 让这段阶段边界可见，
-        // 而不是用通配把未来漏接的命令也静默归 None。
+        // People 五条的 W-4 HTTP 腿由同目录 `transport_people_parity.rs` 单独覆盖（含 POST
+        // body/origin/fresh guard）；本文件只维护 channel 专项矩阵。InvokeTool 尚无公开 HTTP 路由。
         AppCommand::GetCurrentUser
         | AppCommand::AdminStatus
         | AppCommand::ListPeople { .. }

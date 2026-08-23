@@ -37,13 +37,10 @@
 //! [`method_label`] 返回 `&'static str`：命中已知方法给静态名，否则一律
 //! [`METHOD_OTHER`]。**基数有界因此是类型上的事实，不是一句祈祷。**
 //!
-//! # 没有 `route` label
+//! # `route` 只认 `MatchedPath`
 //!
-//! 记原始 `uri().path()` 是同一类事故（未匹配路由时路径完全由对端控制，无界）。安全的
-//! 做法只有 `MatchedPath`，而它只在**路由之后**存在，本模块的中间件刻意装在路由之前
-//! 好覆盖 404 与 413。二选一，G1 取「覆盖全部请求 + 不记不可信字符串」。理由与
-//! [`crate::telemetry::trace_request`] 那条一致，加 `route` 要随第一条需要它的 ledger
-//! 条目一起做。
+//! 绝不记原始 `uri().path()`。Axum `MatchedPath` 来自路由表静态 pattern；未匹配统一写
+//! [`ROUTE_UNMATCHED`]。因此对端发明再多 path 也只有一个 unmatched series。
 //!
 //! # 没有 active connections
 //!
@@ -80,6 +77,12 @@ pub const LABEL_METHOD: &str = "method";
 /// HTTP 状态码 label 名（传输面固有维度）。
 pub const LABEL_STATUS: &str = "status";
 
+/// Axum 匹配后的静态 route pattern label 名。
+pub const LABEL_ROUTE: &str = "route";
+
+/// 未匹配路由统一桶；从不使用对端控制的原始 path。
+pub const ROUTE_UNMATCHED: &str = "unmatched";
+
 /// 未知 HTTP 方法的兜底 label 取值。见模块文档〈`method` 的基数是被守住的〉。
 pub const METHOD_OTHER: &str = "other";
 
@@ -87,7 +90,7 @@ pub const METHOD_OTHER: &str = "other";
 ///
 /// `http_labels_are_exactly_the_declared_ledger` 拿真实渲染出来的 Prometheus 文本反解出
 /// label 名，与它逐项比对：多打一个或少打一个都判红。
-pub const HTTP_METRIC_LABELS: &[&str] = &[LABEL_TRANSPORT, LABEL_METHOD, LABEL_STATUS];
+pub const HTTP_METRIC_LABELS: &[&str] = &[LABEL_TRANSPORT, LABEL_METHOD, LABEL_STATUS, LABEL_ROUTE];
 
 /// 传输面**固有维度**——不是 §16.4 的关联字段，所以白名单对它们无话可说。
 ///
@@ -95,9 +98,10 @@ pub const HTTP_METRIC_LABELS: &[&str] = &[LABEL_TRANSPORT, LABEL_METHOD, LABEL_S
 ///
 /// - `method`：由 [`method_label`] 收敛到 9 个已知方法 + [`METHOD_OTHER`]，共 **10** 个
 ///   取值，`&'static str` 保证不会有第 11 个。
-/// - `status`：取值只能来自本进程自己产出的状态码 —— §15.3 的 `HTTP_STATUS_DOMAIN`（9 个）
+/// - `status`：取值只能来自本进程自己产出的状态码 —— §15.3 的 `HTTP_STATUS_DOMAIN`
 ///   加上 transport 自己会产的 404 与 413。对端无法让我们发明新状态码。
-pub const TRANSPORT_INTRINSIC_LABELS: &[&str] = &[LABEL_METHOD, LABEL_STATUS];
+/// - `route`：Axum 路由表静态 pattern + 唯一 `unmatched`，不是原始 URL path。
+pub const TRANSPORT_INTRINSIC_LABELS: &[&str] = &[LABEL_METHOD, LABEL_STATUS, LABEL_ROUTE];
 
 /// 已知 HTTP 方法的静态 label 取值。
 ///
@@ -142,12 +146,13 @@ impl Drop for InFlightGuard {
 }
 
 /// 记一次请求的耗时与状态。
-pub fn record_http_request(method: &Method, status: StatusCode, elapsed: Duration) {
+pub fn record_http_request(method: &Method, status: StatusCode, elapsed: Duration, route: &str) {
     histogram!(
         HTTP_REQUEST_DURATION_SECONDS,
         LABEL_TRANSPORT => Transport::Http.as_str(),
         LABEL_METHOD => method_label(method),
         LABEL_STATUS => status.as_u16().to_string(),
+        LABEL_ROUTE => route.to_owned(),
     )
     .record(elapsed.as_secs_f64());
 }
@@ -373,7 +378,12 @@ mod tests {
     #[test]
     fn recording_without_a_recorder_is_a_noop() {
         let guard = track_in_flight();
-        record_http_request(&Method::GET, StatusCode::OK, Duration::from_millis(1));
+        record_http_request(
+            &Method::GET,
+            StatusCode::OK,
+            Duration::from_millis(1),
+            "/health",
+        );
         drop(guard);
     }
 

@@ -85,7 +85,7 @@ pub enum AppCommand {
         /// opaque keyset cursor。
         cursor: Option<String>,
         /// 页大小；application 钳制到 1..=200。
-        limit: Option<u32>,
+        limit: Option<i64>,
     },
 
     /// 修改一个人的角色。
