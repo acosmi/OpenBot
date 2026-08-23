@@ -455,6 +455,16 @@ Rust 选型：OIDC 使用 `openidconnect` 4.x；SAML 使用固定版本 `samael`
 - WebSocket handshake 绑定 fresh session，之后每次高权限 server request 再检查 generation；
 - 从 Better Auth 切换到 Rust Auth 时，旧 Better Auth session 全部失效，用户统一重新登录一次；不反向工程其 cookie。
 
+Rust session 复用上游 `sessions` 表但不复用其明文 token 语义：`token` 固定写
+`sh1_` + `HMAC-SHA256(OPENBOT_SESSION_SECRET, raw_token)`，resolver 对 cookie 同样计算后等值查询，
+数据库永不保存 bearer 原文。native 0015 只在 `sessions` 末尾追加 nullable
+`auth_generation bigint` + 非负 CHECK；新 session 写签发时 generation，旧 Better Auth 行保持
+NULL/明文，resolver 两项都不认，统一 401 重新登录。每次请求同一查询读取 session、user 当前
+generation、deny list 与 role，随后按 timeline → generation → absolute → idle 判定；普通请求认证
+通过即 touch，敏感写只有 Origin/fresh guard 也通过后才 touch，被拒 CSRF 不得续 idle；缺角色
+返回 403，不降级成 user。敏感 role/access 写还必须携带 live-session assurance 与可信 Origin，
+四种拒绝各有稳定码。（§28.1 R42）
+
 ### 6.4 Vault
 
 | 环境 | Master key | Record key |
@@ -1057,7 +1067,7 @@ R1 不要求 pgvector，也不重建 customer document index。升级前先要�
 
 **0012 之后的 Rust-owned 增量不写上游 Drizzle 账本。** 固定形态是：`db::baseline` 只负责把空库建成固定上游 0012 oracle；`db::compat` 只读 `drizzle.__drizzle_migrations` 判断旧库是否到边界；`db::native` 再以独立事务施加本项目的 expand-only 增量。自有账本固定为 `openbot_internal.schema_migrations(version, name, checksum, applied_at)`，checksum 是 migration SQL 原文的 SHA-256；同版本名字或摘要漂移必须 fail-closed。施加前取 transaction-scoped advisory lock，多 replica 同启时恰好一个写 DDL；真实 migration SQL 不用 `IF NOT EXISTS`，因此“对象存在但账本缺失”会报 drift 并整体回滚，而不是静默伪装成已施加。Fresh install 的顺序是 `baseline 0012 → native 增量`；回滚应用仍只允许回到兼容 expanded schema 的上一签名 build，不提供 downgrade SQL。（§28.1 R35）
 
-当前 native 链为 0013 → 0014。0014 只追加 `users.auth_generation` nullable bigint 与非负 CHECK；PostgreSQL 17.11 post fixture 为 **31 表 / 249 列 / 94 约束 / 53 索引 / 4 触发器**。生产入口施加到最新版本；历史 fixture 测试用同一账本/锁/摘要路径固定在 0013 边界，不复制 migration 执行器。（§28.1 R39）
+当前 native 链为 0013 → 0014 → 0015。0014 只追加 `users.auth_generation`，0015 只追加 `sessions.auth_generation`，均为 nullable bigint + 非负 CHECK；PostgreSQL 17.11 post-0015 fixture 为 **31 表 / 250 列 / 95 约束 / 53 索引 / 4 触发器**。生产入口施加到最新版本；历史 fixture 测试用同一账本/锁/摘要路径固定各自边界，不复制 migration 执行器。（§28.1 R39 / R42）
 
 ### 14.2 28 表 parity ledger
 
@@ -1739,6 +1749,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R39 | §6.2 条 10 / §14.1（2026-08-23 W-3 实施轮） | `AuthContext`、Desktop broker 与 domain access plan 都依赖 auth generation，但 0013 及以前没有任何数据库权威落点；若临时放内存，多 replica 重启后会各答各的 | generation 是跨 session/WS/ticket/capability 的共同失效轴，不能猜、不能只存在进程内；另一方面兼容期直接加 `NOT NULL DEFAULT 0` 会把历史未知值伪装成真实代际并收紧旧 writer | native 0014 在 `users` 末尾只追加 nullable bigint 与非负 CHECK；旧 NULL 读 0，真实 role/access 变化同事务 `coalesce+1`；生产 migration 链按顺序施加，历史 0013 fixture 仍经同一执行器固定边界；generation 只留服务端，不加入 people DTO | PostgreSQL 17.11：`post_0014_is_exact_expand_only_and_null_legacy_generation_is_zero_floor` 逐对象证明 0013 是 0014 子集、users 只多 1 个 nullable 列；负数命中具名 CHECK；双 replica 实得 Applied + AlreadyApplied 且账本恰 2 行；fixture = 31/249/94/53/4 |
 | R40 | §5.2 / §6.2 条 6–10 / §14.2（2026-08-23 W-3 实施轮） | 固定上游把 people 的查、判、写与 audit 分在 route/store 两层；若 Rust 逐个复刻调用，last-admin 计数与权限写之间存在竞态，audit 写失败也无法回滚已提交的角色/撤权 | 第一真源新增的 last-admin 与 audit-before-action 要求比上游更强的事务边界；同时把内部 generation 塞进 `Person` 会静默新增公开 wire 字段，违反 parity | 增加 `PeopleAdministration` 原子 port 与五个 typed application command；adapter 用 deployment-wide 事务锁串行 role/access，同快照判 floor/self/last-admin，同事务写业务/generation/audit；provider 集合稳定排序，坏 cursor 按上游回第一页；公开 DTO 严格排除 auth generation，并按上游 `Date.toISOString()` 固定 UTC 毫秒。Axum 生产路由仍留 W-4，不在本条提前宣称闭合 | PostgreSQL 17.11 `people_application` 5/5：两管理员并发互降实得 1 success + 1 `RoleLastAdmin`、最终 admin=1；audit invariant 失败后 role/generation 零副作用；撤权 deny/session/generation/audit 同批、恢复不回退 generation；搜索 wildcard/cursor/provider 顺序真库通过。全 workspace 908 passed / 0 failed / 44 ignored；infra 真库 248/0/0 |
 | R41 | §5.2 / §8.1 / §8.3 / §17.2 条 2、9（2026-08-23 W-3b 实施轮） | 领域已有十二段类型状态机，infra 已有 call+attempt/outcome repo，但全仓没有 application 调用点，`openbot-agent` 仍为空；另一个实测缺陷是“已成功落库的 `commit_state=unknown`”会走 `Completed` | 只靠“repository 已存在”不能证明 action 前一定调用；executor 若直接接 tool+args，仍能绕 capability。unknown 即使写成功也不代表成功，而是已知需要和解；把它回成 ToolResult 会诱导继续循环 | 新增封闭 `InvokeTool`、`ToolControlPlane` 与 `ToolJournal`；policy 结论只能由 domain 构造；raw args 只随字段私有的 `AuthorizedToolCall` 到 executor，report 必须带 redeemed proof；decision+attempt commit、capability CAS 均在 execute 前；outcome+audit 同事务；unknown 恒 halt。Agent gateway 铸 UUIDv7/per-run seq，actor 只取 AuthContext。生产 executor 仍属 G4，不提前宣称 G4 | application 7 条管线矩阵 + 1 条 approval 细分码：完整顺序、decision/attach 失败执行数 0、outcome 失败只执行 1 次、unknown 两态、enforce/dry-run、人拒绝、scope/malformed；Agent 3 条含 32 并发 sequence=0..31；PG17 `tool_application` 5/5：happy、refusal、audit rollback、unknown、duplicate，完整 infra 253/0/0；workspace 922/0/49 |
+| R42 | §6.3 / §14.1 / §17.2 条 6（2026-08-23 W-4 实施轮） | 上游 `sessions.token` 是可直接使用的明文，且 session 行没有签发 generation；若只查当前 user generation，每次请求都会“自动升级”旧 session，角色/撤权变化无法使既有 session 失效 | 第一真源已要求 token 只存 keyed hash、refresh 不沿用旧代际、切换时旧 Better Auth session 全失效；没有 session 自己的代际就无法同时满足三条 | native 0015 追加 nullable `sessions.auth_generation` + 非负 CHECK；旧 NULL 不回填。production resolver 只认 `openbot_session`，HMAC 后查库并逐次校验 session/user generation、deny、role、absolute/idle；重复 cookie/明文旧行/NULL/撤权/过期均 fail-closed。敏感写带 live assurance + trusted Origin，四原因四码 | PG17 native0015 2/2（fixture 31/250/95/53/4、旧 6 行 NULL、负值 CHECK、双副本一次）；server `postgres_auth` 4/4：keyed hash、重复/旧 token/代际变化、deny/过期/缺角色、真实 cookie→HTTP→ApplicationService→generation/audit 竖切 |
+| R43 | §5.2 / §6.3 / §16.1 / §16.4（2026-08-23 W-4 实施轮） | 全仓无 `main.rs`，唯一 AuthResolver 是 testkit；`/metrics` public；span/metrics 无 route；people 五条 application command 没有 HTTP 腿 | 没有可运行二进制就无法证明启动/migration/readiness/监听；给 metrics 单独 token 会造第二个认证脑；原始 URL path 进 label 会让对端制造无界 series；把 tenant package 目录路径当包 ID 会永久铸错 deployment/thread 归属 | 新增 `openbot-server` main：单一 DATABASE_URL parser 对不能兑现的 TLS/拓扑选项拒绝而不降级，fresh baseline/legacy boundary/native 链，显式单用户 loopback 或 PostgreSQL session resolver、DB readiness、graceful shutdown；tenant package loader 未落地前要求显式 `DEPLOYMENT_ID`。接 `/api/me` 与 admin status/people 三面，role/access 强制 fresh+Origin；metrics 共用 session。route 只取 Axum MatchedPath，未匹配统一 `unmatched`；非 loopback 明文 HTTP 在 readiness 投影 `insecure_transport:true`。多用户在 G5 isolation 未接前 readiness 刻意红；OIDC/SAML 登录/session 签发仍属 G2，不能冒充闭合 | server 单测含 HTTP framing/sensitive/route/metrics/readiness；DB parser 负例含 `sslmode=require`/read-write/channel-binding/hostaddr；testkit `transport_people_parity` 五命令同一 Arc 对拍；真实进程冒烟：fresh 库账本 3、single principal 1/roles 2，health/readiness/me/metrics 均 200，route label 静态，Ctrl-C exit 0；临时库已删除 |
 
 ### 28.2 复核通过、原样保留的断言
 
