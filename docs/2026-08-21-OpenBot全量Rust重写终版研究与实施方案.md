@@ -1223,6 +1223,16 @@ RUSTSEC-2023-0071 的 `rsa 0.9.10` 由钉版 `openidconnect 4.0.1` 非可选引�
 必须先判红重审。RustSec 一旦出现 patched 版本，或 OIDC token endpoint / dynamic
 provider 引入 private-key JWT，同 PR 必须删除或重写豁免。（§28.1 R44）
 
+`cargo vet` 钉 `0.10.0`，数据固定放在仓根 `supply-chain/`，CI 只跑
+`cargo vet --locked`。初始建立时只直接信任 Cargo Vet 官方 registry 登记的
+Google exact/delta audits，`imports.lock` 锁定本轮实际覆盖的 14 个依赖；其余
+350 个精确版本是 bootstrap exemptions，它们只表示“接入时已存在”，不表示
+已审计。Cargo.lock 新增/升级未覆盖版本会直接判红，CI 不自动 regenerate；
+更新 imports/exemptions 必须在同 PR 审查锁文件和差异。Mozilla 的 publisher/wildcard
+动态信任和 Bytecode Alliance 在 0.10.0 下的 80 条无效审计告警均不被冒充为
+已验证输入。workflow 同时把 checkout / rust-cache / install-action 从漂移 major tag
+收窄到已实查的 patch tag。（§28.1 R45）
+
 ### 16.4 Observability
 
 Rust 全链使用 `tracing` + OpenTelemetry；Server 暴露 Prometheus metrics；Desktop 默认只保留 7 天 redacted local ring buffer，不自动外传。**零 phone-home**：上游 `@copilotkit/runtime` 依赖 `@segment/analytics-node` 与 `@scarf/scarf`，默认向 CopilotKit/Segment 上报使用分析（`OPENBOT_ACCESSIBILITY_DISABLED` 关闭它）；Rust 版删掉 runtime 后没有任何第一方外发遥测端点，OTel exporter 只在管理员显式配置 collector 地址时才建连，supply-chain 闸门（§16.3）把"二进制内出现非配置来源的外部分析域名"判为失败。该变化写进 §22 的合规披露。
@@ -1760,6 +1770,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R42 | §6.3 / §14.1 / §17.2 条 6（2026-08-23 W-4 实施轮） | 上游 `sessions.token` 是可直接使用的明文，且 session 行没有签发 generation；若只查当前 user generation，每次请求都会“自动升级”旧 session，角色/撤权变化无法使既有 session 失效 | 第一真源已要求 token 只存 keyed hash、refresh 不沿用旧代际、切换时旧 Better Auth session 全失效；没有 session 自己的代际就无法同时满足三条 | native 0015 追加 nullable `sessions.auth_generation` + 非负 CHECK；旧 NULL 不回填。production resolver 只认 `openbot_session`，HMAC 后查库并逐次校验 session/user generation、deny、role、absolute/idle；重复 cookie/明文旧行/NULL/撤权/过期均 fail-closed。敏感写带 live assurance + trusted Origin，四原因四码 | PG17 native0015 2/2（fixture 31/250/95/53/4、旧 6 行 NULL、负值 CHECK、双副本一次）；server `postgres_auth` 4/4：keyed hash、重复/旧 token/代际变化、deny/过期/缺角色、真实 cookie→HTTP→ApplicationService→generation/audit 竖切 |
 | R43 | §5.2 / §6.3 / §16.1 / §16.4（2026-08-23 W-4 实施轮） | 全仓无 `main.rs`，唯一 AuthResolver 是 testkit；`/metrics` public；span/metrics 无 route；people 五条 application command 没有 HTTP 腿 | 没有可运行二进制就无法证明启动/migration/readiness/监听；给 metrics 单独 token 会造第二个认证脑；原始 URL path 进 label 会让对端制造无界 series；把 tenant package 目录路径当包 ID 会永久铸错 deployment/thread 归属 | 新增 `openbot-server` main：单一 DATABASE_URL parser 对不能兑现的 TLS/拓扑选项拒绝而不降级，fresh baseline/legacy boundary/native 链，显式单用户 loopback 或 PostgreSQL session resolver、DB readiness、graceful shutdown；tenant package loader 未落地前要求显式 `DEPLOYMENT_ID`。接 `/api/me` 与 admin status/people 三面，role/access 强制 fresh+Origin；metrics 共用 session。route 只取 Axum MatchedPath，未匹配统一 `unmatched`；非 loopback 明文 HTTP 在 readiness 投影 `insecure_transport:true`。多用户在 G5 isolation 未接前 readiness 刻意红；OIDC/SAML 登录/session 签发仍属 G2，不能冒充闭合 | server 单测含 HTTP framing/sensitive/route/metrics/readiness；DB parser 负例含 `sslmode=require`/read-write/channel-binding/hostaddr；testkit `transport_people_parity` 五命令同一 Arc 对拍；真实进程冒烟：fresh 库账本 3、single principal 1/roles 2，health/readiness/me/metrics 均 200，route label 静态，Ctrl-C exit 0；临时库已删除 |
 | R44 | §16.3（2026-08-23 D-1 供应链裁决） | `cargo deny check` / `cargo audit` 唯一命中 RUSTSEC-2023-0071：`rsa 0.9.10` 由钉版 `openidconnect 4.0.1` 非可选引入，且 advisory `patched=[]` | 无说明地忽略是隐藏风险；无限期保留一条必红闸门则会训练所有人忽略红灯；换掉 openidconnect 又会偏离已钉选型 | 仅对该 ID 记一条 owner=security 的窄豁免：本仓只以 `CoreJsonWebKey`/`RsaPublicKey` 做 RP 公钥验签，无 RSA 私签/解密。`tools/check-rustsec-waivers.sh` 先锁死 rsa/openidconnect 精确版本、反向生产链、feature 零扩张和私钥符号零命中；版本/feature/消费者/private-key JWT 或 patched 状态任一变化必须重审 | 本轮 `cargo tree -i rsa -e normal --all-features` 精确四节；guard exit 0 且内置正向对照；`cargo deny check` = advisories/bans/licenses/sources 全 ok；`cargo audit --no-fetch --deny warnings --ignore RUSTSEC-2023-0071` 加载 1225 条 advisory、扫描 374 个 crate 依赖、exit 0 |
+| R45 | §16.3（2026-08-23 D-5 供应链棘轮） | CI 固定要求 `cargo vet`，但本机无工具、仓内无 policy/audits/import lock；直接接线会让全部依赖恒红 | 一条恒红闸门等于没有闸门；反过来把 `init` 生成的 exemptions 称为“已审计”也是造假。正确起点是显式标记存量未审，但对任何增量立即判红 | 钉 `cargo-vet 0.10.0`；提交 `supply-chain/config.toml` / `audits.toml` / `imports.lock`。只导入 Google exact/delta audits 并锁定 14 个 fully audited；350 个精确版本保留 bootstrap exemption 且文档明说“不是审计结论”。CI 仅跑 `cargo vet --locked`、不自动 regenerate；checkout/rust-cache/install-action 也收窄到已实查 patch tag | `cargo vet --version` = 0.10.0；正向 `cargo vet --locked` = `14 fully audited, 350 exempted`；负向临时删除 `aead 0.5.2` exemption 实得 exit 255 / `Vetting Failed` / 精确 missing `safe-to-deploy`；exemption 数可由一条 tomllib 命令复算 |
 
 ### 28.2 复核通过、原样保留的断言
 

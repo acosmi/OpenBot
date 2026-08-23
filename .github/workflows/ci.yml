@@ -26,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       run_supply_chain:
-        description: "是否跑 supply-chain job（cargo deny / audit，比 gates 慢）"
+        description: "是否跑 supply-chain job（cargo deny / audit / vet，比 gates 慢）"
         type: boolean
         default: true
 
@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: 安装 rust-toolchain.toml 钉住的工具链
         # rustup 读仓根 rust-toolchain.toml（channel + rustfmt/clippy components）。
@@ -106,7 +106,7 @@ jobs:
           cargo fmt --version
           cargo clippy --version
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: gates
 
@@ -134,24 +134,24 @@ jobs:
   # 混进 gates 会让"闸门为什么红"这个问题多一个来源。
   # =========================================================================
   supply-chain:
-    name: supply-chain（cargo deny / cargo audit）
+    name: supply-chain（cargo deny / cargo audit / cargo vet）
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: ${{ inputs.run_supply_chain }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: 安装 rust-toolchain.toml 钉住的工具链
         run: rustup show
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: supply-chain
 
-      - name: 安装 cargo-deny 与 cargo-audit
-        uses: taiki-e/install-action@v2
+      - name: 安装钉版 supply-chain 工具
+        uses: taiki-e/install-action@v2.86.5
         with:
-          tool: cargo-deny,cargo-audit
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2,cargo-vet@0.10.0
 
       - name: RUSTSEC waiver reachability guard
         # 豁免不只是 ignore 字符串：先锁定可达性前提，变了就先红。
@@ -167,44 +167,44 @@ jobs:
         # cargo-audit 不读 deny.toml，同一条裁决必须显式传入；其余 advisory 仍全部判红。
         run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
 
+      - name: cargo vet（锁定 imports 与 exemptions 棘轮）
+        # --locked 不拉取漂移的远程 audits；只读入库 imports.lock。
+        # Cargo.lock 新增/升级的未覆盖版本必须判红，不自动生成 exemption。
+        run: cargo vet --locked
+
 # ===========================================================================
 # v3 §16.3 固定清单里**尚未接线**的条目（status: todo）
 # ===========================================================================
 # 下面这些刻意**没有**写成 job。理由：它们各自缺一份本仓此刻还不存在的基线，接进来就是一条
 # 恒红的闸门 —— 而一条恒红的闸门等于没有闸门（它会训练所有人忽略红色）。
-# 每条都写明阻塞原因与解除条件，G0 收口时逐条勾掉：
+# 每条都写明阻塞原因与解除条件，G0 收口时逐条勾掉。cargo vet 已由 R45 解除：
+# 钉 cargo-vet 0.10.0，Google exact/delta imports 入锁，CI 跑 `cargo vet --locked`。
 #
-# 1. cargo vet
-#    阻塞：本仓没有 `supply-chain/config.toml` + `audits.toml` 基线，`cargo vet` 会对**每一个**
-#          依赖报 unaudited 而直接失败。
-#    解除：跑一次 `cargo vet init` 生成基线，选定 imports（如 mozilla / google 的公开 audit 集），
-#          随 G0 的 provenance 产物一起入库。
-#
-# 2. OSV scan（Electron shim / packaged assets）
+# 1. OSV scan（Electron shim / packaged assets）
 #    阻塞：Electron shim 与打包资产在 G6/G8 才存在（v3 §16.2），此刻没有扫描对象。
 #    解除：`components/` 下出现 shim 源码与 lockfile 之后接 `osv-scanner`。
 #
-# 3. secret scan
+# 2. secret scan
 #    阻塞：需要先选定工具（gitleaks / trufflehog）与 allowlist 基线，否则会被 fixture 里的
 #          假 token 刷屏。注：.gitignore 已挡住 .env / *.pem 这一层，但那是预防不是扫描。
 #    解除：G0 产出 `fixtures/**` 之后，连同 fixture 里"哪些看起来像密钥的字符串是假的"
 #          一起定 allowlist。
 #
-# 4. license / NOTICE / provenance verification
-#    阻塞：需要 `provenance/sources.spdx.json`（v3 §19.3 的 Phase 0 产物，本轮尚未生成）。
-#    解除：该文件入库后，接一个比对"复用文件的 source repo / commit / original path / license /
+# 3. license / NOTICE / provenance verification
+#    阻塞：`provenance/sources.spdx.json`、`NOTICE`、`LICENSE` 已在，但还没有可执行的一致性校验器。
+#    解除：接一个比对"复用文件的 source repo / commit / original path / license /
 #          copyright / modified flag / hash"是否与实际一致的校验步。
 #
-# 5. CycloneDX / SPDX SBOM
+# 4. CycloneDX / SPDX SBOM
 #    阻塞：无 —— 技术上现在就能跑（cargo-cyclonedx）。不接的理由是产物无人消费：
-#          SBOM 要与第 4 条的 provenance 校验和第 7 条的签名一起才构成完整证据链。
-#    解除：与第 4 条同 PR 接入。
+#          SBOM 要与第 3 条的 provenance 校验和第 6 条的签名一起才构成完整证据链。
+#    解除：与第 3 条同 PR 接入。
 #
-# 6. reproducibility check（可复现构建）
+# 5. reproducibility check（可复现构建）
 #    阻塞：需要两次独立构建的字节比对基线，且发行物形态（v3 §16.1/§16.2）尚未定型。
 #    解除：G8 定下发行物清单后接入。
 #
-# 7. artifact signature / provenance verification
+# 6. artifact signature / provenance verification
 #    阻塞：签名密钥与 release environment 尚未建立。
 #    解除：G8 建立 release 边界后接入。
 #
