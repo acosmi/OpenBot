@@ -23,6 +23,7 @@ use tracing::Span;
 
 use crate::ports::{ChannelReader, NoPeopleAdministration, PeopleAdministration};
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
+use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, change_person_access, change_person_role, current_user,
     health, health_stream, list_people, list_visible_channels,
@@ -33,30 +34,53 @@ use crate::use_cases::{
 /// 它对具体数据源一无所知：`R` 是任何满足 [`ChannelReader`] 的类型。`openbot-server` 与
 /// `openbot-desktop` 各自注入 `openbot-infra` 的实现，测试注入内存 fake —— 三条路径穿的
 /// 是同一份业务代码，这正是 §24 G1「ApplicationService 经 Axum/Tauri 结果一致」的前提。
-pub struct OpenBotApplication<R, P = NoPeopleAdministration> {
+pub struct OpenBotApplication<
+    R,
+    P = NoPeopleAdministration,
+    C = NoToolControlPlane,
+    J = NoToolJournal,
+> {
     channels: R,
     people: P,
+    tool_control: C,
+    tool_journal: J,
     heartbeat_period: Duration,
 }
 
-impl<R> OpenBotApplication<R, NoPeopleAdministration> {
+impl<R> OpenBotApplication<R, NoPeopleAdministration, NoToolControlPlane, NoToolJournal> {
     /// 注入端口实现。
     pub fn new(channels: R) -> Self {
         Self {
             channels,
             people: NoPeopleAdministration,
+            tool_control: NoToolControlPlane,
+            tool_journal: NoToolJournal,
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
 }
 
-impl<R, P> OpenBotApplication<R, P> {
+impl<R, P, C, J> OpenBotApplication<R, P, C, J> {
     /// 注入 people/auth 原子端口。
     #[must_use]
-    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q> {
+    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, C, J> {
         OpenBotApplication {
             channels: self.channels,
             people,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入 tool control plane 与 durable journal；二者分开，application 才能掌握固定顺序。
+    #[must_use]
+    pub fn with_tools<T, K>(self, control: T, journal: K) -> OpenBotApplication<R, P, T, K> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            tool_control: control,
+            tool_journal: journal,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -72,10 +96,12 @@ impl<R, P> OpenBotApplication<R, P> {
     }
 }
 
-impl<R, P> OpenBotApplication<R, P>
+impl<R, P, C, J> OpenBotApplication<R, P, C, J>
 where
     R: ChannelReader,
     P: PeopleAdministration,
+    C: ToolControlPlane,
+    J: ToolJournal,
 {
     /// 命令派发。**穷举 match 无通配** —— 新增 `AppCommand` 变体会在这里编译失败，
     /// 而不是落进一个 `_ => Err(unknown_method)` 分支。那个分支正是 §5.2 逐字禁止的
@@ -109,15 +135,20 @@ where
             AppCommand::ChangePersonAccess { user_id, revoked } => Ok(AppReply::Person(
                 change_person_access(&self.people, auth, &user_id, revoked).await?,
             )),
+            AppCommand::InvokeTool(invocation) => Ok(AppReply::Tool(
+                invoke_tool(&self.tool_control, &self.tool_journal, auth, invocation).await?,
+            )),
         }
     }
 }
 
 #[async_trait]
-impl<R, P> ApplicationService for OpenBotApplication<R, P>
+impl<R, P, C, J> ApplicationService for OpenBotApplication<R, P, C, J>
 where
     R: ChannelReader + 'static,
     P: PeopleAdministration + 'static,
+    C: ToolControlPlane + 'static,
+    J: ToolJournal + 'static,
 {
     #[tracing::instrument(
         name = "application.execute",
@@ -188,7 +219,9 @@ mod tests {
     use openbot_contracts::auth::{AuthContext, Role};
     use openbot_contracts::command::AppEvent;
     use openbot_contracts::error::ErrorCode;
-    use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
+    use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ToolCallId};
+    use openbot_contracts::tool::ToolInvocation;
+    use serde_json::json;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
     use tracing::span::{Attributes, Id, Record};
@@ -341,13 +374,31 @@ mod tests {
         assert!(matches!(role, Ok(AppReply::Person(_))));
 
         let (access, _) = capture(service.execute(
-            auth,
+            auth.clone(),
             AppCommand::ChangePersonAccess {
                 user_id: ActorId::new("actor-2"),
                 revoked: true,
             },
         ));
         assert!(matches!(access, Ok(AppReply::Person(_))));
+
+        let (tool, _) = capture(service.execute(
+            auth,
+            AppCommand::InvokeTool(ToolInvocation {
+                call_id: ToolCallId::new("call-1"),
+                run_id: RunId::new("run-1"),
+                bot_id: BotId::new("bot-1"),
+                call_seq: 0,
+                tool_name: "computer.write".to_owned(),
+                arguments: json!({}),
+            }),
+        ));
+        assert!(matches!(
+            tool,
+            Err(AppError::DependencyUnavailable {
+                dependency: "tool_catalog"
+            })
+        ));
     }
 
     /// 订阅回来的流是**活的**：拿到就能取到第一拍。
@@ -404,11 +455,28 @@ mod tests {
         let service = app();
         let (_, captured) = capture(service.execute(auth_for("actor-1"), AppCommand::Health));
 
+        let tool_secret = "SENTINEL-TOOL-ARGUMENT-SECRET";
+        let (_, tool_captured) = capture(service.execute(
+            auth_for("actor-1"),
+            AppCommand::InvokeTool(ToolInvocation {
+                call_id: ToolCallId::new("call-secret"),
+                run_id: RunId::new("run-1"),
+                bot_id: BotId::new("bot-1"),
+                call_seq: 0,
+                tool_name: "computer.write".to_owned(),
+                arguments: json!({"password":tool_secret}),
+            }),
+        ));
+
         let sentinel = SENTINEL_AUTH_GENERATION.to_string();
-        for (name, value) in &captured.fields {
+        for (name, value) in captured.fields.iter().chain(&tool_captured.fields) {
             assert!(
                 !value.contains(&sentinel),
                 "auth_generation 不得出现在 span 里：{name}={value}"
+            );
+            assert!(
+                !value.contains(tool_secret),
+                "tool arguments 不得出现在 span 里：{name}={value}"
             );
             for forbidden in ["AuthContext", "roles", "Admin", "single_user"] {
                 assert!(
@@ -425,6 +493,7 @@ mod tests {
         // 正向对照：捕获层确实看见了字段（否则上面的循环体一次都不执行）。
         assert!(!captured.fields.is_empty(), "捕获层必须真的看到字段");
         assert_eq!(captured.value_of("actor_id"), Some("actor-1"));
+        assert_eq!(tool_captured.value_of("operation"), Some("invoke_tool"));
     }
 
     /// span 字段集合恰好是登记过的那些 —— 多记一个就判红，逼作者去做基数裁决。

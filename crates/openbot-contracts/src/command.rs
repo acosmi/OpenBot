@@ -21,11 +21,10 @@
 //! 封闭 enum 让「不存在的用例」在**反序列化阶段**就变成 400 malformed payload（§15.3），
 //! 根本到不了 application。
 //!
-//! # 为什么 G1 只有两个用例
+//! # 用例随已闭合 slice 扩展
 //!
-//! 没有 parity ledger 条目背书的用例不能进（CLAUDE.md §4「parity 与新增必须分开标注」）。
-//! G1 的垂直切片只需要一个真实读用例（[`AppCommand::ListVisibleChannels`]）加一个最小
-//! 只读用例（[`AppCommand::Health`]）。thread 订阅是 G3，届时随 ledger 条目一起加。
+//! 没有 parity ledger/第一真源条目背书的用例不能进（CLAUDE.md §4）。G1 从 channel/health
+//! 起步，W-3a 追加 people，W-3b 追加 tool pipeline；thread 订阅仍是 G3，届时同批加入。
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -33,6 +32,7 @@ use time::OffsetDateTime;
 use crate::auth::Role;
 use crate::ids::{BotId, ChannelId, ThreadId};
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
+use crate::tool::{ToolInvocation, ToolResult};
 
 /// 单页 channel 的条数上限。
 ///
@@ -103,6 +103,9 @@ pub enum AppCommand {
         /// `true`=移除，`false`=恢复。
         revoked: bool,
     },
+
+    /// 由 Rust Agent gateway 铸造的一次工具调用；仍须在 application 里走完整 §8.1 管线。
+    InvokeTool(ToolInvocation),
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -121,6 +124,8 @@ pub enum AppReply {
     People(PeoplePage),
     /// role/access 变更后的最新 person。
     Person(Person),
+    /// [`AppCommand::InvokeTool`] 的已持久化、已脱敏结果。
+    Tool(ToolResult),
 }
 
 /// 探活结果。
@@ -409,6 +414,21 @@ mod tests {
             serde_json::to_string(&AppCommand::Health).unwrap(),
             r#"{"kind":"health"}"#
         );
+
+        let tool = AppCommand::InvokeTool(ToolInvocation {
+            call_id: crate::ids::ToolCallId::new("call-1"),
+            run_id: crate::ids::RunId::new("run-1"),
+            bot_id: BotId::new("bot-1"),
+            call_seq: 2,
+            tool_name: "computer.write".to_owned(),
+            arguments: serde_json::json!({"x":1}),
+        });
+        let wire = serde_json::to_string(&tool).unwrap();
+        assert_eq!(
+            wire,
+            r#"{"kind":"invoke_tool","callId":"call-1","runId":"run-1","botId":"bot-1","callSeq":2,"toolName":"computer.write","arguments":{"x":1}}"#,
+        );
+        assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), tool);
     }
 
     /// 自由 method string 走不通：未知 `kind` 与未知字段都在反序列化阶段就失败，
@@ -449,6 +469,21 @@ mod tests {
             r#"{"kind":"channels","channels":[],"nextCursor":null}"#
         );
         assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), channels);
+
+        let tool = AppReply::Tool(ToolResult {
+            call_id: crate::ids::ToolCallId::new("call-1"),
+            content: "ok".to_owned(),
+            error_code: None,
+            commit_state: crate::tool::ToolCommitState::Committed,
+            visible_bytes: 2,
+            truncated: false,
+        });
+        let json = serde_json::to_string(&tool).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"tool","callId":"call-1","content":"ok","errorCode":null,"commitState":"committed","visibleBytes":2,"truncated":false}"#,
+        );
+        assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), tool);
 
         let request = SubscriptionRequest::Health;
         assert_eq!(

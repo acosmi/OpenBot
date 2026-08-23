@@ -106,6 +106,7 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::ListPeople { .. } => "list_people",
         AppCommand::ChangePersonRole { .. } => "change_person_role",
         AppCommand::ChangePersonAccess { .. } => "change_person_access",
+        AppCommand::InvokeTool(_) => "invoke_tool",
     }
 }
 
@@ -120,7 +121,11 @@ pub const fn subscription_kind(request: &SubscriptionRequest) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openbot_contracts::auth::Role;
+    use openbot_contracts::ids::{ActorId, BotId, RunId, ToolCallId};
     use openbot_contracts::telemetry::is_allowed_metrics_label;
+    use openbot_contracts::tool::ToolInvocation;
+    use serde_json::json;
 
     /// §16.4 的可判定形式：span 上的每个字段，要么被论证过可以进 metrics label，
     /// 要么被显式登记为 trace-only。**两边都不在 = 有人加了字段却没做基数论证。**
@@ -150,14 +155,54 @@ mod tests {
 
     #[test]
     fn operation_names_are_closed_and_stable() {
-        assert_eq!(command_kind(&AppCommand::Health), "health");
-        assert_eq!(
-            command_kind(&AppCommand::ListVisibleChannels {
-                limit: None,
-                cursor: None,
-            }),
-            "list_visible_channels"
-        );
+        let commands = [
+            (AppCommand::Health, "health"),
+            (
+                AppCommand::ListVisibleChannels {
+                    limit: None,
+                    cursor: None,
+                },
+                "list_visible_channels",
+            ),
+            (AppCommand::GetCurrentUser, "get_current_user"),
+            (AppCommand::AdminStatus, "admin_status"),
+            (
+                AppCommand::ListPeople {
+                    search: None,
+                    cursor: None,
+                    limit: None,
+                },
+                "list_people",
+            ),
+            (
+                AppCommand::ChangePersonRole {
+                    user_id: ActorId::new("u"),
+                    role: Role::User,
+                },
+                "change_person_role",
+            ),
+            (
+                AppCommand::ChangePersonAccess {
+                    user_id: ActorId::new("u"),
+                    revoked: true,
+                },
+                "change_person_access",
+            ),
+            (
+                AppCommand::InvokeTool(ToolInvocation {
+                    call_id: ToolCallId::new("c"),
+                    run_id: RunId::new("r"),
+                    bot_id: BotId::new("b"),
+                    call_seq: 0,
+                    tool_name: "t".to_owned(),
+                    arguments: json!({}),
+                }),
+                "invoke_tool",
+            ),
+        ];
+        for (command, expected) in commands {
+            assert_eq!(command_kind(&command), expected);
+        }
         assert_eq!(subscription_kind(&SubscriptionRequest::Health), "health");
     }
 

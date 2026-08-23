@@ -928,6 +928,16 @@ impl Executing {
         }
 
         match written {
+            Ok(outcome) if outcome.commit_state.requires_reconciliation() => {
+                ToolCallTerminal::ReconciliationRequired(ReconciliationRequired {
+                    call_id: self.context.call_id,
+                    run: self.context.run,
+                    tool: self.context.metadata.name,
+                    decision: self.receipt.decision,
+                    attempt: self.receipt.attempt,
+                    dependency: "commit_state",
+                })
+            }
             Ok(outcome) => ToolCallTerminal::Completed(Box::new(CompletedToolCall {
                 call_id: self.context.call_id,
                 run: self.context.run,
@@ -1475,6 +1485,25 @@ mod tests {
         assert!(
             terminal.execution_happened(),
             "执行确实发生过 —— 这正是不能重试的理由"
+        );
+    }
+
+    #[test]
+    fn a_durably_recorded_unknown_commit_still_enters_reconciliation() {
+        let (executing, capability) =
+            ready(ApprovalClass::NotRequired, ApprovalOutcome::NotRequired).start();
+        let terminal =
+            executing.record_outcome(capability.redeem(), Ok(outcome(CommitState::Unknown)));
+        let ToolCallTerminal::ReconciliationRequired(state) = &terminal else {
+            panic!("已落库的 unknown 也不能伪装 Completed：{terminal:?}");
+        };
+        assert_eq!(state.dependency(), "commit_state");
+        assert_eq!(state.commit_state(), CommitState::Unknown);
+        assert_eq!(
+            terminal.loop_directive(),
+            ToolLoopDirective::Halt {
+                reason: HaltReason::UnknownCommit
+            }
         );
     }
 

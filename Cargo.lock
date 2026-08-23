@@ -1675,6 +1675,14 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "openbot-agent"
 version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "openbot-application",
+ "openbot-contracts",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "openbot-application"
@@ -1684,6 +1692,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-core",
  "openbot-contracts",
+ "openbot-domain",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

@@ -23,7 +23,7 @@
 //!   同名字段一律是普通不可信输入。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # 当前状态（G1 + W-3a people slice）
+//! # 当前状态（G1 + W-3a people + W-3b tool contracts）
 //!
 //! Phase 0（Evidence Freeze）本 crate 刻意为空；G1 起它承载五个模块：
 //!
@@ -34,6 +34,7 @@
 //! | [`error`] | [`error::AppError`]、稳定 code、HTTP status、audit 类型 | §15.3 |
 //! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent` | §5.2 |
 //! | [`people`] | current user / admin status / people page 与 person 公开 DTO | §6.2 / R40 |
+//! | [`tool`] | Agent tool invocation 与脱敏结果；没有 actor/policy/target 自报字段 | §8.1 |
 //! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
 //!
 //! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：W-3a 只在 G1 的
@@ -45,8 +46,9 @@
 //! # 依赖面为什么这么窄
 //!
 //! 本 crate 必须编到 `wasm32-unknown-unknown`（`openbot-ui` 是 Leptos CSR/WASM 且只依赖它）。
-//! 所以依赖只有 `serde` / `thiserror` / `time`，`serde_json` 只在 dev-dependencies 里供测试
-//! 断言线上形状。**禁止**引入 `tokio` / `axum` / `tokio-postgres` 或任何做 I/O 的 crate ——
+//! 所以依赖只有 `serde` / `serde_json` / `thiserror` / `time`；`serde_json::Value` 只出现在封闭
+//! `InvokeTool` 的 arguments 字段，actor/policy/target 仍无自报入口。**禁止**引入 `tokio` /
+//! `axum` / `tokio-postgres` 或任何做 I/O 的 crate ——
 //! 那会让整个 GUI 编译失败，或者更糟：编过了但在浏览器里运行期炸。闸门是
 //! `cargo check -p openbot-contracts --target wasm32-unknown-unknown`，它必须与
 //! `cargo test` 同批次跑：只跑 native 那一半，wasm 破裂要到 G6 打包时才会被发现。
@@ -67,3 +69,4 @@ pub mod error;
 pub mod ids;
 pub mod people;
 pub mod telemetry;
+pub mod tool;

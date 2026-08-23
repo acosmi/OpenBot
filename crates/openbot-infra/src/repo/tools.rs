@@ -8,14 +8,22 @@
 
 use core::time::Duration;
 
-use deadpool_postgres::Pool;
-use openbot_contracts::ids::PolicyDecisionId;
+use async_trait::async_trait;
+use deadpool_postgres::{GenericClient, Pool};
+use openbot_application::{
+    ToolDecisionDraft, ToolJournal, ToolOutcomeDraft, ToolPortError, ToolRefusalDraft,
+};
+use openbot_contracts::ids::{PolicyDecisionId, ToolCallId};
+use openbot_domain::audit::event::{AuditEvent, AuditEventType};
+use openbot_domain::audit::payload::{AuditIdentifier, AuditLabel};
 use openbot_domain::tool::commit::CommitState;
 use openbot_domain::tool::pipeline::{AttemptId, DurableDecisionReceipt};
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 use crate::db::InfraError;
 use crate::db::tables::{tool_attempts, tool_calls};
+use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 use crate::repo::common::{RepoCore, columns_sql, insert_sql};
 
 /// 首次 decision 事务的两行输入。
@@ -201,54 +209,311 @@ impl ToolAttemptRepo {
         capability_id: &str,
         outcome: &PersistedToolOutcome,
     ) -> Result<Option<tool_attempts::Row>, InfraError> {
-        let duration_ms = i64::try_from(outcome.duration.as_millis())
-            .map_err(|_| InfraError::repository_invariant("tool_duration_overflow"))?;
-        let output_bytes = i64::from(outcome.output_bytes);
-        let status = if outcome.commit_state.requires_reconciliation() {
-            "reconciliation_required"
-        } else {
-            "completed"
-        };
-        let commit_state = outcome.commit_state.as_str();
-        let sql = format!(
-            "UPDATE public.tool_attempts \
-             SET status=$4, commit_state=$5, output_bytes=$6, duration_ms=$7, \
-                 error_code=$8, finished_at=$9 \
-             WHERE tool_call_id=$1 AND attempt_seq=$2 \
-               AND capability_id=$3 AND status='executing' \
-             RETURNING {}",
-            columns_sql::<tool_attempts::Row>(),
-        );
         let client = self.core.pool().get().await.map_err(|source| {
             InfraError::connect("为 ToolAttemptRepo 写 outcome 获取连接", source)
         })?;
-        let row = client
-            .query_opt(
-                &sql,
-                &[
-                    &tool_call_id,
-                    &attempt_seq,
-                    &capability_id,
-                    &status,
-                    &commit_state,
-                    &output_bytes,
-                    &duration_ms,
-                    &outcome.error_code,
-                    &outcome.finished_at,
-                ],
-            )
-            .await
-            .map_err(|source| InfraError::query("记录 tool outcome", source))?;
-        row.as_ref()
-            .map(tool_attempts::Row::try_from)
-            .transpose()
-            .map_err(Into::into)
+        record_outcome_on(&client, tool_call_id, attempt_seq, capability_id, outcome).await
     }
 }
 
 impl core::fmt::Debug for ToolAttemptRepo {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ToolAttemptRepo").finish_non_exhaustive()
+    }
+}
+
+/// §8.1 application tool journal 的 PostgreSQL 实现。
+#[derive(Clone)]
+pub struct PostgresToolJournal {
+    pool: Pool,
+    checkpoint_key: std::sync::Arc<[u8]>,
+}
+
+impl PostgresToolJournal {
+    /// 构造；空 checkpoint key 会让 acting outcome 无法进入 audit，直接拒绝。
+    pub fn new(pool: Pool, checkpoint_key: impl Into<Vec<u8>>) -> Result<Self, InfraError> {
+        let checkpoint_key = checkpoint_key.into();
+        if checkpoint_key.is_empty() {
+            return Err(InfraError::repository_invariant(
+                "audit_checkpoint_key_empty",
+            ));
+        }
+        Ok(Self {
+            pool,
+            checkpoint_key: checkpoint_key.into(),
+        })
+    }
+}
+
+impl core::fmt::Debug for PostgresToolJournal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PostgresToolJournal")
+            .field("checkpoint_key", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl ToolJournal for PostgresToolJournal {
+    async fn record_refusal(&self, draft: &ToolRefusalDraft) -> Result<(), ToolPortError> {
+        let payload = draft.audit_payload().map_err(|_| ToolPortError::Corrupt {
+            field: "audit_payload",
+        })?;
+        let mut client = self.pool.get().await.map_err(pool_port_error)?;
+        let transaction = client.transaction().await.map_err(|error| {
+            infra_port_error(InfraError::query("开始 tool refusal audit 事务", error))
+        })?;
+        append_tool_audit(
+            &transaction,
+            &draft.decision,
+            refusal_event_type(draft.decision.target.kind),
+            payload,
+            &self.checkpoint_key,
+        )
+        .await
+        .map_err(infra_port_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| infra_port_error(InfraError::query("提交 tool refusal audit", error)))
+    }
+
+    async fn record_decision(
+        &self,
+        draft: &ToolDecisionDraft,
+    ) -> Result<DurableDecisionReceipt, ToolPortError> {
+        let decision = first_decision_rows(draft).map_err(infra_port_error)?;
+        ToolCallRepo::new(self.pool.clone())
+            .record_first_decision(&decision)
+            .await
+            .map_err(infra_port_error)
+    }
+
+    async fn attach_capability(
+        &self,
+        call_id: &ToolCallId,
+        capability: &openbot_domain::tool::pipeline::CapabilityId,
+    ) -> Result<(), ToolPortError> {
+        let row = ToolAttemptRepo::new(self.pool.clone())
+            .attach_capability(
+                call_id.as_str(),
+                0,
+                capability.as_str(),
+                OffsetDateTime::now_utc(),
+            )
+            .await
+            .map_err(infra_port_error)?;
+        row.map(|_| ()).ok_or(ToolPortError::Conflict)
+    }
+
+    async fn record_outcome(&self, draft: &ToolOutcomeDraft) -> Result<(), ToolPortError> {
+        let payload = draft.audit_payload().map_err(|_| ToolPortError::Corrupt {
+            field: "audit_payload",
+        })?;
+        let persisted = PersistedToolOutcome {
+            commit_state: draft.outcome.commit_state,
+            output_bytes: draft.outcome.output_bytes,
+            duration: draft.outcome.duration,
+            error_code: draft.outcome.error_code,
+            finished_at: OffsetDateTime::now_utc(),
+        };
+        let mut client = self.pool.get().await.map_err(pool_port_error)?;
+        let transaction = client.transaction().await.map_err(|error| {
+            infra_port_error(InfraError::query("开始 tool outcome/audit 事务", error))
+        })?;
+        let row = record_outcome_on(
+            &transaction,
+            draft.decision.call_id.as_str(),
+            0,
+            draft.capability_id.as_str(),
+            &persisted,
+        )
+        .await
+        .map_err(infra_port_error)?;
+        if row.is_none() {
+            return Err(ToolPortError::Conflict);
+        }
+        append_tool_audit(
+            &transaction,
+            &draft.decision,
+            outcome_event_type(draft),
+            payload,
+            &self.checkpoint_key,
+        )
+        .await
+        .map_err(infra_port_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| infra_port_error(InfraError::query("提交 tool outcome/audit", error)))
+    }
+}
+
+fn first_decision_rows(draft: &ToolDecisionDraft) -> Result<FirstDurableDecision, InfraError> {
+    let call_seq = i64::try_from(draft.call_seq)
+        .map_err(|_| InfraError::repository_invariant("tool_call_sequence_overflow"))?;
+    let catalog_generation = i64::try_from(draft.metadata.catalog_generation.get())
+        .map_err(|_| InfraError::repository_invariant("catalog_generation_overflow"))?;
+    let now = OffsetDateTime::now_utc();
+    Ok(FirstDurableDecision {
+        call: tool_calls::Row {
+            tool_call_id: draft.call_id.as_str().to_owned(),
+            run_id: draft.run_id.as_str().to_owned(),
+            call_seq,
+            decision_id: Uuid::now_v7().to_string(),
+            actor_id: draft.actor.as_str().to_owned(),
+            bot_id: draft.bot.as_str().to_owned(),
+            tool_name: draft.metadata.name.as_str().to_owned(),
+            schema_hash: draft.metadata.schema_hash.to_hex(),
+            catalog_generation,
+            args_hash: draft.args_hash.to_hex(),
+            target_kind: draft.target.kind.to_owned(),
+            target_id: draft.target.id.clone(),
+            effect: draft.metadata.effect.effect().as_str().to_owned(),
+            effect_downgraded: draft.metadata.effect.was_downgraded(),
+            idempotency: draft.metadata.idempotency.as_str().to_owned(),
+            idempotency_key: draft
+                .idempotency_key
+                .as_ref()
+                .map(|key| key.as_str().to_owned()),
+            approval_class: draft.metadata.approval_class.as_str().to_owned(),
+            policy_version: draft.policy_version.as_str().to_owned(),
+            decided_at: now,
+        },
+        attempt: tool_attempts::Row {
+            tool_call_id: draft.call_id.as_str().to_owned(),
+            attempt_seq: 0,
+            attempt_id: Uuid::now_v7().to_string(),
+            capability_id: None,
+            status: "decision_recorded".to_owned(),
+            commit_state: None,
+            output_bytes: None,
+            duration_ms: None,
+            error_code: None,
+            started_at: None,
+            finished_at: None,
+            created_at: now,
+        },
+    })
+}
+
+async fn record_outcome_on<C: GenericClient + Sync>(
+    client: &C,
+    tool_call_id: &str,
+    attempt_seq: i64,
+    capability_id: &str,
+    outcome: &PersistedToolOutcome,
+) -> Result<Option<tool_attempts::Row>, InfraError> {
+    let duration_ms = i64::try_from(outcome.duration.as_millis())
+        .map_err(|_| InfraError::repository_invariant("tool_duration_overflow"))?;
+    let output_bytes = i64::from(outcome.output_bytes);
+    let status = if outcome.commit_state.requires_reconciliation() {
+        "reconciliation_required"
+    } else {
+        "completed"
+    };
+    let commit_state = outcome.commit_state.as_str();
+    let sql = format!(
+        "UPDATE public.tool_attempts \
+         SET status=$4, commit_state=$5, output_bytes=$6, duration_ms=$7, \
+             error_code=$8, finished_at=$9 \
+         WHERE tool_call_id=$1 AND attempt_seq=$2 \
+           AND capability_id=$3 AND status='executing' \
+         RETURNING {}",
+        columns_sql::<tool_attempts::Row>(),
+    );
+    let row = client
+        .query_opt(
+            &sql,
+            &[
+                &tool_call_id,
+                &attempt_seq,
+                &capability_id,
+                &status,
+                &commit_state,
+                &output_bytes,
+                &duration_ms,
+                &outcome.error_code,
+                &outcome.finished_at,
+            ],
+        )
+        .await
+        .map_err(|source| InfraError::query("记录 tool outcome", source))?;
+    row.as_ref()
+        .map(tool_attempts::Row::try_from)
+        .transpose()
+        .map_err(Into::into)
+}
+
+async fn append_tool_audit(
+    transaction: &tokio_postgres::Transaction<'_>,
+    decision: &ToolDecisionDraft,
+    event_type: AuditEventType,
+    payload: openbot_domain::audit::payload::AuditPayload,
+    checkpoint_key: &[u8],
+) -> Result<(), InfraError> {
+    let (id, created_at) = next_event_coordinates(transaction).await?;
+    let target = AuditIdentifier::new(decision.target.id.as_str())
+        .map_err(|_| InfraError::repository_invariant("tool_target_not_audit_identifier"))?;
+    let event = AuditEvent {
+        id,
+        actor: Some(decision.actor.clone()),
+        event_type,
+        target_kind: AuditLabel::new(decision.target.kind),
+        target_id: Some(target),
+        payload,
+        created_at,
+    };
+    append_event_in_transaction(transaction, &event, checkpoint_key)
+        .await
+        .map(|_| ())
+}
+
+fn refusal_event_type(target_kind: &str) -> AuditEventType {
+    if target_kind.starts_with("mcp") {
+        AuditEventType::MCP_CALL_REJECTED
+    } else {
+        AuditEventType::COMPUTER_ACTION_REFUSED
+    }
+}
+
+fn outcome_event_type(draft: &ToolOutcomeDraft) -> AuditEventType {
+    let succeeded =
+        draft.outcome.error_code.is_none() && draft.outcome.commit_state == CommitState::Committed;
+    if draft.decision.target.kind.starts_with("mcp") {
+        if succeeded {
+            AuditEventType::MCP_CALL_SUCCEEDED
+        } else {
+            AuditEventType::MCP_CALL_FAILED
+        }
+    } else if succeeded {
+        AuditEventType::COMPUTER_ACTION_ALLOWED
+    } else {
+        AuditEventType::COMPUTER_ACTION_FAILED
+    }
+}
+
+fn pool_port_error(error: deadpool_postgres::PoolError) -> ToolPortError {
+    tracing::error!(error = %error, "tool journal 获取连接失败");
+    ToolPortError::Unavailable {
+        dependency: "database",
+    }
+}
+
+fn infra_port_error(error: InfraError) -> ToolPortError {
+    tracing::error!(error = %error, "tool journal 失败");
+    match error {
+        InfraError::RowDecode(_) | InfraError::RepositoryInvariant { .. } => {
+            ToolPortError::Corrupt {
+                field: "tool_journal",
+            }
+        }
+        InfraError::Connect { .. }
+        | InfraError::Query { .. }
+        | InfraError::IncompatibleDatabase(_)
+        | InfraError::NativeMigration(_) => ToolPortError::Unavailable {
+            dependency: "database",
+        },
     }
 }
 

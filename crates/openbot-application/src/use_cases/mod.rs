@@ -1,6 +1,6 @@
 //! use case —— 每个文件一个用例，一个用例一条编排。
 //!
-//! G1 只有两个（CLAUDE.md §4「parity 与新增必须分开标注」）：
+//! G1 从下面两个起步；W-3a people 与 W-3b tool 编排分别在 `people` / [`crate::tool`]：
 //!
 //! | 用例 | 标注 | parity 出处 |
 //! | --- | --- | --- |

@@ -24,7 +24,7 @@
 //!   query —— 这四条在 v3 §5.2 是逐字禁止项。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # 当前状态（G1 + W-3a people slice）
+//! # 当前状态（G1 + W-3a people + W-3b tool boundary）
 //!
 //! Phase 0 本 crate 刻意为空；G1 起它承载一个垂直切片所需的全部四层：
 //!
@@ -34,6 +34,7 @@
 //! | [`ports`] | [`ChannelReader`] 与原子 [`PeopleAdministration`] 端口 | §5.2 / §6.2 / R40 |
 //! | [`cursor`] | keyset 游标 [`ChannelCursor`] 的铸造与 fail-closed 解析 | §15.3 |
 //! | [`use_cases`] | health/channel，以及 current user/admin/people role/access 用例 | §6.2 / §6.5 / R40 |
+//! | [`tool`] | metadata→scope→policy→approval→journal→capability→execute→outcome/audit | §8.1 / R41 |
 //!
 //! 具体实现 [`OpenBotApplication`] 把上面四层接起来，是 transport 唯一需要构造的类型。
 //!
@@ -58,8 +59,8 @@
 //!   people port 之前统一检查权威 `AuthContext` 的 `Role::Admin`。所以同一个 roleless actor
 //!   对前两类成功、对后一类得到稳定 `forbidden_role`，不是 transport 自己复制一道门。
 //!
-//! `app::a_roleless_authenticated_actor_is_not_rejected` 把两侧一起钉住。tool application
-//! pipeline 与 openbot-agent acting 接线仍属 W-3b；本 crate 自述不把 people slice 冒充全部完成。
+//! `app::a_roleless_authenticated_actor_is_not_rejected` 把两侧一起钉住。W-3b 已把通用 tool
+//! boundary 接到 Agent gateway/PostgreSQL journal；真实 browser/MCP 等 executor 仍属 G4。
 
 // 本 crate 是 transport 与 domain 之间的唯一门，公开面即契约面：一个没有文档的公开条目
 // 等于一个只有作者知道语义的契约。用 deny 而不是 warn —— warn 会被 `cargo test` 的输出
@@ -70,6 +71,7 @@ mod app;
 pub mod cursor;
 pub mod ports;
 pub mod service;
+pub mod tool;
 pub mod use_cases;
 
 #[cfg(test)]
@@ -84,6 +86,12 @@ pub use ports::{
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,
     SUBSCRIBE_SPAN_NAME, TRACE_ONLY_SPAN_FIELDS, command_kind, subscription_kind,
+};
+pub use tool::{
+    AuthorizedToolCall, ExecutableToolCall, NoToolControlPlane, NoToolJournal, ResolvedToolScope,
+    ToolApprovalRequest, ToolAuditDraftError, ToolControlPlane, ToolDecisionDraft,
+    ToolExecutionReport, ToolJournal, ToolOutcomeDraft, ToolPolicyEvaluation, ToolPortError,
+    ToolRefusalDraft, invoke_tool,
 };
 pub use use_cases::{
     DEFAULT_CHANNEL_PAGE, DEFAULT_PEOPLE_PAGE, MAX_PEOPLE_PAGE, admin_status, change_person_access,

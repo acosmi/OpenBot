@@ -21,7 +21,14 @@
 //! - 浏览器 / 文件 / shell 的实际执行与隔离 —— 在 `openbot-computer`。
 //! - 信任 MCP server、remote Agent 或模型回传的身份字段（v3 §5.3：一律视为普通不可信输入）。
 //!
-//! # Phase 0 状态
+//! # 当前状态
 //!
-//! 刻意为空。Agent/AG-UI/MCP/Drive 是 G4 的产物；Phase 0 只产出它们的 fixture 与 parity ledger
-//! （v3 §19.3：`fixtures/agui/*.jsonl` / `fixtures/provider/*.jsonl` / `fixtures/mcp/*.json`）。
+//! W-3b 只落 [`AgentToolGateway`]：它铸造 call ID/sequence，并把调用交给同一个
+//! `ApplicationService`；实际 built-in reducer、provider、AG-UI、MCP/Drive executor 仍属 G4，
+//! 不在这里用空壳冒充。
+
+#![deny(missing_docs)]
+
+mod gateway;
+
+pub use gateway::AgentToolGateway;

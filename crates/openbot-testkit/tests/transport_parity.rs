@@ -408,7 +408,8 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::AdminStatus
         | AppCommand::ListPeople { .. }
         | AppCommand::ChangePersonRole { .. }
-        | AppCommand::ChangePersonAccess { .. } => None,
+        | AppCommand::ChangePersonAccess { .. }
+        | AppCommand::InvokeTool(_) => None,
     }
 }
 

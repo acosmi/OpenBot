@@ -24,7 +24,7 @@
 //! - **读环境变量**：连接参数一律由调用方以 [`db::pool::DatabaseConfig`] 显式传入。env 的三档
 //!   裁决（v3 §15.4）属于启动 / transport 层，不在本 crate。
 //!
-//! # 当前状态（G1 + W-1/W-2 + W-3a）
+//! # 当前状态（G1 + W-1/W-2 + W-3a/W-3b）
 //!
 //! 已落地的是数据库 schema 层，也就是 v3 §24 G1 判据「28 表/13 migration 映射」的执行面：
 //!
@@ -44,9 +44,11 @@
 //!   [`repo::tools`] —— decision+attempt 同事务与 commit 后 receipt；
 //! - [`repo::people_admin`] —— `PeopleAdministration` 的 PostgreSQL 原子适配器：role/access
 //!   判定、业务写、auth generation 与 audit 同事务（R40）。
+//! - [`repo::tools::PostgresToolJournal`] —— application 的 decision/attempt/capability/outcome
+//!   journal；outcome 与 audit 同事务，unknown 固定进 reconciliation（R41）。
 //!
-//! 尚未落地，也不在此假装存在：safe dialer、联网 provider adapters，以及 people 之外的
-//! application/agent 调用链接线。
+//! 尚未落地，也不在此假装存在：safe dialer、联网 provider adapters，以及 G4 的真实
+//! browser/file/shell/MCP/Drive executor。
 //! `thread/run/outbox/memory/import` 的 10 个 repo 名对应 G3 尚未创建的物理表，必须与建表同批实现，
 //! 不创建零方法空 struct 冒充完成。
 
