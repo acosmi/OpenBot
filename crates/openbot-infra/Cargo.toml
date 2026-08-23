@@ -40,6 +40,7 @@ tokio-postgres.workspace = true
 # schema facts 的规范 JSON 形态（与 psql 侧 jsonb_build_object 逐字段一致）。
 serde.workspace = true
 serde_json.workspace = true
+base64.workspace = true
 
 # `timestamp with time zone` 的行类型；tokio-postgres 已开 `with-time-0_3`。
 time.workspace = true

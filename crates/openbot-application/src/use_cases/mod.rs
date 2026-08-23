@@ -12,6 +12,11 @@
 
 pub mod health;
 pub mod list_visible_channels;
+pub mod people;
 
 pub use health::{DEFAULT_HEARTBEAT_PERIOD, health, health_stream};
 pub use list_visible_channels::{DEFAULT_CHANNEL_PAGE, list_visible_channels};
+pub use people::{
+    DEFAULT_PEOPLE_PAGE, MAX_PEOPLE_PAGE, admin_status, change_person_access, change_person_role,
+    current_user, list_people,
+};

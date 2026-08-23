@@ -24,7 +24,7 @@
 //! - **读环境变量**：连接参数一律由调用方以 [`db::pool::DatabaseConfig`] 显式传入。env 的三档
 //!   裁决（v3 §15.4）属于启动 / transport 层，不在本 crate。
 //!
-//! # 当前状态（G1 + W-1/W-2 current-schema）
+//! # 当前状态（G1 + W-1/W-2 + W-3a）
 //!
 //! 已落地的是数据库 schema 层，也就是 v3 §24 G1 判据「28 表/13 migration 映射」的执行面：
 //!
@@ -35,14 +35,18 @@
 //! - [`db::compat`] —— 迁移边界检查（v3 §14.1「Rust 不接收更早 schema」）。
 //! - [`db::schema_facts`] —— schema 事实提取，与 `fixtures/db/schema-0012.json` 同构。
 //! - [`db::pool`] —— `deadpool-postgres` 连接池。
-//! - [`db::native`] —— Rust-owned 0013，自有 SHA-256 账本与并发施加锁。
+//! - [`db::native`] —— Rust-owned 0013/0014，自有 SHA-256 账本与并发施加锁；0014 只追加
+//!   nullable `users.auth_generation` 与非负 CHECK（R39）。
 //! - [`repo::IMPLEMENTED_REPOSITORIES`] —— 当前已有物理表的 30 个具名 repository；
 //!   [`repo::channels::ChannelRepo`] 同时实现 `openbot_application::ChannelReader`。
 //! - [`vault::CredentialRepo`] —— credential CAS 轮换/撤销；
 //!   [`repo::audit::AuditEventRepo`] —— hash chain/checkpoint；
-//!   [`repo::tools`] —— decision+attempt 同事务与 commit 后 receipt。
+//!   [`repo::tools`] —— decision+attempt 同事务与 commit 后 receipt；
+//! - [`repo::people_admin`] —— `PeopleAdministration` 的 PostgreSQL 原子适配器：role/access
+//!   判定、业务写、auth generation 与 audit 同事务（R40）。
 //!
-//! 尚未落地，也不在此假装存在：safe dialer、provider adapters，以及 application 端口/用例接线。
+//! 尚未落地，也不在此假装存在：safe dialer、联网 provider adapters，以及 people 之外的
+//! application/agent 调用链接线。
 //! `thread/run/outbox/memory/import` 的 10 个 repo 名对应 G3 尚未创建的物理表，必须与建表同批实现，
 //! 不创建零方法空 struct 冒充完成。
 

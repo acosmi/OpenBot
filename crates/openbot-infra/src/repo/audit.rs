@@ -39,13 +39,6 @@ impl AuditEventRepo {
         event: &AuditEvent,
         checkpoint_key: &[u8],
     ) -> Result<StoredAuditRow, InfraError> {
-        if checkpoint_key.is_empty() {
-            return Err(InfraError::repository_invariant(
-                "audit_checkpoint_key_empty",
-            ));
-        }
-        let event_uuid = Uuid::parse_str(event.id.as_str())
-            .map_err(|_| InfraError::repository_invariant("audit_event_id_not_uuid"))?;
         let mut client = self.pool.get().await.map_err(|source| {
             InfraError::connect("为 AuditEventRepo 获取 append 事务连接", source)
         })?;
@@ -53,151 +46,7 @@ impl AuditEventRepo {
             .transaction()
             .await
             .map_err(|source| InfraError::query("开始 audit append 事务", source))?;
-        transaction
-            .query_one("SELECT pg_advisory_xact_lock($1)", &[&AUDIT_CHAIN_LOCK_KEY])
-            .await
-            .map_err(|source| InfraError::query("获取 audit chain 锁", source))?;
-
-        let latest = transaction
-            .query_opt(
-                "SELECT id,created_at,row_hash FROM public.audit_events \
-                 ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE",
-                &[],
-            )
-            .await
-            .map_err(|source| InfraError::query("读取 audit 表尾", source))?;
-        let previous = match latest {
-            Some(row) => {
-                let latest_id: Uuid = row.try_get("id").map_err(|source| {
-                    crate::db::RowDecodeError::column("audit_events", "id", source)
-                })?;
-                let latest_at: OffsetDateTime = row.try_get("created_at").map_err(|source| {
-                    crate::db::RowDecodeError::column("audit_events", "created_at", source)
-                })?;
-                if (event.created_at, event_uuid) <= (latest_at, latest_id) {
-                    return Err(InfraError::repository_invariant(
-                        "audit_event_order_not_monotonic",
-                    ));
-                }
-                let text: Option<String> = row.try_get("row_hash").map_err(|source| {
-                    crate::db::RowDecodeError::column("audit_events", "row_hash", source)
-                })?;
-                match text {
-                    Some(text) => {
-                        PrevRowHash::Linked(Sha256Digest::parse_hex(&text).map_err(|_| {
-                            InfraError::repository_invariant("audit_row_hash_invalid")
-                        })?)
-                    }
-                    None => {
-                        let linked_exists: bool = transaction
-                            .query_one(
-                                "SELECT EXISTS(SELECT 1 FROM public.audit_events \
-                                 WHERE row_hash IS NOT NULL)",
-                                &[],
-                            )
-                            .await
-                            .map_err(|source| {
-                                InfraError::query("检查 audit chain 后置旧行", source)
-                            })?
-                            .try_get(0)
-                            .map_err(|source| {
-                                crate::db::RowDecodeError::column("audit_events", "exists", source)
-                            })?;
-                        if linked_exists {
-                            return Err(InfraError::repository_invariant(
-                                "unlinked_audit_row_after_chain_start",
-                            ));
-                        }
-                        PrevRowHash::Genesis
-                    }
-                }
-            }
-            None => PrevRowHash::Genesis,
-        };
-        let linked = StoredAuditRow::link(event.clone(), previous);
-        let prev_hash = linked.prev_hash.map(|hash| hash.to_hex());
-        let row_hash = linked
-            .row_hash
-            .expect("StoredAuditRow::link 必有 row_hash")
-            .to_hex();
-        let actor = event.actor.as_ref().map(|actor| actor.as_str());
-        let target_id = event.target_id.as_ref().map(|id| id.as_str());
-        let payload = event.payload.to_json();
-        transaction
-            .execute(
-                "INSERT INTO public.audit_events \
-                 (id, actor_user_id, event_type, target_type, target_id, payload, created_at, \
-                  prev_hash, row_hash) \
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-                &[
-                    &event_uuid,
-                    &actor,
-                    &event.event_type.as_str(),
-                    &event.target_kind.as_str(),
-                    &target_id,
-                    &payload,
-                    &event.created_at,
-                    &prev_hash,
-                    &row_hash,
-                ],
-            )
-            .await
-            .map_err(|source| InfraError::query("追加 audit event", source))?;
-
-        if matches!(previous, PrevRowHash::Genesis) {
-            let existing_checkpoints: i64 = transaction
-                .query_one("SELECT count(*)::bigint FROM public.audit_checkpoints", &[])
-                .await
-                .map_err(|source| InfraError::query("检查 genesis checkpoint 前提", source))?
-                .try_get(0)
-                .map_err(|source| {
-                    crate::db::RowDecodeError::column("audit_checkpoints", "count", source)
-                })?;
-            if existing_checkpoints != 0 {
-                return Err(InfraError::repository_invariant(
-                    "checkpoint_exists_without_audit_chain",
-                ));
-            }
-            let unlinked_rows_before: i64 = transaction
-                .query_one(
-                    "SELECT count(*)::bigint FROM public.audit_events \
-                     WHERE row_hash IS NULL AND prev_hash IS NULL",
-                    &[],
-                )
-                .await
-                .map_err(|source| InfraError::query("统计 chain 前旧审计行", source))?
-                .try_get(0)
-                .map_err(|source| {
-                    crate::db::RowDecodeError::column("audit_events", "count", source)
-                })?;
-            let checkpoint = AuditCheckpoint {
-                sequence: 0,
-                created_at: event.created_at,
-                kind: AuditCheckpointKind::Genesis {
-                    genesis_event: event.id.clone(),
-                    genesis_row_hash: linked.row_hash.expect("link 必有 hash"),
-                    unlinked_rows_before: u64::try_from(unlinked_rows_before).map_err(|_| {
-                        InfraError::repository_invariant("audit_unlinked_count_negative")
-                    })?,
-                },
-            };
-            insert_checkpoint(&transaction, &checkpoint, checkpoint_key).await?;
-        } else {
-            let checkpoints: i64 = transaction
-                .query_one("SELECT count(*)::bigint FROM public.audit_checkpoints", &[])
-                .await
-                .map_err(|source| InfraError::query("确认 audit genesis checkpoint", source))?
-                .try_get(0)
-                .map_err(|source| {
-                    crate::db::RowDecodeError::column("audit_checkpoints", "count", source)
-                })?;
-            if checkpoints == 0 {
-                return Err(InfraError::repository_invariant(
-                    "audit_chain_without_genesis_checkpoint",
-                ));
-            }
-        }
-
+        let linked = append_event_in_transaction(&transaction, event, checkpoint_key).await?;
         transaction
             .commit()
             .await
@@ -299,6 +148,192 @@ impl AuditEventRepo {
             .collect::<Result<_, _>>()
             .map_err(Into::into)
     }
+}
+
+/// 在调用方已有事务里追加事件；people/tool 等 acting 事务用它保证业务写与 audit 同 commit。
+pub(crate) async fn append_event_in_transaction(
+    transaction: &tokio_postgres::Transaction<'_>,
+    event: &AuditEvent,
+    checkpoint_key: &[u8],
+) -> Result<StoredAuditRow, InfraError> {
+    if checkpoint_key.is_empty() {
+        return Err(InfraError::repository_invariant(
+            "audit_checkpoint_key_empty",
+        ));
+    }
+    let event_uuid = Uuid::parse_str(event.id.as_str())
+        .map_err(|_| InfraError::repository_invariant("audit_event_id_not_uuid"))?;
+    transaction
+        .query_one("SELECT pg_advisory_xact_lock($1)", &[&AUDIT_CHAIN_LOCK_KEY])
+        .await
+        .map_err(|source| InfraError::query("获取 audit chain 锁", source))?;
+
+    let latest = transaction
+        .query_opt(
+            "SELECT id,created_at,row_hash FROM public.audit_events \
+             ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE",
+            &[],
+        )
+        .await
+        .map_err(|source| InfraError::query("读取 audit 表尾", source))?;
+    let previous = match latest {
+        Some(row) => {
+            let latest_id: Uuid = row.try_get("id").map_err(|source| {
+                crate::db::RowDecodeError::column("audit_events", "id", source)
+            })?;
+            let latest_at: OffsetDateTime = row.try_get("created_at").map_err(|source| {
+                crate::db::RowDecodeError::column("audit_events", "created_at", source)
+            })?;
+            if (event.created_at, event_uuid) <= (latest_at, latest_id) {
+                return Err(InfraError::repository_invariant(
+                    "audit_event_order_not_monotonic",
+                ));
+            }
+            let text: Option<String> = row.try_get("row_hash").map_err(|source| {
+                crate::db::RowDecodeError::column("audit_events", "row_hash", source)
+            })?;
+            match text {
+                Some(text) => PrevRowHash::Linked(
+                    Sha256Digest::parse_hex(&text)
+                        .map_err(|_| InfraError::repository_invariant("audit_row_hash_invalid"))?,
+                ),
+                None => {
+                    let linked_exists: bool = transaction
+                        .query_one(
+                            "SELECT EXISTS(SELECT 1 FROM public.audit_events \
+                             WHERE row_hash IS NOT NULL)",
+                            &[],
+                        )
+                        .await
+                        .map_err(|source| InfraError::query("检查 audit chain 后置旧行", source))?
+                        .try_get(0)
+                        .map_err(|source| {
+                            crate::db::RowDecodeError::column("audit_events", "exists", source)
+                        })?;
+                    if linked_exists {
+                        return Err(InfraError::repository_invariant(
+                            "unlinked_audit_row_after_chain_start",
+                        ));
+                    }
+                    PrevRowHash::Genesis
+                }
+            }
+        }
+        None => PrevRowHash::Genesis,
+    };
+    let linked = StoredAuditRow::link(event.clone(), previous);
+    let prev_hash = linked.prev_hash.map(|hash| hash.to_hex());
+    let row_hash = linked
+        .row_hash
+        .expect("StoredAuditRow::link 必有 row_hash")
+        .to_hex();
+    let actor = event.actor.as_ref().map(|actor| actor.as_str());
+    let target_id = event.target_id.as_ref().map(|id| id.as_str());
+    let payload = event.payload.to_json();
+    transaction
+        .execute(
+            "INSERT INTO public.audit_events \
+             (id, actor_user_id, event_type, target_type, target_id, payload, created_at, \
+              prev_hash, row_hash) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            &[
+                &event_uuid,
+                &actor,
+                &event.event_type.as_str(),
+                &event.target_kind.as_str(),
+                &target_id,
+                &payload,
+                &event.created_at,
+                &prev_hash,
+                &row_hash,
+            ],
+        )
+        .await
+        .map_err(|source| InfraError::query("追加 audit event", source))?;
+
+    if matches!(previous, PrevRowHash::Genesis) {
+        let existing_checkpoints: i64 = transaction
+            .query_one("SELECT count(*)::bigint FROM public.audit_checkpoints", &[])
+            .await
+            .map_err(|source| InfraError::query("检查 genesis checkpoint 前提", source))?
+            .try_get(0)
+            .map_err(|source| {
+                crate::db::RowDecodeError::column("audit_checkpoints", "count", source)
+            })?;
+        if existing_checkpoints != 0 {
+            return Err(InfraError::repository_invariant(
+                "checkpoint_exists_without_audit_chain",
+            ));
+        }
+        let unlinked_rows_before: i64 = transaction
+            .query_one(
+                "SELECT count(*)::bigint FROM public.audit_events \
+                 WHERE row_hash IS NULL AND prev_hash IS NULL",
+                &[],
+            )
+            .await
+            .map_err(|source| InfraError::query("统计 chain 前旧审计行", source))?
+            .try_get(0)
+            .map_err(|source| crate::db::RowDecodeError::column("audit_events", "count", source))?;
+        let checkpoint = AuditCheckpoint {
+            sequence: 0,
+            created_at: event.created_at,
+            kind: AuditCheckpointKind::Genesis {
+                genesis_event: event.id.clone(),
+                genesis_row_hash: linked.row_hash.expect("link 必有 hash"),
+                unlinked_rows_before: u64::try_from(unlinked_rows_before).map_err(|_| {
+                    InfraError::repository_invariant("audit_unlinked_count_negative")
+                })?,
+            },
+        };
+        insert_checkpoint(transaction, &checkpoint, checkpoint_key).await?;
+    } else {
+        let checkpoints: i64 = transaction
+            .query_one("SELECT count(*)::bigint FROM public.audit_checkpoints", &[])
+            .await
+            .map_err(|source| InfraError::query("确认 audit genesis checkpoint", source))?
+            .try_get(0)
+            .map_err(|source| {
+                crate::db::RowDecodeError::column("audit_checkpoints", "count", source)
+            })?;
+        if checkpoints == 0 {
+            return Err(InfraError::repository_invariant(
+                "audit_chain_without_genesis_checkpoint",
+            ));
+        }
+    }
+    Ok(linked)
+}
+
+/// 在 audit 锁内铸造严格晚于当前表尾的 `(id, created_at)`；跨事务业务写用。
+pub(crate) async fn next_event_coordinates(
+    transaction: &tokio_postgres::Transaction<'_>,
+) -> Result<(openbot_contracts::ids::AuditEventId, OffsetDateTime), InfraError> {
+    transaction
+        .query_one("SELECT pg_advisory_xact_lock($1)", &[&AUDIT_CHAIN_LOCK_KEY])
+        .await
+        .map_err(|source| InfraError::query("获取 audit coordinate 锁", source))?;
+    let row = transaction
+        .query_one(
+            "SELECT gen_random_uuid() AS id, \
+                    CASE WHEN max(created_at) >= clock_timestamp() \
+                         THEN max(created_at) + interval '1 microsecond' \
+                         ELSE clock_timestamp() END AS created_at \
+             FROM public.audit_events",
+            &[],
+        )
+        .await
+        .map_err(|source| InfraError::query("铸造 audit event coordinate", source))?;
+    let id: Uuid = row
+        .try_get("id")
+        .map_err(|source| crate::db::RowDecodeError::column("audit_events", "id", source))?;
+    let created_at: OffsetDateTime = row.try_get("created_at").map_err(|source| {
+        crate::db::RowDecodeError::column("audit_events", "created_at", source)
+    })?;
+    Ok((
+        openbot_contracts::ids::AuditEventId::new(id.to_string()),
+        created_at,
+    ))
 }
 
 impl core::fmt::Debug for AuditEventRepo {

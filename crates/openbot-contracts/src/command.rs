@@ -30,7 +30,9 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::auth::Role;
 use crate::ids::{BotId, ChannelId, ThreadId};
+use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
 
 /// 单页 channel 的条数上限。
 ///
@@ -69,6 +71,38 @@ pub enum AppCommand {
         /// 它由 application 铸造、由 application 解析，中间任何一层原样搬运。
         cursor: Option<String>,
     },
+
+    /// 返回当前已验证 actor 的公开资料。
+    GetCurrentUser,
+
+    /// 管理员 gate 探针；非 admin 由 application 返回 403。
+    AdminStatus,
+
+    /// 管理员 people keyset 页。
+    ListPeople {
+        /// email/name 的大小写不敏感子串；空白等价未设置。
+        search: Option<String>,
+        /// opaque keyset cursor。
+        cursor: Option<String>,
+        /// 页大小；application 钳制到 1..=200。
+        limit: Option<u32>,
+    },
+
+    /// 修改一个人的角色。
+    ChangePersonRole {
+        /// 被管理者 id。
+        user_id: crate::ids::ActorId,
+        /// 目标角色。
+        role: Role,
+    },
+
+    /// 移除或恢复一个人的访问。
+    ChangePersonAccess {
+        /// 被管理者 id。
+        user_id: crate::ids::ActorId,
+        /// `true`=移除，`false`=恢复。
+        revoked: bool,
+    },
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -79,6 +113,14 @@ pub enum AppReply {
     Health(HealthReport),
     /// [`AppCommand::ListVisibleChannels`] 的应答。
     Channels(ChannelPage),
+    /// [`AppCommand::GetCurrentUser`] 应答。
+    CurrentUser(CurrentUser),
+    /// [`AppCommand::AdminStatus`] 应答。
+    AdminStatus(AdminStatus),
+    /// [`AppCommand::ListPeople`] 应答。
+    People(PeoplePage),
+    /// role/access 变更后的最新 person。
+    Person(Person),
 }
 
 /// 探活结果。

@@ -209,6 +209,12 @@ pub enum AuditFact {
     ErrorCode(AuditLabel),
     /// 执行结果的 commit 状态（`crate::tool::commit`）。
     CommitState(AuditLabel),
+    /// people 角色变更前的角色。
+    PreviousRole(AuditLabel),
+    /// people 角色变更后的角色。
+    NewRole(AuditLabel),
+    /// people 访问状态变更后的 revoked 值。
+    AccessRevoked(bool),
     /// 判定所依据的 computer 代际（§17.2 条 6）。
     ComputerGeneration(u64),
     /// 判定所依据的 catalog 代际（§8.5）。
@@ -271,6 +277,9 @@ impl AuditFact {
             Self::RefusedByRule(_) => "refused_by_rule",
             Self::ErrorCode(_) => "error_code",
             Self::CommitState(_) => "commit_state",
+            Self::PreviousRole(_) => "previous_role",
+            Self::NewRole(_) => "new_role",
+            Self::AccessRevoked(_) => "access_revoked",
             Self::ComputerGeneration(_) => "computer_generation",
             Self::CatalogGeneration(_) => "catalog_generation",
             Self::DocumentGeneration(_) => "document_generation",
@@ -300,6 +309,8 @@ impl AuditFact {
             | Self::TargetKind(label)
             | Self::ErrorCode(label)
             | Self::CommitState(label)
+            | Self::PreviousRole(label)
+            | Self::NewRole(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
             | Self::SandboxRequirement(label) => Value::String(label.as_str().to_owned()),
@@ -308,6 +319,7 @@ impl AuditFact {
             }
             Self::EffectDowngraded(value)
             | Self::ParallelSafe(value)
+            | Self::AccessRevoked(value)
             | Self::OutputTruncated(value) => Value::Bool(*value),
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
@@ -359,12 +371,15 @@ impl AuditFact {
             | Self::TargetKind(label)
             | Self::ErrorCode(label)
             | Self::CommitState(label)
+            | Self::PreviousRole(label)
+            | Self::NewRole(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
             | Self::SandboxRequirement(label) => writer.str(label.as_str()),
             Self::CanonicalArgsHash(digest) | Self::SchemaHash(digest) => writer.digest(digest),
             Self::EffectDowngraded(value)
             | Self::ParallelSafe(value)
+            | Self::AccessRevoked(value)
             | Self::OutputTruncated(value) => writer.bool(*value),
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
@@ -409,6 +424,9 @@ pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "refused_by_rule",
     "error_code",
     "commit_state",
+    "previous_role",
+    "new_role",
+    "access_revoked",
     "computer_generation",
     "catalog_generation",
     "document_generation",
@@ -546,6 +564,9 @@ mod tests {
             AuditFact::RefusedByRule(identifier("deny.private_hosts")),
             AuditFact::ErrorCode(AuditLabel::new("policy_refused")),
             AuditFact::CommitState(AuditLabel::new("unknown")),
+            AuditFact::PreviousRole(AuditLabel::new("user")),
+            AuditFact::NewRole(AuditLabel::new("admin")),
+            AuditFact::AccessRevoked(true),
             AuditFact::ComputerGeneration(3),
             AuditFact::CatalogGeneration(4),
             AuditFact::DocumentGeneration(5),

@@ -51,7 +51,7 @@ async fn provision(pool: &deadpool_postgres::Pool, seed: bool) -> Result<(), Str
         .map_err(|error| format!("应用 baseline 失败：{error}"))?;
     native::apply(&mut client)
         .await
-        .map_err(|error| format!("应用 native 0013 失败：{error}"))?;
+        .map_err(|error| format!("应用 native migrations 失败：{error}"))?;
     if seed {
         client
             .batch_execute(SEED_SQL)

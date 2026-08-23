@@ -17,6 +17,7 @@ pub mod channels;
 pub mod components;
 pub mod computer;
 pub mod people;
+pub mod people_admin;
 pub mod plugins;
 pub mod tenant;
 pub mod tools;

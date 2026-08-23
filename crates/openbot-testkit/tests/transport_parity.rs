@@ -402,6 +402,13 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
             }
             Some(uri)
         }
+        // W-3 已有 typed application 腿，W-4 才接 Axum 路由；显式 None 让这段阶段边界可见，
+        // 而不是用通配把未来漏接的命令也静默归 None。
+        AppCommand::GetCurrentUser
+        | AppCommand::AdminStatus
+        | AppCommand::ListPeople { .. }
+        | AppCommand::ChangePersonRole { .. }
+        | AppCommand::ChangePersonAccess { .. } => None,
     }
 }
 

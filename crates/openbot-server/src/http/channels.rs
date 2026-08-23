@@ -118,11 +118,17 @@ pub async fn list(
     // 拿到它该怎么办，而不是让它落进一个静默的 `_ =>` 分支。
     match reply {
         AppReply::Channels(page) => Ok(Json(page)),
-        // 走到这里说明 application 拿 `ListVisibleChannels` 回了个探活应答 —— 契约破了。
+        // 走到这里说明 application 拿 `ListVisibleChannels` 回了别的命令应答 —— 契约破了。
         // 不 `unreachable!()`：一条不该发生的路径该以可诊断的失败收场，而不是把整个
         // 进程打死；也不伪装成 200 空列表，那会把一次契约破损洗成"没有数据"。
-        AppReply::Health(_) => {
-            tracing::error!("ListVisibleChannels 收到 Health 应答 —— ApplicationService 契约破损");
+        AppReply::Health(_)
+        | AppReply::CurrentUser(_)
+        | AppReply::AdminStatus(_)
+        | AppReply::People(_)
+        | AppReply::Person(_) => {
+            tracing::error!(
+                "ListVisibleChannels 收到非 Channels 应答 —— ApplicationService 契约破损"
+            );
             Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }

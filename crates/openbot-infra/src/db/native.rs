@@ -20,8 +20,8 @@
 //! # Fresh install 与 upgrade 是同一条终态
 //!
 //! Fresh install 调用顺序固定为 `baseline::apply` → [`apply`]；既有库先过 compat，再调用
-//! [`apply`]。这样 0012 fixture 始终只表达固定上游 oracle，post-0013 另有自己的 fixture，
-//! 两份事实不会互相污染。
+//! [`apply`]。这样 0012 fixture 始终只表达固定上游 oracle，每个 native 边界另有自己的
+//! post fixture，事实不会互相污染。
 
 use openbot_domain::audit::hash::Sha256Digest;
 use tokio_postgres::Client;
@@ -40,10 +40,41 @@ pub const NATIVE_0013_NAME: &str = "native_0013_audit_tool_pipeline";
 /// 第一条 Rust-owned 增量的 SQL 原文。
 pub const NATIVE_0013_SQL: &str = include_str!("../../sql/native_0013.sql");
 
+/// 持久化 user auth generation 的版本号。
+pub const NATIVE_0014_VERSION: i32 = 14;
+
+/// 0014 的稳定名字。
+pub const NATIVE_0014_NAME: &str = "native_0014_user_auth_generation";
+
+/// 0014 SQL 原文。
+pub const NATIVE_0014_SQL: &str = include_str!("../../sql/native_0014.sql");
+
+/// 当前二进制认识的最新 native schema 版本。
+pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0014_VERSION;
+
 /// 全部署共用的 migration advisory lock key（ASCII `OPENBOT1`）。
 const MIGRATION_LOCK_KEY: i64 = 0x4f50_454e_424f_5431;
 
 const LEDGER_ROW_LABEL: &str = "(openbot_internal.schema_migrations)";
+
+struct MigrationSpec {
+    version: i32,
+    name: &'static str,
+    sql: &'static str,
+}
+
+const MIGRATIONS: &[MigrationSpec] = &[
+    MigrationSpec {
+        version: NATIVE_0013_VERSION,
+        name: NATIVE_0013_NAME,
+        sql: NATIVE_0013_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0014_VERSION,
+        name: NATIVE_0014_NAME,
+        sql: NATIVE_0014_SQL,
+    },
+];
 
 const LEDGER_BOOTSTRAP_SQL: &str = r#"
 CREATE SCHEMA IF NOT EXISTS openbot_internal;
@@ -97,13 +128,19 @@ pub enum NativeMigrationViolation {
     },
 }
 
-/// 当前 0013 SQL 的小写 SHA-256。
+/// 0013 SQL 的小写 SHA-256。
 #[must_use]
 pub fn native_0013_checksum() -> String {
     Sha256Digest::of(NATIVE_0013_SQL.as_bytes()).to_hex()
 }
 
-/// 在一个已到 0012 的数据库上施加 Rust-owned 0013。
+/// 当前 0014 SQL 的小写 SHA-256。
+#[must_use]
+pub fn native_0014_checksum() -> String {
+    Sha256Digest::of(NATIVE_0014_SQL.as_bytes()).to_hex()
+}
+
+/// 在一个已到 0012 的数据库上施加当前二进制认识的全部 Rust-owned migrations。
 ///
 /// # Errors
 ///
@@ -111,6 +148,16 @@ pub fn native_0013_checksum() -> String {
 /// - 同版本账本漂移或出现版本空洞返回 [`InfraError::NativeMigration`]；
 /// - commit 失败同样返回查询错误，事务由 PostgreSQL 回滚。
 pub async fn apply(client: &mut Client) -> Result<ApplyOutcome, InfraError> {
+    apply_through(client, NATIVE_LATEST_VERSION).await
+}
+
+/// 只施加到给定版本（含）；历史 fixture 测试用它固定 0013 边界。
+///
+/// 生产启动应调用 [`apply`]。本入口仍走同一账本/锁/摘要校验，不是绕过 migration 的测试后门。
+pub async fn apply_through(
+    client: &mut Client,
+    max_version: i32,
+) -> Result<ApplyOutcome, InfraError> {
     let transaction = client
         .transaction()
         .await
@@ -126,84 +173,91 @@ pub async fn apply(client: &mut Client) -> Result<ApplyOutcome, InfraError> {
         .await
         .map_err(|source| InfraError::query("初始化 native schema migration 账本", source))?;
 
-    let checksum = native_0013_checksum();
-    let existing = transaction
-        .query_opt(
-            "SELECT name, checksum FROM openbot_internal.schema_migrations WHERE version = $1",
-            &[&NATIVE_0013_VERSION],
-        )
-        .await
-        .map_err(|source| InfraError::query("读取 native schema migration 账本", source))?;
+    let mut applied = 0usize;
+    for migration in MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version <= max_version)
+    {
+        let checksum = Sha256Digest::of(migration.sql.as_bytes()).to_hex();
+        let existing = transaction
+            .query_opt(
+                "SELECT name, checksum FROM openbot_internal.schema_migrations WHERE version = $1",
+                &[&migration.version],
+            )
+            .await
+            .map_err(|source| InfraError::query("读取 native schema migration 账本", source))?;
 
-    if let Some(row) = existing {
-        let actual_name: String = row
-            .try_get("name")
-            .map_err(|source| RowDecodeError::column(LEDGER_ROW_LABEL, "name", source))?;
-        let actual_checksum: String = row
-            .try_get("checksum")
-            .map_err(|source| RowDecodeError::column(LEDGER_ROW_LABEL, "checksum", source))?;
-        if actual_name != NATIVE_0013_NAME || actual_checksum != checksum {
-            return Err(NativeMigrationViolation::LedgerDrift {
-                version: NATIVE_0013_VERSION,
-                expected_name: NATIVE_0013_NAME,
-                expected_checksum: checksum,
-                actual_name,
-                actual_checksum,
+        if let Some(row) = existing {
+            let actual_name: String = row
+                .try_get("name")
+                .map_err(|source| RowDecodeError::column(LEDGER_ROW_LABEL, "name", source))?;
+            let actual_checksum: String = row
+                .try_get("checksum")
+                .map_err(|source| RowDecodeError::column(LEDGER_ROW_LABEL, "checksum", source))?;
+            if actual_name != migration.name || actual_checksum != checksum {
+                return Err(NativeMigrationViolation::LedgerDrift {
+                    version: migration.version,
+                    expected_name: migration.name,
+                    expected_checksum: checksum,
+                    actual_name,
+                    actual_checksum,
+                }
+                .into());
+            }
+            continue;
+        }
+
+        let future = transaction
+            .query_opt(
+                "SELECT version FROM openbot_internal.schema_migrations \
+                 WHERE version > $1 ORDER BY version LIMIT 1",
+                &[&migration.version],
+            )
+            .await
+            .map_err(|source| InfraError::query("检查 native schema migration 版本空洞", source))?;
+        if let Some(row) = future {
+            let future_version: i32 = row
+                .try_get("version")
+                .map_err(|source| RowDecodeError::column(LEDGER_ROW_LABEL, "version", source))?;
+            return Err(NativeMigrationViolation::MissingBeforeFuture {
+                missing_version: migration.version,
+                future_version,
             }
             .into());
         }
+
         transaction
-            .commit()
+            .batch_execute(migration.sql)
             .await
-            .map_err(|source| InfraError::query("提交 native schema migration 只读事务", source))?;
-        return Ok(ApplyOutcome::AlreadyApplied);
+            .map_err(|source| InfraError::query(format!("应用 {}", migration.name), source))?;
+        transaction
+            .execute(
+                "INSERT INTO openbot_internal.schema_migrations (version, name, checksum) \
+                 VALUES ($1, $2, $3)",
+                &[&migration.version, &migration.name, &checksum],
+            )
+            .await
+            .map_err(|source| InfraError::query(format!("记录 {} 账本", migration.name), source))?;
+        applied += 1;
     }
 
-    let future = transaction
-        .query_opt(
-            "SELECT version FROM openbot_internal.schema_migrations \
-             WHERE version > $1 ORDER BY version LIMIT 1",
-            &[&NATIVE_0013_VERSION],
-        )
-        .await
-        .map_err(|source| InfraError::query("检查 native schema migration 版本空洞", source))?;
-    if let Some(row) = future {
-        let future_version: i32 = row
-            .try_get("version")
-            .map_err(|source| RowDecodeError::column(LEDGER_ROW_LABEL, "version", source))?;
-        return Err(NativeMigrationViolation::MissingBeforeFuture {
-            missing_version: NATIVE_0013_VERSION,
-            future_version,
-        }
-        .into());
-    }
-
-    transaction
-        .batch_execute(NATIVE_0013_SQL)
-        .await
-        .map_err(|source| InfraError::query("应用 native_0013.sql", source))?;
-    transaction
-        .execute(
-            "INSERT INTO openbot_internal.schema_migrations (version, name, checksum) \
-             VALUES ($1, $2, $3)",
-            &[&NATIVE_0013_VERSION, &NATIVE_0013_NAME, &checksum],
-        )
-        .await
-        .map_err(|source| InfraError::query("记录 native_0013.sql 账本", source))?;
     transaction
         .commit()
         .await
-        .map_err(|source| InfraError::query("提交 native_0013.sql", source))?;
-    Ok(ApplyOutcome::Applied)
+        .map_err(|source| InfraError::query("提交 native schema migrations", source))?;
+    Ok(if applied == 0 {
+        ApplyOutcome::AlreadyApplied
+    } else {
+        ApplyOutcome::Applied
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn statement_lines() -> impl Iterator<Item = &'static str> {
-        NATIVE_0013_SQL
-            .lines()
+    fn statement_lines(sql: &'static str) -> impl Iterator<Item = &'static str> {
+        sql.lines()
             .map(str::trim)
             .filter(|line| !line.is_empty() && !line.starts_with("--"))
     }
@@ -211,7 +265,7 @@ mod tests {
     #[test]
     fn migration_sql_is_mechanically_expand_only() {
         let forbidden_prefixes = ["DROP ", "TRUNCATE ", "DELETE ", "UPDATE "];
-        for line in statement_lines() {
+        for line in statement_lines(NATIVE_0013_SQL).chain(statement_lines(NATIVE_0014_SQL)) {
             let uppercase = line.to_ascii_uppercase();
             assert!(
                 !forbidden_prefixes
@@ -236,11 +290,17 @@ mod tests {
         );
         assert!(NATIVE_0013_SQL.contains("ADD COLUMN prev_hash text"));
         assert!(NATIVE_0013_SQL.contains("ADD COLUMN row_hash text"));
+        assert!(NATIVE_0014_SQL.contains("ADD COLUMN auth_generation bigint"));
+        assert!(!statement_lines(NATIVE_0014_SQL).any(|line| line.contains("SET NOT NULL")));
     }
 
     #[test]
     fn real_migration_uses_the_ledger_not_object_existence_as_idempotency() {
-        assert!(!statement_lines().any(|line| line.contains("IF NOT EXISTS")));
+        assert!(
+            !statement_lines(NATIVE_0013_SQL)
+                .chain(statement_lines(NATIVE_0014_SQL))
+                .any(|line| line.contains("IF NOT EXISTS"))
+        );
         assert!(LEDGER_BOOTSTRAP_SQL.contains("IF NOT EXISTS"));
         assert!(!LEDGER_BOOTSTRAP_SQL.contains("drizzle"));
         assert_eq!(NATIVE_LEDGER_TABLE, "openbot_internal.schema_migrations");
@@ -256,5 +316,10 @@ mod tests {
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
         );
         assert_ne!(checksum, Sha256Digest::of(b"different migration").to_hex());
+        let next = native_0014_checksum();
+        assert_eq!(next.len(), 64);
+        assert_ne!(checksum, next);
+        assert_eq!(MIGRATIONS.len(), 2);
+        assert_eq!(MIGRATIONS[1].version, NATIVE_LATEST_VERSION);
     }
 }

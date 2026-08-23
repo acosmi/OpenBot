@@ -96,6 +96,29 @@ expand-only 不是靠读 SQL 猜：真库测试
 整棵相等。`object_collision_rolls_back_every_0013_change_and_does_not_forge_ledger` 再制造同名异形
 表，实证失败事务不会留下 hash 列、checkpoint 表或伪账本。
 
+## `schema-0014.json`：user auth generation
+
+W-3 开工前的调用链审计发现：`AuthContext` 与领域 `AccessChangeRequest` 都要求权威
+`auth_generation`，撤权还要求在同一事务把 subject 的 generation 递增；但 0013 之前没有任何
+持久化列。只放内存会在重启/多副本后回到旧值，拿 actor 自己的 generation 又会错绑到被管理者。
+
+0014 因此只做一次 expand：`users` 末尾追加 nullable `auth_generation bigint` 与非负 CHECK。
+旧行 NULL 在读侧等价于 generation 0，第一次角色/撤权写入用
+`coalesce(auth_generation,0)+1` 变成 1；兼容窗口内不 `SET NOT NULL`。
+
+| 项 | 0014 数量 | 相对 0013 |
+| --- | ---: | ---: |
+| public 表 | 31 | 0 |
+| 列 | 249 | +1 |
+| 约束 | 94 | +1 |
+| 索引 | 53 | 0 |
+| 触发器 | 4 | 0 |
+
+真库测试 `post_0014_is_exact_expand_only_and_null_legacy_generation_is_zero_floor` 先与 0013
+fixture 相等，再施加 0014，逐旧列证明无改写，并实测 6 个 seed user 均为 NULL、`NULL→1`、
+负数命中 `users_auth_generation_nonnegative`。`two_replicas_apply_0013_and_0014_exactly_once`
+实得恰好 `Applied + AlreadyApplied`。
+
 ## 复算命令
 
 ```bash
@@ -110,6 +133,9 @@ python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',en
 
 # post-0013 八个数
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0013.json',encoding='utf-8'));print('tables',len(d['tables']),'columns',sum(len(t['columns']) for t in d['tables']),'constraints',sum(len(t['constraints']) for t in d['tables']),'indexes',sum(len(t['indexes']) for t in d['tables']),'triggers',sum(len(t['triggers']) for t in d['tables']),'enums',len(d['enums']),'functions',len(d['functions']),'ext',len(d['extensions']))"  # 31 248 93 53 4 4 1 0
+
+# post-0014
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0014.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 31 249 94 53 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

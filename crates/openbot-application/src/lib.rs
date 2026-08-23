@@ -24,16 +24,16 @@
 //!   query —— 这四条在 v3 §5.2 是逐字禁止项。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # G1 状态（Rust Foundation，W5–10）
+//! # 当前状态（G1 + W-3a people slice）
 //!
 //! Phase 0 本 crate 刻意为空；G1 起它承载一个垂直切片所需的全部四层：
 //!
 //! | 模块 | 内容 | 方案出处 |
 //! | --- | --- | --- |
 //! | [`service`] | [`ApplicationService`] trait 与 [`AppEventStream`] | §5.2 |
-//! | [`ports`] | [`ChannelReader`] 端口与 [`PortError`]（依赖倒置的方向盘） | §5.2 |
+//! | [`ports`] | [`ChannelReader`] 与原子 [`PeopleAdministration`] 端口 | §5.2 / §6.2 / R40 |
 //! | [`cursor`] | keyset 游标 [`ChannelCursor`] 的铸造与 fail-closed 解析 | §15.3 |
-//! | [`use_cases`] | `list_visible_channels` 与 `health` 两个用例 | §6.5 / §28.1 R22 |
+//! | [`use_cases`] | health/channel，以及 current user/admin/people role/access 用例 | §6.2 / §6.5 / R40 |
 //!
 //! 具体实现 [`OpenBotApplication`] 把上面四层接起来，是 transport 唯一需要构造的类型。
 //!
@@ -45,22 +45,21 @@
 //! 也会让本 crate 的测试必须有一个真库 —— 本 crate 的全部测试都用内存 fake，一行 SQL
 //! 都不需要，这正是方向盘朝对了的可观察后果。
 //!
-//! # G1 里**没有**生产者的两个错误变体
+//! # 401 留在认证 transport，403 已由 application 生产
 //!
-//! `AppError::Unauthenticated`（401）与 `AppError::ForbiddenRole`（403）在本 crate 里
-//! 一次都没有被构造，这是刻意的，不是遗漏：
+//! `AppError::Unauthenticated`（401）在本 crate 里没有生产者，而
+//! `AppError::ForbiddenRole`（403）从 W-3a 起有 admin people 用例这一组真实生产者：
 //!
 //! - **401**：`AuthContext` 无法由外部字节铸造（contracts 里它既不 `Serialize` 也不
 //!   `Deserialize`），所以「拿到了一个 `AuthContext`」本身就是「已认证」的证据。未登录
 //!   请求在 transport 的认证层就被挡下，根本走不到 [`ApplicationService::execute`]。
 //!   在这里再写一次 401 检查，就是给一个类型系统已经排除的世界写分支。
-//! - **403**：G1 的两个用例都不要求任何角色 —— 上游 `channels/routes.ts::list` 只要
-//!   session，可见性由 materialized membership 判定而不是由角色判定。凭空给 parity 路由
-//!   加一道角色门，就是把「新增」写成「当前行为」（CLAUDE.md §4 / §28.1 R1）。
-//!   G2 的 admin-only 路由落地时，403 才会有第一个真实生产者。
+//! - **403**：health 与 channel list 仍不要求角色；admin status/list/role/access 在调用
+//!   people port 之前统一检查权威 `AuthContext` 的 `Role::Admin`。所以同一个 roleless actor
+//!   对前两类成功、对后一类得到稳定 `forbidden_role`，不是 transport 自己复制一道门。
 //!
-//! 这两条由 `app` 模块的 `error_variants_without_producer_in_g1` 钉住，并配正向对照
-//! （确实有生产者的变体必须能被本 crate 产出），免得它退化成一句注释。
+//! `app::a_roleless_authenticated_actor_is_not_rejected` 把两侧一起钉住。tool application
+//! pipeline 与 openbot-agent acting 接线仍属 W-3b；本 crate 自述不把 people slice 冒充全部完成。
 
 // 本 crate 是 transport 与 domain 之间的唯一门，公开面即契约面：一个没有文档的公开条目
 // 等于一个只有作者知道语义的契约。用 deny 而不是 warn —— warn 会被 `cargo test` 的输出
@@ -78,9 +77,15 @@ mod fakes;
 
 pub use app::OpenBotApplication;
 pub use cursor::{ChannelCursor, channel_recency};
-pub use ports::{ChannelReader, PortError};
+pub use ports::{
+    ChannelReader, NoPeopleAdministration, PeopleAdministration, PeoplePageRequest,
+    PeoplePortError, PortError,
+};
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,
     SUBSCRIBE_SPAN_NAME, TRACE_ONLY_SPAN_FIELDS, command_kind, subscription_kind,
 };
-pub use use_cases::{DEFAULT_CHANNEL_PAGE, health, list_visible_channels};
+pub use use_cases::{
+    DEFAULT_CHANNEL_PAGE, DEFAULT_PEOPLE_PAGE, MAX_PEOPLE_PAGE, admin_status, change_person_access,
+    change_person_role, current_user, health, list_people, list_visible_channels,
+};

@@ -115,7 +115,7 @@ async fn post_0013_fixture_is_exact_and_every_0012_object_survives() {
                 return Err("开工前提失败：活库 baseline 与 schema-0012.json 不相等".to_owned());
             }
 
-            let applied = native::apply(&mut client)
+            let applied = native::apply_through(&mut client, native::NATIVE_0013_VERSION)
                 .await
                 .map_err(|error| format!("施加 0013 失败：{error}"))?;
             if applied != ApplyOutcome::Applied {
@@ -176,7 +176,10 @@ async fn native_0013_is_idempotent_and_concurrent_callers_serialize() {
 
             let mut first = pool.get().await.map_err(|error| format!("取连接 1 失败：{error}"))?;
             let mut second = pool.get().await.map_err(|error| format!("取连接 2 失败：{error}"))?;
-            let (left, right) = tokio::join!(native::apply(&mut first), native::apply(&mut second));
+            let (left, right) = tokio::join!(
+                native::apply_through(&mut first, native::NATIVE_0013_VERSION),
+                native::apply_through(&mut second, native::NATIVE_0013_VERSION),
+            );
             let mut outcomes = vec![
                 left.map_err(|error| format!("并发施加 1 失败：{error}"))?,
                 right.map_err(|error| format!("并发施加 2 失败：{error}"))?,
@@ -192,7 +195,7 @@ async fn native_0013_is_idempotent_and_concurrent_callers_serialize() {
             drop(second);
 
             let mut third = pool.get().await.map_err(|error| format!("取连接 3 失败：{error}"))?;
-            if native::apply(&mut third)
+            if native::apply_through(&mut third, native::NATIVE_0013_VERSION)
                 .await
                 .map_err(|error| format!("第三次施加失败：{error}"))?
                 != ApplyOutcome::AlreadyApplied
@@ -242,7 +245,7 @@ async fn object_collision_rolls_back_every_0013_change_and_does_not_forge_ledger
                 .await
                 .map_err(|error| format!("制造对象碰撞失败：{error}"))?;
 
-            let error = native::apply(&mut client)
+            let error = native::apply_through(&mut client, native::NATIVE_0013_VERSION)
                 .await
                 .expect_err("对象存在但账本缺失必须判红，不能 IF NOT EXISTS 跳过");
             if error.sqlstate() != Some("42P07") {
@@ -299,7 +302,7 @@ async fn ledger_drift_is_refused_even_when_all_objects_exist() {
             baseline::apply(&client)
                 .await
                 .map_err(|error| format!("应用 baseline 失败：{error}"))?;
-            native::apply(&mut client)
+            native::apply_through(&mut client, native::NATIVE_0013_VERSION)
                 .await
                 .map_err(|error| format!("首次施加失败：{error}"))?;
             client
@@ -310,7 +313,7 @@ async fn ledger_drift_is_refused_even_when_all_objects_exist() {
                 .await
                 .map_err(|error| format!("制造账本漂移失败：{error}"))?;
 
-            match native::apply(&mut client).await {
+            match native::apply_through(&mut client, native::NATIVE_0013_VERSION).await {
                 Err(InfraError::NativeMigration(NativeMigrationViolation::LedgerDrift {
                     version,
                     actual_checksum,
@@ -340,7 +343,7 @@ async fn database_constraints_preserve_chain_checkpoint_and_attempt_invariants()
             baseline::apply(&client)
                 .await
                 .map_err(|error| format!("应用 baseline 失败：{error}"))?;
-            native::apply(&mut client)
+            native::apply_through(&mut client, native::NATIVE_0013_VERSION)
                 .await
                 .map_err(|error| format!("施加 0013 失败：{error}"))?;
 

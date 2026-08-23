@@ -4,9 +4,11 @@
 //! 本模块不 import 任何 I/O crate，也不出现任何 SQL —— 出现了就说明抽象漏了。
 
 use async_trait::async_trait;
+use openbot_contracts::auth::Role;
 use openbot_contracts::command::ChannelSummary;
-use openbot_contracts::error::AppError;
+use openbot_contracts::error::{AppError, IdentityConflictReason};
 use openbot_contracts::ids::ActorId;
+use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 
 use crate::cursor::ChannelCursor;
 
@@ -118,6 +120,119 @@ pub trait ChannelReader: Send + Sync {
         limit: u32,
         cursor: Option<ChannelCursor>,
     ) -> Result<Vec<ChannelSummary>, PortError>;
+}
+
+/// people 页端口的 keyset 请求；字段均由 typed command 投影，不含自由 SQL。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PeoplePageRequest {
+    /// email/name 子串；`None` = 不搜索。
+    pub search: Option<String>,
+    /// opaque cursor。
+    pub cursor: Option<String>,
+    /// 已由 application 钳制到 1..=200。
+    pub limit: u32,
+}
+
+/// people role/access 原子端口错误。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum PeoplePortError {
+    /// 数据库/审计依赖不可用。
+    #[error("people_port_unavailable")]
+    Unavailable,
+    /// 权威数据损坏。
+    #[error("people_port_corrupt field={field}")]
+    Corrupt {
+        /// 静态字段名。
+        field: &'static str,
+    },
+    /// subject 不存在；对外统一 404 防枚举。
+    #[error("people_not_found")]
+    NotFound,
+    /// domain floor/self/last-admin 拒绝。
+    #[error("people_identity_conflict reason={reason}")]
+    IdentityConflict {
+        /// 稳定拒绝原因。
+        reason: IdentityConflictReason,
+    },
+}
+
+impl PeoplePortError {
+    /// 映射 §15.3 AppError。
+    #[must_use]
+    pub const fn into_app_error(self) -> AppError {
+        match self {
+            Self::Unavailable | Self::Corrupt { .. } => AppError::DependencyUnavailable {
+                dependency: "database",
+            },
+            Self::NotFound => AppError::NotVisible,
+            Self::IdentityConflict { reason } => AppError::IdentityConflict { reason },
+        }
+    }
+}
+
+/// people/auth application 端口。
+///
+/// role/access 方法必须在实现侧同一事务读取 subject、其他有效 admin 与 auth generation，调用
+/// domain 判定，写角色/deny/session/generation，并追加 audit；拆成多个端口调用会产生竞态。
+#[async_trait]
+pub trait PeopleAdministration: Send + Sync {
+    /// 当前 actor 的公开 `/api/me` 投影。
+    async fn current_user(&self, actor: &ActorId) -> Result<CurrentUser, PeoplePortError>;
+
+    /// 管理员 people 页。
+    async fn list_people(&self, request: PeoplePageRequest) -> Result<PeoplePage, PeoplePortError>;
+
+    /// 原子角色变更。
+    async fn change_role(
+        &self,
+        actor: &ActorId,
+        subject: &ActorId,
+        desired: Role,
+    ) -> Result<Person, PeoplePortError>;
+
+    /// 原子访问移除/恢复。
+    async fn change_access(
+        &self,
+        actor: &ActorId,
+        subject: &ActorId,
+        revoked: bool,
+    ) -> Result<Person, PeoplePortError>;
+}
+
+/// 未注入 people 适配器时的构造性 503，供现有 G1 宿主平滑升级。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoPeopleAdministration;
+
+#[async_trait]
+impl PeopleAdministration for NoPeopleAdministration {
+    async fn current_user(&self, _actor: &ActorId) -> Result<CurrentUser, PeoplePortError> {
+        Err(PeoplePortError::Unavailable)
+    }
+
+    async fn list_people(
+        &self,
+        _request: PeoplePageRequest,
+    ) -> Result<PeoplePage, PeoplePortError> {
+        Err(PeoplePortError::Unavailable)
+    }
+
+    async fn change_role(
+        &self,
+        _actor: &ActorId,
+        _subject: &ActorId,
+        _desired: Role,
+    ) -> Result<Person, PeoplePortError> {
+        Err(PeoplePortError::Unavailable)
+    }
+
+    async fn change_access(
+        &self,
+        _actor: &ActorId,
+        _subject: &ActorId,
+        _revoked: bool,
+    ) -> Result<Person, PeoplePortError> {
+        Err(PeoplePortError::Unavailable)
+    }
 }
 
 #[cfg(test)]

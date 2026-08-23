@@ -21,26 +21,43 @@ use openbot_contracts::command::{AppCommand, AppReply, SubscriptionRequest};
 use openbot_contracts::error::AppError;
 use tracing::Span;
 
-use crate::ports::ChannelReader;
+use crate::ports::{ChannelReader, NoPeopleAdministration, PeopleAdministration};
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
-use crate::use_cases::{DEFAULT_HEARTBEAT_PERIOD, health, health_stream, list_visible_channels};
+use crate::use_cases::{
+    DEFAULT_HEARTBEAT_PERIOD, admin_status, change_person_access, change_person_role, current_user,
+    health, health_stream, list_people, list_visible_channels,
+};
 
 /// [`ApplicationService`] 的生产实现。
 ///
 /// 它对具体数据源一无所知：`R` 是任何满足 [`ChannelReader`] 的类型。`openbot-server` 与
 /// `openbot-desktop` 各自注入 `openbot-infra` 的实现，测试注入内存 fake —— 三条路径穿的
 /// 是同一份业务代码，这正是 §24 G1「ApplicationService 经 Axum/Tauri 结果一致」的前提。
-pub struct OpenBotApplication<R> {
+pub struct OpenBotApplication<R, P = NoPeopleAdministration> {
     channels: R,
+    people: P,
     heartbeat_period: Duration,
 }
 
-impl<R> OpenBotApplication<R> {
+impl<R> OpenBotApplication<R, NoPeopleAdministration> {
     /// 注入端口实现。
     pub fn new(channels: R) -> Self {
         Self {
             channels,
+            people: NoPeopleAdministration,
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
+        }
+    }
+}
+
+impl<R, P> OpenBotApplication<R, P> {
+    /// 注入 people/auth 原子端口。
+    #[must_use]
+    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q> {
+        OpenBotApplication {
+            channels: self.channels,
+            people,
+            heartbeat_period: self.heartbeat_period,
         }
     }
 
@@ -55,9 +72,10 @@ impl<R> OpenBotApplication<R> {
     }
 }
 
-impl<R> OpenBotApplication<R>
+impl<R, P> OpenBotApplication<R, P>
 where
     R: ChannelReader,
+    P: PeopleAdministration,
 {
     /// 命令派发。**穷举 match 无通配** —— 新增 `AppCommand` 变体会在这里编译失败，
     /// 而不是落进一个 `_ => Err(unknown_method)` 分支。那个分支正是 §5.2 逐字禁止的
@@ -74,14 +92,32 @@ where
                     list_visible_channels(&self.channels, auth, limit, cursor.as_deref()).await?;
                 Ok(AppReply::Channels(page))
             }
+            AppCommand::GetCurrentUser => Ok(AppReply::CurrentUser(
+                current_user(&self.people, auth).await?,
+            )),
+            AppCommand::AdminStatus => Ok(AppReply::AdminStatus(admin_status(auth)?)),
+            AppCommand::ListPeople {
+                search,
+                cursor,
+                limit,
+            } => Ok(AppReply::People(
+                list_people(&self.people, auth, search, cursor, limit).await?,
+            )),
+            AppCommand::ChangePersonRole { user_id, role } => Ok(AppReply::Person(
+                change_person_role(&self.people, auth, &user_id, role).await?,
+            )),
+            AppCommand::ChangePersonAccess { user_id, revoked } => Ok(AppReply::Person(
+                change_person_access(&self.people, auth, &user_id, revoked).await?,
+            )),
         }
     }
 }
 
 #[async_trait]
-impl<R> ApplicationService for OpenBotApplication<R>
+impl<R, P> ApplicationService for OpenBotApplication<R, P>
 where
     R: ChannelReader + 'static,
+    P: PeopleAdministration + 'static,
 {
     #[tracing::instrument(
         name = "application.execute",
@@ -142,11 +178,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fakes::{FakeChannelReader, SENTINEL_AUTH_GENERATION, auth_for, summary_at};
+    use crate::fakes::{
+        FakeChannelReader, FakePeopleAdministration, SENTINEL_AUTH_GENERATION, auth_for,
+        sample_person, summary_at,
+    };
     use crate::service::{APPLICATION_SPAN_FIELDS, EXECUTE_SPAN_NAME, SUBSCRIBE_SPAN_NAME};
     use core::fmt;
     use core::future::Future;
-    use openbot_contracts::auth::AuthContext;
+    use openbot_contracts::auth::{AuthContext, Role};
     use openbot_contracts::command::AppEvent;
     use openbot_contracts::error::ErrorCode;
     use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
@@ -234,11 +273,15 @@ mod tests {
         (out, captured)
     }
 
-    fn app() -> OpenBotApplication<FakeChannelReader> {
+    fn app() -> OpenBotApplication<FakeChannelReader, FakePeopleAdministration> {
         OpenBotApplication::new(
             FakeChannelReader::empty()
                 .with_visible("actor-1", vec![summary_at("c-1", "2026-08-22T04:00:00Z")]),
         )
+        .with_people(FakePeopleAdministration::seeded([
+            sample_person("actor-1", Role::Admin),
+            sample_person("actor-2", Role::User),
+        ]))
         .with_heartbeat_period(Duration::from_millis(1))
     }
 
@@ -258,7 +301,7 @@ mod tests {
         );
 
         let (channels_reply, _) = capture(service.execute(
-            auth,
+            auth.clone(),
             AppCommand::ListVisibleChannels {
                 limit: None,
                 cursor: None,
@@ -271,6 +314,40 @@ mod tests {
             }
             other => panic!("命令与应答必须一一对应，拿到 {other:?}"),
         }
+
+        let (me, _) = capture(service.execute(auth.clone(), AppCommand::GetCurrentUser));
+        assert!(matches!(me, Ok(AppReply::CurrentUser(_))));
+
+        let (status, _) = capture(service.execute(auth.clone(), AppCommand::AdminStatus));
+        assert!(matches!(status, Ok(AppReply::AdminStatus(_))));
+
+        let (people, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::ListPeople {
+                search: None,
+                cursor: None,
+                limit: None,
+            },
+        ));
+        assert!(matches!(people, Ok(AppReply::People(_))));
+
+        let (role, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::ChangePersonRole {
+                user_id: ActorId::new("actor-2"),
+                role: Role::Admin,
+            },
+        ));
+        assert!(matches!(role, Ok(AppReply::Person(_))));
+
+        let (access, _) = capture(service.execute(
+            auth,
+            AppCommand::ChangePersonAccess {
+                user_id: ActorId::new("actor-2"),
+                revoked: true,
+            },
+        ));
+        assert!(matches!(access, Ok(AppReply::Person(_))));
     }
 
     /// 订阅回来的流是**活的**：拿到就能取到第一拍。
@@ -420,7 +497,7 @@ mod tests {
 
     /// 零角色的**已认证** actor 不被拒绝：G1 的两个用例都不设角色门（parity）。
     ///
-    /// 这条同时是「本 crate 不产出 403」的行为证据 —— 如果有人凭空加了角色门，它会红。
+    /// 同一个 roleless actor：普通读取不凭空加角色门，admin 用例则必须产出 403。
     #[test]
     fn a_roleless_authenticated_actor_is_not_rejected() {
         let roleless = AuthContext::for_test(
@@ -438,13 +515,21 @@ mod tests {
         assert!(health_reply.is_ok(), "探活不看角色");
 
         let (list_reply, _) = capture(service.execute(
-            roleless,
+            roleless.clone(),
             AppCommand::ListVisibleChannels {
                 limit: None,
                 cursor: None,
             },
         ));
         assert!(list_reply.is_ok(), "列表只看 membership，不看角色");
+
+        let (admin_reply, _) = capture(service.execute(roleless, AppCommand::AdminStatus));
+        assert!(matches!(
+            admin_reply,
+            Err(AppError::ForbiddenRole {
+                required: Role::Admin
+            })
+        ));
     }
 
     /// 正向对照：本 crate **确实**会返回错误 —— 上一条的 `is_ok()` 不是靠

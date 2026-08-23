@@ -23,7 +23,7 @@
 //!   同名字段一律是普通不可信输入。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # G1 状态（Rust Foundation，W5–10）
+//! # 当前状态（G1 + W-3a people slice）
 //!
 //! Phase 0（Evidence Freeze）本 crate 刻意为空；G1 起它承载五个模块：
 //!
@@ -33,11 +33,12 @@
 //! | [`auth`] | [`auth::AuthContext`]、[`auth::Role`]、受限构造入口 | §5.3 / §5.2 |
 //! | [`error`] | [`error::AppError`]、稳定 code、HTTP status、audit 类型 | §15.3 |
 //! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent` | §5.2 |
+//! | [`people`] | current user / admin status / people page 与 person 公开 DTO | §6.2 / R40 |
 //! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
 //!
-//! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：G1 只落了垂直切片
-//! 需要的两个用例（列出可见 channel + 探活），thread 订阅、工具管线、browser 协议分别是
-//! G3 及之后的工作，届时随各自 ledger 条目一起加。本 crate 里凡是与上游行为对齐的取值
+//! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：W-3a 只在 G1 的
+//! channel/health 之外追加 fixed-upstream people slice；thread 订阅、工具管线、browser 协议分别是
+//! 后续工作，届时随各自 ledger 条目一起加。本 crate 里凡是与上游行为对齐的取值
 //! （如 [`command::MAX_CHANNEL_PAGE`]）都在注释里标了 parity 出处，新增项同理 —— 把新增
 //! 写成"当前行为"是 v2 审计里最重的一类错误（§28.1 R1）。
 //!
@@ -64,4 +65,5 @@ pub mod auth;
 pub mod command;
 pub mod error;
 pub mod ids;
+pub mod people;
 pub mod telemetry;

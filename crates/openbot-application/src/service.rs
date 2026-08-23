@@ -101,6 +101,11 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
     match command {
         AppCommand::Health => "health",
         AppCommand::ListVisibleChannels { .. } => "list_visible_channels",
+        AppCommand::GetCurrentUser => "get_current_user",
+        AppCommand::AdminStatus => "admin_status",
+        AppCommand::ListPeople { .. } => "list_people",
+        AppCommand::ChangePersonRole { .. } => "change_person_role",
+        AppCommand::ChangePersonAccess { .. } => "change_person_access",
     }
 }
 

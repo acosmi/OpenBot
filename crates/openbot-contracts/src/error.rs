@@ -59,6 +59,20 @@ impl ErrorCode {
     pub const STALE_GENERATION: Self = Self("stale_generation");
     /// lease 冲突（409）。
     pub const LEASE_CONFLICT: Self = Self("lease_conflict");
+    /// 配置 admin floor 阻止降权。
+    pub const IDENTITY_ROLE_CONFIGURED_ADMIN: Self = Self("identity_role_change_configured_admin");
+    /// 管理员不能给自己降权。
+    pub const IDENTITY_ROLE_SELF_DEMOTION: Self = Self("identity_role_change_self_demotion");
+    /// 不能移除最后一个有效管理员角色。
+    pub const IDENTITY_ROLE_LAST_ADMIN: Self = Self("identity_role_change_last_admin");
+    /// 配置 admin floor 阻止撤权。
+    pub const IDENTITY_ACCESS_CONFIGURED_ADMIN: Self =
+        Self("identity_access_change_configured_admin");
+    /// 管理员不能移除自己的访问。
+    pub const IDENTITY_ACCESS_SELF_REVOCATION: Self =
+        Self("identity_access_change_self_revocation");
+    /// 不能撤销最后一个有效管理员的访问。
+    pub const IDENTITY_ACCESS_LAST_ADMIN: Self = Self("identity_access_change_last_admin");
     /// commit 状态未知，需要和解（202 或 409）。
     pub const RECONCILIATION_REQUIRED: Self = Self("reconciliation_required");
 
@@ -170,6 +184,44 @@ impl fmt::Display for StaleGenerationSubject {
     }
 }
 
+/// people role/access 变更的六种稳定冲突原因（上游前四项 parity，last-admin 两项新增）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IdentityConflictReason {
+    /// 地址在 configured admin floor，不能降权。
+    RoleConfiguredAdmin,
+    /// 不能给自己降 admin。
+    RoleSelfDemotion,
+    /// 会留下零有效 admin。
+    RoleLastAdmin,
+    /// 地址在 configured admin floor，不能撤权。
+    AccessConfiguredAdmin,
+    /// 不能撤销自己的访问。
+    AccessSelfRevocation,
+    /// 会留下零有效 admin。
+    AccessLastAdmin,
+}
+
+impl IdentityConflictReason {
+    /// 对应领域 rejection 的稳定码。
+    #[must_use]
+    pub const fn code(self) -> ErrorCode {
+        match self {
+            Self::RoleConfiguredAdmin => ErrorCode::IDENTITY_ROLE_CONFIGURED_ADMIN,
+            Self::RoleSelfDemotion => ErrorCode::IDENTITY_ROLE_SELF_DEMOTION,
+            Self::RoleLastAdmin => ErrorCode::IDENTITY_ROLE_LAST_ADMIN,
+            Self::AccessConfiguredAdmin => ErrorCode::IDENTITY_ACCESS_CONFIGURED_ADMIN,
+            Self::AccessSelfRevocation => ErrorCode::IDENTITY_ACCESS_SELF_REVOCATION,
+            Self::AccessLastAdmin => ErrorCode::IDENTITY_ACCESS_LAST_ADMIN,
+        }
+    }
+}
+
+impl fmt::Display for IdentityConflictReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code().as_str())
+    }
+}
+
 /// 应用层错误。封闭 enum，恰好覆盖 §15.3 列举的每一条语义。
 ///
 /// # 三样东西必须与文案解耦
@@ -249,6 +301,13 @@ pub enum AppError {
         holder: Option<ActorId>,
     },
 
+    /// people role/access 变更被 floor/self/last-admin 不变量拒绝（409）。
+    #[error("{reason}")]
+    IdentityConflict {
+        /// 稳定拒绝原因。
+        reason: IdentityConflictReason,
+    },
+
     /// commit 状态未知，需要和解（§15.3「unknown commit 202/409 对应 reconciliation，
     /// 不伪装 500 或 success」）。
     #[error("reconciliation_required accepted={accepted}")]
@@ -276,6 +335,7 @@ impl AppError {
             Self::VendorFailure { .. } => ErrorCode::VENDOR_FAILURE,
             Self::StaleGeneration { .. } => ErrorCode::STALE_GENERATION,
             Self::LeaseConflict { .. } => ErrorCode::LEASE_CONFLICT,
+            Self::IdentityConflict { reason } => reason.code(),
             Self::ReconciliationRequired { .. } => ErrorCode::RECONCILIATION_REQUIRED,
         }
     }
@@ -292,7 +352,9 @@ impl AppError {
             Self::MalformedPayload { .. } => 400,
             Self::DependencyUnavailable { .. } => 503,
             Self::VendorFailure { .. } => 502,
-            Self::StaleGeneration { .. } | Self::LeaseConflict { .. } => 409,
+            Self::StaleGeneration { .. }
+            | Self::LeaseConflict { .. }
+            | Self::IdentityConflict { .. } => 409,
             // 「不伪装 500 或 success」：已受理 → 202（Accepted，明说还没定），
             // 未受理 → 409（Conflict，明说现在不能继续）。两个都不是 2xx 成功语义里的 200。
             Self::ReconciliationRequired { accepted } => {
@@ -319,6 +381,7 @@ impl AppError {
             Self::StaleGeneration { .. } | Self::LeaseConflict { .. } => {
                 AuditKind::ConcurrencyConflict
             }
+            Self::IdentityConflict { .. } => AuditKind::AuthorizationDenied,
             Self::ReconciliationRequired { .. } => AuditKind::ReconciliationRequired,
         }
     }
@@ -337,7 +400,7 @@ mod tests {
 
     /// 变体总数。新增变体必须同 PR 改这里 —— 它与 [`variant_index`] 和
     /// [`all_variants_for_test`] 三者互相咬合，见下方三条测试。
-    const VARIANT_COUNT: usize = 10;
+    const VARIANT_COUNT: usize = 11;
 
     /// 无通配 `_` 的穷举 match：**新增变体在这里编译失败**，逼作者同 PR 更新下面的变体台账。
     ///
@@ -355,7 +418,8 @@ mod tests {
             AppError::VendorFailure { .. } => 6,
             AppError::StaleGeneration { .. } => 7,
             AppError::LeaseConflict { .. } => 8,
-            AppError::ReconciliationRequired { .. } => 9,
+            AppError::IdentityConflict { .. } => 9,
+            AppError::ReconciliationRequired { .. } => 10,
         }
     }
 
@@ -392,6 +456,24 @@ mod tests {
             AppError::LeaseConflict {
                 holder: Some(ActorId::new("actor-9")),
             },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::RoleConfiguredAdmin,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::RoleSelfDemotion,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::RoleLastAdmin,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::AccessConfiguredAdmin,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::AccessSelfRevocation,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::AccessLastAdmin,
+            },
             AppError::ReconciliationRequired { accepted: true },
             AppError::ReconciliationRequired { accepted: false },
         ]
@@ -415,10 +497,9 @@ mod tests {
     /// 所以按 `variant_index` 去重后再比。
     #[test]
     fn stable_codes_are_pairwise_distinct_per_variant() {
-        let mut seen: BTreeSet<usize> = BTreeSet::new();
         let mut codes: BTreeSet<&'static str> = BTreeSet::new();
         for error in all_variants_for_test() {
-            if !seen.insert(variant_index(&error)) {
+            if matches!(error, AppError::ReconciliationRequired { accepted: false }) {
                 continue;
             }
             assert!(
@@ -427,7 +508,11 @@ mod tests {
                 error.code()
             );
         }
-        assert_eq!(codes.len(), VARIANT_COUNT, "稳定码数量必须等于变体数量");
+        assert_eq!(
+            codes.len(),
+            VARIANT_COUNT + 5,
+            "IdentityConflict 一个结构变体承载六个不同补救动作，所以稳定码比变体多 5",
+        );
     }
 
     /// 每个变体的 HTTP 状态码逐条对齐 §15.3，且全部落在 [`HTTP_STATUS_DOMAIN`] 内。
@@ -467,6 +552,12 @@ mod tests {
                 409,
             ),
             (AppError::LeaseConflict { holder: None }, 409),
+            (
+                AppError::IdentityConflict {
+                    reason: IdentityConflictReason::RoleLastAdmin,
+                },
+                409,
+            ),
             (AppError::ReconciliationRequired { accepted: true }, 202),
             (AppError::ReconciliationRequired { accepted: false }, 409),
         ];

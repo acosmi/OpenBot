@@ -13,11 +13,14 @@ use async_trait::async_trait;
 use openbot_contracts::auth::{AuthContext, Role};
 use openbot_contracts::command::ChannelSummary;
 use openbot_contracts::ids::{ActorId, ChannelId, DeploymentId, TenantId};
+use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::cursor::{ChannelCursor, channel_recency};
-use crate::ports::{ChannelReader, PortError};
+use crate::ports::{
+    ChannelReader, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
+};
 
 /// 解析测试里用的 RFC 3339 字面量。解析不了就是测试写错了，直接 panic。
 pub(crate) fn ts(raw: &str) -> OffsetDateTime {
@@ -179,5 +182,158 @@ impl ChannelReader for FakeChannelReader {
         // 四、截断到调用方要的行数（调用方已经把探测用的 +1 算进来了）。
         visible.truncate(limit as usize);
         Ok(visible)
+    }
+}
+
+/// people port 收到的调用。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PeopleCall {
+    Current(ActorId),
+    List(PeoplePageRequest),
+    Role {
+        actor: ActorId,
+        subject: ActorId,
+        role: Role,
+    },
+    Access {
+        actor: ActorId,
+        subject: ActorId,
+        revoked: bool,
+    },
+}
+
+/// 内存 people adapter；只模拟 port 事务的可观察结果，domain 拒绝另由 use case 映射测试覆盖。
+pub(crate) struct FakePeopleAdministration {
+    people: Mutex<Vec<Person>>,
+    failure: Option<PeoplePortError>,
+    calls: Mutex<Vec<PeopleCall>>,
+}
+
+impl FakePeopleAdministration {
+    pub(crate) fn seeded(people: impl IntoIterator<Item = Person>) -> Self {
+        Self {
+            people: Mutex::new(people.into_iter().collect()),
+            failure: None,
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn failing(failure: PeoplePortError) -> Self {
+        Self {
+            people: Mutex::new(Vec::new()),
+            failure: Some(failure),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn calls(&self) -> Vec<PeopleCall> {
+        self.calls.lock().expect("fake 锁不应中毒").clone()
+    }
+}
+
+#[async_trait]
+impl PeopleAdministration for FakePeopleAdministration {
+    async fn current_user(&self, actor: &ActorId) -> Result<CurrentUser, PeoplePortError> {
+        self.calls
+            .lock()
+            .expect("fake 锁不应中毒")
+            .push(PeopleCall::Current(actor.clone()));
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let people = self.people.lock().expect("fake 锁不应中毒");
+        let person = people
+            .iter()
+            .find(|person| &person.id == actor)
+            .ok_or(PeoplePortError::NotFound)?;
+        Ok(CurrentUser {
+            id: person.id.clone(),
+            email: person.email.clone(),
+            name: person.name.clone(),
+            image: person.image.clone(),
+            role: person.role,
+        })
+    }
+
+    async fn list_people(&self, request: PeoplePageRequest) -> Result<PeoplePage, PeoplePortError> {
+        self.calls
+            .lock()
+            .expect("fake 锁不应中毒")
+            .push(PeopleCall::List(request.clone()));
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let mut people = self.people.lock().expect("fake 锁不应中毒").clone();
+        people.truncate(request.limit as usize);
+        Ok(PeoplePage {
+            people,
+            next_cursor: None,
+        })
+    }
+
+    async fn change_role(
+        &self,
+        actor: &ActorId,
+        subject: &ActorId,
+        desired: Role,
+    ) -> Result<Person, PeoplePortError> {
+        self.calls
+            .lock()
+            .expect("fake 锁不应中毒")
+            .push(PeopleCall::Role {
+                actor: actor.clone(),
+                subject: subject.clone(),
+                role: desired,
+            });
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let mut people = self.people.lock().expect("fake 锁不应中毒");
+        let person = people
+            .iter_mut()
+            .find(|person| &person.id == subject)
+            .ok_or(PeoplePortError::NotFound)?;
+        person.role = desired;
+        Ok(person.clone())
+    }
+
+    async fn change_access(
+        &self,
+        actor: &ActorId,
+        subject: &ActorId,
+        revoked: bool,
+    ) -> Result<Person, PeoplePortError> {
+        self.calls
+            .lock()
+            .expect("fake 锁不应中毒")
+            .push(PeopleCall::Access {
+                actor: actor.clone(),
+                subject: subject.clone(),
+                revoked,
+            });
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let mut people = self.people.lock().expect("fake 锁不应中毒");
+        let person = people
+            .iter_mut()
+            .find(|person| &person.id == subject)
+            .ok_or(PeoplePortError::NotFound)?;
+        person.revoked = revoked;
+        Ok(person.clone())
+    }
+}
+
+pub(crate) fn sample_person(id: &str, role: Role) -> Person {
+    Person {
+        id: ActorId::new(id),
+        email: format!("{id}@example.invalid"),
+        name: Some(id.to_owned()),
+        image: None,
+        role,
+        providers: vec!["google".to_owned()],
+        last_signed_in_at: Some(ts("2026-08-23T00:00:00Z")),
+        revoked: false,
+        configured_admin: false,
     }
 }

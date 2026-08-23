@@ -108,6 +108,7 @@ impl IntoResponse for HttpError {
             | AppError::VendorFailure { .. }
             | AppError::StaleGeneration { .. }
             | AppError::LeaseConflict { .. }
+            | AppError::IdentityConflict { .. }
             | AppError::ReconciliationRequired { .. } => None,
         };
 
@@ -156,6 +157,9 @@ mod tests {
             },
             AppError::LeaseConflict {
                 holder: Some(ActorId::new("actor-other-tenant-user")),
+            },
+            AppError::IdentityConflict {
+                reason: openbot_contracts::error::IdentityConflictReason::RoleLastAdmin,
             },
             AppError::ReconciliationRequired { accepted: true },
             AppError::ReconciliationRequired { accepted: false },
