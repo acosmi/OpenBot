@@ -314,7 +314,7 @@ yanked = "deny"
 # unmaintained 显式写成 "all"，不吃默认值：默认只看 workspace 直接依赖，
 # 而供应链风险恰恰更常藏在传递依赖里。写死它也让"这条闸门到底管多宽"不随 cargo-deny 升版本漂移。
 unmaintained = "all"
-# 已知 advisory 的豁免。**空**是刻意的，而且是本轮实跑验证后的空，不是没查过的空：
+# 已知 advisory 的豁免。每条必须有可达性论证、owner 和机器化复查触发器：
 #
 # 2026-08-22 本机 `cargo deny check advisories` = ok。advisory-db 确实被拉下来了
 # （`find ~/.cargo/advisory-dbs -name 'RUSTSEC-*.md' | wc -l` = 1205，这是正向对照：
@@ -325,9 +325,17 @@ unmaintained = "all"
 #   - unsafe-libyaml / RUSTSEC-2023-0075（32/16 位平台 u64 非对齐写，informational=unsound）：
 #     patched >= 0.2.10，本仓 Cargo.lock 锁 0.2.11。
 # advisory-db 里目前**没有**针对 serde_yaml 的 unmaintained 通告（该 crate 目录下只有
-# RUSTSEC-2018-0005 一份），所以这里不需要任何豁免行。
-# 将来真需要加时，每一行都必须带 RUSTSEC 编号 + 书面理由 + owner，不允许为了让闸门变绿而顺手加。
-ignore = []
+# RUSTSEC-2018-0005 一份）。
+#
+# RUSTSEC-2023-0071 / CVE-2023-49092（owner: security，2026-08-23 D-1 正式裁决）：
+# - advisory 的 `patched = []`，无安全升级；`rsa 0.9.10` 是 `openidconnect 4.0.1` 的非可选依赖。
+# - 影响前提是攻击者能观测 RSA **私钥**运算的计时。本仓 RP 只以
+#   `CoreJsonWebKey`/`RsaPublicKey` 验证 IdP RS256，没有 RSA 解密或私签路径。
+# - `tools/check-rustsec-waivers.sh` 同时锁死精确版本/反向生产依赖链和私钥符号零命中。
+# - 以下任一变化必须先重审并在同 PR 删除或修订豁免：`rsa`/`openidconnect`
+#   版本或 feature 变化；新增反向消费者；引入 private-key JWT/RSA 签名/解密；RustSec 出现
+#   patched 版本；OIDC token endpoint 或动态 provider 能力扩大。
+ignore = ["RUSTSEC-2023-0071"]
 
 # ---------------------------------------------------------------------------
 # sources —— 来源

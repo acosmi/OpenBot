@@ -153,14 +153,19 @@ jobs:
         with:
           tool: cargo-deny,cargo-audit
 
+      - name: RUSTSEC waiver reachability guard
+        # 豁免不只是 ignore 字符串：先锁定可达性前提，变了就先红。
+        run: bash tools/check-rustsec-waivers.sh
+
       - name: cargo deny（licenses / bans / advisories / sources 四段）
-        # 配置 = 仓根 deny.toml。2026-08-22 本机实跑四段全 ok。
+        # 配置 = 仓根 deny.toml；RUSTSEC-2023-0071 的书面裁决与触发器同样在该文件。
         run: cargo deny check
 
       - name: cargo audit / RustSec
         # 与 cargo deny 的 advisories 段判据重叠但不等价（audit 直读 Cargo.lock，
         # deny 走依赖图）。v3 §16.3 把两者并列，这里照列，不合并。
-        run: cargo audit --deny warnings
+        # cargo-audit 不读 deny.toml，同一条裁决必须显式传入；其余 advisory 仍全部判红。
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
 
 # ===========================================================================
 # v3 §16.3 固定清单里**尚未接线**的条目（status: todo）
