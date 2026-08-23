@@ -242,6 +242,23 @@ pub struct TableSpec {
     pub column_specs: &'static [ColumnSpec],
 }
 
+/// repository 层对所有类型化行的封闭公共面。
+///
+/// 实现只由 [`define_table!`] 展开；表名与列名因此都是编译期字面量，repo 可以机械生成 SQL，
+/// 但 transport/application 没有传入自由表名、列名或 predicate 的入口。
+pub trait TableRow: Sized {
+    /// PostgreSQL public 表名。
+    const TABLE_NAME: &'static str;
+    /// 全部列，按 `attnum` 升序。
+    const COLUMNS: &'static [&'static str];
+
+    /// 按 [`Self::COLUMNS`] 顺序借出绑定参数。
+    fn as_sql_params(&self) -> Vec<&(dyn tokio_postgres::types::ToSql + Sync)>;
+
+    /// 从 PostgreSQL 行解码。
+    fn try_from_pg(row: &tokio_postgres::Row) -> Result<Self, crate::db::RowDecodeError>;
+}
+
 /// 从一份列清单同时展开行结构体与列台账。
 ///
 /// 语法：
@@ -318,7 +335,7 @@ macro_rules! define_table {
             /// 顺序与 [`COLUMNS`] 一致，所以可以直接喂给
             /// `ROW($1, …, $n)::public.<表名>`。
             pub fn as_sql_params(&self) -> Vec<&(dyn tokio_postgres::types::ToSql + Sync)> {
-                vec![$(&self.$field),+]
+                <Self as $crate::db::tables::TableRow>::as_sql_params(self)
             }
         }
 
@@ -333,6 +350,21 @@ macro_rules! define_table {
                         })?,
                     )+
                 })
+            }
+        }
+
+        impl $crate::db::tables::TableRow for Row {
+            const TABLE_NAME: &'static str = TABLE_NAME;
+            const COLUMNS: &'static [&'static str] = COLUMNS;
+
+            fn as_sql_params(&self) -> Vec<&(dyn tokio_postgres::types::ToSql + Sync)> {
+                vec![$(&self.$field),+]
+            }
+
+            fn try_from_pg(
+                row: &tokio_postgres::Row,
+            ) -> Result<Self, $crate::db::RowDecodeError> {
+                Self::try_from(row)
             }
         }
     };

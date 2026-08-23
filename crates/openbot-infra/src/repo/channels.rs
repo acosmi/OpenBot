@@ -252,6 +252,73 @@ where
     })
 }
 
+use crate::repo::common::define_table_repo;
+
+define_table_repo!(
+    /// `channel_memberships` repository；可见性业务查询仍由 [`ChannelRepo`] 承担。
+    ChannelMembershipRepo,
+    table = channel_memberships,
+    order_by = "\"channel_id\", \"user_id\"",
+    find = find_by_key(channel_id: &str, user_id: &str) where "\"channel_id\" = $1 AND \"user_id\" = $2"
+);
+
+define_table_repo!(
+    /// `channel_agents` repository。
+    ChannelAgentRepo,
+    table = channel_agents,
+    order_by = "\"channel_id\", \"agent_id\"",
+    find = find_by_key(channel_id: &str, agent_id: &str) where "\"channel_id\" = $1 AND \"agent_id\" = $2"
+);
+
+/// `intelligence_channel_mappings` 的只读 legacy provenance repository。
+///
+/// 刻意没有 insert/delete：v3 §14.2 已把它降成历史来源，native 请求路径不得再制造或消费
+/// live mapping。导入器只读它，最终过保留期后的删除属于独立 destructive migration。
+#[derive(Clone)]
+pub struct LegacyIntelligenceMappingRepo {
+    core: crate::repo::common::RepoCore<crate::db::tables::intelligence_channel_mappings::Row>,
+}
+
+impl LegacyIntelligenceMappingRepo {
+    /// 用调用方提供的连接池构造。
+    #[must_use]
+    pub fn new(pool: Pool) -> Self {
+        Self {
+            core: crate::repo::common::RepoCore::new(pool),
+        }
+    }
+
+    /// 按旧复合主键读取。
+    pub async fn find_by_key(
+        &self,
+        user_id: &str,
+        channel_id: &str,
+    ) -> Result<Option<crate::db::tables::intelligence_channel_mappings::Row>, crate::db::InfraError>
+    {
+        self.core
+            .find(
+                "\"user_id\" = $1 AND \"channel_id\" = $2",
+                &[&user_id, &channel_id],
+            )
+            .await
+    }
+
+    /// 稳定列出全部 legacy provenance。
+    pub async fn list_all(
+        &self,
+    ) -> Result<Vec<crate::db::tables::intelligence_channel_mappings::Row>, crate::db::InfraError>
+    {
+        self.core.list("\"user_id\", \"channel_id\"").await
+    }
+}
+
+impl core::fmt::Debug for LegacyIntelligenceMappingRepo {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LegacyIntelligenceMappingRepo")
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

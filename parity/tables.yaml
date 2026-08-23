@@ -38,10 +38,12 @@
 # "Rust aggregate/repository" 规划落点，属 G2 及以后的工作。G1 交付的是 db::tables 的
 # 保真行结构 + baseline + compat 边界检查，不是仓储层。别把 done 读成"仓储已就绪"。
 #
-# G1 结束时**唯一**已实现的仓储是 openbot-infra::repo::channels::ChannelRepo
-# （impl openbot_application::ChannelReader，7 条真库集成测试；tbl-channels /
-# tbl-channel-memberships / tbl-channel-agents / tbl-agent-profiles 四张表参与它的查询）。
-# 其余 36 个 repo= 落点仍未实现。
+# 【2026-08-23 W-2】当前已有物理表的 30 个具名 repository 已实现：上游 28 表各一个，
+# 0013 再加 ToolCallRepo / ToolAttemptRepo；audit_checkpoints 与 audit_events 共用
+# AuditEventRepo。`repo::IMPLEMENTED_REPOSITORIES` 是可复算台账，PG17 真库测试
+# all_thirty_current_repositories_touch_their_real_tables 逐个调用。剩余 10 个 repo= 落点恰好
+# 对应 G3 尚未建表的 threads/messages/runs/outbox/memory/import 面；在表不存在时造同名空 struct
+# 不叫实现，所以明确留给建表同批闭合。下面四条 recount 双向保证 40 / 30 / 10 / 越界 0。
 #
 # 迁移边界（v3 §14.1 + §14.3）：Rust 只接收已迁到第 13 条 migration（0012）的库；
 # 兼容期只允许新表 / nullable column / backfill / index / 非破坏性 constraint 验证，
@@ -85,6 +87,18 @@ recount:
   - command: "grep -rn -i '\\bchannel' app/src server/src --include=*.ts --include=*.tsx | grep -v test | grep -vE ':[0-9]+:[[:space:]]*(\\*|//|/\\*)' | wc -l"
     cwd: upstream
     expect: 437
+  - command: "grep -oE 'repo=([A-Za-z0-9_:-]+)' parity/tables.yaml | sed 's/repo=//' | sort -u | wc -l"
+    cwd: repo
+    expect: 40
+  - command: "sed -n '/pub const IMPLEMENTED_REPOSITORIES/,/^];/p' crates/openbot-infra/src/repo/mod.rs | grep -oE '\"openbot-infra::[^\"]+Repo\"' | tr -d '\"' | sort -u | wc -l"
+    cwd: repo
+    expect: 30
+  - command: "comm -23 <(grep -oE 'repo=([A-Za-z0-9_:-]+)' parity/tables.yaml | sed 's/repo=//' | sort -u) <(sed -n '/pub const IMPLEMENTED_REPOSITORIES/,/^];/p' crates/openbot-infra/src/repo/mod.rs | grep -oE '\"openbot-infra::[^\"]+Repo\"' | tr -d '\"' | sort -u) | wc -l"
+    cwd: repo
+    expect: 10
+  - command: "comm -13 <(grep -oE 'repo=([A-Za-z0-9_:-]+)' parity/tables.yaml | sed 's/repo=//' | sort -u) <(sed -n '/pub const IMPLEMENTED_REPOSITORIES/,/^];/p' crates/openbot-infra/src/repo/mod.rs | grep -oE '\"openbot-infra::[^\"]+Repo\"' | tr -d '\"' | sort -u) | wc -l"
+    cwd: repo
+    expect: 0
 
 entries:
   # =========================================================================

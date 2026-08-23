@@ -24,7 +24,7 @@
 //! - **读环境变量**：连接参数一律由调用方以 [`db::pool::DatabaseConfig`] 显式传入。env 的三档
 //!   裁决（v3 §15.4）属于启动 / transport 层，不在本 crate。
 //!
-//! # G1 状态（Rust Foundation，W5–10）
+//! # 当前状态（G1 + W-1/W-2 current-schema）
 //!
 //! 已落地的是数据库 schema 层，也就是 v3 §24 G1 判据「28 表/13 migration 映射」的执行面：
 //!
@@ -35,14 +35,18 @@
 //! - [`db::compat`] —— 迁移边界检查（v3 §14.1「Rust 不接收更早 schema」）。
 //! - [`db::schema_facts`] —— schema 事实提取，与 `fixtures/db/schema-0012.json` 同构。
 //! - [`db::pool`] —— `deadpool-postgres` 连接池。
-//! - [`repo::channels::ChannelRepo`] —— 首个 vertical slice 的读侧：
-//!   `openbot_application::ChannelReader` 的 PostgreSQL 实现。
+//! - [`db::native`] —— Rust-owned 0013，自有 SHA-256 账本与并发施加锁。
+//! - [`repo::IMPLEMENTED_REPOSITORIES`] —— 当前已有物理表的 30 个具名 repository；
+//!   [`repo::channels::ChannelRepo`] 同时实现 `openbot_application::ChannelReader`。
+//! - [`vault::CredentialRepo`] —— credential CAS 轮换/撤销；
+//!   [`repo::audit::AuditEventRepo`] —— hash chain/checkpoint；
+//!   [`repo::tools`] —— decision+attempt 同事务与 commit 后 receipt。
 //!
-//! 尚未落地，也不在此假装存在：outbox、vault、safe dialer、provider adapters，以及
-//! `ChannelReader` 之外的各个 port。
-//! `parity/tables.yaml` 里 12 张 native 新表与 `db::migrations::*` 的 13 条 migration 台账落点
-//! 同样仍是 `status: todo`。
+//! 尚未落地，也不在此假装存在：safe dialer、provider adapters，以及 application 端口/用例接线。
+//! `thread/run/outbox/memory/import` 的 10 个 repo 名对应 G3 尚未创建的物理表，必须与建表同批实现，
+//! 不创建零方法空 struct 冒充完成。
 
 pub mod auth;
 pub mod db;
 pub mod repo;
+pub mod vault;

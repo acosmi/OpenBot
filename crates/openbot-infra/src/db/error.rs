@@ -72,6 +72,13 @@ pub enum InfraError {
     /// Rust-owned native migration 的账本漂移或版本空洞。
     #[error(transparent)]
     NativeMigration(#[from] NativeMigrationViolation),
+
+    /// repository 入参或持久化状态违反封闭不变量；只带稳定 code，不带运行期值。
+    #[error("repository 不变量失败（{code}）")]
+    RepositoryInvariant {
+        /// 稳定、无载荷的错误码。
+        code: &'static str,
+    },
 }
 
 impl InfraError {
@@ -92,6 +99,12 @@ impl InfraError {
             context: context.into(),
             source: PostgresErrorSummary::from_error(&source),
         }
+    }
+
+    /// 构造一个无载荷 repository 不变量错误。
+    #[must_use]
+    pub const fn repository_invariant(code: &'static str) -> Self {
+        Self::RepositoryInvariant { code }
     }
 
     /// 服务端错误的 SQLSTATE（形如 `23505`），非服务端错误为 `None`。
