@@ -8,10 +8,10 @@ recount:
     expect: 28
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
-    expect: 23
+    expect: 22
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 5
+    expect: 6
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
@@ -188,7 +188,15 @@ entries:
     owner: openbot-domain
     test_id: T-FIX-0009
     migration_rule: "preserve: 结果类别（true/false/error）任一不同即在迁移报告高亮并要求管理员逐条确认"
-    status: todo
+    status: done
+    done_evidence: >-
+      crates/openbot-domain/tests/cel_corpus_parity.rs（`cargo test -p openbot-domain --test cel_corpus_parity` = 6 passed）。
+      69 条逐条在 Rust cel 0.14.3 上求值，判据不是"全部相同"而是"分歧集合恰好等于 DIVERGENCE_LEDGER 这张写死的 6 条台账"
+      —— `assert_eq!` 于两个 BTreeMap 上是双向集合相等，多一条（既有规则语义悄悄翻转）与少一条（cel 改了行为）都判红；
+      另有 `assert_eq!(evaluated, 69)` 防跳过。6 条分歧全是 oracle=error → Rust 非 error，其中 deny 侧放宽 2 条、
+      allow 侧放宽 4 条，由 preflight 逐条给出两侧后果（`preflight_flags_every_ledger_row_with_its_direction`）。
+      Rust 侧实测值不回写 corpus 的 candidate 段：那会让 fixture 同时是 oracle 与被测方；台账落在测试源码里，
+      改行为必须改台账，而改台账要过 review。
     evidence: fixtures/policy/cel-corpus.json::candidate（cel 0.14.3，Rust 侧实测值缺位）
     notes: >-
       需录：把 fixtures/policy/cel-corpus.json 的 69 条在 Rust cel 0.14.3 上各跑一遍，把 result_class 写进同文件的 candidate 段或并列文件。

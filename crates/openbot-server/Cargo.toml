@@ -23,6 +23,8 @@ testkit = ["openbot-contracts/testkit"]
 openbot-contracts.workspace = true
 # 唯一业务入口。transport 只经 `ApplicationService` 说话（v3 §5.2）。
 openbot-application.workspace = true
+# G2 起启动配置要落成领域类型（retention 窗口等），而不是一堆裸字符串。
+openbot-domain.workspace = true
 
 # `AuthResolver` / `ReadinessProbe` 都要对象安全（state 里持的是 `dyn`），
 # edition 2024 的 AFIT 仍不给对象安全，所以走 `async_trait`。
@@ -39,6 +41,12 @@ tower-http.workspace = true
 
 # 查询参数与响应体的 derive。
 serde = { workspace = true }
+# `AGENT_COMPUTER_POLICY` 是一段 JSON（上游 config.ts::computerConfig 在启动时解析并对非法值
+# 直接 throw）。启动期把它解析成 `openbot_domain::policy::ActionPolicy` 属于**配置校验**而不是
+# 业务判定：一个坏策略必须在启动时被发现，而不是等到第一次工具调用才 fail-closed 成"什么都不许"。
+# **不给 `ActionPolicy` 派生 `Deserialize`**：那会开一条"自由 JSON 直接铸造领域类型"的路（§5.2
+# 明令禁止的形态）。这里逐字段读、逐字段校验、再显式构造。
+serde_json = { workspace = true }
 
 # 请求 span。
 tracing.workspace = true
@@ -75,9 +83,10 @@ time.workspace = true
 # `util` 不改根 Cargo.toml，也不影响任何生产依赖图（`tower` 不在 `[dependencies]` 里）。
 tower = { workspace = true, features = ["util"] }
 
-# 断言线上 JSON 形状。刻意只在 dev 侧：生产代码里没有任何需要自由 JSON 的地方
-# （理由同 contracts 的同名注释 —— `serde_json::Value` 进依赖就是给"自由 params"留门）。
-serde_json.workspace = true
+# 注：`serde_json` 已上移到 [dependencies]（G2 起启动期要解析 `AGENT_COMPUTER_POLICY`），
+# 这里不再重复声明。它进生产依赖**不等于**放开"自由 params"：那条禁令针对的是
+# `AppCommand` 面接受任意 JSON，而 `AppCommand` 仍是封闭 enum，本 crate 的路由一个
+# `serde_json::Value` 参数都不收。
 
 # `#[tokio::test]`。生产侧不依赖 tokio：本 crate 不 spawn、不计时，
 # 运行时由宿主二进制提供。

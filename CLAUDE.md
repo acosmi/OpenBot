@@ -13,6 +13,13 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
   **G0 仍有一项未闭合**：§1.1 要求把两份输入文档原件归档到 `docs/inputs/`，仓内与本机都不存在原件，只有 SHA-256 —— 在补齐之前不得宣称 G0 通过。
 - **G1（Rust Core 与 PostgreSQL）四条判据本轮全部达成**（§24，四条缺一不可）：① 10 crate workspace + `cargo build --workspace --all-features --locked` 绿；② 同一个 `Arc<dyn ApplicationService>` 经 Axum 与 in-process 两条 transport 结果一致（`cargo test -p openbot-testkit --test transport_parity` = 7 passed，含"递到 port 上的调用逐字段相同"这条比结果更强的断言）；③ 28 表 / 13 migration 映射对走完 13 条 migration 的真参照库逐字段相等，read checksum 168/168 行逐字节相同（两条腿都在 PostgreSQL 侧渲染，避免"两边都用同一份 Rust 代码算"的自证）；④ tracing span + 关联字段 + 脱敏 + Prometheus metrics 从首个 vertical slice 生效。
   **以下仍未闭合，不得算进 G1**：`AuthResolver` 没有生产实现（属 G2 的 method/origin 面），所以还没有可独立运行的 Server 二进制；`/metrics` 的访问控制同属 G2；read checksum 只覆盖 seed 造出来的取值形态，不是全量数据证明；`InfraError::Connect` 只实测过鉴权失败一种形态；迁移账本只数条目不校验内容；跨 transport 对拍跑在 fake port 上（真库那条腿的 harness 在 infra 侧）；`subscribe` / `AppEventStream` 不在对拍矩阵内；span / metrics 尚无 `route` 维度；目标 PostgreSQL 17 未实测（本机 18.1）。
+- **G2（Auth/Vault/Policy/Audit）本轮交付的是「不依赖网络、不依赖 C 工具链」的那整块**，四条判据（§24 G2）逐条如实：
+  ① **CEL corpus 对等 —— 达成**：`fixtures/policy/cel-corpus.json` 的 69 条逐条在 Rust `cel 0.14.3` 上实跑，与 `cel-js@0.8.2` oracle 的分歧集合**恰好等于**一张写死的 6 条台账（`BTreeMap` 双向相等 + `evaluated == 69` 防跳过：多一条 = 既有规则语义悄悄翻转，少一条 = `cel` 改了行为）。6 条全是 `error → 非 error`，deny 侧放宽 2 条、allow 侧放宽 4 条。
+  ② **acting before durable decision = 0 —— 构造性那一半达成**：`openbot_domain::tool::pipeline` 是类型状态机，5 条 `compile_fail` doctest 钉住「没有 durable decision 拿不到 capability」「capability 用过即不可再用」「`ReconciliationRequired` 没有回到工具循环的边」「轮换不能跳过校验回读」。**持久化那一半未做**（`tool_calls` / `tool_attempts` 要 migration 0013）。
+  ③ **v1 credential/SSO decrypt + v2 rotation —— 达成**：v1 解密由**真跨语言互操作**证明（逐字节复制上游 `credentials.ts` 跑 node 产出 7 条信封 → Rust 解开明文逐字节相等 → 测试里内联的 fixture 再喂回上游 `decryptSecret`，双向闭合），每条正向断言配错密钥 / 翻密文位 / 翻 tag 位 / 翻 IV 位四种负向对照。
+  ④ **OIDC/SAML/session/role/group/revoke 全矩阵 —— 未闭合，且不得宣称闭合**：SAML 一行没写（`samael 0.0.22` 本机构建失败），真实 HTTP safe dialer 未做，token endpoint 交换未做。理由与边界见 §28.1 R29。
+  **其余未闭合项**：migration 0013（审计 hash chain 两列 / `audit_checkpoints` / `tool_calls` / `tool_attempts`）；infra repos（people / session / role / revoked / sso / credentials / action_policy / audit）；application 端口与用例；server 的生产 `AuthResolver`、`/metrics` 访问控制与 auth/admin 路由。
+- 本轮把 v3 §28.1 的修订行从 25 条推到 **34** 条（R26–R34）。其中两条是**会出事**的，实施时必须先读：**R27**（`cel` 的解析器爆栈，而 Rust 栈溢出是 abort 不是 panic，崩溃点还随线程栈大小变化）与 **R33**（`KEY_ENCRYPTION_KEY` 硬要求 32 字节会让 16/24 字节 KEK 的部署永远迁不出自己的密文 —— 「更严」在这里等于数据丢失）。
 - 上游对照固定在 `CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`，不引用会漂移的 `main`（§1.2）。
 
 ## 2. 目标定义（为什么是这条线）
