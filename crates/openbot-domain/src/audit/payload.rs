@@ -215,6 +215,12 @@ pub enum AuditFact {
     NewRole(AuditLabel),
     /// people 访问状态变更后的 revoked 值。
     AccessRevoked(bool),
+    /// 被退役 credential 的权威 owner 标识；只记 owner id，不记 token/密文。
+    CredentialOwner(AuditIdentifier),
+    /// credential 撤销原因的封闭分类。
+    RevocationReason(AuditLabel),
+    /// vendor 侧授权是否已经确认撤销；本地退役不能把 `false` 说成 `true`。
+    VendorRevoked(bool),
     /// 判定所依据的 computer 代际（§17.2 条 6）。
     ComputerGeneration(u64),
     /// 判定所依据的 catalog 代际（§8.5）。
@@ -280,6 +286,9 @@ impl AuditFact {
             Self::PreviousRole(_) => "previous_role",
             Self::NewRole(_) => "new_role",
             Self::AccessRevoked(_) => "access_revoked",
+            Self::CredentialOwner(_) => "credential_owner",
+            Self::RevocationReason(_) => "revocation_reason",
+            Self::VendorRevoked(_) => "vendor_revoked",
             Self::ComputerGeneration(_) => "computer_generation",
             Self::CatalogGeneration(_) => "catalog_generation",
             Self::DocumentGeneration(_) => "document_generation",
@@ -304,13 +313,15 @@ impl AuditFact {
             | Self::TargetId(value)
             | Self::DecisionId(value)
             | Self::PolicyVersion(value)
-            | Self::RefusedByRule(value) => Value::String(value.as_str().to_owned()),
+            | Self::RefusedByRule(value)
+            | Self::CredentialOwner(value) => Value::String(value.as_str().to_owned()),
             Self::EffectClass(label)
             | Self::TargetKind(label)
             | Self::ErrorCode(label)
             | Self::CommitState(label)
             | Self::PreviousRole(label)
             | Self::NewRole(label)
+            | Self::RevocationReason(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
             | Self::SandboxRequirement(label) => Value::String(label.as_str().to_owned()),
@@ -320,6 +331,7 @@ impl AuditFact {
             Self::EffectDowngraded(value)
             | Self::ParallelSafe(value)
             | Self::AccessRevoked(value)
+            | Self::VendorRevoked(value)
             | Self::OutputTruncated(value) => Value::Bool(*value),
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
@@ -366,13 +378,15 @@ impl AuditFact {
             | Self::TargetId(value)
             | Self::DecisionId(value)
             | Self::PolicyVersion(value)
-            | Self::RefusedByRule(value) => writer.str(value.as_str()),
+            | Self::RefusedByRule(value)
+            | Self::CredentialOwner(value) => writer.str(value.as_str()),
             Self::EffectClass(label)
             | Self::TargetKind(label)
             | Self::ErrorCode(label)
             | Self::CommitState(label)
             | Self::PreviousRole(label)
             | Self::NewRole(label)
+            | Self::RevocationReason(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
             | Self::SandboxRequirement(label) => writer.str(label.as_str()),
@@ -380,6 +394,7 @@ impl AuditFact {
             Self::EffectDowngraded(value)
             | Self::ParallelSafe(value)
             | Self::AccessRevoked(value)
+            | Self::VendorRevoked(value)
             | Self::OutputTruncated(value) => writer.bool(*value),
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
@@ -427,6 +442,9 @@ pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "previous_role",
     "new_role",
     "access_revoked",
+    "credential_owner",
+    "revocation_reason",
+    "vendor_revoked",
     "computer_generation",
     "catalog_generation",
     "document_generation",
@@ -567,6 +585,9 @@ mod tests {
             AuditFact::PreviousRole(AuditLabel::new("user")),
             AuditFact::NewRole(AuditLabel::new("admin")),
             AuditFact::AccessRevoked(true),
+            AuditFact::CredentialOwner(identifier("person-1")),
+            AuditFact::RevocationReason(AuditLabel::new("person_removed")),
+            AuditFact::VendorRevoked(false),
             AuditFact::ComputerGeneration(3),
             AuditFact::CatalogGeneration(4),
             AuditFact::DocumentGeneration(5),

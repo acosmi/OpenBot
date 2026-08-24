@@ -31,7 +31,7 @@
 //! | 模块 | 内容 | 方案出处 |
 //! | --- | --- | --- |
 //! | [`service`] | [`ApplicationService`] trait 与 [`AppEventStream`] | §5.2 |
-//! | [`ports`] | channel / people / audit typed ports | §5.2 / §6.2 / §8.6 / R40 / R56 |
+//! | [`ports`] | channel / people / owned-credential retirement / audit typed ports | §5.2 / §6.2 / §6.4 / §8.6 / R40 / R56 / R59 |
 //! | [`cursor`] | keyset 游标 [`ChannelCursor`] 的铸造与 fail-closed 解析 | §15.3 |
 //! | [`use_cases`] | health/channel、people role/access 与 admin audit keyset 用例 | §6.2 / §6.5 / §8.6 / R56 |
 //! | [`tool`] | metadata→scope→policy→approval→journal→capability→execute→outcome/audit | §8.1 / R41 |
@@ -81,8 +81,9 @@ pub use app::OpenBotApplication;
 pub use cursor::{ChannelCursor, channel_recency};
 pub use ports::{
     AuditPageRequest, AuditReadError, AuditReader, ChannelReader, NoAuditReader,
-    NoPeopleAdministration, NoPolicyAdministration, PeopleAdministration, PeoplePageRequest,
-    PeoplePortError, PolicyAdministration, PolicyAdministrationError, PortError,
+    NoPeopleAdministration, NoPolicyAdministration, OwnedCredentialRetirementError,
+    OwnedCredentialRetirer, PeopleAdministration, PeoplePageRequest, PeoplePortError,
+    PolicyAdministration, PolicyAdministrationError, PortError,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,

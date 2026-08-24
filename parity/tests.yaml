@@ -77,7 +77,7 @@ recount:
     expect: 234
   - command: "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]'"
     cwd: repo
-    expect: done=111 todo=123 in_progress=0 total=234
+    expect: done=122 todo=112 in_progress=0 total=234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 932
+    expect: 921
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -8759,112 +8759,123 @@ entries:
   - id: "server-tests-plugin-user-credential-integration--a-person-who-has-not-connected--is-refused-and-told-to-connect-rather-than-told-it-broke"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::a person who has not connected"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::is_refused_and_told_to_connect_rather_than_told_it_broke"
+    target: "openbot_infra::tests::plugin_user_credential::is_refused_and_told_to_connect_rather_than_told_it_broke"
     owner: openbot-infra
     test_id: T-TEST-0833
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1007]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "CARGO_INCREMENTAL=0 cargo test -p openbot-infra --test plugin_user_credential --locked -- --include-ignored --test-threads=1 => 11/0/0；无 join 时精确 mcp_user_connection_required，随后同库补 client+个人连接的正向 exchange 成功"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「is refused, and told to connect rather than told it broke」。"
   - id: "server-tests-plugin-user-credential-integration--a-person-who-has-not-connected--is-not-quietly-served-the-deployment-s-own-credential"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::a person who has not connected"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::is_not_quietly_served_the_deployment_s_own_credential"
+    target: "openbot_infra::tests::plugin_user_credential::is_not_quietly_served_the_deployment_s_own_credential"
     owner: openbot-infra
     test_id: T-TEST-0834
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1008]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：deployment OAuth client 是可解 v2 真行，但 asker 无 (server,user) join 仍精确拒绝；补个人行后同一 client 正向可用"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「is not quietly served the deployment's own credential」。"
   - id: "server-tests-plugin-user-credential-integration--nobody-in-particular--cannot-borrow-a-connected-person-s-access"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::nobody in particular"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::cannot_borrow_a_connected_person_s_access"
+    target: "openbot_infra::tests::plugin_user_credential::cannot_borrow_a_connected_person_s_access"
     owner: openbot-infra
     test_id: T-TEST-0835
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1010]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：空 ActorId 在碰库前精确 mcp_user_actor_required；同 fixture 的具名 asker 正向 exchange 成功，排除恒拒绝"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「cannot borrow a connected person's access」。"
   - id: "server-tests-plugin-user-credential-integration--a-person-who-has-connected--is-told-plainly-when-the-deployment-has-registered-no-cl"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::a person who has connected"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::is_told_plainly_when_the_deployment_has_registered_no_cl"
+    target: "openbot_infra::tests::plugin_user_credential::is_told_plainly_when_the_deployment_has_registered_no_client"
     owner: openbot-infra
     test_id: T-TEST-0836
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1012]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：个人 v2 token/join 已存在而 server.credential_id=NULL 时精确 mcp_oauth_client_required；登记 client 后正向成功"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「is told plainly when the deployment has registered no client」。"
   - id: "server-tests-plugin-user-credential-integration--a-person-who-has-connected--goes-out-with-their-own-token-and-nobody-else-s"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::a person who has connected"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::goes_out_with_their_own_token_and_nobody_else_s"
+    target: "openbot_infra::tests::plugin_user_credential::goes_out_with_their_own_token_and_nobody_else_s"
     owner: openbot-infra
     test_id: T-TEST-0837
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1013]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：两 actor 的 refresh 摘要分别只进入一次 token exchanger、互不相等；deployment client 摘要相同，证明按 (server,actor) 精确选择"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「goes out with their own token and nobody else's」。"
   - id: "server-tests-plugin-user-credential-integration--a-person-who-has-connected--never-sends-the-refresh-token-itself-to-the-vendor"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::a person who has connected"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::never_sends_the_refresh_token_itself_to_the_vendor"
+    target: "openbot_infra::tests::plugin_user_credential::never_sends_the_refresh_token_itself_to_the_vendor"
     owner: openbot-infra
     test_id: T-TEST-0838
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1014]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：token exchanger 回显 refresh 时常数时间命中 oauth_refresh_token_passthrough_refused，无法铸 VendorAccessToken；正向 access 摘要与 refresh 不同"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「never sends the refresh token itself to the vendor」。"
   - id: "server-tests-plugin-user-credential-integration--a-person-who-has-connected--is-refused-once-their-credential-is-revoked-and-told-to"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::a person who has connected"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::is_refused_once_their_credential_is_revoked_and_told_to"
+    target: "openbot_infra::tests::plugin_user_credential::is_refused_once_their_credential_is_revoked_and_told_to_reconnect"
     owner: openbot-infra
     test_id: T-TEST-0839
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1015]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：join 指向 revoked_at 非空真行时精确 mcp_user_reconnect_required；重连换新 v2 行后正向 exchange 成功"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「is refused once their credential is revoked, and told to reconnect」。"
   - id: "server-tests-plugin-user-credential-integration--a-person-who-has-connected--does-not-gain-access-to-a-server-they-connected-a-differ"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::a person who has connected"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::does_not_gain_access_to_a_server_they_connected_a_differ"
+    target: "openbot_infra::tests::plugin_user_credential::does_not_gain_access_to_a_server_they_connected_a_different_one_for"
     owner: openbot-infra
     test_id: T-TEST-0840
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1016]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：Drive 与 Calendar 均有 deployment client，仅 Drive 有 asker join；Calendar 精确拒绝、Drive 正向成功"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「does not gain access to a server they connected a different one for」。"
   - id: "server-tests-plugin-user-credential-integration--retiring-the-credentials-a-person-owns--the-vault-stops-holding-a-usable-secret-and-the-connecti"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::retiring the credentials a person owns"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::the_vault_stops_holding_a_usable_secret_and_the_connecti"
+    target: "openbot_infra::tests::plugin_user_credential::the_vault_stops_holding_a_usable_secret_and_the_connection_is_gone"
     owner: openbot-infra
     test_id: T-TEST-0841
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1018]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：先正向 exchange，再经 PeopleAdministration access revoke→Server 已注入 OwnedCredentialRetirer；active token=0、join=0、typed mcp.account_disconnected audit=1、后续调用拒绝"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「the vault stops holding a usable secret, and the connection is gone」。"
   - id: "server-tests-plugin-user-credential-integration--retiring-the-credentials-a-person-owns--a-credential-orphaned-by-a-deleted-user-row-is-still-ret"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::retiring the credentials a person owns"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::a_credential_orphaned_by_a_deleted_user_row_is_still_ret"
+    target: "openbot_infra::tests::plugin_user_credential::a_credential_orphaned_by_a_deleted_user_row_is_still_retired"
     owner: openbot-infra
     test_id: T-TEST-0842
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1019]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：真实 DELETE users 使 join 经 FK cascade=0 而 vault active=1；按 credentials(kind,key_id) 直接找回后 retired=1/active=0"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「a credential orphaned by a deleted user row is still retired」。"
   - id: "server-tests-plugin-user-credential-integration--retiring-the-credentials-a-person-owns--retiring-twice-is-quiet-and-nobody-owns-nothing"
     upstream: "server/tests/plugin-user-credential.integration.test.ts::retiring the credentials a person owns"
     label: parity
-    target: "openbot_infra::store::plugin_user_credential::tests::retiring_twice_is_quiet_and_nobody_owns_nothing"
+    target: "openbot_infra::tests::plugin_user_credential::retiring_twice_is_quiet_and_nobody_owns_nothing"
     owner: openbot-infra
     test_id: T-TEST-0843
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1020]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 11/0/0：同 owner 一条 join token+一条孤儿 token 首次 retired=2，第二次=0，空 owner=0；无测试顺序计数依赖"
     notes: "ported —— v3 §6.4 Vault + §9.2 连接生命周期：个人凭据的连接、缺失与退役判据逐条移植。上游用例标题：「retiring twice is quiet, and nobody owns nothing」。"
   # ---------------------------------------------------------------------------
   # server/tests/policy-durability.integration.test.ts —— owner openbot-infra / ported / parity

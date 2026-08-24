@@ -28,6 +28,7 @@ use openbot_infra::policy::{PolicyListener, PolicyStore};
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
+use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
 use openbot_server::config::{DeploymentEnvironment, ServerConfig, env_map_from_process};
 use openbot_server::readiness::ReadinessVerdict;
 use openbot_server::telemetry::{self, LogFormat};
@@ -166,7 +167,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
     };
 
-    let people = PostgresPeopleAdministration::new(pool.clone(), floor, audit_key.to_vec())?;
+    let owned_credentials = Arc::new(PostgresOwnedCredentialRetirer::new(
+        pool.clone(),
+        audit_key.to_vec(),
+    )?);
+    let people = PostgresPeopleAdministration::new(pool.clone(), floor, audit_key.to_vec())?
+        .with_owned_credential_retirer(owned_credentials);
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(ChannelRepo::new(pool.clone()))
             .with_people(people)

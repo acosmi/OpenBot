@@ -24,7 +24,7 @@
 //! - **读环境变量**：连接参数一律由调用方以 [`db::pool::DatabaseConfig`] 显式传入。env 的三档
 //!   裁决（v3 §15.4）属于启动 / transport 层，不在本 crate。
 //!
-//! # 当前状态（G1 + W-1/W-2 + W-3a/W-3b）
+//! # 当前状态（G1 + W-1/W-2 + W-3a/W-3b + W-5 batch 6）
 //!
 //! 已落地的是数据库 schema 层，也就是 v3 §24 G1 判据「28 表/13 migration 映射」的执行面：
 //!
@@ -49,6 +49,8 @@
 //!   journal；outcome 与 audit 同事务，unknown 固定进 reconciliation（R41）。
 //! - [`policy`] —— action policy 权威行、raw+预编译内存快照、同事务 NOTIFY 与专用重连
 //!   listener（R56）。
+//! - [`store::plugin_user_credential`] —— per-user OAuth 按 `(server, actor)` 的网络前选择、
+//!   refresh/access 类型隔离，以及 People 移除后的正常/孤儿 credential 事务退役（R59）。
 //!
 //! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
 //! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
@@ -61,4 +63,5 @@ pub mod db;
 pub mod net;
 pub mod policy;
 pub mod repo;
+pub mod store;
 pub mod vault;
