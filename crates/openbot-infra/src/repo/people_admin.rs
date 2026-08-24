@@ -413,7 +413,7 @@ async fn find_person<C: GenericClient + Sync>(
     id: &ActorId,
     floor: Option<&AdminFloor>,
 ) -> Result<Option<PersonRecord>, InfraError> {
-    let sql = format!("{PERSON_SELECT} WHERE u.id=$1 GROUP BY u.id");
+    let sql = person_by_id_sql();
     let row = client
         .query_opt(&sql, &[&id.as_str()])
         .await
@@ -421,6 +421,10 @@ async fn find_person<C: GenericClient + Sync>(
     row.as_ref()
         .map(|row| person_from_row(row, floor))
         .transpose()
+}
+
+fn person_by_id_sql() -> String {
+    format!("{PERSON_SELECT} WHERE u.id=$1 GROUP BY u.id")
 }
 
 async fn list_people<C: GenericClient + Sync>(
@@ -598,5 +602,33 @@ fn port_error(error: InfraError) -> PeoplePortError {
         | InfraError::Query { .. }
         | InfraError::IncompatibleDatabase(_)
         | InfraError::NativeMigration(_) => PeoplePortError::Unavailable,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 固定上游 `PeopleStore.find()` 的复杂度判据：按 id 的过滤必须在聚合前进入 SQL，
+    /// 不能退回 `list().find(...)` 或先构造 deployment-wide CTE 再在 Rust 里筛。
+    #[test]
+    fn finding_one_person_is_id_bounded_before_aggregation() {
+        let sql = person_by_id_sql();
+        assert_eq!(sql.matches("WHERE u.id=$1").count(), 1);
+        assert_eq!(sql.matches("GROUP BY u.id").count(), 1);
+        assert!(
+            sql.find("WHERE u.id=$1") < sql.find("GROUP BY u.id"),
+            "主键谓词必须在 person 聚合之前：{sql}",
+        );
+        assert!(
+            !sql.contains("WITH people AS") && !sql.contains("SELECT * FROM people"),
+            "point lookup 不得复用 deployment-wide list 查询：{sql}",
+        );
+
+        // 正向对照：列表生产 SQL 确实使用 `WITH people AS`；上面的零命中不是拼错关键字。
+        let list_sql =
+            format!("WITH people AS ({PERSON_SELECT} GROUP BY u.id) SELECT * FROM people");
+        assert!(list_sql.contains("WITH people AS"));
+        assert!(list_sql.contains("SELECT * FROM people"));
     }
 }

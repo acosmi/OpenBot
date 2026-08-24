@@ -4,6 +4,7 @@ use openbot_contracts::auth::{AuthContext, Role};
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ActorId;
 use openbot_contracts::people::{AdminState, AdminStatus, CurrentUser, PeoplePage, Person};
+use openbot_domain::text::trim_ecmascript;
 
 use crate::ports::{PeopleAdministration, PeoplePageRequest};
 
@@ -41,7 +42,7 @@ pub async fn list_people<P: PeopleAdministration>(
 ) -> Result<PeoplePage, AppError> {
     require_admin(auth)?;
     let search = search.and_then(|value| {
-        let trimmed = value.trim();
+        let trimmed = trim_ecmascript(&value);
         (!trimmed.is_empty()).then(|| trimmed.to_owned())
     });
     let limit = limit
@@ -152,6 +153,51 @@ mod tests {
                 cursor: Some("opaque".to_owned()),
                 limit: MAX_PEOPLE_PAGE,
             })]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_search_uses_exact_ecmascript_trim_string() {
+        let people = FakePeopleAdministration::seeded([
+            sample_person("admin-1", Role::Admin),
+            sample_person("user-1", Role::User),
+        ]);
+        let admin = auth("admin-1", [Role::Admin]);
+
+        list_people(
+            &people,
+            &admin,
+            Some("\u{FEFF}\u{3000}user\u{00A0}".to_owned()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        list_people(
+            &people,
+            &admin,
+            Some("\u{0085}user\u{0085}".to_owned()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            people.calls(),
+            vec![
+                PeopleCall::List(PeoplePageRequest {
+                    search: Some("user".to_owned()),
+                    cursor: None,
+                    limit: DEFAULT_PEOPLE_PAGE,
+                }),
+                PeopleCall::List(PeoplePageRequest {
+                    search: Some("\u{0085}user\u{0085}".to_owned()),
+                    cursor: None,
+                    limit: DEFAULT_PEOPLE_PAGE,
+                }),
+            ],
+            "BOM 必须裁掉，而 ECMAScript 不认的 U+0085 必须保留",
         );
     }
 
