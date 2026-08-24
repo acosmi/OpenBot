@@ -96,9 +96,10 @@ jobs:
       - name: 安装 SAML xmlsec 原生闭包
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl libclang-dev pkg-config libssl-dev
+          sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl libclang-dev pkg-config libssl-dev ripgrep
           xmlsec1-config --version
           pkg-config --modversion libxml-2.0 openssl
+          rg --version
 
       - name: 安装 rust-toolchain.toml 钉住的工具链
         # rustup 读仓根 rust-toolchain.toml（channel + rustfmt/clippy components）。
@@ -159,8 +160,9 @@ jobs:
       - name: 安装 SAML xmlsec 原生闭包
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl libclang-dev pkg-config libssl-dev
+          sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl libclang-dev pkg-config libssl-dev ripgrep
           xmlsec1-config --version
+          rg --version
 
       - name: 安装 rust-toolchain.toml 钉住的工具链
         run: rustup show
