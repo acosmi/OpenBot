@@ -22,11 +22,11 @@ for exact in \
   'openssl-sys v0.9.117' 'pkg-config v0.3.34' 'prettyplease v0.2.37' \
   'quick-xml v0.41.0' 'samael v0.0.22' 'shlex v1.3.0' \
   'simd-adler32 v0.3.10' 'vcpkg v0.2.15'; do
-  printf '%s\n' "$tree" | grep -qxF "$exact" || fail "依赖图缺少精确版本 $exact"
+  grep -qxF "$exact" <<< "$tree" || fail "依赖图缺少精确版本 $exact"
 done
 
 feature_tree=$(cargo tree -p openbot-infra -e features --prefix none --locked | sed -E 's/ \(\*\)$//' | sort -u)
-printf '%s\n' "$feature_tree" | grep -qxF 'samael feature "xmlsec"' \
+grep -qxF 'samael feature "xmlsec"' <<< "$feature_tree" \
   || fail 'samael xmlsec feature 未生效'
 
 metadata=$(cargo metadata --format-version 1 --locked)
