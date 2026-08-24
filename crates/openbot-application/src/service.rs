@@ -110,6 +110,9 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::GetActionPolicy => "get_action_policy",
         AppCommand::SetActionPolicy { .. } => "set_action_policy",
         AppCommand::InvokeTool(_) => "invoke_tool",
+        AppCommand::MintThreadId => "mint_thread_id",
+        AppCommand::GetThreadStatus { .. } => "get_thread_status",
+        AppCommand::BeginThreadRun(_) => "begin_thread_run",
     }
 }
 
@@ -118,6 +121,7 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
 pub const fn subscription_kind(request: &SubscriptionRequest) -> &'static str {
     match request {
         SubscriptionRequest::Health => "health",
+        SubscriptionRequest::ThreadEvents { .. } => "thread_events",
     }
 }
 
@@ -226,11 +230,41 @@ mod tests {
                 }),
                 "invoke_tool",
             ),
+            (AppCommand::MintThreadId, "mint_thread_id"),
+            (
+                AppCommand::GetThreadStatus {
+                    thread_id: openbot_contracts::ids::ThreadId::new(
+                        "550e8400-e29b-41d4-a716-446655440000",
+                    ),
+                },
+                "get_thread_status",
+            ),
+            (
+                AppCommand::BeginThreadRun(openbot_contracts::command::BeginThreadRun {
+                    thread_id: openbot_contracts::ids::ThreadId::new(
+                        "550e8400-e29b-81d4-a716-446655440000",
+                    ),
+                    run_id: RunId::new("r2"),
+                    bot_id: BotId::new("b2"),
+                    anchor: openbot_contracts::command::ThreadRunAnchor::DirectBot,
+                    message: "hello".to_owned(),
+                }),
+                "begin_thread_run",
+            ),
         ];
         for (command, expected) in commands {
             assert_eq!(command_kind(&command), expected);
         }
         assert_eq!(subscription_kind(&SubscriptionRequest::Health), "health");
+        assert_eq!(
+            subscription_kind(&SubscriptionRequest::ThreadEvents {
+                thread_id: openbot_contracts::ids::ThreadId::new(
+                    "550e8400-e29b-81d4-a716-446655440000",
+                ),
+                after_event_sequence: Some(3),
+            }),
+            "thread_events"
+        );
     }
 
     /// `AppEventStream` 必须是 `Send` 的 boxed stream：transport 会把它挪进另一个任务。

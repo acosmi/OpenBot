@@ -47,6 +47,9 @@ getrandom.workspace = true
 
 # `ChannelReader` 是 `#[async_trait]` trait，实现侧必须同样标注。
 async-trait.workspace = true
+# R65 的 LISTEN/replay receiver 直接实现 application 的 `Stream` 边界；只需 core trait，
+# 不为一个 `StreamExt` 拉入 futures-util。package 已在既有锁图内，新 package=0。
+futures-core.workspace = true
 
 # `PortError` 只带静态字段（端口文档：数据库原值是不可信数据，不进错误）。
 # 真正的故障细节由实现侧自己 trace 出去 —— 只依赖 facade，不依赖 subscriber。

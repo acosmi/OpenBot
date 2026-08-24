@@ -24,17 +24,18 @@
 //!   query —— 这四条在 v3 §5.2 是逐字禁止项。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # 当前状态（G1 + people/tool + W-5 audit read boundary）
+//! # 当前状态（G1 + people/tool/audit + G3 thread transaction/live boundary）
 //!
 //! Phase 0 本 crate 刻意为空；G1 起它承载一个垂直切片所需的全部四层：
 //!
 //! | 模块 | 内容 | 方案出处 |
 //! | --- | --- | --- |
 //! | [`service`] | [`ApplicationService`] trait 与 [`AppEventStream`] | §5.2 |
-//! | [`ports`] | channel / people / owned-credential retirement / audit typed ports | §5.2 / §6.2 / §6.4 / §8.6 / R40 / R56 / R59 |
+//! | [`ports`] | channel / people / owned-credential retirement / audit / native thread typed ports | §5.2 / §4.1 / §6.2 / §6.4 / §8.6 / R40 / R56 / R59 / R64–R65 |
 //! | [`cursor`] | keyset 游标 [`ChannelCursor`] 的铸造与 fail-closed 解析 | §15.3 |
 //! | [`tenant`] | Tenant Package 五 YAML、audience 校验与 PostgreSQL 同步 port | §3.2 / §6.5 / R60 |
-//! | [`use_cases`] | health/channel、people role/access 与 admin audit keyset 用例 | §6.2 / §6.5 / §8.6 / R56 |
+//! | [`use_cases`] | health/channel、people role/access、admin audit、thread mint/status/begin/subscribe | §4.1 / §4.3 / §6.2 / §6.5 / §8.6 / R56 / R64–R65 |
+//! | [`chunk`] | 50ms/8KiB UTF-8 semantic chunk accumulator；真实 provider 接线仍待 G4 | §4.3 / R65 |
 //! | [`tool`] | metadata→scope→policy→approval→journal→capability→execute→outcome/audit | §8.1 / R41 |
 //!
 //! 具体实现 [`OpenBotApplication`] 把上面四层接起来，是 transport 唯一需要构造的类型。
@@ -69,6 +70,7 @@
 #![deny(missing_docs)]
 
 mod app;
+pub mod chunk;
 pub mod cursor;
 pub mod ports;
 pub mod service;
@@ -80,12 +82,14 @@ pub mod use_cases;
 mod fakes;
 
 pub use app::OpenBotApplication;
+pub use chunk::{SEMANTIC_CHUNK_MAX_BYTES, SEMANTIC_CHUNK_MAX_DELAY, SemanticChunkAccumulator};
 pub use cursor::{ChannelCursor, channel_recency};
 pub use ports::{
-    AuditPageRequest, AuditReadError, AuditReader, ChannelReader, NoAuditReader,
-    NoPeopleAdministration, NoPolicyAdministration, OwnedCredentialRetirementError,
-    OwnedCredentialRetirer, PeopleAdministration, PeoplePageRequest, PeoplePortError,
-    PolicyAdministration, PolicyAdministrationError, PortError,
+    AuditPageRequest, AuditReadError, AuditReader, BeginThreadRunRequest, ChannelReader,
+    NoAuditReader, NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory,
+    OwnedCredentialRetirementError, OwnedCredentialRetirer, PeopleAdministration,
+    PeoplePageRequest, PeoplePortError, PolicyAdministration, PolicyAdministrationError, PortError,
+    ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,
@@ -99,6 +103,7 @@ pub use tool::{
 };
 pub use use_cases::{
     DEFAULT_AUDIT_PAGE, DEFAULT_CHANNEL_PAGE, DEFAULT_PEOPLE_PAGE, MAX_AUDIT_PAGE, MAX_PEOPLE_PAGE,
-    admin_status, change_person_access, change_person_role, current_user, get_action_policy,
-    health, list_audit_events, list_people, list_visible_channels, set_action_policy,
+    admin_status, begin_thread_run, change_person_access, change_person_role, current_user,
+    get_action_policy, get_thread_status, health, list_audit_events, list_people,
+    list_visible_channels, mint_thread_id, set_action_policy, subscribe_thread_events,
 };

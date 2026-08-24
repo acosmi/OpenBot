@@ -53,12 +53,15 @@
 //!   refresh/access 类型隔离，以及 People 移除后的正常/孤儿 credential 事务退役（R59）。
 //! - [`tenant`] —— 五 YAML 有界 loader、checksum、collision-safe PostgreSQL package sync 与
 //!   materialized membership/generation/session 原子投影（R60）。
+//! - [`thread_directory`] —— OS CSPRNG mint、scope status、同事务 BeginThreadRun 与
+//!   LISTEN-before-replay/SSE producer；最终请求路径零 Intelligence fallback（R64–R65）。
 //!
 //! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
 //! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
 //! Server KMS/HSM、多平台原生发行，以及 G4 的真实 browser/file/shell/MCP/Drive executor。
-//! 0016 已把 `thread/run/outbox/memory/import` 的 10 个 repo 与对应物理表同批实现；没有创建
-//! 零方法空 struct 冒充完成。SSE/WS live、transactional append、memory user journey 仍归后续 G3。
+//! 0016 已把 `thread/run/outbox/memory/import` 的 10 个 repo 与对应物理表同批实现；R64/R65
+//! 又接 mint/status、transactional begin 与 SSE live。WebSocket/history、真实 Agent consumer、
+//! memory user journey 仍归后续 G3/G4。
 
 pub mod auth;
 pub mod db;
@@ -67,5 +70,6 @@ pub mod policy;
 pub mod repo;
 pub mod store;
 pub mod tenant;
+pub mod thread_directory;
 pub mod thread_id;
 pub mod vault;

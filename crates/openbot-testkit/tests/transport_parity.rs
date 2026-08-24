@@ -412,7 +412,10 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::ListAuditEvents { .. }
         | AppCommand::GetActionPolicy
         | AppCommand::SetActionPolicy { .. }
-        | AppCommand::InvokeTool(_) => None,
+        | AppCommand::InvokeTool(_)
+        | AppCommand::MintThreadId
+        | AppCommand::GetThreadStatus { .. }
+        | AppCommand::BeginThreadRun(_) => None,
     }
 }
 

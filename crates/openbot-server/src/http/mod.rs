@@ -10,6 +10,9 @@
 //! readiness-get           target: "openbot-server::http::readiness (GET /readiness)"
 //! metrics-get             target: "openbot-server::http::metrics (GET /metrics)"
 //! api-channels-list-get   target: "openbot-server::http::channels::list (GET /api/channels)"
+//! api-threads-mint-post   target: "openbot-server::http::threads::mint (POST /api/threads/mint)"
+//! api-threads-get         target: "openbot-server::http::threads::status (GET /api/threads/{thread_id})"
+//! thread-events-sse-get   target: "openbot-server::http::threads::events (GET /api/threads/{thread_id}/events)"
 //! ```
 //!
 //! 所以 [`health`] / [`channels`] / [`metrics`] 这几个模块名、[`channels::list`] 这个函数名
@@ -42,6 +45,7 @@ pub mod channels;
 pub mod computers;
 pub mod health;
 pub mod metrics;
+pub mod threads;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -363,6 +367,9 @@ pub fn router(state: ServerState) -> Router {
             get(auth_sso::saml_metadata),
         )
         .route("/api/channels", get(channels::list))
+        .route("/api/threads/mint", post(threads::mint))
+        .route("/api/threads/{thread_id}/events", get(threads::events))
+        .route("/api/threads/{thread_id}", get(threads::status))
         .route("/api/me", get(admin::me))
         .route("/api/admin/status", get(admin::status))
         .route("/api/admin/identity-providers", get(auth_sso::list))

@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 886
+    expect: 878
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -10414,82 +10414,90 @@ entries:
   - id: "server-tests-thread-routes--minting-a-thread--returns-one-this-deployment-can-recognise-later"
     upstream: "server/tests/thread-routes.test.ts::minting a thread"
     label: 替代
-    target: "openbot_server::routes::threads::tests::returns_one_this_deployment_can_recognise_later"
+    target: "openbot_server::http::threads::tests::returns_one_this_deployment_can_recognise_later"
     owner: openbot-server
     test_id: T-TEST-0986
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1197]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-server http::threads::tests --all-features --locked => 9/0/0；HTTP→typed ApplicationService→ThreadDirectory 返回 UUIDv8，固定 deployment identity owns=true"
     notes: "ported —— v3 §4.1 条 1/2/3（Rust/PostgreSQL 是 thread 唯一真源，最终请求路径不读不写 Intelligence）+ §2.4 第 4 行（issue #72：从未运行的 thread history 返回 500 → Rust 版明确返回空 history），故'向上游确认线程是否还在'这一面被删除、错误语义被修正；铸造线程判据逐条移植。上游用例标题：「returns one this deployment can recognise later」。"
   - id: "server-tests-thread-routes--minting-a-thread--returns-a-different-one-every-time"
     upstream: "server/tests/thread-routes.test.ts::minting a thread"
     label: 替代
-    target: "openbot_server::routes::threads::tests::returns_a_different_one_every_time"
+    target: "openbot_server::http::threads::tests::returns_a_different_one_every_time"
     owner: openbot-server
     test_id: T-TEST-0987
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1198]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "thread 路由 9/0/0：同一个 application/issuer 连续两次 POST /mint 的 threadId 不相等；production OS CSPRNG issuer 另有 1000 次唯一证据"
     notes: "ported —— v3 §4.1 条 1/2/3（Rust/PostgreSQL 是 thread 唯一真源，最终请求路径不读不写 Intelligence）+ §2.4 第 4 行（issue #72：从未运行的 thread history 返回 500 → Rust 版明确返回空 history），故'向上游确认线程是否还在'这一面被删除、错误语义被修正；铸造线程判据逐条移植。上游用例标题：「returns a different one every time」。"
   - id: "server-tests-thread-routes--minting-a-thread--does-not-answer-a-caller-with-no-session"
     upstream: "server/tests/thread-routes.test.ts::minting a thread"
     label: 替代
-    target: "openbot_server::routes::threads::tests::does_not_answer_a_caller_with_no_session"
+    target: "openbot_server::http::threads::tests::does_not_answer_a_caller_with_no_session"
     owner: openbot-server
     test_id: T-TEST-0988
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1199]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "thread 路由 9/0/0：AuthResolver 401 在 ApplicationService 前拒绝，ThreadDirectory mint 调用数严格为 0，响应只含稳定 unauthenticated code"
     notes: "ported —— v3 §4.1 条 1/2/3（Rust/PostgreSQL 是 thread 唯一真源，最终请求路径不读不写 Intelligence）+ §2.4 第 4 行（issue #72：从未运行的 thread history 返回 500 → Rust 版明确返回空 history），故'向上游确认线程是否还在'这一面被删除、错误语义被修正；铸造线程判据逐条移植。上游用例标题：「does not answer a caller with no session」。"
   - id: "server-tests-thread-routes--checking-whether-a-remembered-thread-is--answers-known-when-the-reader-can-produce-the-thread"
     upstream: "server/tests/thread-routes.test.ts::checking whether a remembered thread is still known upstream"
     label: 替代
-    target: "openbot_server::routes::threads::tests::answers_known_when_the_reader_can_produce_the_thread"
+    target: "openbot_server::http::threads::tests::answers_known_when_the_native_store_can_produce_the_thread"
     owner: openbot-server
     test_id: T-TEST-0989
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1201]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "thread 路由 9/0/0 + PG17/SCRAM thread_directory 1/0/0：精确 deployment+tenant+actor membership 的 native thread 返回 200 known:true；legacy UUID 不要求当前 identity owns"
     notes: "ported —— v3 §4.1 条 1/2/3（Rust/PostgreSQL 是 thread 唯一真源，最终请求路径不读不写 Intelligence）+ §2.4 第 4 行（issue #72：从未运行的 thread history 返回 500 → Rust 版明确返回空 history），故'向上游确认线程是否还在'这一面被删除、错误语义被修正；铸造线程判据逐条移植。上游用例标题：「answers known when the reader can produce the thread」。"
   - id: "server-tests-thread-routes--checking-whether-a-remembered-thread-is--answers-unknown-when-the-reader-reports-intelligence-has"
     upstream: "server/tests/thread-routes.test.ts::checking whether a remembered thread is still known upstream"
     label: 替代
-    target: "openbot_server::routes::threads::tests::answers_unknown_when_the_reader_reports_intelligence_has"
+    target: "openbot_server::http::threads::tests::answers_unknown_when_the_native_store_has_never_heard_of_it"
     owner: openbot-server
     test_id: T-TEST-0990
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1202]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "thread 路由 9/0/0 + PG17/SCRAM scope 矩阵：不存在、已删除、无 membership、错 deployment/tenant/actor 全部统一 200 known:false"
     notes: "ported —— v3 §4.1 条 1/2/3（Rust/PostgreSQL 是 thread 唯一真源，最终请求路径不读不写 Intelligence）+ §2.4 第 4 行（issue #72：从未运行的 thread history 返回 500 → Rust 版明确返回空 history），故'向上游确认线程是否还在'这一面被删除、错误语义被修正；铸造线程判据逐条移植。上游用例标题：「answers unknown when the reader reports Intelligence has never heard of it」。"
   - id: "server-tests-thread-routes--checking-whether-a-remembered-thread-is--answers-502-not-the-reader-s-own-error-when-the-check-it"
     upstream: "server/tests/thread-routes.test.ts::checking whether a remembered thread is still known upstream"
     label: 替代
-    target: "openbot_server::routes::threads::tests::answers_502_not_the_reader_s_own_error_when_the_check_it"
+    target: "openbot_server::http::threads::tests::native_store_failure_is_503_and_never_leaks_its_own_error"
     owner: openbot-server
     test_id: T-TEST-0991
-    migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    migration_rule: "rename: ported with explicit replacement —— §4.1 删除 Intelligence vendor，native PostgreSQL 失败按 §15.3 映射 503，不再伪装 502 vendor failure"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1203]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "thread 路由 9/0/0：ThreadDirectory failure 精确返回 503 dependency_unavailable，body 不含 database/连接错误/拓扑；与 200 known:false 明确分离"
     notes: "ported —— v3 §4.1 条 1/2/3（Rust/PostgreSQL 是 thread 唯一真源，最终请求路径不读不写 Intelligence）+ §2.4 第 4 行（issue #72：从未运行的 thread history 返回 500 → Rust 版明确返回空 history），故'向上游确认线程是否还在'这一面被删除、错误语义被修正；铸造线程判据逐条移植。上游用例标题：「answers 502, not the reader's own error, when the check itself fails」。"
   - id: "server-tests-thread-routes--checking-whether-a-remembered-thread-is--is-not-registered-at-all-when-the-deployment-has-no-read"
     upstream: "server/tests/thread-routes.test.ts::checking whether a remembered thread is still known upstream"
     label: 替代
-    target: "openbot_server::routes::threads::tests::is_not_registered_at_all_when_the_deployment_has_no_read"
+    target: "openbot_server::http::threads::tests::status_is_always_registered_without_intelligence_and_mint_keeps_working"
     owner: openbot-server
     test_id: T-TEST-0992
-    migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    migration_rule: "rename: ported with explicit replacement —— §4.1 要求无 Intelligence 配置完整运行，故 status 恒注册并由 PostgreSQL 返回 known:false；mint 不受状态行存在与否影响"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1204]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "thread 路由 9/0/0：零 Intelligence 类型/配置下 GET 路由仍注册并回 200 false，同一 Router POST /mint 继续 200；生产 main 只注入 PostgresThreadDirectory"
     notes: "ported —— v3 §4.1 条 1/2/3（Rust/PostgreSQL 是 thread 唯一真源，最终请求路径不读不写 Intelligence）+ §2.4 第 4 行（issue #72：从未运行的 thread history 返回 500 → Rust 版明确返回空 history），故'向上游确认线程是否还在'这一面被删除、错误语义被修正；铸造线程判据逐条移植。上游用例标题：「is not registered at all when the deployment has no reader, and mint keeps working」。"
   - id: "server-tests-thread-routes--checking-whether-a-remembered-thread-is--asks-about-the-user-the-session-established-not-one-smug"
     upstream: "server/tests/thread-routes.test.ts::checking whether a remembered thread is still known upstream"
     label: 替代
-    target: "openbot_server::routes::threads::tests::asks_about_the_user_the_session_established_not_one_smug"
+    target: "openbot_server::http::threads::tests::asks_about_the_session_actor_not_one_smuggled_in_the_query"
     owner: openbot-server
     test_id: T-TEST-0993
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1205]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "thread 路由 9/0/0 + application thread 4/0/0：?userId=someone-else 不参与 typed command，port 实收 actor=u1 且 deployment/tenant 同样只来自 AuthContext"
     notes: "ported —— v3 §4.1 条 1/2/3（Rust/PostgreSQL 是 thread 唯一真源，最终请求路径不读不写 Intelligence）+ §2.4 第 4 行（issue #72：从未运行的 thread history 返回 500 → Rust 版明确返回空 history），故'向上游确认线程是否还在'这一面被删除、错误语义被修正；铸造线程判据逐条移植。上游用例标题：「asks about the user the session established, not one smuggled in the request」。"
   # ---------------------------------------------------------------------------
   # server/tests/thread-status.test.ts —— owner openbot-application / covered-by-golden / 替代

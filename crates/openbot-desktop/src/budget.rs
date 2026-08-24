@@ -114,7 +114,7 @@ pub enum DeliveryClass {
 /// **穷举 match、无通配分支**：新增事件变体会在这里编译失败。这是本函数存在的全部理由
 /// —— 它不是一张查找表，是一道编译期的强制分类。
 ///
-/// # G1 的唯一一条：`Heartbeat` 是 `LatestValue`
+/// # Heartbeat 是 `LatestValue`，durable thread frame 是 `Critical`
 ///
 /// 判据不是"心跳听起来不重要"，是两条可查的事实：
 ///
@@ -128,6 +128,9 @@ pub enum DeliveryClass {
 pub const fn delivery_class(event: &AppEvent) -> DeliveryClass {
     match event {
         AppEvent::Heartbeat { .. } => DeliveryClass::LatestValue,
+        // Durable semantic events 与显式 stream error 都不能在 broker 内静默丢弃；队列满时
+        // 断开，GUI 用 thread-global cursor 从 PostgreSQL replay。
+        AppEvent::ThreadRunEvent(_) | AppEvent::ThreadStreamError { .. } => DeliveryClass::Critical,
     }
 }
 
@@ -171,7 +174,7 @@ mod tests {
         assert_eq!(crate::cancel::SHUTDOWN_DEADLINE, Duration::from_secs(5));
     }
 
-    /// G1 唯一一条分类：心跳是 presence ⇒ latest-value。
+    /// 心跳是 presence ⇒ latest-value。
     #[test]
     fn heartbeat_is_presence_and_therefore_latest_value() {
         assert_eq!(
@@ -183,6 +186,17 @@ mod tests {
             delivery_class(&AppEvent::Heartbeat { seq: u64::MAX }),
             DeliveryClass::LatestValue
         );
+    }
+
+    #[test]
+    fn durable_thread_frames_are_critical_and_never_silently_shed() {
+        assert_eq!(
+            delivery_class(&AppEvent::ThreadStreamError {
+                code: "not_visible".to_owned(),
+            }),
+            DeliveryClass::Critical
+        );
+        assert!(!DeliveryClass::Critical.may_shed_under_pressure());
     }
 
     /// 「可丢」这条判据在四档上各给一个答案，而且不是恒真也不是恒假。
@@ -213,12 +227,12 @@ mod tests {
         assert_eq!(deduped.len(), labels.len(), "投递等级 label 不得重名");
     }
 
-    /// G1 的分类函数**不会**返回 `Screen`。
+    /// 结构化事件分类函数**不会**返回 `Screen`。
     ///
     /// 这条不是废话：它是「screen 走另一条通道」在 G1 的可判定形式。正向对照在同一条
     /// 里 —— 该函数确实会返回某个等级（否则本断言在"函数不可调用"的世界里也成立）。
     #[test]
-    fn g1_never_classifies_anything_as_screen() {
+    fn structured_events_never_classify_as_screen() {
         let class = delivery_class(&AppEvent::Heartbeat { seq: 1 });
         assert_ne!(class, DeliveryClass::Screen);
         assert_eq!(class, DeliveryClass::LatestValue);

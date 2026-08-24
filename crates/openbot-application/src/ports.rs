@@ -6,14 +6,15 @@
 use async_trait::async_trait;
 use openbot_contracts::audit::AuditPage;
 use openbot_contracts::auth::Role;
-use openbot_contracts::command::ChannelSummary;
+use openbot_contracts::command::{BeginThreadRun, ChannelSummary, ThreadRunStarted};
 use openbot_contracts::error::{AppError, IdentityConflictReason};
-use openbot_contracts::ids::ActorId;
+use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use openbot_domain::policy::ActionPolicy;
 use time::OffsetDateTime;
 
 use crate::cursor::ChannelCursor;
+use crate::service::AppEventStream;
 
 /// 端口失败。**恰两类**，因为 application 对它们只有两种正确反应。
 ///
@@ -123,6 +124,147 @@ pub trait ChannelReader: Send + Sync {
         limit: u32,
         cursor: Option<ChannelCursor>,
     ) -> Result<Vec<ChannelSummary>, PortError>;
+}
+
+/// Native thread 目录端口错误；不携带随机源或数据库的原始错误文本。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ThreadDirectoryError {
+    /// OS CSPRNG 或 PostgreSQL 当前不可用。
+    #[error("thread_directory_unavailable")]
+    Unavailable,
+    /// 持久化行无法按封闭 schema 解码。
+    #[error("thread_directory_corrupt field={field}")]
+    Corrupt {
+        /// 出问题的静态字段名，不含数据库原值。
+        field: &'static str,
+    },
+    /// 只有事务读到现状后才能判定的输入错误（例如尝试以 foreign UUID 创建新 thread）。
+    #[error("thread_input_invalid field={field}")]
+    InvalidInput {
+        /// 静态字段名。
+        field: &'static str,
+    },
+    /// Thread/Bot/channel 对当前 actor 不可见；与不存在统一 404。
+    #[error("thread_target_not_visible")]
+    NotVisible,
+    /// 另一个 owner/run 正占用 foreground slot 或 thread lease。
+    #[error("thread_lease_conflict")]
+    LeaseConflict,
+    /// 同一个 run id 已绑定到不同请求内容。
+    #[error("thread_request_conflict")]
+    RequestConflict,
+    /// PostgreSQL commit 返回前连接中断，不能猜提交是否发生。
+    #[error("thread_commit_unknown")]
+    CommitUnknown,
+}
+
+impl ThreadDirectoryError {
+    /// 映射为 §15.3 稳定语义；数据库/随机源细节只收敛到同一个 503。
+    #[must_use]
+    pub const fn into_app_error(self) -> AppError {
+        match self {
+            Self::Unavailable | Self::Corrupt { .. } => AppError::DependencyUnavailable {
+                dependency: "thread_directory",
+            },
+            Self::InvalidInput { field } => AppError::MalformedPayload { field },
+            Self::NotVisible => AppError::NotVisible,
+            Self::LeaseConflict => AppError::LeaseConflict { holder: None },
+            Self::RequestConflict => AppError::RequestConflict { resource: "run" },
+            Self::CommitUnknown => AppError::ReconciliationRequired { accepted: true },
+        }
+    }
+}
+
+/// application 已把权威 scope 与封闭 command 合并后的事务请求。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BeginThreadRunRequest {
+    /// 权威 deployment。
+    pub deployment: DeploymentId,
+    /// 权威 tenant。
+    pub tenant: TenantId,
+    /// 权威 actor。
+    pub actor: ActorId,
+    /// 不含 scope/fencing/time/sequence 的调用输入。
+    pub command: BeginThreadRun,
+}
+
+/// 权威 scope 与 durable cursor 合并后的 thread event 订阅请求。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreadEventSubscription {
+    /// 权威 deployment。
+    pub deployment: DeploymentId,
+    /// 权威 tenant。
+    pub tenant: TenantId,
+    /// 权威 actor。
+    pub actor: ActorId,
+    /// 要订阅的 thread。
+    pub thread: ThreadId,
+    /// 最后一条已完整接收的 cursor；`None` 从第一条开始。
+    pub after_event_sequence: Option<u64>,
+}
+
+/// Native thread ID 铸造与 scope-aware 可见性查询。
+///
+/// 查询同时接收 deployment、tenant 与 actor，三者都来自权威 [`AuthContext`](openbot_contracts::auth::AuthContext)，
+/// transport 没有自报 scope 的入口。`false` 必须合并“不存在、已删除、无 membership、scope
+/// 不同”，防止状态接口枚举别人的 thread。
+#[async_trait]
+pub trait ThreadDirectory: Send + Sync {
+    /// 以 OS CSPRNG 铸造当前 deployment 的 UUIDv8 thread ID。
+    async fn mint_thread_id(
+        &self,
+        deployment: &DeploymentId,
+    ) -> Result<ThreadId, ThreadDirectoryError>;
+
+    /// 当前权威 scope 是否能产生这条 native thread。
+    async fn thread_known(
+        &self,
+        deployment: &DeploymentId,
+        tenant: &TenantId,
+        actor: &ActorId,
+        thread: &ThreadId,
+    ) -> Result<bool, ThreadDirectoryError>;
+
+    /// 在同一个 PostgreSQL transaction 中写 thread/membership/message/running run/started
+    /// event/replay-safe outbox，并只在 commit 后返回 receipt。
+    async fn begin_thread_run(
+        &self,
+        _request: BeginThreadRunRequest,
+    ) -> Result<ThreadRunStarted, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
+
+    /// 先建立 LISTEN，再从 durable cursor replay，之后每次唤醒继续补取。
+    async fn subscribe_thread_events(
+        &self,
+        _request: ThreadEventSubscription,
+    ) -> Result<AppEventStream, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
+}
+
+/// 未注入 native thread 适配器时 fail-closed；不回退到 Intelligence。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoThreadDirectory;
+
+#[async_trait]
+impl ThreadDirectory for NoThreadDirectory {
+    async fn mint_thread_id(
+        &self,
+        _deployment: &DeploymentId,
+    ) -> Result<ThreadId, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
+
+    async fn thread_known(
+        &self,
+        _deployment: &DeploymentId,
+        _tenant: &TenantId,
+        _actor: &ActorId,
+        _thread: &ThreadId,
+    ) -> Result<bool, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
 }
 
 /// 管理员审计页的 typed 查询；自由 SQL/列名无法穿越此边界。

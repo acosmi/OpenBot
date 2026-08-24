@@ -1,0 +1,1029 @@
+//! Native PostgreSQL thread runtime；最终请求路径不读、不写、不连接 Intelligence。
+
+use core::pin::Pin;
+use core::task::{Context, Poll};
+use std::future::poll_fn;
+
+use async_trait::async_trait;
+use futures_core::Stream;
+use openbot_application::{
+    AppEventStream, BeginThreadRunRequest, ThreadDirectory, ThreadDirectoryError,
+    ThreadEventSubscription,
+};
+use openbot_contracts::command::{
+    AppEvent, ThreadRunAnchor, ThreadRunEvent, ThreadRunEventKind, ThreadRunStarted,
+};
+use openbot_contracts::ids::thread::ThreadIdentity;
+use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
+use openbot_domain::run::{Run, RunEvent, RunEventKind};
+use openbot_domain::thread::{FencingToken, Message, MessageId, MessageRole};
+use serde_json::{Value, json};
+use time::{Duration, OffsetDateTime};
+use tokio::sync::{mpsc, watch};
+use tokio_postgres::error::SqlState;
+use tokio_postgres::{AsyncMessage, Client, Connection, NoTls, Socket, Transaction};
+
+use crate::db::pool::DatabaseConfig;
+use crate::thread_id::mint_thread_id;
+
+/// foreground writer lease 的新增默认值；每 30 秒失效，后续 runtime 必须在 10 秒内续租。
+///
+/// 这不是上游 parity 常量。它只决定 failover/fencing 窗口，不是 run deadline；绝不能拿它
+/// 代替 §7.2 的 `OPENBOT_RUN_DEADLINE_MS`。
+pub const DEFAULT_THREAD_LEASE_DURATION: Duration = Duration::seconds(30);
+const THREAD_EVENT_TOPIC: &str = "openbot_thread_events";
+const THREAD_EVENT_BATCH: i64 = 256;
+const THREAD_EVENT_CHANNEL_CAPACITY: usize = 256;
+const THREAD_RECONNECT_DELAY: core::time::Duration = core::time::Duration::from_millis(100);
+const THREAD_CATCH_UP_PERIOD: core::time::Duration = core::time::Duration::from_secs(1);
+
+#[derive(Clone)]
+struct RuntimeLease {
+    database: DatabaseConfig,
+    owner_id: String,
+    duration: Duration,
+}
+
+/// OS CSPRNG issuer + scope-aware PostgreSQL status/transactional append。
+#[derive(Clone)]
+pub struct PostgresThreadDirectory {
+    pool: deadpool_postgres::Pool,
+    runtime: Option<RuntimeLease>,
+}
+
+impl PostgresThreadDirectory {
+    /// 用共享连接池构造只读/mint 目录；`begin_thread_run` 会 fail-closed。
+    #[must_use]
+    pub fn new(pool: deadpool_postgres::Pool) -> Self {
+        Self {
+            pool,
+            runtime: None,
+        }
+    }
+
+    /// 追加当前进程唯一 lease owner，使 transactional append 可用。
+    ///
+    /// # Errors
+    ///
+    /// owner 为空或 duration 非正时拒绝构造。
+    pub fn with_runtime(
+        pool: deadpool_postgres::Pool,
+        database: DatabaseConfig,
+        owner_id: String,
+        duration: Duration,
+    ) -> Result<Self, ThreadDirectoryError> {
+        if owner_id.is_empty() || duration <= Duration::ZERO {
+            return Err(ThreadDirectoryError::Corrupt {
+                field: "thread_lease_config",
+            });
+        }
+        Ok(Self {
+            pool,
+            runtime: Some(RuntimeLease {
+                database,
+                owner_id,
+                duration,
+            }),
+        })
+    }
+}
+
+#[async_trait]
+impl ThreadDirectory for PostgresThreadDirectory {
+    async fn mint_thread_id(
+        &self,
+        deployment: &DeploymentId,
+    ) -> Result<ThreadId, ThreadDirectoryError> {
+        mint_thread_id(deployment).map_err(|_| ThreadDirectoryError::Unavailable)
+    }
+
+    async fn thread_known(
+        &self,
+        deployment: &DeploymentId,
+        tenant: &TenantId,
+        actor: &ActorId,
+        thread: &ThreadId,
+    ) -> Result<bool, ThreadDirectoryError> {
+        let client = self.pool.get().await.map_err(|error| {
+            tracing::error!(error = %error, "native thread status 获取数据库连接失败");
+            ThreadDirectoryError::Unavailable
+        })?;
+        let row = client
+            .query_one(
+                "SELECT EXISTS( \
+                   SELECT 1 FROM public.threads t \
+                   JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id \
+                   WHERE t.thread_id=$1 AND t.deployment_id=$2 AND t.tenant_id=$3 \
+                     AND tm.user_id=$4 AND t.status<>'deleted' \
+                 ) AS known",
+                &[
+                    &thread.as_str(),
+                    &deployment.as_str(),
+                    &tenant.as_str(),
+                    &actor.as_str(),
+                ],
+            )
+            .await
+            .map_err(|error| unavailable("native thread status 查询失败", error))?;
+        row.try_get::<_, bool>("known")
+            .map_err(|_| ThreadDirectoryError::Corrupt { field: "known" })
+    }
+
+    async fn begin_thread_run(
+        &self,
+        request: BeginThreadRunRequest,
+    ) -> Result<ThreadRunStarted, ThreadDirectoryError> {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or(ThreadDirectoryError::Unavailable)?;
+        let mut client = self.pool.get().await.map_err(|error| {
+            tracing::error!(error = %error, "begin thread run 获取数据库连接失败");
+            ThreadDirectoryError::Unavailable
+        })?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|error| unavailable("begin thread run 开始事务失败", error))?;
+        let outcome = apply_begin(&transaction, runtime, &request).await;
+        match outcome {
+            Ok(BeginOutcome::Replayed(receipt)) => {
+                if let Err(error) = transaction.rollback().await {
+                    tracing::warn!(error = %error, "幂等 replay 只读事务 rollback 失败");
+                }
+                Ok(receipt)
+            }
+            Ok(BeginOutcome::Created(receipt)) => {
+                transaction.commit().await.map_err(|error| {
+                    tracing::error!(error = %error, "begin thread run commit 结果未知");
+                    ThreadDirectoryError::CommitUnknown
+                })?;
+                Ok(receipt)
+            }
+            Err(error) => {
+                if let Err(rollback_error) = transaction.rollback().await {
+                    tracing::warn!(error = %rollback_error, "begin thread run 失败事务 rollback 未确认");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    async fn subscribe_thread_events(
+        &self,
+        request: ThreadEventSubscription,
+    ) -> Result<AppEventStream, ThreadDirectoryError> {
+        if request
+            .after_event_sequence
+            .is_some_and(|value| i64::try_from(value).is_err())
+        {
+            return Err(ThreadDirectoryError::InvalidInput {
+                field: "after_event_sequence",
+            });
+        }
+        if !self
+            .thread_known(
+                &request.deployment,
+                &request.tenant,
+                &request.actor,
+                &request.thread,
+            )
+            .await?
+        {
+            return Err(ThreadDirectoryError::NotVisible);
+        }
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or(ThreadDirectoryError::Unavailable)?;
+        let (stop, stop_rx) = watch::channel(false);
+        let active = listen_thread_once(&runtime.database, stop_rx.clone()).await?;
+        let (sender, receiver) = mpsc::channel(THREAD_EVENT_CHANNEL_CAPACITY);
+        tokio::spawn(supervise_thread_stream(
+            self.pool.clone(),
+            runtime.database.clone(),
+            request,
+            sender,
+            stop_rx,
+            active,
+        ));
+        Ok(Box::pin(ThreadEventReceiver { receiver, stop }))
+    }
+}
+
+struct ThreadEventReceiver {
+    receiver: mpsc::Receiver<AppEvent>,
+    stop: watch::Sender<bool>,
+}
+
+impl Stream for ThreadEventReceiver {
+    type Item = AppEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.receiver.poll_recv(cx)
+    }
+}
+
+impl Drop for ThreadEventReceiver {
+    fn drop(&mut self) {
+        self.stop.send_replace(true);
+    }
+}
+
+type PgConnection = Connection<Socket, tokio_postgres::tls::NoTlsStream>;
+
+struct ActiveThreadListener {
+    _client: Client,
+    connection: PgConnection,
+}
+
+async fn listen_thread_once(
+    database: &DatabaseConfig,
+    mut stop: watch::Receiver<bool>,
+) -> Result<ActiveThreadListener, ThreadDirectoryError> {
+    let (client, mut connection) = database
+        .to_pg_config()
+        .connect(NoTls)
+        .await
+        .map_err(|error| unavailable("建立 thread event LISTEN 连接失败", error))?;
+    {
+        let listen = client.batch_execute("LISTEN openbot_thread_events");
+        tokio::pin!(listen);
+        loop {
+            tokio::select! {
+                result = &mut listen => {
+                    result.map_err(|error| unavailable("订阅 thread event channel 失败", error))?;
+                    break;
+                }
+                changed = stop.changed() => {
+                    if changed.is_err() || *stop.borrow() {
+                        return Err(ThreadDirectoryError::Unavailable);
+                    }
+                }
+                message = poll_fn(|cx| connection.poll_message(cx)) => match message {
+                    Some(Ok(_)) => {}
+                    Some(Err(error)) => {
+                        return Err(unavailable("建立 LISTEN 时连接失败", error));
+                    }
+                    None => return Err(ThreadDirectoryError::Unavailable),
+                }
+            }
+        }
+    }
+    Ok(ActiveThreadListener {
+        _client: client,
+        connection,
+    })
+}
+
+async fn supervise_thread_stream(
+    pool: deadpool_postgres::Pool,
+    database: DatabaseConfig,
+    request: ThreadEventSubscription,
+    sender: mpsc::Sender<AppEvent>,
+    mut stop: watch::Receiver<bool>,
+    mut active: ActiveThreadListener,
+) {
+    let mut cursor = request.after_event_sequence.map_or(-1, |value| {
+        i64::try_from(value).expect("subscribe 已验证 cursor")
+    });
+    loop {
+        match replay_all(&pool, &request, &sender, &mut cursor).await {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                emit_stream_error(&sender, error).await;
+                return;
+            }
+        }
+
+        let mut catch_up = tokio::time::interval(THREAD_CATCH_UP_PERIOD);
+        catch_up.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // interval 首拍立即 ready；先消费掉，避免紧接 initial replay 再做一次相同查询。
+        catch_up.tick().await;
+        loop {
+            tokio::select! {
+                changed = stop.changed() => {
+                    if changed.is_err() || *stop.borrow() {
+                        return;
+                    }
+                }
+                () = sender.closed() => {
+                    return;
+                }
+                _ = catch_up.tick() => {
+                    // NOTIFY 只是一种低延迟 wake；周期补取负责“通知丢失仍不丢 durable event”
+                    // 与 membership 撤销后的 fail-closed 收口。
+                    match replay_all(&pool, &request, &sender, &mut cursor).await {
+                        Ok(true) => {}
+                        Ok(false) => return,
+                        Err(error) => {
+                            emit_stream_error(&sender, error).await;
+                            return;
+                        }
+                    }
+                }
+                message = poll_fn(|cx| active.connection.poll_message(cx)) => {
+                    match message {
+                        Some(Ok(AsyncMessage::Notification(notification)))
+                            if notification.channel() == THREAD_EVENT_TOPIC =>
+                        {
+                            match replay_all(&pool, &request, &sender, &mut cursor).await {
+                                Ok(true) => {}
+                                Ok(false) => return,
+                                Err(error) => {
+                                    emit_stream_error(&sender, error).await;
+                                    return;
+                                }
+                            }
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(error)) => {
+                            tracing::error!(error = %error,
+                                "thread event LISTEN 连接失败，准备重连");
+                            break;
+                        }
+                        None => {
+                            tracing::warn!("thread event LISTEN 连接关闭，准备重连");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        loop {
+            tokio::select! {
+                changed = stop.changed() => {
+                    if changed.is_err() || *stop.borrow() {
+                        return;
+                    }
+                }
+                () = sender.closed() => return,
+                () = tokio::time::sleep(THREAD_RECONNECT_DELAY) => {}
+            }
+            match listen_thread_once(&database, stop.clone()).await {
+                Ok(listener) => {
+                    active = listener;
+                    break;
+                }
+                Err(error) => tracing::error!(code = %error.into_app_error().code(),
+                    "thread event LISTEN 重连失败；继续重试并依赖 durable replay"),
+            }
+        }
+    }
+}
+
+async fn replay_all(
+    pool: &deadpool_postgres::Pool,
+    request: &ThreadEventSubscription,
+    sender: &mpsc::Sender<AppEvent>,
+    cursor: &mut i64,
+) -> Result<bool, ThreadDirectoryError> {
+    loop {
+        let events = replay_batch(pool, request, *cursor).await?;
+        if events.is_empty() {
+            return Ok(true);
+        }
+        let full = events.len() == THREAD_EVENT_BATCH as usize;
+        for event in events {
+            *cursor =
+                i64::try_from(event.event_sequence).map_err(|_| ThreadDirectoryError::Corrupt {
+                    field: "event_sequence",
+                })?;
+            if sender.send(AppEvent::ThreadRunEvent(event)).await.is_err() {
+                return Ok(false);
+            }
+        }
+        if !full {
+            return Ok(true);
+        }
+    }
+}
+
+async fn replay_batch(
+    pool: &deadpool_postgres::Pool,
+    request: &ThreadEventSubscription,
+    cursor: i64,
+) -> Result<Vec<ThreadRunEvent>, ThreadDirectoryError> {
+    let client = pool.get().await.map_err(|error| {
+        tracing::error!(error = %error, "thread event replay 获取连接失败");
+        ThreadDirectoryError::Unavailable
+    })?;
+    let visible: bool = client
+        .query_one(
+            "SELECT EXISTS( \
+               SELECT 1 FROM public.threads t \
+               JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id \
+               WHERE t.thread_id=$1 AND t.deployment_id=$2 AND t.tenant_id=$3 \
+                 AND tm.user_id=$4 AND t.status<>'deleted' \
+             )",
+            &[
+                &request.thread.as_str(),
+                &request.deployment.as_str(),
+                &request.tenant.as_str(),
+                &request.actor.as_str(),
+            ],
+        )
+        .await
+        .map_err(|error| unavailable("验证 thread event replay scope 失败", error))?
+        .try_get(0)
+        .map_err(|_| ThreadDirectoryError::Corrupt {
+            field: "thread_visible",
+        })?;
+    if !visible {
+        return Err(ThreadDirectoryError::NotVisible);
+    }
+    let rows = client
+        .query(
+            "SELECT run_id,event_seq,event_type,payload,terminal,created_at \
+             FROM public.run_events WHERE thread_id=$1 AND event_seq>$2 \
+             ORDER BY event_seq LIMIT $3",
+            &[&request.thread.as_str(), &cursor, &THREAD_EVENT_BATCH],
+        )
+        .await
+        .map_err(|error| unavailable("补取 durable thread events 失败", error))?;
+    rows.iter()
+        .map(|row| decode_thread_event(row, &request.thread))
+        .collect()
+}
+
+fn decode_thread_event(
+    row: &tokio_postgres::Row,
+    thread: &ThreadId,
+) -> Result<ThreadRunEvent, ThreadDirectoryError> {
+    let sequence: i64 = decode(row, "event_seq")?;
+    let event_sequence = checked_sequence(sequence, "event_seq")?;
+    let raw_kind: String = decode(row, "event_type")?;
+    let event_type =
+        ThreadRunEventKind::from_database(&raw_kind).ok_or(ThreadDirectoryError::Corrupt {
+            field: "event_type",
+        })?;
+    let payload: Value = decode(row, "payload")?;
+    if !payload.is_object() {
+        return Err(ThreadDirectoryError::Corrupt { field: "payload" });
+    }
+    let terminal: bool = decode(row, "terminal")?;
+    if terminal != event_type.is_terminal() {
+        return Err(ThreadDirectoryError::Corrupt { field: "terminal" });
+    }
+    Ok(ThreadRunEvent {
+        thread_id: thread.clone(),
+        run_id: openbot_contracts::ids::RunId::new(decode::<String>(row, "run_id")?),
+        event_sequence,
+        event_type,
+        payload,
+        terminal,
+        created_at: decode(row, "created_at")?,
+    })
+}
+
+async fn emit_stream_error(sender: &mpsc::Sender<AppEvent>, error: ThreadDirectoryError) {
+    let _ = sender
+        .send(AppEvent::ThreadStreamError {
+            code: error.into_app_error().code().as_str().to_owned(),
+        })
+        .await;
+}
+
+enum BeginOutcome {
+    Replayed(ThreadRunStarted),
+    Created(ThreadRunStarted),
+}
+
+struct ThreadState {
+    status: String,
+    next_message_seq: i64,
+    next_event_seq: i64,
+}
+
+async fn apply_begin(
+    transaction: &Transaction<'_>,
+    runtime: &RuntimeLease,
+    request: &BeginThreadRunRequest,
+) -> Result<BeginOutcome, ThreadDirectoryError> {
+    let command = &request.command;
+    transaction
+        .query_one(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+            &[&command.thread_id.as_str()],
+        )
+        .await
+        .map_err(|error| unavailable("获取 thread transaction lock 失败", error))?;
+
+    let existing_thread = load_thread(transaction, request).await?;
+    if existing_thread
+        .as_ref()
+        .is_some_and(|state| state.status == "deleted")
+    {
+        return Err(ThreadDirectoryError::NotVisible);
+    }
+    if let Some(receipt) = replay_existing(transaction, request).await? {
+        return Ok(BeginOutcome::Replayed(receipt));
+    }
+
+    let now = database_now(transaction).await?;
+    let state = match existing_thread {
+        Some(state) => {
+            if state.status != "active" {
+                return Err(ThreadDirectoryError::NotVisible);
+            }
+            if !target_visible(transaction, request).await? {
+                return Err(ThreadDirectoryError::NotVisible);
+            }
+            state
+        }
+        None => {
+            if !ThreadIdentity::new(&request.deployment).owns(&command.thread_id) {
+                return Err(ThreadDirectoryError::InvalidInput { field: "thread_id" });
+            }
+            if !target_visible(transaction, request).await? {
+                return Err(ThreadDirectoryError::NotVisible);
+            }
+            insert_thread(transaction, request, now).await?;
+            ThreadState {
+                status: "active".to_owned(),
+                next_message_seq: 0,
+                next_event_seq: 0,
+            }
+        }
+    };
+
+    let expires_at = now
+        .checked_add(runtime.duration)
+        .ok_or(ThreadDirectoryError::Corrupt {
+            field: "thread_lease_expiry",
+        })?;
+    let fencing = acquire_lease(transaction, request, runtime, now, expires_at).await?;
+
+    let active: bool = transaction
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM public.runs \
+             WHERE thread_id=$1 AND foreground \
+               AND status IN ('queued','running','reconciliation_required'))",
+            &[&command.thread_id.as_str()],
+        )
+        .await
+        .map_err(|error| unavailable("检查 foreground run 失败", error))?
+        .try_get(0)
+        .map_err(|_| ThreadDirectoryError::Corrupt {
+            field: "active_foreground",
+        })?;
+    if active {
+        return Err(ThreadDirectoryError::LeaseConflict);
+    }
+
+    let message_sequence = checked_sequence(state.next_message_seq, "next_message_seq")?;
+    let event_sequence = checked_sequence(state.next_event_seq, "next_event_seq")?;
+    let next_message_seq =
+        state
+            .next_message_seq
+            .checked_add(1)
+            .ok_or(ThreadDirectoryError::Corrupt {
+                field: "next_message_seq",
+            })?;
+    let next_event_seq =
+        state
+            .next_event_seq
+            .checked_add(1)
+            .ok_or(ThreadDirectoryError::Corrupt {
+                field: "next_event_seq",
+            })?;
+
+    let mut run = Run::queued(
+        command.run_id.clone(),
+        command.thread_id.clone(),
+        command.bot_id.clone(),
+        request.actor.clone(),
+        true,
+        FencingToken::new(fencing).map_err(|_| ThreadDirectoryError::Corrupt {
+            field: "fencing_token",
+        })?,
+        now,
+    );
+    run.start(now).map_err(|_| ThreadDirectoryError::Corrupt {
+        field: "run_transition",
+    })?;
+    let message_id = input_message_id(command.run_id.as_str());
+    let content = json!({"text": command.message});
+    let message = Message::new(
+        MessageId::new(&message_id),
+        command.thread_id.clone(),
+        message_sequence,
+        MessageRole::User,
+        content.clone(),
+        command.message.clone(),
+        Some(command.run_id.clone()),
+        Some(request.actor.clone()),
+        now,
+    );
+    let event = RunEvent::new(
+        command.run_id.clone(),
+        0,
+        command.thread_id.clone(),
+        event_sequence,
+        RunEventKind::Started,
+        json!({
+            "runId": command.run_id,
+            "messageId": message_id,
+            "botId": command.bot_id,
+        }),
+        now,
+    );
+
+    transaction
+        .execute(
+            "UPDATE public.threads SET next_message_seq=$2,next_event_seq=$3,updated_at=$4 \
+             WHERE thread_id=$1",
+            &[
+                &command.thread_id.as_str(),
+                &next_message_seq,
+                &next_event_seq,
+                &now,
+            ],
+        )
+        .await
+        .map_err(|error| write_error("推进 thread sequence 失败", error))?;
+    transaction
+        .execute(
+            "INSERT INTO public.runs( \
+               run_id,thread_id,bot_id,actor_id,foreground,status,fencing_token,next_event_seq, \
+               terminal_event_seq,error_code,created_at,started_at,finished_at \
+             ) VALUES($1,$2,$3,$4,$5,$6,$7,1,NULL,NULL,$8,$9,NULL)",
+            &[
+                &run.id().as_str(),
+                &run.thread().as_str(),
+                &run.bot().as_str(),
+                &run.actor().as_str(),
+                &run.foreground(),
+                &run.status().as_str(),
+                &run.fencing().get(),
+                &run.created_at(),
+                &run.started_at(),
+            ],
+        )
+        .await
+        .map_err(|error| write_error("写 running run 失败", error))?;
+    transaction
+        .execute(
+            "INSERT INTO public.messages( \
+               message_id,thread_id,seq,role,content,search_text,run_id,actor_id,created_at \
+             ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            &[
+                &message.id().as_str(),
+                &message.thread().as_str(),
+                &(message.sequence() as i64),
+                &message.role().as_str(),
+                message.content(),
+                &message.search_text(),
+                &message.run().map(|value| value.as_str()),
+                &message.actor().map(|value| value.as_str()),
+                &message.created_at(),
+            ],
+        )
+        .await
+        .map_err(|error| write_error("写 initial message 失败", error))?;
+    transaction
+        .execute(
+            "INSERT INTO public.run_events( \
+               run_id,seq,thread_id,event_seq,event_type,payload,terminal,created_at \
+             ) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+            &[
+                &event.run().as_str(),
+                &(event.sequence() as i64),
+                &event.thread().as_str(),
+                &(event.thread_sequence() as i64),
+                &event.kind().as_str(),
+                event.payload(),
+                &event.kind().is_terminal(),
+                &event.created_at(),
+            ],
+        )
+        .await
+        .map_err(|error| write_error("写 run started event 失败", error))?;
+    let outbox_id = format!("{}:agent_run_dispatch", command.run_id);
+    let outbox_payload = json!({
+        "runId": command.run_id,
+        "threadId": command.thread_id,
+        "eventSequence": event_sequence,
+    });
+    transaction
+        .execute(
+            "INSERT INTO public.outbox( \
+               outbox_id,aggregate_kind,aggregate_id,seq,destination,delivery_class,payload, \
+               available_at,created_at,updated_at \
+             ) VALUES($1,'thread',$2,$3,'agent_run_dispatch','internal',$4,$5,$5,$5)",
+            &[
+                &outbox_id,
+                &command.thread_id.as_str(),
+                &(event_sequence as i64),
+                &outbox_payload,
+                &now,
+            ],
+        )
+        .await
+        .map_err(|error| write_error("写 replay-safe dispatch outbox 失败", error))?;
+    transaction
+        .query_one("SELECT pg_notify('openbot_thread_events','')", &[])
+        .await
+        .map_err(|error| unavailable("提交 thread wakeup 失败", error))?;
+
+    Ok(BeginOutcome::Created(ThreadRunStarted {
+        thread_id: command.thread_id.clone(),
+        run_id: command.run_id.clone(),
+        message_sequence,
+        event_sequence,
+        replayed: false,
+    }))
+}
+
+async fn load_thread(
+    transaction: &Transaction<'_>,
+    request: &BeginThreadRunRequest,
+) -> Result<Option<ThreadState>, ThreadDirectoryError> {
+    let command = &request.command;
+    let row = transaction
+        .query_opt(
+            "SELECT t.deployment_id,t.tenant_id,t.anchor_kind,t.anchor_id,t.status, \
+                    t.next_message_seq,t.next_event_seq, \
+                    EXISTS(SELECT 1 FROM public.thread_memberships tm \
+                           WHERE tm.thread_id=t.thread_id AND tm.user_id=$2) AS member \
+             FROM public.threads t WHERE t.thread_id=$1 FOR UPDATE OF t",
+            &[&command.thread_id.as_str(), &request.actor.as_str()],
+        )
+        .await
+        .map_err(|error| unavailable("读取并锁定 thread 失败", error))?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let deployment: String = decode(&row, "deployment_id")?;
+    let tenant: String = decode(&row, "tenant_id")?;
+    let anchor_kind: String = decode(&row, "anchor_kind")?;
+    let anchor_id: String = decode(&row, "anchor_id")?;
+    let member: bool = decode(&row, "member")?;
+    if deployment != request.deployment.as_str() || tenant != request.tenant.as_str() || !member {
+        return Err(ThreadDirectoryError::NotVisible);
+    }
+    if !anchor_matches(
+        &command.anchor,
+        command.bot_id.as_str(),
+        &anchor_kind,
+        &anchor_id,
+    ) {
+        return Err(ThreadDirectoryError::RequestConflict);
+    }
+    Ok(Some(ThreadState {
+        status: decode(&row, "status")?,
+        next_message_seq: decode(&row, "next_message_seq")?,
+        next_event_seq: decode(&row, "next_event_seq")?,
+    }))
+}
+
+async fn replay_existing(
+    transaction: &Transaction<'_>,
+    request: &BeginThreadRunRequest,
+) -> Result<Option<ThreadRunStarted>, ThreadDirectoryError> {
+    let command = &request.command;
+    let message_id = input_message_id(command.run_id.as_str());
+    let row = transaction
+        .query_opt(
+            "SELECT r.thread_id,r.bot_id,r.actor_id,r.foreground, \
+                    m.seq AS message_seq,m.content,e.event_seq \
+             FROM public.runs r \
+             LEFT JOIN public.messages m ON m.message_id=$2 AND m.run_id=r.run_id \
+             LEFT JOIN public.run_events e ON e.run_id=r.run_id AND e.seq=0 \
+                                           AND e.event_type='started' \
+             WHERE r.run_id=$1",
+            &[&command.run_id.as_str(), &message_id],
+        )
+        .await
+        .map_err(|error| unavailable("查询 run idempotency receipt 失败", error))?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let thread: String = decode(&row, "thread_id")?;
+    let bot: String = decode(&row, "bot_id")?;
+    let actor: String = decode(&row, "actor_id")?;
+    let foreground: bool = decode(&row, "foreground")?;
+    let message_seq: Option<i64> = decode(&row, "message_seq")?;
+    let content: Option<Value> = decode(&row, "content")?;
+    let event_seq: Option<i64> = decode(&row, "event_seq")?;
+    if thread != command.thread_id.as_str()
+        || bot != command.bot_id.as_str()
+        || actor != request.actor.as_str()
+        || !foreground
+        || content.as_ref() != Some(&json!({"text": command.message}))
+    {
+        return Err(ThreadDirectoryError::RequestConflict);
+    }
+    let message_sequence = checked_sequence(
+        message_seq.ok_or(ThreadDirectoryError::Corrupt {
+            field: "idempotent_message",
+        })?,
+        "idempotent_message",
+    )?;
+    let event_sequence = checked_sequence(
+        event_seq.ok_or(ThreadDirectoryError::Corrupt {
+            field: "idempotent_event",
+        })?,
+        "idempotent_event",
+    )?;
+    Ok(Some(ThreadRunStarted {
+        thread_id: command.thread_id.clone(),
+        run_id: command.run_id.clone(),
+        message_sequence,
+        event_sequence,
+        replayed: true,
+    }))
+}
+
+async fn target_visible(
+    transaction: &Transaction<'_>,
+    request: &BeginThreadRunRequest,
+) -> Result<bool, ThreadDirectoryError> {
+    let command = &request.command;
+    let row = match &command.anchor {
+        ThreadRunAnchor::DirectBot => {
+            transaction
+                .query_one(
+                    "SELECT EXISTS( \
+                       SELECT 1 FROM public.agent_profiles p \
+                       WHERE p.agent_id=$1 AND p.deleted_at IS NULL \
+                         AND (p.visibility='public' OR p.owner_user_id=$2) \
+                     )",
+                    &[&command.bot_id.as_str(), &request.actor.as_str()],
+                )
+                .await
+        }
+        ThreadRunAnchor::Channel { channel_id } => {
+            transaction
+                .query_one(
+                    "SELECT EXISTS( \
+                       SELECT 1 FROM public.channel_memberships cm \
+                       JOIN public.channel_agents ca ON ca.channel_id=cm.channel_id \
+                       JOIN public.agent_profiles p ON p.agent_id=ca.agent_id \
+                       WHERE cm.channel_id=$1 AND cm.user_id=$2 AND ca.agent_id=$3 \
+                         AND p.deleted_at IS NULL \
+                         AND (p.visibility='public' OR p.owner_user_id=$2) \
+                     )",
+                    &[
+                        &channel_id.as_str(),
+                        &request.actor.as_str(),
+                        &command.bot_id.as_str(),
+                    ],
+                )
+                .await
+        }
+    }
+    .map_err(|error| unavailable("验证 thread target 可见性失败", error))?;
+    row.try_get(0).map_err(|_| ThreadDirectoryError::Corrupt {
+        field: "target_visible",
+    })
+}
+
+async fn insert_thread(
+    transaction: &Transaction<'_>,
+    request: &BeginThreadRunRequest,
+    now: OffsetDateTime,
+) -> Result<(), ThreadDirectoryError> {
+    let command = &request.command;
+    let (anchor_kind, anchor_id) = match &command.anchor {
+        ThreadRunAnchor::DirectBot => ("direct_bot", command.bot_id.as_str()),
+        ThreadRunAnchor::Channel { channel_id } => ("channel", channel_id.as_str()),
+    };
+    transaction
+        .execute(
+            "INSERT INTO public.threads( \
+               thread_id,tenant_id,deployment_id,created_by,anchor_kind,anchor_id,title,status, \
+               next_message_seq,next_event_seq,created_at,updated_at,deleted_at \
+             ) VALUES($1,$2,$3,$4,$5,$6,NULL,'active',0,0,$7,$7,NULL)",
+            &[
+                &command.thread_id.as_str(),
+                &request.tenant.as_str(),
+                &request.deployment.as_str(),
+                &request.actor.as_str(),
+                &anchor_kind,
+                &anchor_id,
+                &now,
+            ],
+        )
+        .await
+        .map_err(|error| write_error("创建 native thread 失败", error))?;
+    transaction
+        .execute(
+            "INSERT INTO public.thread_memberships(thread_id,user_id,created_at) \
+             VALUES($1,$2,$3)",
+            &[&command.thread_id.as_str(), &request.actor.as_str(), &now],
+        )
+        .await
+        .map_err(|error| write_error("创建 thread membership 失败", error))?;
+    Ok(())
+}
+
+async fn acquire_lease(
+    transaction: &Transaction<'_>,
+    request: &BeginThreadRunRequest,
+    runtime: &RuntimeLease,
+    now: OffsetDateTime,
+    expires_at: OffsetDateTime,
+) -> Result<i64, ThreadDirectoryError> {
+    let row = transaction
+        .query_opt(
+            "INSERT INTO public.thread_leases( \
+               thread_id,owner_id,fencing_token,acquired_at,expires_at,updated_at \
+             ) VALUES($1,$2,1,$3,$4,$3) \
+             ON CONFLICT(thread_id) DO UPDATE SET \
+               owner_id=excluded.owner_id, \
+               fencing_token=CASE WHEN thread_leases.expires_at<=$3 \
+                                  THEN thread_leases.fencing_token+1 \
+                                  ELSE thread_leases.fencing_token END, \
+               acquired_at=CASE WHEN thread_leases.expires_at<=$3 \
+                                THEN $3 ELSE thread_leases.acquired_at END, \
+               expires_at=$4,updated_at=$3 \
+             WHERE (thread_leases.owner_id=$2 AND thread_leases.expires_at>$3) \
+                OR (thread_leases.expires_at<=$3 \
+                    AND thread_leases.fencing_token<9223372036854775807) \
+             RETURNING fencing_token",
+            &[
+                &request.command.thread_id.as_str(),
+                &runtime.owner_id,
+                &now,
+                &expires_at,
+            ],
+        )
+        .await
+        .map_err(|error| write_error("获取 thread lease 失败", error))?;
+    let Some(row) = row else {
+        return Err(ThreadDirectoryError::LeaseConflict);
+    };
+    row.try_get(0).map_err(|_| ThreadDirectoryError::Corrupt {
+        field: "fencing_token",
+    })
+}
+
+async fn database_now(
+    transaction: &Transaction<'_>,
+) -> Result<OffsetDateTime, ThreadDirectoryError> {
+    transaction
+        .query_one("SELECT now()", &[])
+        .await
+        .map_err(|error| unavailable("读取数据库时钟失败", error))?
+        .try_get(0)
+        .map_err(|_| ThreadDirectoryError::Corrupt {
+            field: "database_now",
+        })
+}
+
+fn anchor_matches(
+    anchor: &ThreadRunAnchor,
+    bot_id: &str,
+    stored_kind: &str,
+    stored_id: &str,
+) -> bool {
+    match anchor {
+        ThreadRunAnchor::DirectBot => stored_kind == "direct_bot" && stored_id == bot_id,
+        ThreadRunAnchor::Channel { channel_id } => {
+            stored_kind == "channel" && stored_id == channel_id.as_str()
+        }
+    }
+}
+
+fn input_message_id(run_id: &str) -> String {
+    format!("{run_id}:input")
+}
+
+fn checked_sequence(value: i64, field: &'static str) -> Result<u64, ThreadDirectoryError> {
+    u64::try_from(value).map_err(|_| ThreadDirectoryError::Corrupt { field })
+}
+
+fn decode<T>(row: &tokio_postgres::Row, field: &'static str) -> Result<T, ThreadDirectoryError>
+where
+    for<'a> T: tokio_postgres::types::FromSql<'a>,
+{
+    row.try_get(field)
+        .map_err(|_| ThreadDirectoryError::Corrupt { field })
+}
+
+fn unavailable(context: &'static str, error: tokio_postgres::Error) -> ThreadDirectoryError {
+    tracing::error!(
+        sqlstate = error.code().map_or("none", SqlState::code),
+        connection_closed = error.is_closed(),
+        context,
+        "native thread database operation failed"
+    );
+    ThreadDirectoryError::Unavailable
+}
+
+fn write_error(context: &'static str, error: tokio_postgres::Error) -> ThreadDirectoryError {
+    tracing::error!(
+        sqlstate = error.code().map_or("none", SqlState::code),
+        connection_closed = error.is_closed(),
+        context,
+        "native thread transaction write failed"
+    );
+    match error.code() {
+        Some(code) if code == &SqlState::UNIQUE_VIOLATION => ThreadDirectoryError::RequestConflict,
+        Some(code) if code == &SqlState::FOREIGN_KEY_VIOLATION => ThreadDirectoryError::NotVisible,
+        _ => ThreadDirectoryError::Unavailable,
+    }
+}

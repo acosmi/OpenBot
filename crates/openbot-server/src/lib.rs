@@ -23,7 +23,7 @@
 //! - 把 computer token 交给浏览器（v3 §12.4）；Server 的 screen viewer 用同源 `wss` +
 //!   session cookie + CSRF-style origin check。
 //!
-//! # 当前状态（G1 + W-4 Server slice + W-5 audit/policy）
+//! # 当前状态（G1 + W-4 Server slice + W-5 audit/policy + G3 thread routes/SSE）
 //!
 //! Phase 0 本 crate 刻意为空；G1 落**第一个垂直切片**所需的最小集合。四条 G1 判据里
 //! 「ApplicationService 经 Axum/Tauri 结果一致」与「tracing/metrics/redaction 从首个
@@ -53,6 +53,10 @@
 //!   `openbot-server::http::metrics`。不另开监听端口，见 [`http::metrics`] 模块文档。
 //! - `GET /api/admin/audit-events` —— 台账 `api-admin-audit-events-get`（parity），只做 query
 //!   framing；admin gate、归一与页长在 application，SQL/keyset 在 infra（R56）。
+//! - `POST /api/threads/mint` / `GET /api/threads/{thread_id}` —— R64；只做 auth/path/JSON
+//!   framing，CSPRNG 与 PostgreSQL scope 判定均经 typed ApplicationService。
+//! - `GET /api/threads/{thread_id}/events` —— R65 authenticated SSE；只把 Last-Event-ID 变成
+//!   typed cursor 并 frame AppEvent，replay/LISTEN/ACL 全在 application/infra。
 //!
 //! # 还没有的东西（不要当成"已经有了"）
 //!
@@ -62,7 +66,8 @@
 //! - **OTel exporter**：§16.4 明说 exporter「只在管理员显式配置 collector 地址时才建连」，
 //!   而配置面是 G2（§15.4）。此刻引入只会得到一个零调用点的依赖，所以刻意不引入。
 //!   **本 crate 没有任何默认外发的遥测端点**（§16.4「零 phone-home」）。
-//! - **SSE / WebSocket / 静态 GUI bundle**：分别是 G3 与 GUI 线的工作。
+//! - **WebSocket / 静态 GUI bundle**：SSE 已落；固定上游 channel WebSocket parity 与 GUI
+//!   bundle 仍分别是 G3/G6 的工作。
 //! - credentials/computer（含 policy 管理写面）等其余 HTTP 路由仍未落地。W-7 已接环境/动态 OIDC、SAML
 //!   routing/metadata/ACS、动态 IdP 管理与 keyed session/group refresh；外部 SAML/XSW 审计、
 //!   KMS/HSM 与跨平台原生发行未完成，不能据此宣称 G2。

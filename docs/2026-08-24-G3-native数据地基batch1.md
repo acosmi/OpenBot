@@ -35,7 +35,8 @@
 
 ## 3. 机器证据
 
-- `cargo test -p openbot-contracts ids::thread::tests --locked`：**8/0/0**；contracts WASM 通过；
+- batch 1 当时 `cargo test -p openbot-contracts ids::thread::tests --locked`：固定上游 **8/0/0**；
+  R64 后同 module 另加 UUID plausibility/ownership 分离 1 条，当前为 **9/0/0**；contracts WASM 通过；
 - `cargo test -p openbot-domain --locked`：**336/0/0**；
 - native 0016 PG17/SCRAM：**3/0/0**；
 - 0015 + 0016 + repositories + tool application 组合：**15/0/0**；
