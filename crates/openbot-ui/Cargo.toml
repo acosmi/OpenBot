@@ -11,6 +11,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+openbot-contracts.workspace = true
+serde_json.workspace = true
+
 # Phase 0 刻意不引 Leptos —— G0 不编 WASM，本机也没有 `wasm32-unknown-unknown` target 与
 # trunk / Tailwind standalone / wasm-bindgen CLI / wasm-opt 这四件钉 sha256 的构建期二进制
 # （设计系统文档 §12.1）。提前写 `leptos = "0.8.19"` 会让 `cargo build --workspace` 拉进

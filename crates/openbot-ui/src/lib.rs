@@ -23,9 +23,14 @@
 //! - 不引入远程资产：字体（Inter Variable 4.1）与图标（Lucide 1.33.0 allowlist）随 bundle
 //!   打包；`index.html` 零内联脚本，`<html class lang>` 由 Rust 在首帧改写（v3 §13.1）。
 //!
-//! # Phase 0 状态
+//! # 当前状态
 //!
-//! 刻意为空，且 **Cargo.toml 里刻意没有 leptos 依赖** —— Phase 0 不编 WASM。
+//! G2 只先落了不需要组件树的纯 Rust tool transcript projection；
+//! **Cargo.toml 里仍刻意没有 leptos 依赖**，不冒充 G6 GUI 已开工。
 //! 钉版表以注释形式备查在 `crates/openbot-ui/Cargo.toml`（真源 = 设计系统文档 §12.4）。
 //! GUI 是 G6 的产物；Phase 0 只产出 `parity/ui.yaml`、`fixtures/ui/**` 与 `tools/pins.toml`
 //! （设计系统文档 §11，已并入 v3 §19.3）。
+
+#![deny(missing_docs)]
+
+pub mod features;

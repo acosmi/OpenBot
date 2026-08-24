@@ -74,4 +74,5 @@ pub mod ids;
 pub mod people;
 pub mod policy;
 pub mod telemetry;
+pub mod text;
 pub mod tool;
