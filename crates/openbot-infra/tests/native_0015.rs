@@ -38,7 +38,7 @@ async fn post_0015_is_exact_expand_only_and_legacy_sessions_remain_unclaimed() {
             if before != facts(POST_0014) {
                 return Err("0014 前提事实漂移".to_owned());
             }
-            if native::apply(&mut client)
+            if native::apply_through(&mut client, native::NATIVE_0015_VERSION)
                 .await
                 .map_err(|error| error.to_string())?
                 != ApplyOutcome::Applied
@@ -154,7 +154,10 @@ async fn two_replicas_apply_0013_through_0015_exactly_once() {
             }
             let mut first = pool.get().await.map_err(|error| error.to_string())?;
             let mut second = pool.get().await.map_err(|error| error.to_string())?;
-            let (left, right) = tokio::join!(native::apply(&mut first), native::apply(&mut second));
+            let (left, right) = tokio::join!(
+                native::apply_through(&mut first, native::NATIVE_0015_VERSION),
+                native::apply_through(&mut second, native::NATIVE_0015_VERSION)
+            );
             let mut outcomes = vec![
                 left.map_err(|error| error.to_string())?,
                 right.map_err(|error| error.to_string())?,

@@ -141,6 +141,34 @@ sessions 多一列/一约束，6 条旧 seed session 全为 NULL，typed 新值 
 CHECK；`two_replicas_apply_0013_through_0015_exactly_once` 实得恰好
 `Applied + AlreadyApplied`。
 
+## `schema-0016.json`：native thread/realtime/memory base
+
+`schema-0016.json` 在同一 PostgreSQL **17.11** 隔离 SCRAM 实例上按
+`baseline_0012.sql → native_0013.sql → native_0014.sql → native_0015.sql → native_0016.sql →
+schema_facts.sql` 机械生成，SHA-256
+`3a9ca0e2292e25171785c526047c279291c1671a357195b603efa2b998616877`。
+
+| 项 | 0016 数量 | 相对 0015 |
+| --- | ---: | ---: |
+| public 表 | 41 | +10 |
+| 列 | 351 | +101 |
+| NOT NULL 列 | 268 | +83 |
+| 约束 | 181 | +86 |
+| 索引 | 80 | +27 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+十张新表集合恰为 `threads` / `thread_memberships` / `messages` / `runs` / `run_events` /
+`thread_leases` / `outbox` / `memories` / `memory_events` / `intelligence_import_cursors`。
+`tool_calls` 只增加一个 `NOT VALID` 的 `run_id → runs` FK：它约束迁移后的新写，但不扫描并
+伪造历史 run；导入/backfill 完成后再由独立 migration `VALIDATE CONSTRAINT`。
+
+真库测试 `post_0016_is_exact_expand_only_and_tool_fk_is_staged_not_validated` 先固定 0015 事实，
+再逐旧列证明未改写并与本 fixture 整棵相等；行为测试覆盖 foreground partial unique、terminal
+event exactly-once、fencing takeover、replay、outbox replay-safe/claim/delivery、memory scope/source/
+删除清空与新 tool FK；双 replica 仍实得 `Applied + AlreadyApplied`。40 个具名 repository 由
+`all_forty_current_repositories_touch_their_real_tables` 逐个触表，不以空 struct 占名。
+
 ## 复算命令
 
 ```bash
@@ -161,6 +189,9 @@ python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0014.json',en
 
 # post-0015
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0015.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 31 250 95 53 4
+
+# post-0016
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0016.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 351 268 181 80 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

@@ -2,7 +2,7 @@
 //!
 //! baseline 与 native migrations 不能是两个提交：进程若恰在二者之间退出，重启只看见一套
 //! 无 Drizzle/native 账本的 0012 schema，无法与“运维手工迁过但 0003 是否执行未知”的库区分。
-//! 本入口让 baseline、0013–0015 与自有账本在一个事务里一起出现或一起消失。
+//! 本入口让 baseline、0013–0016 与自有账本在一个事务里一起出现或一起消失。
 
 use tokio_postgres::Client;
 

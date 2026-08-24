@@ -9,8 +9,8 @@
 //! - `COLUMN_SPECS: &[ColumnSpec]` —— 逐列的 SQL 形态（列名 / `format_type()` 文本 / 是否 NOT NULL）；
 //! - `struct Row` + `impl TryFrom<&tokio_postgres::Row>` —— 类型化行与解码。
 //!
-//! 上游 28 表的列真源是 `fixtures/db/schema-0012.json`；0013 新增表的列真源是
-//! `fixtures/db/schema-0013.json`。与真库的一致性由集成测试机械核对，不靠人读。
+//! 上游 28 表的列真源是 `fixtures/db/schema-0012.json`；0013/0016 新增表各有 post-migration
+//! fixture。与真库的一致性由集成测试机械核对，不靠人读。
 //!
 //! # 类型映射
 //!
@@ -43,8 +43,8 @@
 //! [`SECRET_COLUMN_NAME_ROOTS`] 却既不在 [`SECRET_COLUMNS`] 也不在 [`SECRET_SCAN_EXEMPTIONS`]
 //! 的，当场判红。将来有人加一列 `refresh_token` 而忘了登记，闸门会拦住。
 //!
-//! 0013 已落的三张 native 表单列在 [`NATIVE_0013_TABLES`]；§4.3 余下 10 张 native 表
-//! （`threads` / `messages` / `runs` / …）尚未实现，不得混进 0012 的 [`ALL_TABLES`]。
+//! 0013 与 0016 的 native 表分别登记在 [`NATIVE_0013_TABLES`] / [`NATIVE_0016_TABLES`]，
+//! 始终不混进只代表固定上游 0012 的 [`ALL_TABLES`]。
 
 use std::fmt;
 
@@ -83,9 +83,21 @@ pub const SECRET_COLUMNS: &[(&str, &str)] = &[
     ("agent_profiles", "callback_token_hash"),
     ("audit_checkpoints", "signature"),
     ("credentials", "encrypted_value"),
+    ("intelligence_import_cursors", "cursor"),
+    ("intelligence_import_cursors", "provenance"),
+    ("memories", "content"),
+    ("memories", "tags"),
+    ("memory_events", "metadata"),
+    ("messages", "content"),
+    ("messages", "search_text"),
+    ("outbox", "payload"),
+    ("run_events", "payload"),
+    ("runs", "fencing_token"),
     ("sessions", "token"),
     ("sso_providers", "oidc_config"),
     ("sso_providers", "saml_config"),
+    ("thread_leases", "fencing_token"),
+    ("threads", "title"),
     ("tool_attempts", "capability_id"),
     ("tool_calls", "args_hash"),
     ("tool_calls", "idempotency_key"),
@@ -189,6 +201,11 @@ pub const SECRET_SCAN_EXEMPTIONS: &[(&str, &str, &str)] = &[
         "uuid：指向 credentials 表的外键，是指针不是凭据",
     ),
     (
+        "intelligence_import_cursors",
+        "last_hash",
+        "SHA-256 导入完整性摘要，不是 secret 或可用认证物",
+    ),
+    (
         "tool_calls",
         "schema_hash",
         "SHA-256 catalog schema 摘要是公开版本标识，不由运行期 secret 输入派生",
@@ -197,7 +214,7 @@ pub const SECRET_SCAN_EXEMPTIONS: &[(&str, &str, &str)] = &[
 
 /// 这一列是否登记在 [`SECRET_COLUMNS`] 里。
 ///
-/// 由 `define_table!` 展开出来的 `Debug` 调用。线性扫 10 项 —— `Debug` 不在热路径上，
+/// 由 `define_table!` 展开出来的 `Debug` 调用。线性扫 26 项 —— `Debug` 不在热路径上，
 /// 换成完美哈希只会多一处可以和台账漂开的东西。
 pub fn is_secret_column(table: &str, column: &str) -> bool {
     SECRET_COLUMNS
@@ -445,12 +462,80 @@ pub const NATIVE_0013_TABLES: &[TableSpec] = &[
     },
 ];
 
+pub mod intelligence_import_cursors;
+pub mod memories;
+pub mod memory_events;
+pub mod messages;
+pub mod outbox;
+pub mod run_events;
+pub mod runs;
+pub mod thread_leases;
+pub mod thread_memberships;
+pub mod threads;
+
+/// Native 0016 的十张 thread/realtime/memory 表，按表名升序。
+pub const NATIVE_0016_TABLES: &[TableSpec] = &[
+    TableSpec {
+        name: intelligence_import_cursors::TABLE_NAME,
+        columns: intelligence_import_cursors::COLUMNS,
+        column_specs: intelligence_import_cursors::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: memories::TABLE_NAME,
+        columns: memories::COLUMNS,
+        column_specs: memories::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: memory_events::TABLE_NAME,
+        columns: memory_events::COLUMNS,
+        column_specs: memory_events::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: messages::TABLE_NAME,
+        columns: messages::COLUMNS,
+        column_specs: messages::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: outbox::TABLE_NAME,
+        columns: outbox::COLUMNS,
+        column_specs: outbox::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: run_events::TABLE_NAME,
+        columns: run_events::COLUMNS,
+        column_specs: run_events::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: runs::TABLE_NAME,
+        columns: runs::COLUMNS,
+        column_specs: runs::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: thread_leases::TABLE_NAME,
+        columns: thread_leases::COLUMNS,
+        column_specs: thread_leases::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: thread_memberships::TABLE_NAME,
+        columns: thread_memberships::COLUMNS,
+        column_specs: thread_memberships::COLUMN_SPECS,
+    },
+    TableSpec {
+        name: threads::TABLE_NAME,
+        columns: threads::COLUMNS,
+        column_specs: threads::COLUMN_SPECS,
+    },
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn current_table_specs() -> impl Iterator<Item = &'static TableSpec> {
-        ALL_TABLES.iter().chain(NATIVE_0013_TABLES.iter())
+        ALL_TABLES
+            .iter()
+            .chain(NATIVE_0013_TABLES.iter())
+            .chain(NATIVE_0016_TABLES.iter())
     }
 
     /// 每张表的列数。数值取自参照库（`fixtures/db/schema-0012.json`），合计必须是 204。
@@ -808,8 +893,8 @@ mod tests {
             })
             .count();
         assert_eq!(hits, registered_root_hits + exemption_root_hits);
-        assert_eq!(SECRET_COLUMNS.len(), 14);
-        assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 10);
+        assert_eq!(SECRET_COLUMNS.len(), 26);
+        assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 11);
     }
 
     /// 两张名单都必须指向真实存在的 `(表, 列)`，且互不重叠。

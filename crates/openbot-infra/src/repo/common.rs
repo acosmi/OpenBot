@@ -145,6 +145,15 @@ pub(crate) fn columns_sql<R: TableRow>() -> String {
         .join(", ")
 }
 
+/// 用编译期 alias 限定全部列；用于 `UPDATE ... FROM ... RETURNING` 消除同名列歧义。
+pub(crate) fn qualified_columns_sql<R: TableRow>(alias: &'static str) -> String {
+    R::COLUMNS
+        .iter()
+        .map(|column| format!("{alias}.\"{column}\""))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub(crate) fn insert_sql<R: TableRow>() -> String {
     let columns = columns_sql::<R>();
     let placeholders = (1..=R::COLUMNS.len())

@@ -16,10 +16,15 @@ pub mod audit;
 pub mod channels;
 pub mod components;
 pub mod computer;
+pub mod import;
+pub mod memory;
+pub mod outbox;
 pub mod people;
 pub mod people_admin;
 pub mod plugins;
+pub mod run;
 pub mod tenant;
+pub mod thread;
 pub mod tools;
 
 pub use channels::ChannelRepo;
@@ -27,8 +32,8 @@ pub use channels::ChannelRepo;
 /// 当前已有物理表的具名 repository 台账。
 ///
 /// 28 个上游表各一个（`ChannelRepo` 已含 channels），0013 再加 tool_calls/tool_attempts；
-/// `audit_checkpoints` 与 audit_events 共用 `AuditEventRepo`，不另造第 31 个类型。剩余 10 个
-/// `repo=` 落点对应 G3 尚未创建的 native 表，不在这里用假类型冒充实现。
+/// `audit_checkpoints` 与 audit_events 共用 `AuditEventRepo`。0016 与十张物理表同批补齐
+/// thread/message/run/outbox/memory/import 十个 repository，40 个规划落点现均指向真实类型。
 pub const IMPLEMENTED_REPOSITORIES: &[&str] = &[
     "openbot-infra::repo::agents::AgentPreferenceRepo",
     "openbot-infra::repo::agents::AgentProfileRepo",
@@ -44,6 +49,10 @@ pub const IMPLEMENTED_REPOSITORIES: &[&str] = &[
     "openbot-infra::repo::components::SandboxedComponentRepo",
     "openbot-infra::repo::computer::ActionPolicyRepo",
     "openbot-infra::repo::computer::SnapshotRepo",
+    "openbot-infra::repo::import::ImportCursorRepo",
+    "openbot-infra::repo::memory::MemoryEventRepo",
+    "openbot-infra::repo::memory::MemoryRepo",
+    "openbot-infra::repo::outbox::OutboxRepo",
     "openbot-infra::repo::people::AccountRepo",
     "openbot-infra::repo::people::IdentityProviderRepo",
     "openbot-infra::repo::people::RevokedAccessRepo",
@@ -56,7 +65,13 @@ pub const IMPLEMENTED_REPOSITORIES: &[&str] = &[
     "openbot-infra::repo::plugins::McpUserCredentialRepo",
     "openbot-infra::repo::plugins::PluginGrantRepo",
     "openbot-infra::repo::plugins::SkillRepo",
+    "openbot-infra::repo::run::RunEventRepo",
+    "openbot-infra::repo::run::RunRepo",
     "openbot-infra::repo::tenant::DeploymentPackageRepo",
+    "openbot-infra::repo::thread::MessageRepo",
+    "openbot-infra::repo::thread::ThreadLeaseRepo",
+    "openbot-infra::repo::thread::ThreadMembershipRepo",
+    "openbot-infra::repo::thread::ThreadRepo",
     "openbot-infra::repo::tools::ToolAttemptRepo",
     "openbot-infra::repo::tools::ToolCallRepo",
     "openbot-infra::vault::CredentialRepo",
@@ -67,8 +82,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn implemented_repository_ledger_has_thirty_unique_sorted_names() {
-        assert_eq!(IMPLEMENTED_REPOSITORIES.len(), 30);
+    fn implemented_repository_ledger_has_forty_unique_sorted_names() {
+        assert_eq!(IMPLEMENTED_REPOSITORIES.len(), 40);
         let mut sorted = IMPLEMENTED_REPOSITORIES.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -89,6 +104,10 @@ mod tests {
             core::any::type_name::<components::SandboxedComponentRepo>(),
             core::any::type_name::<computer::ActionPolicyRepo>(),
             core::any::type_name::<computer::SnapshotRepo>(),
+            core::any::type_name::<import::ImportCursorRepo>(),
+            core::any::type_name::<memory::MemoryEventRepo>(),
+            core::any::type_name::<memory::MemoryRepo>(),
+            core::any::type_name::<outbox::OutboxRepo>(),
             core::any::type_name::<people::AccountRepo>(),
             core::any::type_name::<people::IdentityProviderRepo>(),
             core::any::type_name::<people::RevokedAccessRepo>(),
@@ -101,7 +120,13 @@ mod tests {
             core::any::type_name::<plugins::McpUserCredentialRepo>(),
             core::any::type_name::<plugins::PluginGrantRepo>(),
             core::any::type_name::<plugins::SkillRepo>(),
+            core::any::type_name::<run::RunEventRepo>(),
+            core::any::type_name::<run::RunRepo>(),
             core::any::type_name::<tenant::DeploymentPackageRepo>(),
+            core::any::type_name::<thread::MessageRepo>(),
+            core::any::type_name::<thread::ThreadLeaseRepo>(),
+            core::any::type_name::<thread::ThreadMembershipRepo>(),
+            core::any::type_name::<thread::ThreadRepo>(),
             core::any::type_name::<tools::ToolAttemptRepo>(),
             core::any::type_name::<tools::ToolCallRepo>(),
             core::any::type_name::<crate::vault::CredentialRepo>(),

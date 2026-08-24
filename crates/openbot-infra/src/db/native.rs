@@ -58,8 +58,20 @@ pub const NATIVE_0015_NAME: &str = "native_0015_session_auth_generation";
 /// 0015 SQL 原文。
 pub const NATIVE_0015_SQL: &str = include_str!("../../sql/native_0015.sql");
 
+/// Native thread/realtime/memory 地基版本号。
+pub const NATIVE_0016_VERSION: i32 = 16;
+
+/// 0016 的稳定名字。
+pub const NATIVE_0016_NAME: &str = "native_0016_thread_realtime_memory_base";
+
+/// 0016 SQL 原文。
+pub const NATIVE_0016_SQL: &str = include_str!("../../sql/native_0016.sql");
+
 /// 当前二进制认识的最新 native schema 版本。
-pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0015_VERSION;
+pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0016_VERSION;
+
+/// 当前二进制钉住的 native migration 数量。
+pub const NATIVE_MIGRATION_COUNT: usize = MIGRATIONS.len();
 
 /// 全部署共用的 migration advisory lock key（ASCII `OPENBOT1`）。
 const MIGRATION_LOCK_KEY: i64 = 0x4f50_454e_424f_5431;
@@ -87,6 +99,11 @@ const MIGRATIONS: &[MigrationSpec] = &[
         version: NATIVE_0015_VERSION,
         name: NATIVE_0015_NAME,
         sql: NATIVE_0015_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0016_VERSION,
+        name: NATIVE_0016_NAME,
+        sql: NATIVE_0016_SQL,
     },
 ];
 
@@ -158,6 +175,12 @@ pub fn native_0014_checksum() -> String {
 #[must_use]
 pub fn native_0015_checksum() -> String {
     Sha256Digest::of(NATIVE_0015_SQL.as_bytes()).to_hex()
+}
+
+/// 当前 0016 SQL 的小写 SHA-256。
+#[must_use]
+pub fn native_0016_checksum() -> String {
+    Sha256Digest::of(NATIVE_0016_SQL.as_bytes()).to_hex()
 }
 
 /// 在一个已到 0012 的数据库上施加当前二进制认识的全部 Rust-owned migrations。
@@ -318,6 +341,7 @@ mod tests {
         for line in statement_lines(NATIVE_0013_SQL)
             .chain(statement_lines(NATIVE_0014_SQL))
             .chain(statement_lines(NATIVE_0015_SQL))
+            .chain(statement_lines(NATIVE_0016_SQL))
         {
             let uppercase = line.to_ascii_uppercase();
             assert!(
@@ -347,6 +371,9 @@ mod tests {
         assert!(!statement_lines(NATIVE_0014_SQL).any(|line| line.contains("SET NOT NULL")));
         assert!(NATIVE_0015_SQL.contains("ADD COLUMN auth_generation bigint"));
         assert!(!statement_lines(NATIVE_0015_SQL).any(|line| line.contains("SET NOT NULL")));
+        assert_eq!(NATIVE_0016_SQL.matches("CREATE TABLE public.").count(), 10);
+        assert!(NATIVE_0016_SQL.contains("ADD CONSTRAINT tool_calls_run_id_fkey"));
+        assert!(NATIVE_0016_SQL.contains("NOT VALID"));
     }
 
     #[test]
@@ -355,6 +382,7 @@ mod tests {
             !statement_lines(NATIVE_0013_SQL)
                 .chain(statement_lines(NATIVE_0014_SQL))
                 .chain(statement_lines(NATIVE_0015_SQL))
+                .chain(statement_lines(NATIVE_0016_SQL))
                 .any(|line| line.contains("IF NOT EXISTS"))
         );
         assert!(LEDGER_BOOTSTRAP_SQL.contains("IF NOT EXISTS"));
@@ -378,7 +406,10 @@ mod tests {
         let latest = native_0015_checksum();
         assert_eq!(latest.len(), 64);
         assert_ne!(next, latest);
-        assert_eq!(MIGRATIONS.len(), 3);
-        assert_eq!(MIGRATIONS[2].version, NATIVE_LATEST_VERSION);
+        let native_thread = native_0016_checksum();
+        assert_eq!(native_thread.len(), 64);
+        assert_ne!(latest, native_thread);
+        assert_eq!(MIGRATIONS.len(), 4);
+        assert_eq!(MIGRATIONS[3].version, NATIVE_LATEST_VERSION);
     }
 }

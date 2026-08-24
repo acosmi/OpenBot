@@ -26,6 +26,9 @@ use openbot_infra::repo::components::{
     ComponentExclusionRepo, ComponentFunctionRepo, ComponentRepo, SandboxedComponentRepo,
 };
 use openbot_infra::repo::computer::{ActionPolicyRepo, SnapshotRepo};
+use openbot_infra::repo::import::ImportCursorRepo;
+use openbot_infra::repo::memory::{MemoryEventRepo, MemoryRepo};
+use openbot_infra::repo::outbox::OutboxRepo;
 use openbot_infra::repo::people::{
     AccountRepo, IdentityProviderRepo, RevokedAccessRepo, RoleRepo, SessionRepo, UserRepo,
     VerificationRepo,
@@ -33,7 +36,9 @@ use openbot_infra::repo::people::{
 use openbot_infra::repo::plugins::{
     McpServerRepo, McpToolRepo, McpUserCredentialRepo, PluginGrantRepo, SkillRepo,
 };
+use openbot_infra::repo::run::{RunEventRepo, RunRepo};
 use openbot_infra::repo::tenant::DeploymentPackageRepo;
+use openbot_infra::repo::thread::{MessageRepo, ThreadLeaseRepo, ThreadMembershipRepo, ThreadRepo};
 use openbot_infra::repo::tools::{
     FirstDurableDecision, PersistedToolOutcome, ToolAttemptRepo, ToolCallRepo,
 };
@@ -61,6 +66,22 @@ async fn provision(pool: &deadpool_postgres::Pool, seed: bool) -> Result<(), Str
     Ok(())
 }
 
+async fn seed_tool_run(pool: &deadpool_postgres::Pool) -> Result<(), String> {
+    pool.get()
+        .await
+        .map_err(|error| error.to_string())?
+        .batch_execute(
+            "INSERT INTO public.threads(\
+               thread_id,tenant_id,deployment_id,created_by,anchor_kind,anchor_id) \
+             VALUES('thread-tool-1','tenant-1','deployment-1','actor-1','direct_bot','bot-1'); \
+             INSERT INTO public.runs(\
+               run_id,thread_id,bot_id,actor_id,foreground,status,fencing_token,started_at) \
+             VALUES('run-1','thread-tool-1','bot-1','actor-1',false,'running',1,now());",
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
 macro_rules! expect_six {
     ($pool:expr, $repo:ty) => {{
         let rows = <$repo>::new($pool.clone())
@@ -79,8 +100,8 @@ macro_rules! expect_six {
 
 #[tokio::test]
 #[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
-async fn all_thirty_current_repositories_touch_their_real_tables() {
-    let admin = admin_config("all_thirty_current_repositories_touch_their_real_tables");
+async fn all_forty_current_repositories_touch_their_real_tables() {
+    let admin = admin_config("all_forty_current_repositories_touch_their_real_tables");
     with_temp_database(&admin, "repo_inventory", |config| async move {
         let pool = pool::connect(&config)
             .await
@@ -133,6 +154,29 @@ async fn all_thirty_current_repositories_touch_their_real_tables() {
             if !calls.is_empty() || !attempts.is_empty() {
                 return Err("全新 0013 的 tool 表必须为空".to_owned());
             }
+
+            macro_rules! expect_empty {
+                ($repo:ty) => {
+                    if !<$repo>::new(pool.clone())
+                        .list_all()
+                        .await
+                        .map_err(|error| format!("{} list_all 失败：{error}", stringify!($repo)))?
+                        .is_empty()
+                    {
+                        return Err(format!("{} 在全新 0016 应为空", stringify!($repo)));
+                    }
+                };
+            }
+            expect_empty!(ThreadRepo);
+            expect_empty!(ThreadMembershipRepo);
+            expect_empty!(MessageRepo);
+            expect_empty!(ThreadLeaseRepo);
+            expect_empty!(RunRepo);
+            expect_empty!(RunEventRepo);
+            expect_empty!(OutboxRepo);
+            expect_empty!(MemoryRepo);
+            expect_empty!(MemoryEventRepo);
+            expect_empty!(ImportCursorRepo);
 
             let visible = ChannelRepo::new(pool.clone())
                 .list_visible_channels(&ActorId::new("users_00"), 100, None)
@@ -321,6 +365,7 @@ async fn tool_decision_and_attempt_transitions_are_durable_and_compare_and_swap(
             .map_err(|error| format!("连接临时库失败：{error}"))?;
         let outcome = async {
             provision(&pool, false).await?;
+            seed_tool_run(&pool).await?;
             let calls = ToolCallRepo::new(pool.clone());
             let attempts = ToolAttemptRepo::new(pool.clone());
             let decided_at = OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();

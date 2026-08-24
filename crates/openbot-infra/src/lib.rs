@@ -35,9 +35,9 @@
 //! - [`db::compat`] —— 迁移边界检查（v3 §14.1「Rust 不接收更早 schema」）。
 //! - [`db::schema_facts`] —— schema 事实提取，与 `fixtures/db/schema-0012.json` 同构。
 //! - [`db::pool`] —— `deadpool-postgres` 连接池。
-//! - [`db::native`] —— Rust-owned 0013/0014，自有 SHA-256 账本与并发施加锁；0014 只追加
-//!   nullable `users.auth_generation` 与非负 CHECK（R39）。
-//! - [`repo::IMPLEMENTED_REPOSITORIES`] —— 当前已有物理表的 30 个具名 repository；
+//! - [`db::native`] —— Rust-owned 0013–0016，自有 SHA-256 账本与并发施加锁；0016 增加
+//!   native thread/realtime/memory 十表且保持 expand-only。
+//! - [`repo::IMPLEMENTED_REPOSITORIES`] —— 当前 40 个规划落点全部有物理表与具名 repository；
 //!   [`repo::channels::ChannelRepo`] 同时实现 `openbot_application::ChannelReader`。
 //! - [`vault::CredentialRepo`] —— credential CAS 轮换/撤销；
 //!   [`repo::audit::AuditEventRepo`] —— hash chain/checkpoint；
@@ -57,8 +57,8 @@
 //! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
 //! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
 //! Server KMS/HSM、多平台原生发行，以及 G4 的真实 browser/file/shell/MCP/Drive executor。
-//! `thread/run/outbox/memory/import` 的 10 个 repo 名对应 G3 尚未创建的物理表，必须与建表同批实现，
-//! 不创建零方法空 struct 冒充完成。
+//! 0016 已把 `thread/run/outbox/memory/import` 的 10 个 repo 与对应物理表同批实现；没有创建
+//! 零方法空 struct 冒充完成。SSE/WS live、transactional append、memory user journey 仍归后续 G3。
 
 pub mod auth;
 pub mod db;
@@ -67,4 +67,5 @@ pub mod policy;
 pub mod repo;
 pub mod store;
 pub mod tenant;
+pub mod thread_id;
 pub mod vault;

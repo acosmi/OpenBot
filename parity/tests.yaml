@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 894
+    expect: 886
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -10323,22 +10323,24 @@ entries:
   - id: "server-tests-thread-identity--a-thread-id-carries-the-deployment-that--it-is-a-well-formed-uuid-which-is-all-the-platform-accep"
     upstream: "server/tests/thread-identity.test.ts::a thread id carries the deployment that minted it"
     label: parity
-    target: "openbot_contracts::ids::thread::tests::it_is_a_well_formed_uuid_which_is_all_the_platform_accep"
+    target: "openbot_contracts::ids::thread::tests::it_is_a_well_formed_uuid_which_is_all_the_platform_accepts"
     owner: openbot-contracts
     test_id: T-TEST-0978
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1188]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-contracts ids::thread::tests --locked => 8/0/0；固定 entropy 实得 b8484487-c5e4-8000-8000-000000000000，与独立 SHA-256 shell oracle 的前六字节一致"
     notes: "ported —— v3 §5.3：ThreadId 携带铸造它的 deployment，兼容端必须接受上游既有字符串，判据逐条移植。上游用例标题：「it is a well-formed UUID, which is all the platform accepts」。"
   - id: "server-tests-thread-identity--a-thread-id-carries-the-deployment-that--it-declares-the-custom-layout-rather-than-claiming-to-be"
     upstream: "server/tests/thread-identity.test.ts::a thread id carries the deployment that minted it"
     label: parity
-    target: "openbot_contracts::ids::thread::tests::it_declares_the_custom_layout_rather_than_claiming_to_be"
+    target: "openbot_contracts::ids::thread::tests::it_declares_the_custom_layout_rather_than_claiming_to_be_random"
     owner: openbot-contracts
     test_id: T-TEST-0979
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1189]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "contracts thread identity 8/0/0：UUID version nibble 精确为 8，variant 由布局器固定为 RFC 形态"
     notes: "ported —— v3 §5.3：ThreadId 携带铸造它的 deployment，兼容端必须接受上游既有字符串，判据逐条移植。上游用例标题：「it declares the custom layout rather than claiming to be random」。"
   - id: "server-tests-thread-identity--a-thread-id-carries-the-deployment-that--a-deployment-recognises-its-own"
     upstream: "server/tests/thread-identity.test.ts::a thread id carries the deployment that minted it"
@@ -10347,28 +10349,31 @@ entries:
     owner: openbot-contracts
     test_id: T-TEST-0980
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1190]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "contracts thread identity 8/0/0：同 deployment 的 50 组不同 entropy 均被 owns() 识别"
     notes: "ported —— v3 §5.3：ThreadId 携带铸造它的 deployment，兼容端必须接受上游既有字符串，判据逐条移植。上游用例标题：「a deployment recognises its own」。"
   - id: "server-tests-thread-identity--a-thread-id-carries-the-deployment-that--and-does-not-claim-another-deployment-s"
     upstream: "server/tests/thread-identity.test.ts::a thread id carries the deployment that minted it"
     label: parity
-    target: "openbot_contracts::ids::thread::tests::and_does_not_claim_another_deployment_s"
+    target: "openbot_contracts::ids::thread::tests::and_does_not_claim_another_deployments"
     owner: openbot-contracts
     test_id: T-TEST-0981
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1191]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "contracts thread identity 8/0/0：production/staging 两个 fingerprint 双向 50 组均拒认"
     notes: "ported —— v3 §5.3：ThreadId 携带铸造它的 deployment，兼容端必须接受上游既有字符串，判据逐条移植。上游用例标题：「and does not claim another deployment's」。"
   - id: "server-tests-thread-identity--a-thread-id-carries-the-deployment-that--the-same-name-recognises-threads-minted-by-another-proce"
     upstream: "server/tests/thread-identity.test.ts::a thread id carries the deployment that minted it"
     label: parity
-    target: "openbot_contracts::ids::thread::tests::the_same_name_recognises_threads_minted_by_another_proce"
+    target: "openbot_contracts::ids::thread::tests::the_same_name_recognises_threads_minted_by_another_process"
     owner: openbot-contracts
     test_id: T-TEST-0982
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1192]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "contracts thread identity 8/0/0：新构造的同名 deployment 无状态识别另一实例铸造的 ID"
     notes: "ported —— v3 §5.3：ThreadId 携带铸造它的 deployment，兼容端必须接受上游既有字符串，判据逐条移植。上游用例标题：「the same name recognises threads minted by another process」。"
   - id: "server-tests-thread-identity--a-thread-id-carries-the-deployment-that--ids-differ-so-the-tag-has-not-eaten-the-randomness"
     upstream: "server/tests/thread-identity.test.ts::a thread id carries the deployment that minted it"
@@ -10377,28 +10382,31 @@ entries:
     owner: openbot-contracts
     test_id: T-TEST-0983
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1193]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "contracts thread identity 8/0/0 + infra production issuer 1/0/0：固定 1000 组 entropy 与 OS CSPRNG 1000 次均唯一，且每个生产 ID 都被 deployment owns"
     notes: "ported —— v3 §5.3：ThreadId 携带铸造它的 deployment，兼容端必须接受上游既有字符串，判据逐条移植。上游用例标题：「ids differ, so the tag has not eaten the randomness」。"
   - id: "server-tests-thread-identity--a-thread-id-carries-the-deployment-that--a-thread-minted-before-deployments-had-names-is-not-clai"
     upstream: "server/tests/thread-identity.test.ts::a thread id carries the deployment that minted it"
     label: parity
-    target: "openbot_contracts::ids::thread::tests::a_thread_minted_before_deployments_had_names_is_not_clai"
+    target: "openbot_contracts::ids::thread::tests::a_thread_minted_before_deployments_had_names_is_not_claimed"
     owner: openbot-contracts
     test_id: T-TEST-0984
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1194]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "contracts thread identity 8/0/0：合法 UUIDv4 不因 string 形状被误认成当前 deployment 的 v8"
     notes: "ported —— v3 §5.3：ThreadId 携带铸造它的 deployment，兼容端必须接受上游既有字符串，判据逐条移植。上游用例标题：「a thread minted before deployments had names is not claimed」。"
   - id: "server-tests-thread-identity--a-thread-id-carries-the-deployment-that--anything-that-is-not-a-uuid-is-refused-rather-than-parse"
     upstream: "server/tests/thread-identity.test.ts::a thread id carries the deployment that minted it"
     label: parity
-    target: "openbot_contracts::ids::thread::tests::anything_that_is_not_a_uuid_is_refused_rather_than_parse"
+    target: "openbot_contracts::ids::thread::tests::anything_that_is_not_a_uuid_is_refused_rather_than_parsed"
     owner: openbot-contracts
     test_id: T-TEST-0985
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1195]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "contracts thread identity 8/0/0：空、短、超长、非 hex、prefixed 六类全部 owns=false；普通 ThreadId 兼容构造仍不加格式限制"
     notes: "ported —— v3 §5.3：ThreadId 携带铸造它的 deployment，兼容端必须接受上游既有字符串，判据逐条移植。上游用例标题：「anything that is not a UUID is refused rather than parsed」。"
   # ---------------------------------------------------------------------------
   # server/tests/thread-routes.test.ts —— owner openbot-server / ported / 替代
