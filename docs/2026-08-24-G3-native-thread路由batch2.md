@@ -66,3 +66,10 @@ Intelligence 后，可观察问题不变，但权威答案只能来自 PostgreSQ
 来写 semantic chunk/terminal，纯
 accumulator 也没有 producer 调用点。`/api/channels/events` WebSocket parity、空 history facade、
 memory user journey 与 Intelligence import checksum 继续 todo，因此 G3 整关保持未勾。
+
+## 5. Git 恢复点
+
+- 实施提交：`a3e54897c220a514b44555b0596a6e436372ceab`；
+- 分支：`feat/2026-08-24-G3-thread-append-live`；
+- PR：#19，base=`feat/2026-08-24-G3-native-data-base`，head=上述分支；
+- 创建后实查：OPEN / CLEAN / MERGEABLE，`statusCheckRollup=[]`，本 head Actions run=0。
