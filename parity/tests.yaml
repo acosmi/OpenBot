@@ -4,6 +4,7 @@
 # id/upstream/label/owner/test_id/evidence 不手改；非 todo 的 target/migration_rule/status/done_evidence 会按稳定 id 保留。
 # 已完成 id 若在重生成后消失会硬失败，不会静默丢证据或错接到另一条 AST 用例。
 # 分类真源 = crates/openbot-testkit/src/xtask/test_inventory.rs::FILE_RULES（105 行，一行一个上游文件）。
+# G2 队列真源 = 同文件 G2_TEST_FILES（21 文件 / 234 用例）；§6/§8 的 3 个 GUI 文件另归 G6。
 #
 # 真源与依据：
 # - v3 §1.3：1,007 是词法命中，不冒充 AST 解析后的精确 test 数；Phase 0 必须生成 AST 级 inventory 并归档原始结果。
@@ -71,6 +72,9 @@ recount:
   - command: "jq '[.nodes[] | select(.kind == \"test\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 1047
+  - command: "jq --argjson files '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]' '[.nodes[] | select(.kind == \"test\" and (.file as $file | $files | index($file)))] | length' fixtures/tests/upstream-ast-inventory.json"
+    cwd: repo
+    expect: 234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229

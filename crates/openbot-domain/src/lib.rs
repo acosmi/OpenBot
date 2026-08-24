@@ -53,5 +53,6 @@
 pub mod audit;
 pub mod identity;
 pub mod policy;
+pub mod text;
 pub mod tool;
 pub mod vault;

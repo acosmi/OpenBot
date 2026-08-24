@@ -9,6 +9,7 @@ use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ActorId;
 use openbot_contracts::people::{AdminStatus, CurrentUser, PeoplePage, Person};
+use openbot_domain::text::is_ecmascript_whitespace;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{Authenticated, SensitiveAuthenticated};
@@ -213,26 +214,6 @@ fn parse_decimal_prefix(raw: &str) -> Option<i64> {
     } else {
         Some(i64::try_from(magnitude).unwrap_or(i64::MAX))
     }
-}
-
-/// ECMAScript `TrimString` 的 WhiteSpace + LineTerminator 集合。
-///
-/// 不能用 Rust `trim_start()`：它不认 U+FEFF，却会多认 ECMAScript 不认的 U+0085（R30）。
-fn is_ecmascript_whitespace(value: char) -> bool {
-    matches!(
-        value,
-        '\u{0009}'..='\u{000D}'
-            | '\u{0020}'
-            | '\u{00A0}'
-            | '\u{1680}'
-            | '\u{2000}'..='\u{200A}'
-            | '\u{2028}'
-            | '\u{2029}'
-            | '\u{202F}'
-            | '\u{205F}'
-            | '\u{3000}'
-            | '\u{FEFF}'
-    )
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@
 //!
 //! # 解析器
 //!
-//! `oxc_parser` `0.139.0`（纯 Rust，配套 `oxc_allocator` / `oxc_ast` / `oxc_ast_visit` /
+//! `oxc_parser` `0.146.0`（纯 Rust，配套 `oxc_allocator` / `oxc_ast` / `oxc_ast_visit` /
 //! `oxc_span` 同版本）。选纯 Rust 而不是起 Node/Bun 子进程：v3 §3.5 已裁决删除 Bun launcher，
 //! 把闸门的正确性系在一个本仓刻意不安装的运行时上等于把闸门交给环境。
 //!
@@ -57,7 +57,7 @@ const UPSTREAM_COMMIT: &str = "891df72f1827454d8b353d108fe5dd2313b7e30d";
 
 /// 解析器版本。与仓根 `Cargo.toml` 的 `[workspace.dependencies] oxc_parser` 同值，
 /// 由 `tests::oxc_version_matches_workspace_manifest` 双向钉死 —— 写进产物的
-/// "用 0.139.0 解析"必须是真的，不能是注释里的旧值。
+/// “用 OXC_VERSION 解析”必须是真的，不能是注释里的旧值。
 const OXC_VERSION: &str = "0.146.0";
 
 /// v3 §1.3 的词法基线，只用于交叉检查（`§28.4` 的
@@ -415,6 +415,61 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
     FileRule { file: "worker/tests/status.test.ts", owner: "openbot-testkit", target_module: "openbot_testkit::retired::worker_status", tier: Tier::NotApplicableWithProof, label: Label::Substitute,
         reason: "v3 §3.5 逐字：'当前 worker 只返回 {status:\"idle\"} 且没有 job，Rust 版不发布空 worker binary；该测试标记 not-applicable-with-proof'。证明面 = 发行物清单里不得出现 worker 二进制（v3 §16.1/§16.2），由 openbot_testkit::retired::worker_status 做反向断言，不是把 idle 断言照抄一遍。" },
 ];
+
+// ---------------------------------------------------------------------------
+// 阶段队列（v3 §24 G2 / G6；§28.1 R52）
+// ---------------------------------------------------------------------------
+
+/// G2 的上游 test inventory 文件集合。
+///
+/// 取 `FILE_RULES.reason` 引用 §6（Auth/Vault）或 §8（Policy/Audit/Tool control）的全集，
+/// 再减去 [`G6_DEFERRED_G2_GUI_FILES`]。`tool-name` / `tool-result` 留在这里是刻意的：它们
+/// 分别承载 §8.2 tool metadata 与 policy refusal 解码后的可识别性，不依赖 route/视觉落地。
+const G2_TEST_FILES: [&str; 21] = [
+    "agent-computer/tests/shell.test.ts",
+    "app/tests/tool-name.test.ts",
+    "app/tests/tool-result.test.ts",
+    "server/tests/audit.test.ts",
+    "server/tests/bot-lifecycle-audit.test.ts",
+    "server/tests/computer-gateway.test.ts",
+    "server/tests/computer-policy-route.test.ts",
+    "server/tests/computer-policy.test.ts",
+    "server/tests/dev-actor.integration.test.ts",
+    "server/tests/encrypt-sso-config.test.ts",
+    "server/tests/entra-profile.test.ts",
+    "server/tests/human-input-end-to-end.test.ts",
+    "server/tests/people-paging.integration.test.ts",
+    "server/tests/plugin-user-credential.integration.test.ts",
+    "server/tests/policy-durability.integration.test.ts",
+    "server/tests/policy-fanout.integration.test.ts",
+    "server/tests/roles.test.ts",
+    "server/tests/server-side-tools.integration.test.ts",
+    "server/tests/single-user.test.ts",
+    "server/tests/tenant-package.test.ts",
+    "tests/fintech-package.test.ts",
+];
+
+/// 引用 §6/§8、但明确归 §24 G6 的 GUI 文件。
+///
+/// 三者验证的是 audit 页可见文案、浏览器登录 client 与 credential form；后端闭合不能把
+/// 它们冒充完成。固定上游 AST 中分别为 5 / 6 / 1 条。
+#[cfg(test)]
+const G6_DEFERRED_G2_GUI_FILES: [&str; 3] = [
+    "app/tests/audit-silence.test.ts",
+    "app/tests/auth-client.test.ts",
+    "app/tests/credential-form.test.ts",
+];
+
+/// 固定上游 AST 中 G2 队列的用例数；由同名测试与 `parity/tests.yaml::recount` 双重复算。
+const G2_TEST_CASE_COUNT: usize = 234;
+
+/// 延后到 G6 的三个 GUI 文件用例数。
+#[cfg(test)]
+const G6_DEFERRED_G2_GUI_CASE_COUNT: usize = 12;
+
+/// `FILE_RULES.reason` 引用 §6 或 §8 的完整用例数。
+#[cfg(test)]
+const G2_SECTION_REFERENCED_TEST_CASE_COUNT: usize = 246;
 
 // ---------------------------------------------------------------------------
 // AST 抽取结果
@@ -1181,6 +1236,10 @@ fn render_ledger(inv: &Inventory, progress: &BTreeMap<String, ProgressOverlay>) 
         w,
         "# 分类真源 = crates/openbot-testkit/src/xtask/test_inventory.rs::FILE_RULES（{UPSTREAM_TEST_FILE_COUNT} 行，一行一个上游文件）。"
     )?;
+    writeln!(
+        w,
+        "# G2 队列真源 = 同文件 G2_TEST_FILES（21 文件 / {G2_TEST_CASE_COUNT} 用例）；§6/§8 的 3 个 GUI 文件另归 G6。"
+    )?;
     writeln!(w, "#")?;
     writeln!(w, "# 真源与依据：")?;
     writeln!(
@@ -1326,6 +1385,8 @@ fn render_ledger(inv: &Inventory, progress: &BTreeMap<String, ProgressOverlay>) 
     writeln!(w, "generated_by: \"xtask test-inventory\"")?;
     writeln!(w, "recount:")?;
 
+    let g2_files_json =
+        serde_json::to_string(&G2_TEST_FILES).context("序列化 G2 test file 集合失败")?;
     let recounts: Vec<(String, &str, String)> = vec![
         (
             "git ls-files '*.test.ts' '*.test.tsx' | wc -l".to_string(),
@@ -1366,6 +1427,13 @@ fn render_ledger(inv: &Inventory, progress: &BTreeMap<String, ProgressOverlay>) 
                 .to_string(),
             "repo",
             cases.len().to_string(),
+        ),
+        (
+            format!(
+                "jq --argjson files '{g2_files_json}' '[.nodes[] | select(.kind == \"test\" and (.file as $file | $files | index($file)))] | length' fixtures/tests/upstream-ast-inventory.json"
+            ),
+            "repo",
+            G2_TEST_CASE_COUNT.to_string(),
         ),
         (
             "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
@@ -1747,6 +1815,54 @@ mod tests {
             unique.len(),
             UPSTREAM_TEST_FILE_COUNT,
             "FILE_RULES 里有重复路径"
+        );
+    }
+
+    /// 移交指南里的“G2 相关 234 条”必须是一张封闭分区，不是碰巧加出同一个数字。
+    #[test]
+    fn g2_test_inventory_is_exactly_234() {
+        let cited: std::collections::BTreeSet<&str> = FILE_RULES
+            .iter()
+            .filter(|rule| rule.reason.contains("§6") || rule.reason.contains("§8"))
+            .map(|rule| rule.file)
+            .collect();
+        let g2: std::collections::BTreeSet<&str> = G2_TEST_FILES.into_iter().collect();
+        let deferred: std::collections::BTreeSet<&str> =
+            G6_DEFERRED_G2_GUI_FILES.into_iter().collect();
+        assert!(g2.is_disjoint(&deferred), "一个文件不能同时归 G2 与 G6");
+        let partition: std::collections::BTreeSet<&str> = g2.union(&deferred).copied().collect();
+        assert_eq!(
+            partition, cited,
+            "§6/§8 引用文件必须恰好分到 G2 或显式延后的 G6，不能漏也不能多"
+        );
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("crates/openbot-testkit 的祖父目录 = 仓根");
+        let fixture =
+            std::fs::read_to_string(root.join("fixtures/tests/upstream-ast-inventory.json"))
+                .expect("读取固定上游 AST fixture");
+        let inventory: serde_json::Value = serde_json::from_str(&fixture).expect("fixture 是 JSON");
+        let nodes = inventory["nodes"].as_array().expect("fixture.nodes 是数组");
+        let count = |files: &std::collections::BTreeSet<&str>| {
+            nodes
+                .iter()
+                .filter(|node| {
+                    node["kind"].as_str() == Some("test")
+                        && node["file"]
+                            .as_str()
+                            .is_some_and(|file| files.contains(file))
+                })
+                .count()
+        };
+
+        assert_eq!(count(&g2), G2_TEST_CASE_COUNT);
+        assert_eq!(count(&deferred), G6_DEFERRED_G2_GUI_CASE_COUNT);
+        assert_eq!(count(&cited), G2_SECTION_REFERENCED_TEST_CASE_COUNT);
+        assert_eq!(
+            G2_TEST_CASE_COUNT + G6_DEFERRED_G2_GUI_CASE_COUNT,
+            G2_SECTION_REFERENCED_TEST_CASE_COUNT
         );
     }
 
