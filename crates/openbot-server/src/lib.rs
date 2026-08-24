@@ -60,8 +60,9 @@
 //!   而配置面是 G2（§15.4）。此刻引入只会得到一个零调用点的依赖，所以刻意不引入。
 //!   **本 crate 没有任何默认外发的遥测端点**（§16.4「零 phone-home」）。
 //! - **SSE / WebSocket / 静态 GUI bundle**：分别是 G3 与 GUI 线的工作。
-//! - SAML、动态 IdP 管理、credentials/computer 等其余 HTTP 路由仍未落地。W-7 已接环境配置
-//!   OIDC capabilities/start/callback 与真实 keyed session/group refresh，但外部安全审计未完成。
+//! - credentials/computer 等其余 HTTP 路由仍未落地。W-7 已接环境/动态 OIDC、SAML
+//!   routing/metadata/ACS、动态 IdP 管理与 keyed session/group refresh；外部 SAML/XSW 审计、
+//!   KMS/HSM 与跨平台原生发行未完成，不能据此宣称 G2。
 
 #![deny(missing_docs)]
 

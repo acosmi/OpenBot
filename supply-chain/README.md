@@ -6,10 +6,11 @@
 
 ## 读口径
 
-- `imports.lock` 锁定 Google 公开的 exact/delta audits；当前机械覆盖 **14** 个依赖。
-- `config.toml` 的 **370** 条 exemptions 中，350 条是“引入 Cargo Vet 时已存在的精确版本快照”；
+- `imports.lock` 锁定 Google 公开的 exact/delta audits；当前机械覆盖 **15** 个依赖
+  （W-7b 刷新后新增覆盖 `openssl-macros 0.1.1`）。
+- `config.toml` 的 **400** 条 exemptions 中，350 条是“引入 Cargo Vet 时已存在的精确版本快照”；
   另 20 条是 W-7 TLS delta 的精确版本、逐条带 `owner=security` 与
-  `not a full source audit` 说明，
+  `not a full source audit` 说明；W-7b SAML/xmlsec FFI 再增 30 条同口径精确版本，
   **不是安全审计结论**。
 - CI 不运行 `init` / `regenerate`。Cargo.lock 新增或升级一个未覆盖版本时，
   `cargo vet --locked` 直接判红，不会自动添加 exemption。
@@ -18,8 +19,8 @@
 
 ```bash
 cargo vet --version                                                   # cargo-vet 0.10.0
-cargo vet --locked                                                    # 14 fully audited, 370 exempted
-python3 -c 'import tomllib;d=tomllib.load(open("supply-chain/config.toml","rb"));print(sum(len(v) for v in d.get("exemptions",{}).values()))'  # 370
+cargo vet --locked                                                    # 15 fully audited, 400 exempted
+python3 -c 'import tomllib;d=tomllib.load(open("supply-chain/config.toml","rb"));print(sum(len(v) for v in d.get("exemptions",{}).values()))'  # 400
 ```
 
 ## 直接信任源裁决
@@ -43,3 +44,5 @@ python3 -c 'import tomllib;d=tomllib.load(open("supply-chain/config.toml","rb"))
 实得 `Vetting Failed` 且精确报 `aead:0.5.2 missing ["safe-to-deploy"]`，证明该闸门会说“不”。
 W-7 加 TLS 依赖、写 exemption 前同一闸门又精确列出新增 **20/20** unvetted；Google imports
 刷新后仍全缺，未用“导入过”冒充“覆盖了”。
+W-7b 加 SAML 图时先得 **31/31** unvetted；刷新 Google imports 后只有
+`openssl-macros 0.1.1` 获 exact+delta 覆盖，其余 **30/31** 仍逐项明示非审计 exemption。

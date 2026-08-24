@@ -924,6 +924,18 @@ pub fn auth_config(
     public_url: Option<&str>,
     session_lifetime: SessionLifetimePolicy,
 ) -> Result<Option<AuthConfig>, AuthConfigError> {
+    auth_config_with_dynamic_provider(env, public_url, session_lifetime, false)
+}
+
+/// 与 [`auth_config`] 相同，但把数据库里已存在的 deployment-owned IdP 纳入“有 provider”。
+///
+/// 该布尔值只能来自启动层对 `sso_providers` 的数据库查询，不能来自请求或环境自报。
+pub fn auth_config_with_dynamic_provider(
+    env: &EnvMap,
+    public_url: Option<&str>,
+    session_lifetime: SessionLifetimePolicy,
+    has_dynamic_provider: bool,
+) -> Result<Option<AuthConfig>, AuthConfigError> {
     let mut provider_problems = Vec::new();
 
     let google = oauth_client(env, AuthProviderId::Google, &mut provider_problems);
@@ -943,7 +955,8 @@ pub fn auth_config(
     }
 
     let session_secret = optional(env, "OPENBOT_SESSION_SECRET").map(Secret::new);
-    let has_provider = google.is_some() || microsoft.is_some() || okta.is_some();
+    let has_provider =
+        google.is_some() || microsoft.is_some() || okta.is_some() || has_dynamic_provider;
 
     if !has_provider {
         if session_secret.is_some() {
@@ -1224,6 +1237,26 @@ mod tests {
                 .is_none()
         );
         assert!(single_user_enabled(&bare, false).expect("显式要了"));
+    }
+
+    #[test]
+    fn a_database_owned_provider_makes_session_configuration_live_without_an_environment_idp() {
+        let dynamic_only = without_google(&signed_in_env());
+        let config = auth_config_with_dynamic_provider(
+            &dynamic_only,
+            PUBLIC,
+            default_session_lifetime(),
+            true,
+        )
+        .expect("数据库 provider 是权威启动事实")
+        .expect("动态 provider 需要 multi-user auth 配置");
+        assert!(config.configured_providers().is_empty());
+        assert_eq!(
+            config.session_secret.character_count(),
+            "a-long-enough-local-development-auth-secret"
+                .chars()
+                .count()
+        );
     }
 
     // -----------------------------------------------------------------------

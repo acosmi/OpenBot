@@ -7,9 +7,11 @@ use hmac::{Hmac, Mac};
 use openbot_application::{ApplicationService, OpenBotApplication};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::session::TrustedOrigins;
+use openbot_domain::vault::{KeyVersion, WrappingKey};
 use openbot_infra::auth::config::{
     AuthConfig, BindingExposure, ExampleKeyPolicy, KeyEncryptionKey, SingleUserAdmission,
-    auth_config, default_session_lifetime, single_user_binding_verdict, single_user_enabled,
+    auth_config_with_dynamic_provider, default_session_lifetime, single_user_binding_verdict,
+    single_user_enabled,
 };
 use openbot_infra::auth::oidc::coordinator::{DEFAULT_IDP_TIMEOUT, DEFAULT_METADATA_MAX_BYTES};
 use openbot_infra::auth::oidc::{
@@ -17,6 +19,7 @@ use openbot_infra::auth::oidc::{
     PostgresOidcRateLimiter, PostgresOidcSessionIssuer, PreAuthSurface, ProviderRegistry,
     configured_oidc_providers,
 };
+use openbot_infra::auth::sso::DynamicSsoService;
 use openbot_infra::db::compat::{DataMigrationVerdict, check_migration_boundary_on};
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{baseline, native, pool};
@@ -35,6 +38,7 @@ use sha2::Sha256;
 type HmacSha256 = Hmac<Sha256>;
 type OidcLoginAssembly = (
     Arc<OidcLoginCoordinator>,
+    Arc<DynamicSsoService>,
     PreAuthSurface,
     TrustedOrigins,
     bool,
@@ -73,8 +77,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .ok_or_else(|| startup_error("key_encryption_key_missing"))?;
     let audit_key = derive_audit_key(raw_master.as_bytes());
 
+    let has_dynamic_provider = database_has_dynamic_provider(&pool).await?;
     let public_url = server.public_url.as_ref().map(|url| url.as_str());
-    let auth_config = auth_config(&env, public_url, default_session_lifetime())?;
+    let auth_config = auth_config_with_dynamic_provider(
+        &env,
+        public_url,
+        default_session_lifetime(),
+        has_dynamic_provider,
+    )?;
     let has_provider = auth_config.is_some();
     let single_user = single_user_enabled(&env, has_provider)?;
     // 第一真源的缺省是“tenant package 的 id”，不是目录路径。W-4 尚未加载/校验包，
@@ -92,6 +102,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             &pool,
             &tenant,
             audit_key.as_slice(),
+            key_encryption.into_wrapping_key(),
             server.public_transport().cookie_secure(),
         )
         .await?;
@@ -161,8 +172,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_metrics_handle(metrics)
         .with_insecure_transport(server.public_transport().insecure_transport())
         .with_readiness_probe(Arc::new(db_probe));
-    if let Some((coordinator, preauth, origins, secure_cookie)) = oidc_login {
-        builder = builder.with_oidc_login(coordinator, preauth, origins, secure_cookie);
+    if let Some((coordinator, dynamic_sso, preauth, origins, secure_cookie)) = oidc_login {
+        builder = builder.with_login_security(origins, secure_cookie);
+        builder = builder.with_oidc_login(coordinator, preauth);
+        builder = builder.with_dynamic_sso(dynamic_sso);
     }
     if !single_user {
         builder = builder.with_readiness_probe(Arc::new(FnReadinessProbe::new(
@@ -195,12 +208,17 @@ async fn build_oidc_login(
     pool: &deadpool_postgres::Pool,
     tenant: &TenantId,
     audit_key: &[u8],
+    wrapping_key: WrappingKey,
     secure_cookie: bool,
 ) -> Result<OidcLoginAssembly, Box<dyn Error>> {
     let configured = configured_oidc_providers(config)?;
     let registry =
         ProviderRegistry::build(configured.iter().map(|provider| provider.config.clone()))?;
     let preauth = PreAuthSurface::project(&registry);
+    let environment_provider_ids: Vec<String> = configured
+        .iter()
+        .map(|provider| provider.config.id().as_str().to_owned())
+        .collect();
     let dialer = SafeDialer::new(EgressPolicy::default());
     let budget = FetchBudget::new(DEFAULT_METADATA_MAX_BYTES, DEFAULT_IDP_TIMEOUT);
     let mut runtimes = Vec::with_capacity(configured.len());
@@ -235,13 +253,41 @@ async fn build_oidc_login(
         tenant,
     )?;
     let coordinator =
-        OidcLoginCoordinator::new(runtimes, attempts, sessions, rate_limiter, dialer)?;
+        OidcLoginCoordinator::new(runtimes, attempts, sessions, rate_limiter, dialer.clone())?;
+    let dynamic_sso = DynamicSsoService::new(
+        pool.clone(),
+        tenant,
+        config.session_secret.expose().as_bytes(),
+        config.session_secret.expose().as_bytes(),
+        audit_key,
+        wrapping_key,
+        KeyVersion::new(1),
+        config.session_lifetime,
+        config.admin_floor.clone(),
+        environment_provider_ids,
+        dialer,
+        config.public_url.clone(),
+    )?;
+    dynamic_sso
+        .preflight_all(time::OffsetDateTime::now_utc())
+        .await?;
     Ok((
         Arc::new(coordinator),
+        Arc::new(dynamic_sso),
         preauth,
         config.trusted_origins.clone(),
         secure_cookie,
     ))
+}
+
+async fn database_has_dynamic_provider(
+    pool: &deadpool_postgres::Pool,
+) -> Result<bool, Box<dyn Error>> {
+    let client = pool.get().await?;
+    Ok(client
+        .query_one("SELECT EXISTS(SELECT 1 FROM public.sso_providers)", &[])
+        .await?
+        .try_get(0)?)
 }
 
 async fn initialize_database(pool: &deadpool_postgres::Pool) -> Result<(), Box<dyn Error>> {

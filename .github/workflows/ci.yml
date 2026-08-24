@@ -87,11 +87,18 @@ jobs:
   # 不能来自"两边跑的命令不一样"。
   # =========================================================================
   gates:
-    name: gates（fmt / clippy / test / parity）
+    name: gates（fmt / clippy / test / native guards / parity）
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
+
+      - name: 安装 SAML xmlsec 原生闭包
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl libclang-dev pkg-config libssl-dev
+          xmlsec1-config --version
+          pkg-config --modversion libxml-2.0 openssl
 
       - name: 安装 rust-toolchain.toml 钉住的工具链
         # rustup 读仓根 rust-toolchain.toml（channel + rustfmt/clippy components）。
@@ -127,6 +134,9 @@ jobs:
         # 17 个预生成对象与 20 条诚实的非审计 exemption；任一漂移先红再 delta audit。
         run: bash tools/check-safe-dialer-dependencies.sh
 
+      - name: W-7b SAML / xmlsec / OpenSSL / libxml2 FFI guard
+        run: bash tools/check-saml-dependencies.sh
+
       - name: xtask parity-check
         # v3 §19.3："CI 拒绝未归类项和没有证据的 `done`"。
         # parity/ 为空时它打印 "0 ledger" 并通过 —— Phase 0 早期这是正确行为，
@@ -146,6 +156,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - name: 安装 SAML xmlsec 原生闭包
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl libclang-dev pkg-config libssl-dev
+          xmlsec1-config --version
+
       - name: 安装 rust-toolchain.toml 钉住的工具链
         run: rustup show
 
@@ -164,6 +180,9 @@ jobs:
 
       - name: W-7 safe dialer dependency / C-FFI guard
         run: bash tools/check-safe-dialer-dependencies.sh
+
+      - name: W-7b SAML / xmlsec / OpenSSL / libxml2 FFI guard
+        run: bash tools/check-saml-dependencies.sh
 
       - name: cargo deny（licenses / bans / advisories / sources 四段）
         # 配置 = 仓根 deny.toml；RUSTSEC-2023-0071 的书面裁决与触发器同样在该文件。

@@ -7,6 +7,11 @@ version = "0.10"
 [imports.google]
 url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
 
+[[exemptions.adler2]]
+version = "2.0.1"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
 [[exemptions.aead]]
 version = "0.5.2"
 criteria = "safe-to-deploy"
@@ -79,6 +84,11 @@ criteria = "safe-to-deploy"
 version = "0.2.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.bindgen]]
+version = "0.72.1"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
 [[exemptions.bit-set]]
 version = "0.8.0"
 criteria = "safe-to-deploy"
@@ -127,6 +137,11 @@ criteria = "safe-to-deploy"
 version = "0.14.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.cexpr]]
+version = "0.6.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
 [[exemptions.cfg-if]]
 version = "1.0.4"
 criteria = "safe-to-deploy"
@@ -142,6 +157,11 @@ criteria = "safe-to-deploy"
 [[exemptions.cipher]]
 version = "0.4.4"
 criteria = "safe-to-deploy"
+
+[[exemptions.clang-sys]]
+version = "1.9.1"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.cmov]]
 version = "0.5.4"
@@ -170,6 +190,11 @@ criteria = "safe-to-deploy"
 [[exemptions.cpufeatures]]
 version = "0.3.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.crc32fast]]
+version = "1.5.1"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.crossbeam-epoch]]
 version = "0.9.20"
@@ -208,16 +233,36 @@ version = "0.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.darling]]
+version = "0.20.11"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.darling]]
 version = "0.23.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.darling_core]]
+version = "0.20.11"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.darling_core]]
 version = "0.23.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.darling_macro]]
+version = "0.20.11"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.darling_macro]]
 version = "0.23.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.data-encoding]]
+version = "2.11.1"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.deadpool]]
 version = "0.12.3"
@@ -250,6 +295,21 @@ criteria = "safe-to-deploy"
 [[exemptions.deranged]]
 version = "0.5.8"
 criteria = "safe-to-deploy"
+
+[[exemptions.derive_builder]]
+version = "0.20.2"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.derive_builder_core]]
+version = "0.20.2"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.derive_builder_macro]]
+version = "0.20.2"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.digest]]
 version = "0.10.7"
@@ -319,9 +379,29 @@ criteria = "safe-to-deploy"
 version = "0.1.11"
 criteria = "safe-to-deploy"
 
+[[exemptions.flate2]]
+version = "1.1.9"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.fnv]]
+version = "1.0.7"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
 [[exemptions.foldhash]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.foreign-types]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.foreign-types-shared]]
+version = "0.1.1"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.form_urlencoded]]
 version = "1.2.2"
@@ -370,6 +450,11 @@ criteria = "safe-to-deploy"
 [[exemptions.ghash]]
 version = "0.5.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.glob]]
+version = "0.3.4"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.group]]
 version = "0.13.0"
@@ -548,6 +633,11 @@ criteria = "safe-to-deploy"
 version = "0.2.189"
 criteria = "safe-to-deploy"
 
+[[exemptions.libloading]]
+version = "0.8.9"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
 [[exemptions.libm]]
 version = "0.2.16"
 criteria = "safe-to-deploy"
@@ -555,6 +645,11 @@ criteria = "safe-to-deploy"
 [[exemptions.libredox]]
 version = "0.1.20"
 criteria = "safe-to-deploy"
+
+[[exemptions.libxml]]
+version = "0.3.3"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.litemap]]
 version = "0.8.3"
@@ -607,6 +702,11 @@ criteria = "safe-to-deploy"
 [[exemptions.minimal-lexical]]
 version = "0.2.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.miniz_oxide]]
+version = "0.8.9"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.mio]]
 version = "1.2.2"
@@ -671,6 +771,21 @@ criteria = "safe-to-deploy"
 [[exemptions.openidconnect]]
 version = "4.0.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.openssl]]
+version = "0.10.81"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.openssl-probe]]
+version = "0.1.6"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.openssl-sys]]
+version = "0.9.117"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.ordered-float]]
 version = "2.10.1"
@@ -800,6 +915,11 @@ criteria = "safe-to-deploy"
 version = "0.10.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.pkg-config]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
 [[exemptions.polyval]]
 version = "0.6.2"
 criteria = "safe-to-deploy"
@@ -836,6 +956,11 @@ criteria = "safe-to-deploy"
 version = "0.2.21"
 criteria = "safe-to-deploy"
 
+[[exemptions.prettyplease]]
+version = "0.2.37"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
 [[exemptions.primeorder]]
 version = "0.13.6"
 criteria = "safe-to-deploy"
@@ -847,6 +972,11 @@ criteria = "safe-to-deploy"
 [[exemptions.quanta]]
 version = "0.12.6"
 criteria = "safe-to-deploy"
+
+[[exemptions.quick-xml]]
+version = "0.41.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.quote]]
 version = "1.0.47"
@@ -964,6 +1094,11 @@ criteria = "safe-to-deploy"
 version = "1.0.23"
 criteria = "safe-to-deploy"
 
+[[exemptions.samael]]
+version = "0.0.22"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
 [[exemptions.same-file]]
 version = "1.0.6"
 criteria = "safe-to-deploy"
@@ -1053,6 +1188,11 @@ version = "0.1.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.shlex]]
+version = "1.3.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.shlex]]
 version = "2.0.1"
 criteria = "safe-to-deploy"
 
@@ -1063,6 +1203,11 @@ criteria = "safe-to-deploy"
 [[exemptions.signature]]
 version = "2.2.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.simd-adler32]]
+version = "0.3.10"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.siphasher]]
 version = "1.0.3"
@@ -1302,6 +1447,11 @@ criteria = "safe-to-deploy"
 [[exemptions.valuable]]
 version = "0.1.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.vcpkg]]
+version = "0.2.15"
+criteria = "safe-to-deploy"
+notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
 
 [[exemptions.version_check]]
 version = "0.9.5"

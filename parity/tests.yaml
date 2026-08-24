@@ -1,7 +1,8 @@
 # parity/tests.yaml —— 上游 105 个 .test.ts/.test.tsx 文件的 **AST 级** test inventory。
 #
-# 本文件由 `cargo xtask test-inventory --upstream <上游干净克隆>` 生成，**不要手改**：
-# 手改会在下一次生成时被覆盖，且与 fixtures/tests/upstream-ast-inventory.json 的 nodes[] 下标失配。
+# 本文件的 AST 身份字段由 `cargo xtask test-inventory --upstream <上游干净克隆>` 生成：
+# id/upstream/label/owner/test_id/evidence 不手改；非 todo 的 target/migration_rule/status/done_evidence 会按稳定 id 保留。
+# 已完成 id 若在重生成后消失会硬失败，不会静默丢证据或错接到另一条 AST 用例。
 # 分类真源 = crates/openbot-testkit/src/xtask/test_inventory.rs::FILE_RULES（105 行，一行一个上游文件）。
 #
 # 真源与依据：
@@ -19,7 +20,7 @@
 # 三档写在 notes 开头，机器可读（`grep -c 'notes: "ported '` 等，见 recount）。
 #
 # label 粒度与取向（CLAUDE.md §4）：
-# label / tier / owner / target 取**文件**粒度。label 取保守方向 —— 只要该文件的被测面在 v3 里
+# label / tier / owner / 初始 target 取**文件**粒度。label 取保守方向 —— 只要该文件的被测面在 v3 里
 # 有任一处换机制，整个文件标 `替代`，绝不把换了机制的东西写成 `parity`。反方向的代价只是把
 # 若干条 parity 条目多标了一次 `替代`，会在 G8 逐条复核时收敛。
 # 本表**不含 `新增`**：每条 entry 都由一个上游 AST 用例生成，按定义都有上游对应物；
@@ -28,9 +29,9 @@
 # 字段约定：
 # - upstream = `<上游文件路径>::<describe 链，用 :: 连接>`，无 describe 时只有文件路径。
 #   **不带行号**（CLAUDE.md §8：位置引用只用符号名）；行列号只在 fixtures/tests/upstream-ast-inventory.json 里。
-# - target = `<Rust 模块路径>::tests::<函数名>`，函数名由用例标题派生。
+# - target 初值由用例标题派生；条目闭合时改成亲跑证据的真实 Rust 落点，并由生成器保留。
 # - evidence = fixtures/tests/upstream-ast-inventory.json 的 nodes[] 下标，一一对应，可直接 jq 复核。
-# - status 全为 todo：本仓当前零 Rust 实现代码，任何 done 都会是假 done（校验器规则 4 也会当场红）。
+# - status 初值为 todo；只有本轮亲跑证据齐全时改 done，done_evidence 缺失会被生成器与 parity-check 双重拒绝。
 #
 # 交叉检查（v3 §1.3 / §28.4）：词法命中 1007 vs AST 用例 1047，差值 +40。
 # 差值逐项闭合，每一项都由本文件 recount 段的命令复算：
@@ -105,7 +106,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 1047
+    expect: 1036
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -7229,72 +7230,79 @@ entries:
   - id: "server-tests-encrypt-sso-config--the-identity-provider-config-in-the-data--is-ciphertext-and-the-client-secret-is-not-in-it"
     upstream: "server/tests/encrypt-sso-config.test.ts::the identity provider config in the database"
     label: parity
-    target: "openbot_infra::vault::sso_config::tests::is_ciphertext_and_the_client_secret_is_not_in_it"
+    target: "openbot_infra::tests::dynamic_sso::dynamic_saml_is_encrypted_replay_safe_and_delete_cleans_account_anchors"
     owner: openbot-infra
     test_id: T-TEST-0693
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[831]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "OPENBOT_TEST_DATABASE_URL=… CARGO_INCREMENTAL=0 cargo test -p openbot-infra --test dynamic_sso -- --include-ignored => 3/0/0；直接 SELECT saml_config 断言 v2 envelope，且不含 X509Certificate；vault unit 3/0/0 另钉 secret 明文不在 ciphertext"
     notes: "ported —— v3 §6.4 Vault：身份提供方配置在数据库里的加密形态判据逐条移植。上游用例标题：「is ciphertext, and the client secret is not in it」。"
   - id: "server-tests-encrypt-sso-config--the-identity-provider-config-in-the-data--comes-back-in-the-clear-so-the-plugin-sees-what-it-wrote"
     upstream: "server/tests/encrypt-sso-config.test.ts::the identity provider config in the database"
     label: parity
-    target: "openbot_infra::vault::sso_config::tests::comes_back_in_the_clear_so_the_plugin_sees_what_it_wrote"
+    target: "openbot_infra::auth::sso::vault::tests::v2_is_bound_to_provider_column_and_tenant"
     owner: openbot-infra
     test_id: T-TEST-0694
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[832]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-infra auth::sso::vault::tests => 3/0/0；seal 后以同 tenant/provider/column/key 打开，逐字节等于原 SecretBytes，且 needs_migration=false"
     notes: "ported —— v3 §6.4 Vault：身份提供方配置在数据库里的加密形态判据逐条移植。上游用例标题：「comes back in the clear, so the plugin sees what it wrote」。"
   - id: "server-tests-encrypt-sso-config--the-identity-provider-config-in-the-data--a-row-written-before-this-existed-still-reads-so-an-upgr"
     upstream: "server/tests/encrypt-sso-config.test.ts::the identity provider config in the database"
     label: parity
-    target: "openbot_infra::vault::sso_config::tests::a_row_written_before_this_existed_still_reads_so_an_upgr"
+    target: "openbot_infra::tests::dynamic_sso::legacy_plaintext_saml_config_is_read_verified_and_resealed_as_v2"
     owner: openbot-infra
     test_id: T-TEST-0695
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[833]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "OPENBOT_TEST_DATABASE_URL=… CARGO_INCREMENTAL=0 cargo test -p openbot-infra --test dynamic_sso -- --include-ignored => 3/0/0；直接插入 legacy plaintext + ` Legacy.Example `，startup preflight 同事务重封 v2 并规范成 legacy.example；保留 ID、organization scope、规范化后重复域均启动拒绝"
     notes: "ported —— v3 §6.4 Vault：身份提供方配置在数据库里的加密形态判据逐条移植。上游用例标题：「a row written before this existed still reads, so an upgrade does not lock anybody out」。"
   - id: "server-tests-encrypt-sso-config--the-identity-provider-config-in-the-data--a-saml-provider-s-signing-config-is-covered-too"
     upstream: "server/tests/encrypt-sso-config.test.ts::the identity provider config in the database"
     label: parity
-    target: "openbot_infra::vault::sso_config::tests::a_saml_provider_s_signing_config_is_covered_too"
+    target: "openbot_infra::tests::dynamic_sso::dynamic_saml_is_encrypted_replay_safe_and_delete_cleans_account_anchors"
     owner: openbot-infra
     test_id: T-TEST-0696
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— Rust 加密整个可接受的 SamlSecretConfig；上游测试虚构的 privateKey 字段不在实际 GUI 注册体中，Rust deny_unknown_fields 且不发布 SP 私钥输入"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[834]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "OPENBOT_TEST_DATABASE_URL=… CARGO_INCREMENTAL=0 cargo test -p openbot-infra --test dynamic_sso -- --include-ignored => 3/0/0；真实 SAML metadata/X509 verification material 整体落库仅为 v2 ciphertext，随后完成 XMLDSig/session/group。边界如实：上游单测的 synthetic privateKey 会被 Rust 输入 schema 拒绝，不冒充已支持 signed AuthnRequest"
     notes: "ported —— v3 §6.4 Vault：身份提供方配置在数据库里的加密形态判据逐条移植。上游用例标题：「a SAML provider's signing config is covered too」。"
   - id: "server-tests-encrypt-sso-config--the-identity-provider-config-in-the-data--every-other-model-passes-straight-through"
     upstream: "server/tests/encrypt-sso-config.test.ts::the identity provider config in the database"
     label: parity
-    target: "openbot_infra::vault::sso_config::tests::every_other_model_passes_straight_through"
+    target: "openbot_infra::auth::sso::vault::SsoConfigVault（显式窄边界）"
     owner: openbot-infra
     test_id: T-TEST-0697
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "remove: not-applicable-with-proof —— Rust 无全局 ORM hook，只有封闭 OIDC/SAML 列可调用 vault"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[835]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "bash tools/check-saml-dependencies.sh => exit 0；guard 锁定 SsoConfigVault 只在 sso/service.rs、store.rs、vault.rs 三文件出现，类型 pub(crate)，列名只能取封闭 SsoSecretColumn::{Oidc,Saml}，因此不存在可触碰其他 model 的全局拦截面"
     notes: "ported —— v3 §6.4 Vault：身份提供方配置在数据库里的加密形态判据逐条移植。上游用例标题：「every other model passes straight through」。"
   - id: "server-tests-encrypt-sso-config--the-identity-provider-config-in-the-data--an-already-encrypted-value-is-not-encrypted-twice"
     upstream: "server/tests/encrypt-sso-config.test.ts::the identity provider config in the database"
     label: parity
-    target: "openbot_infra::vault::sso_config::tests::an_already_encrypted_value_is_not_encrypted_twice"
+    target: "openbot_infra::auth::sso::vault::tests::v2_is_bound_to_provider_column_and_tenant"
     owner: openbot-infra
     test_id: T-TEST-0698
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[836]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-infra auth::sso::vault::tests => 3/0/0；当前 key version 的 v2 open 明确返回 needs_migration=false，store 只在该位为 true 时重封，故当前 envelope 不会二次加密"
     notes: "ported —— v3 §6.4 Vault：身份提供方配置在数据库里的加密形态判据逐条移植。上游用例标题：「an already-encrypted value is not encrypted twice」。"
   - id: "server-tests-encrypt-sso-config--the-identity-provider-config-in-the-data--a-value-this-key-cannot-read-is-dropped-rather-than-hand"
     upstream: "server/tests/encrypt-sso-config.test.ts::the identity provider config in the database"
     label: parity
-    target: "openbot_infra::vault::sso_config::tests::a_value_this_key_cannot_read_is_dropped_rather_than_hand"
+    target: "openbot_infra::auth::sso::vault::tests::a_v2_value_sealed_by_another_key_never_returns_ciphertext_as_plaintext"
     owner: openbot-infra
     test_id: T-TEST-0699
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[837]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-infra auth::sso::vault::tests => 3/0/0；同 tenant/provider/column/version 但错 KEK 精确返回 CiphertextRejected，既不把 envelope 当明文交上层，也不泄露 saml-signing-material"
     notes: "ported —— v3 §6.4 Vault：身份提供方配置在数据库里的加密形态判据逐条移植。上游用例标题：「a value this key cannot read is dropped rather than handed over as ciphertext」。"
   # ---------------------------------------------------------------------------
   # server/tests/entra-profile.test.ts —— owner openbot-infra / ported / parity
@@ -7601,42 +7609,46 @@ entries:
   - id: "server-tests-health--identity-provider-registration--refuses-s-to-a-plain-user"
     upstream: "server/tests/health.test.ts::identity provider registration"
     label: parity
-    target: "openbot_server::health::tests::refuses_s_to_a_plain_user"
+    target: "openbot_server::tests::dynamic_sso_http::admin_routes_require_fresh_origin_and_never_project_saml_material"
     owner: openbot-server
     test_id: T-TEST-0729
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[877]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "OPENBOT_TEST_DATABASE_URL=… CARGO_INCREMENTAL=0 cargo test -p openbot-server --test dynamic_sso_http -- --include-ignored => 1/0/0；plain user 对 register/update-provider/delete-provider 三路逐条实得 403，且 delete 的 admin guard 先于 body parse"
     notes: "ported —— v3 §16.1 Server 发行物（health/readiness）：健康端点、运行时能力、认证可用性与 IdP 注册判据逐条移植。上游用例标题：「refuses %s to a plain user」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-health--identity-provider-registration--refuses-s-to-somebody-signed-out"
     upstream: "server/tests/health.test.ts::identity provider registration"
     label: parity
-    target: "openbot_server::health::tests::refuses_s_to_somebody_signed_out"
+    target: "openbot_server::tests::dynamic_sso_http::admin_routes_require_fresh_origin_and_never_project_saml_material"
     owner: openbot-server
     test_id: T-TEST-0730
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[878]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一真 Axum+PG17 矩阵：无 session 对三条 admin-only SSO route 逐条实得 401；另以仍 live 但超过 15 分钟 fresh 窗口的 admin session 实得 401 + identity_sensitive_write_session_not_fresh"
     notes: "ported —— v3 §16.1 Server 发行物（health/readiness）：健康端点、运行时能力、认证可用性与 IdP 注册判据逐条移植。上游用例标题：「refuses %s to somebody signed out」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-health--identity-provider-registration--lets-an-administrator-through-to-s"
     upstream: "server/tests/health.test.ts::identity provider registration"
     label: parity
-    target: "openbot_server::health::tests::lets_an_administrator_through_to_s"
+    target: "openbot_server::tests::dynamic_sso_http::admin_routes_require_fresh_origin_and_never_project_saml_material"
     owner: openbot-server
     test_id: T-TEST-0731
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[879]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一真 Axum+PG17 矩阵：admin fresh session + trusted Origin 对 register/update-provider/delete-provider 三路逐条实得 200；缺 Origin 的 admin register 实得 403"
     notes: "ported —— v3 §16.1 Server 发行物（health/readiness）：健康端点、运行时能力、认证可用性与 IdP 注册判据逐条移植。上游用例标题：「lets an administrator through to %s」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-health--identity-provider-registration--leaves-the-rest-of-the-auth-routes-alone"
     upstream: "server/tests/health.test.ts::identity provider registration"
     label: parity
-    target: "openbot_server::health::tests::leaves_the_rest_of_the_auth_routes_alone"
+    target: "openbot_server::tests::dynamic_sso_http::admin_routes_require_fresh_origin_and_never_project_saml_material"
     owner: openbot-server
     test_id: T-TEST-0732
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[880]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一真 Axum+PG17 矩阵：无 session 的 /api/auth/sso/start 在 trusted Origin 下实得 202 Accepted，证明 admin guard 只包三条 IdP 写面，没有误包匿名登录路由"
     notes: "ported —— v3 §16.1 Server 发行物（health/readiness）：健康端点、运行时能力、认证可用性与 IdP 注册判据逐条移植。上游用例标题：「leaves the rest of the auth routes alone」。"
   # ---------------------------------------------------------------------------
   # server/tests/human-input-end-to-end.test.ts —— owner openbot-server / ported / parity
