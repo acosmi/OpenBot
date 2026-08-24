@@ -2,6 +2,8 @@
 
 mod harness;
 
+use std::future::Future;
+
 use harness::{admin_config, with_temp_database};
 use openbot_application::{PeopleAdministration, PeoplePageRequest, PeoplePortError};
 use openbot_contracts::auth::Role;
@@ -49,6 +51,71 @@ async fn scalar_i64(pool: &deadpool_postgres::Pool, sql: &str) -> Result<i64, St
         .map_err(|error| error.to_string())?
         .try_get(0)
         .map_err(|error| error.to_string())
+}
+
+const PAGING_FIXTURE: &str = r#"
+INSERT INTO public.users(id,email,name) VALUES
+  ('admin-a','admin@example.com','Admin'),
+  ('recent-000','recent-000@openbot.test','Person 0'),
+  ('recent-001','recent-001@openbot.test','Person 1'),
+  ('recent-002','recent-002@openbot.test','Person 2'),
+  ('recent-003','recent-003@openbot.test','Person 3'),
+  ('recent-004','recent-004@openbot.test','Person 4'),
+  ('recent-005','recent-005@openbot.test','Person 5'),
+  ('literal','literal@openbot.test','Ninety _ Percent'),
+  ('target-099','target-099@openbot.test','Grace Hopper'),
+  ('never','never@openbot.test','Never');
+INSERT INTO public.user_roles(user_id,role)
+SELECT id,CASE WHEN id='admin-a' THEN 'admin'::public.role ELSE 'user'::public.role END
+FROM public.users;
+INSERT INTO public.sessions(id,user_id,token,expires_at,created_at) VALUES
+  ('s-admin','admin-a','token-admin','2099-01-01T00:00:00Z','2026-12-12T00:00:00Z'),
+  ('s-000','recent-000','token-000','2099-01-01T00:00:00Z','2026-11-11T00:00:00Z'),
+  ('s-001','recent-001','token-001','2099-01-01T00:00:00Z','2026-10-10T00:00:00Z'),
+  ('s-002','recent-002','token-002','2099-01-01T00:00:00Z','2026-09-09T00:00:00Z'),
+  ('s-003','recent-003','token-003','2099-01-01T00:00:00Z','2026-08-08T00:00:00Z'),
+  ('s-004','recent-004','token-004','2099-01-01T00:00:00Z','2026-07-07T00:00:00Z'),
+  ('s-005','recent-005','token-005','2099-01-01T00:00:00Z','2026-06-06T00:00:00Z'),
+  ('s-literal','literal','token-literal','2099-01-01T00:00:00Z','2026-05-05T00:00:00Z'),
+  ('s-target','target-099','token-target','2099-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+INSERT INTO public.accounts(id,account_id,provider_id,user_id) VALUES
+  ('target-account-z','target-z','zeta','target-099'),
+  ('target-account-a','target-a','alpha','target-099');
+"#;
+
+const PAGING_IDS: [&str; 10] = [
+    "admin-a",
+    "recent-000",
+    "recent-001",
+    "recent-002",
+    "recent-003",
+    "recent-004",
+    "recent-005",
+    "literal",
+    "target-099",
+    "never",
+];
+
+async fn with_paging_fixture<F, Fut>(test_name: &'static str, tag: &'static str, body: F)
+where
+    F: FnOnce(deadpool_postgres::Pool, PostgresPeopleAdministration) -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+{
+    let admin = admin_config(test_name);
+    with_temp_database(&admin, tag, move |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| format!("连接临时库失败：{error}"))?;
+        let outcome = async {
+            provision(&pool, PAGING_FIXTURE).await?;
+            let people = adapter(&pool, None)?;
+            body(pool.clone(), people).await
+        }
+        .await;
+        pool.close();
+        outcome
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -167,6 +234,344 @@ async fn people_projection_search_and_cursor_match_the_fixed_upstream_shape() {
         pool.close();
         outcome
     })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn session_without_a_user_is_structurally_unreachable_and_writes_nothing() {
+    let admin =
+        admin_config("session_without_a_user_is_structurally_unreachable_and_writes_nothing");
+    with_temp_database(&admin, "session_user_fk", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| format!("连接临时库失败：{error}"))?;
+        let outcome = async {
+            provision(&pool, "").await?;
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let error = client
+                .execute(
+                    "INSERT INTO public.sessions(id,user_id,token,expires_at) \
+                     VALUES('orphan-session','missing-user','orphan-token','2099-01-01T00:00:00Z')",
+                    &[],
+                )
+                .await
+                .expect_err("session 不得引用不存在的 user");
+            if error.code()
+                != Some(&tokio_postgres::error::SqlState::FOREIGN_KEY_VIOLATION)
+            {
+                return Err(format!("orphan session SQLSTATE 不符：{error}"));
+            }
+            if scalar_i64(&pool, "SELECT count(*)::bigint FROM public.sessions").await? != 0 {
+                return Err("FK 拒绝后仍留下 session 行".to_owned());
+            }
+
+            client
+                .batch_execute(
+                    "INSERT INTO public.users(id,email) VALUES('present-user','present@example.com');\
+                     INSERT INTO public.sessions(id,user_id,token,expires_at) \
+                     VALUES('valid-session','present-user','valid-token','2099-01-01T00:00:00Z');",
+                )
+                .await
+                .map_err(|error| format!("正向 session 对照失败：{error}"))?;
+            if scalar_i64(&pool, "SELECT count(*)::bigint FROM public.sessions").await? != 1 {
+                return Err("存在 user 的正向 session 没有写入".to_owned());
+            }
+            client
+                .execute("DELETE FROM public.users WHERE id='present-user'", &[])
+                .await
+                .map_err(|error| format!("删除正向 user 失败：{error}"))?;
+            if scalar_i64(&pool, "SELECT count(*)::bigint FROM public.sessions").await? != 0 {
+                return Err("ON DELETE CASCADE 后留下无 user 的 session".to_owned());
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        outcome
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn answers_a_page_rather_than_everybody() {
+    with_paging_fixture(
+        "answers_a_page_rather_than_everybody",
+        "people_page",
+        |pool, people| async move {
+            let total = scalar_i64(&pool, "SELECT count(*)::bigint FROM public.users").await?;
+            let page = people
+                .list_people(PeoplePageRequest {
+                    search: None,
+                    cursor: None,
+                    limit: 3,
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            if total != 10 || page.people.len() != 3 || page.next_cursor.is_none() {
+                return Err(format!("people 页界不符：total={total}, page={page:?}"));
+            }
+            Ok(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn walking_the_cursor_reaches_everybody_exactly_once() {
+    with_paging_fixture(
+        "walking_the_cursor_reaches_everybody_exactly_once",
+        "people_walk",
+        |_pool, people| async move {
+            let mut cursor = None;
+            let mut seen = Vec::new();
+            let mut ended = false;
+            for _ in 0..20 {
+                let page = people
+                    .list_people(PeoplePageRequest {
+                        search: None,
+                        cursor,
+                        limit: 2,
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?;
+                seen.extend(
+                    page.people
+                        .iter()
+                        .map(|person| person.id.as_str().to_owned()),
+                );
+                let Some(next) = page.next_cursor else {
+                    ended = true;
+                    break;
+                };
+                cursor = Some(next);
+            }
+            let expected: Vec<String> = PAGING_IDS.iter().map(|id| (*id).to_owned()).collect();
+            let unique: std::collections::BTreeSet<&str> =
+                seen.iter().map(String::as_str).collect();
+            if !ended || seen != expected || unique.len() != seen.len() {
+                return Err(format!("people cursor walk 丢失或重复：seen={seen:?}"));
+            }
+            Ok(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn somebody_who_has_never_signed_in_is_last_not_first() {
+    with_paging_fixture(
+        "somebody_who_has_never_signed_in_is_last_not_first",
+        "people_nulls_last",
+        |_pool, people| async move {
+            let mut cursor = None;
+            let mut seen = Vec::new();
+            for _ in 0..20 {
+                let page = people
+                    .list_people(PeoplePageRequest {
+                        search: None,
+                        cursor,
+                        limit: 1,
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?;
+                seen.extend(
+                    page.people
+                        .iter()
+                        .map(|person| person.id.as_str().to_owned()),
+                );
+                let Some(next) = page.next_cursor else { break };
+                cursor = Some(next);
+            }
+            if seen.first().map(String::as_str) != Some("admin-a")
+                || seen.last().map(String::as_str) != Some("never")
+                || seen.len() != PAGING_IDS.len()
+            {
+                return Err(format!("NULLS LAST 顺序不符：{seen:?}"));
+            }
+            Ok(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn search_finds_a_person_outside_the_first_page_by_name_and_email() {
+    with_paging_fixture(
+        "search_finds_a_person_outside_the_first_page_by_name_and_email",
+        "people_search",
+        |_pool, people| async move {
+            let first = people
+                .list_people(PeoplePageRequest {
+                    search: None,
+                    cursor: None,
+                    limit: 2,
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            if first
+                .people
+                .iter()
+                .any(|person| person.id.as_str() == "target-099")
+            {
+                return Err("搜索目标错误地位于未过滤第一页".to_owned());
+            }
+            for needle in ["grace", "TARGET-099"] {
+                let page = people
+                    .list_people(PeoplePageRequest {
+                        search: Some(needle.to_owned()),
+                        cursor: None,
+                        limit: 2,
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if page.people.len() != 1 || page.people[0].id.as_str() != "target-099" {
+                    return Err(format!("server-side 搜索 {needle:?} 不符：{page:?}"));
+                }
+            }
+            Ok(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn a_search_for_a_wildcard_finds_that_not_everything() {
+    with_paging_fixture(
+        "a_search_for_a_wildcard_finds_that_not_everything",
+        "people_wildcard",
+        |_pool, people| async move {
+            let page = people
+                .list_people(PeoplePageRequest {
+                    search: Some("_ Percent".to_owned()),
+                    cursor: None,
+                    limit: 20,
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            if page.people.len() != 1 || page.people[0].id.as_str() != "literal" {
+                return Err(format!("LIKE wildcard 没有按字面转义：{page:?}"));
+            }
+            Ok(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn a_nonsense_cursor_reads_as_the_first_page() {
+    with_paging_fixture(
+        "a_nonsense_cursor_reads_as_the_first_page",
+        "people_bad_cursor",
+        |_pool, people| async move {
+            let first = people
+                .list_people(PeoplePageRequest {
+                    search: None,
+                    cursor: None,
+                    limit: 3,
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            let malformed = people
+                .list_people(PeoplePageRequest {
+                    search: None,
+                    cursor: Some("not-a-cursor".to_owned()),
+                    limit: 3,
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            if malformed != first || malformed.people.is_empty() {
+                return Err(format!("坏 cursor 没有确定性回到第一页：{malformed:?}"));
+            }
+            Ok(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn finding_one_person_returns_the_same_aggregate_shape() {
+    with_paging_fixture(
+        "finding_one_person_returns_the_same_aggregate_shape",
+        "people_find_one",
+        |pool, people| async move {
+            let listed = people
+                .list_people(PeoplePageRequest {
+                    search: Some("target-099".to_owned()),
+                    cursor: None,
+                    limit: 2,
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            let found = people
+                .change_role(
+                    &ActorId::new("admin-a"),
+                    &ActorId::new("target-099"),
+                    Role::User,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if listed.people.as_slice() != [found.clone()]
+                || found.providers != ["alpha".to_owned(), "zeta".to_owned()]
+            {
+                return Err(format!(
+                    "point/list person 聚合形状不同：list={listed:?}, found={found:?}"
+                ));
+            }
+            if scalar_i64(&pool, "SELECT count(*)::bigint FROM public.audit_events").await? != 0 {
+                return Err("幂等 point lookup 产生了业务审计写".to_owned());
+            }
+            Ok(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn finding_a_missing_person_returns_not_found_without_writes() {
+    with_paging_fixture(
+        "finding_a_missing_person_returns_not_found_without_writes",
+        "people_find_missing",
+        |pool, people| async move {
+            let roles_before =
+                scalar_i64(&pool, "SELECT count(*)::bigint FROM public.user_roles").await?;
+            let error = people
+                .change_role(
+                    &ActorId::new("admin-a"),
+                    &ActorId::new("nobody-by-that-id"),
+                    Role::User,
+                )
+                .await
+                .expect_err("不存在的 person 必须返回 NotFound");
+            if error != PeoplePortError::NotFound
+                || scalar_i64(&pool, "SELECT count(*)::bigint FROM public.user_roles").await?
+                    != roles_before
+                || scalar_i64(&pool, "SELECT count(*)::bigint FROM public.audit_events").await? != 0
+            {
+                return Err(format!("missing person 结果/副作用不符：{error:?}"));
+            }
+            let positive = people
+                .change_role(
+                    &ActorId::new("admin-a"),
+                    &ActorId::new("target-099"),
+                    Role::User,
+                )
+                .await
+                .map_err(|error| format!("存在 person 的正向对照失败：{error}"))?;
+            if positive.id.as_str() != "target-099" {
+                return Err(format!("正向 point lookup 返回错误 person：{positive:?}"));
+            }
+            Ok(())
+        },
+    )
     .await;
 }
 

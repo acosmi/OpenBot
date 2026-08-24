@@ -473,6 +473,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn caller_cannot_ask_for_the_whole_deployment_in_one_page() {
+        let people = FakePeople::new();
+        let router = single_user_router(people.clone());
+        let (status, body) = send(router, get("/api/admin/people?limit=100000")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["people"].is_array(),);
+        assert_eq!(
+            people.pages.lock().unwrap().as_slice(),
+            [PeoplePageRequest {
+                search: None,
+                cursor: None,
+                limit: openbot_application::MAX_PEOPLE_PAGE,
+            }],
+            "HTTP 的任意大 limit 必须在触达 PostgreSQL port 前钳到 200",
+        );
+    }
+
+    #[tokio::test]
     async fn admin_status_is_forbidden_for_a_plain_authenticated_user() {
         let router = fixed_router(FakePeople::new(), fixed_auth("plain-user", Role::User));
         let (status, body) = send(router, get("/api/admin/status")).await;

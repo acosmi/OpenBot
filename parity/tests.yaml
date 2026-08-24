@@ -77,7 +77,7 @@ recount:
     expect: 234
   - command: "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]'"
     cwd: repo
-    expect: done=36 todo=198 in_progress=0 total=234
+    expect: done=46 todo=188 in_progress=0 total=234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 1007
+    expect: 997
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -7923,92 +7923,101 @@ entries:
   - id: "server-tests-people-paging-integration--reading-the-people-in-a-deployment--answers-a-page-rather-than-everybody"
     upstream: "server/tests/people-paging.integration.test.ts::reading the people in a deployment"
     label: parity
-    target: "openbot_infra::store::people::tests::answers_a_page_rather_than_everybody"
+    target: "openbot_infra::tests::people_application::answers_a_page_rather_than_everybody"
     owner: openbot-infra
     test_id: T-TEST-0757
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[914]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "CARGO_INCREMENTAL=0 cargo test -p openbot-infra --test people_application -- --include-ignored --test-threads=1 => 14/0/0；真 PG17 fixture 总人数 10，limit=3 实得 3 行且 nextCursor 非空"
     notes: "ported —— v3 §6.1：部署内人员分页读取判据逐条移植。上游用例标题：「answers a page rather than everybody」。"
   - id: "server-tests-people-paging-integration--reading-the-people-in-a-deployment--walking-the-cursor-reaches-everybody-exactly-once"
     upstream: "server/tests/people-paging.integration.test.ts::reading the people in a deployment"
     label: parity
-    target: "openbot_infra::store::people::tests::walking_the_cursor_reaches_everybody_exactly_once"
+    target: "openbot_infra::tests::people_application::walking_the_cursor_reaches_everybody_exactly_once"
     owner: openbot-infra
     test_id: T-TEST-0758
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[915]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 14/0/0：limit=2 逐 cursor 走到 None，实得固定顺序 10/10，BTreeSet 唯一数与 seen 长度同为 10"
     notes: "ported —— v3 §6.1：部署内人员分页读取判据逐条移植。上游用例标题：「walking the cursor reaches everybody exactly once」。"
   - id: "server-tests-people-paging-integration--reading-the-people-in-a-deployment--somebody-who-has-never-signed-in-is-last-not-first"
     upstream: "server/tests/people-paging.integration.test.ts::reading the people in a deployment"
     label: parity
-    target: "openbot_infra::store::people::tests::somebody_who_has_never_signed_in_is_last_not_first"
+    target: "openbot_infra::tests::people_application::somebody_who_has_never_signed_in_is_last_not_first"
     owner: openbot-infra
     test_id: T-TEST-0759
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[916]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 14/0/0：limit=1 走完整个 keyset，最新 admin-a 精确第一、无 session 的 never 精确第 10/最后"
     notes: "ported —— v3 §6.1：部署内人员分页读取判据逐条移植。上游用例标题：「somebody who has never signed in is last, not first」。"
   - id: "server-tests-people-paging-integration--reading-the-people-in-a-deployment--search-finds-somebody-who-is-not-on-the-first-page"
     upstream: "server/tests/people-paging.integration.test.ts::reading the people in a deployment"
     label: parity
-    target: "openbot_infra::store::people::tests::search_finds_somebody_who_is_not_on_the_first_page"
+    target: "openbot_infra::tests::people_application::search_finds_a_person_outside_the_first_page_by_name_and_email"
     owner: openbot-infra
     test_id: T-TEST-0760
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[917]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 14/0/0：target-099 先被断言不在未过滤前 2 行；name=grace 与 email=TARGET-099 两次 server-side ILIKE 各只返回 target-099"
     notes: "ported —— v3 §6.1：部署内人员分页读取判据逐条移植。上游用例标题：「search finds somebody who is not on the first page」。"
   - id: "server-tests-people-paging-integration--reading-the-people-in-a-deployment--a-search-for-a-wildcard-finds-that-not-everything"
     upstream: "server/tests/people-paging.integration.test.ts::reading the people in a deployment"
     label: parity
-    target: "openbot_infra::store::people::tests::a_search_for_a_wildcard_finds_that_not_everything"
+    target: "openbot_infra::tests::people_application::a_search_for_a_wildcard_finds_that_not_everything"
     owner: openbot-infra
     test_id: T-TEST-0761
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[918]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 14/0/0：搜索字面量 `_ Percent` 在 10 人 fixture 中精确只返回 name=`Ninety _ Percent` 的 literal，证明 `_` 未被当 LIKE 通配符"
     notes: "ported —— v3 §6.1：部署内人员分页读取判据逐条移植。上游用例标题：「a search for a wildcard finds that, not everything」。"
   - id: "server-tests-people-paging-integration--reading-the-people-in-a-deployment--a-caller-cannot-ask-for-the-whole-deployment-in-one-page"
     upstream: "server/tests/people-paging.integration.test.ts::reading the people in a deployment"
     label: parity
-    target: "openbot_infra::store::people::tests::a_caller_cannot_ask_for_the_whole_deployment_in_one_page"
+    target: "openbot_server::http::admin::tests::caller_cannot_ask_for_the_whole_deployment_in_one_page"
     owner: openbot-infra
     test_id: T-TEST-0762
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[919]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-server caller_cannot_ask_for_the_whole_deployment_in_one_page => 1/0/0；真实 HTTP `limit=100000` 通过 application 后 typed port 实收 MAX_PEOPLE_PAGE=200"
     notes: "ported —— v3 §6.1：部署内人员分页读取判据逐条移植。上游用例标题：「a caller cannot ask for the whole deployment in one page」。"
   - id: "server-tests-people-paging-integration--reading-the-people-in-a-deployment--a-nonsense-cursor-reads-as-the-first-page-rather-than-an"
     upstream: "server/tests/people-paging.integration.test.ts::reading the people in a deployment"
     label: parity
-    target: "openbot_infra::store::people::tests::a_nonsense_cursor_reads_as_the_first_page_rather_than_an"
+    target: "openbot_infra::tests::people_application::a_nonsense_cursor_reads_as_the_first_page"
     owner: openbot-infra
     test_id: T-TEST-0763
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[920]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 14/0/0：`not-a-cursor` 返回的 3 行与 nextCursor 逐字段等于无 cursor 首页，且 people 非空作为正向对照"
     notes: "ported —— v3 §6.1：部署内人员分页读取判据逐条移植。上游用例标题：「a nonsense cursor reads as the first page rather than an error」。"
   - id: "server-tests-people-paging-integration--reading-the-people-in-a-deployment--finding-one-person-does-not-read-the-deployment"
     upstream: "server/tests/people-paging.integration.test.ts::reading the people in a deployment"
     label: parity
-    target: "openbot_infra::store::people::tests::finding_one_person_does_not_read_the_deployment"
+    target: "openbot_infra::repo::people_admin::tests::finding_one_person_is_id_bounded_before_aggregation + openbot_infra::tests::people_application::finding_one_person_returns_the_same_aggregate_shape"
     owner: openbot-infra
     test_id: T-TEST-0764
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— R40 以原子 PeopleAdministration 取代 route 的 list().find；内部 point query 仍保留同一复杂度与完整 Person 形状"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[921]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-infra repo::people_admin::tests => 1/0/0，生产 SQL 精确只有 `WHERE u.id=$1` 且谓词在 GROUP BY 前、无 deployment list CTE；PG17 14/0/0 又证明 point/list Person 全字段相等、providers=[alpha,zeta]、幂等读取 audit=0"
     notes: "ported —— v3 §6.1：部署内人员分页读取判据逐条移植。上游用例标题：「finding one person does not read the deployment」。"
   - id: "server-tests-people-paging-integration--reading-the-people-in-a-deployment--finding-somebody-who-is-not-there-answers-undefined"
     upstream: "server/tests/people-paging.integration.test.ts::reading the people in a deployment"
     label: parity
-    target: "openbot_infra::store::people::tests::finding_somebody_who_is_not_there_answers_undefined"
+    target: "openbot_infra::tests::people_application::finding_a_missing_person_returns_not_found_without_writes"
     owner: openbot-infra
     test_id: T-TEST-0765
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— R40 把 route 的 undefined 分支收进原子 port 的 typed NotFound，再统一投影为不可见"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[922]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG17/SCRAM 14/0/0：missing id 精确 PeoplePortError::NotFound，user_roles/audit 计数前后不变；同一用例随后 point lookup 已存在 target-099 成功，排除恒 NotFound"
     notes: "ported —— v3 §6.1：部署内人员分页读取判据逐条移植。上游用例标题：「finding somebody who is not there answers undefined」。"
   # ---------------------------------------------------------------------------
   # server/tests/people-routes.test.ts —— owner openbot-server / ported / parity
@@ -9079,12 +9088,13 @@ entries:
   - id: "server-tests-roles--applyconfiguredadmin--does-nothing-for-a-session-whose-user-is-not-there"
     upstream: "server/tests/roles.test.ts::applyConfiguredAdmin"
     label: parity
-    target: "openbot_domain::identity::roles::tests::does_nothing_for_a_session_whose_user_is_not_there"
+    target: "openbot_infra::tests::people_application::session_without_a_user_is_structurally_unreachable_and_writes_nothing"
     owner: openbot-domain
     test_id: T-TEST-0869
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— fixed upstream 与 Rust 生产 schema 都以 sessions→users FK 使 fake-only 缺 user 状态不可达；Rust 用真库约束而非复制死分支"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1053]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG17/SCRAM people_application 14/0/0：orphan session 实得 SQLSTATE 23503 且 sessions=0；存在 user 的正向 session 实得 1，删除 user 后 ON DELETE CASCADE 又精确回到 0"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「does nothing for a session whose user is not there」。"
   - id: "server-tests-roles--seedrole--starts-an-address-on-the-list-as-an-administrator"
     upstream: "server/tests/roles.test.ts::seedRole"
