@@ -3,7 +3,7 @@
 //! # 落点逐字对齐 parity ledger
 //!
 //! `parity/api.yaml` 把路由落点写死到**模块路径**这一级；W-4 在 G1 四条之上追加
-//! `/api/me` 与 admin status/people 三面。
+//! `/api/me`、admin status/people 与 W-5 audit 读面。
 //!
 //! ```text
 //! health-get              target: "openbot-server::http::health (GET /health)"
@@ -370,6 +370,7 @@ pub fn router(state: ServerState) -> Router {
             delete(auth_sso::remove_admin),
         )
         .route("/api/admin/people", get(admin::people_list))
+        .route("/api/admin/audit-events", get(admin::audit_events))
         .route("/api/admin/people/{user_id}/role", post(admin::people_role))
         .route(
             "/api/admin/people/{user_id}/access",

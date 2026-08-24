@@ -106,6 +106,7 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::ListPeople { .. } => "list_people",
         AppCommand::ChangePersonRole { .. } => "change_person_role",
         AppCommand::ChangePersonAccess { .. } => "change_person_access",
+        AppCommand::ListAuditEvents { .. } => "list_audit_events",
         AppCommand::InvokeTool(_) => "invoke_tool",
     }
 }
@@ -187,6 +188,19 @@ mod tests {
                     revoked: true,
                 },
                 "change_person_access",
+            ),
+            (
+                AppCommand::ListAuditEvents {
+                    cursor: None,
+                    event_type: None,
+                    actor_user_id: None,
+                    target_type: None,
+                    target_id: None,
+                    from: None,
+                    to: None,
+                    limit: None,
+                },
+                "list_audit_events",
             ),
             (
                 AppCommand::InvokeTool(ToolInvocation {

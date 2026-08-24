@@ -5,7 +5,13 @@
 //! 或数据库 hash 无法解析时全部 fail-closed。这里没有 UPDATE/DELETE API，数据库 trigger 再挡
 //! 一层绕过。
 
+use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use deadpool_postgres::Pool;
+use openbot_application::{AuditPageRequest, AuditReadError, AuditReader};
+use openbot_contracts::audit::{AuditEventView, AuditPage};
+use openbot_contracts::ids::{ActorId, AuditEventId};
 use openbot_domain::audit::chain::{PrevRowHash, StoredAuditRow};
 use openbot_domain::audit::checkpoint::{
     AuditCheckpoint, AuditCheckpointKind, CheckpointSignature,
@@ -148,6 +154,151 @@ impl AuditEventRepo {
             .collect::<Result<_, _>>()
             .map_err(Into::into)
     }
+}
+
+/// `/api/admin/audit-events` 的 PostgreSQL keyset reader。
+#[derive(Clone, Debug)]
+pub struct PostgresAuditReader {
+    pool: Pool,
+}
+
+impl PostgresAuditReader {
+    /// 用共享连接池构造。
+    #[must_use]
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AuditCursor {
+    created_at_unix_nanos: String,
+    id: String,
+}
+
+#[async_trait]
+impl AuditReader for PostgresAuditReader {
+    async fn list_audit_events(
+        &self,
+        request: AuditPageRequest,
+    ) -> Result<AuditPage, AuditReadError> {
+        let cursor = request
+            .cursor
+            .as_deref()
+            .map(decode_audit_cursor)
+            .transpose()?;
+        let has_types = !request.event_types.is_empty();
+        let actor = request.actor_user_id.as_ref().map(ActorId::as_str);
+        let has_cursor = cursor.is_some();
+        let cursor_at = cursor.as_ref().map(|value| value.0);
+        let cursor_id = cursor.as_ref().map(|value| value.1);
+        let limit = i64::from(request.limit) + 1;
+        let client = self.pool.get().await.map_err(|error| {
+            tracing::error!(error = %error, "audit reader 获取连接失败");
+            AuditReadError::Unavailable
+        })?;
+        let rows = client
+            .query(
+                "SELECT id,actor_user_id,event_type,target_type,target_id,payload,created_at \
+                 FROM public.audit_events \
+                 WHERE (NOT $1::boolean OR event_type=ANY($2::text[])) \
+                   AND ($3::text IS NULL OR actor_user_id=$3) \
+                   AND ($4::text IS NULL OR target_type=$4) \
+                   AND ($5::text IS NULL OR target_id=$5) \
+                   AND ($6::timestamptz IS NULL OR created_at>$6) \
+                   AND ($7::timestamptz IS NULL OR created_at<$7) \
+                   AND (NOT $8::boolean OR created_at<$9 \
+                        OR (created_at=$9 AND id<$10)) \
+                 ORDER BY created_at DESC,id DESC LIMIT $11",
+                &[
+                    &has_types,
+                    &request.event_types,
+                    &actor,
+                    &request.target_type,
+                    &request.target_id,
+                    &request.from,
+                    &request.to,
+                    &has_cursor,
+                    &cursor_at,
+                    &cursor_id,
+                    &limit,
+                ],
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(error = %error, "audit reader 查询失败");
+                AuditReadError::Unavailable
+            })?;
+        let mut events = rows
+            .iter()
+            .map(audit_view_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_more = events.len() > request.limit as usize;
+        events.truncate(request.limit as usize);
+        let next_cursor = if has_more {
+            events.last().map(encode_audit_cursor).transpose()?
+        } else {
+            None
+        };
+        Ok(AuditPage {
+            events,
+            next_cursor,
+        })
+    }
+}
+
+fn audit_view_from_row(row: &tokio_postgres::Row) -> Result<AuditEventView, AuditReadError> {
+    let id: Uuid = audit_column(row, "id")?;
+    let actor: Option<String> = audit_column(row, "actor_user_id")?;
+    let payload: serde_json::Value = audit_column(row, "payload")?;
+    if !payload.is_object() {
+        return Err(AuditReadError::Corrupt { field: "payload" });
+    }
+    Ok(AuditEventView {
+        id: AuditEventId::new(id.to_string()),
+        actor_user_id: actor.map(ActorId::new),
+        event_type: audit_column(row, "event_type")?,
+        target_type: audit_column(row, "target_type")?,
+        target_id: audit_column(row, "target_id")?,
+        payload,
+        created_at: audit_column(row, "created_at")?,
+    })
+}
+
+fn audit_column<'a, T: tokio_postgres::types::FromSql<'a>>(
+    row: &'a tokio_postgres::Row,
+    column: &'static str,
+) -> Result<T, AuditReadError> {
+    row.try_get(column).map_err(|error| {
+        tracing::error!(column, error = %error, "audit reader 行解码失败");
+        AuditReadError::Corrupt { field: column }
+    })
+}
+
+fn encode_audit_cursor(event: &AuditEventView) -> Result<String, AuditReadError> {
+    let bytes = serde_json::to_vec(&AuditCursor {
+        created_at_unix_nanos: event.created_at.unix_timestamp_nanos().to_string(),
+        id: event.id.as_str().to_owned(),
+    })
+    .map_err(|_| AuditReadError::Corrupt { field: "cursor" })?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn decode_audit_cursor(raw: &str) -> Result<(OffsetDateTime, Uuid), AuditReadError> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(raw)
+        .map_err(|_| AuditReadError::InvalidCursor)?;
+    let cursor: AuditCursor =
+        serde_json::from_slice(&bytes).map_err(|_| AuditReadError::InvalidCursor)?;
+    let nanos = cursor
+        .created_at_unix_nanos
+        .parse::<i128>()
+        .map_err(|_| AuditReadError::InvalidCursor)?;
+    let created_at = OffsetDateTime::from_unix_timestamp_nanos(nanos)
+        .map_err(|_| AuditReadError::InvalidCursor)?;
+    let id = Uuid::parse_str(&cursor.id).map_err(|_| AuditReadError::InvalidCursor)?;
+    Ok((created_at, id))
 }
 
 /// 在调用方已有事务里追加事件；people/tool 等 acting 事务用它保证业务写与 audit 同 commit。

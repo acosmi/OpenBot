@@ -25,7 +25,7 @@
 //!   同名字段一律是普通不可信输入。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # 当前状态（G1 + W-3a people + W-3b tool contracts）
+//! # 当前状态（G1 + people/tool + W-5 audit contracts）
 //!
 //! Phase 0（Evidence Freeze）本 crate 刻意为空；G1 起它承载五个模块：
 //!
@@ -36,6 +36,7 @@
 //! | [`error`] | [`error::AppError`]、稳定 code、HTTP status、audit 类型 | §15.3 |
 //! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent` | §5.2 |
 //! | [`people`] | current user / admin status / people page 与 person 公开 DTO | §6.2 / R40 |
+//! | [`audit`] | 管理员 audit event/page DTO 与 JavaScript 毫秒时间 wire | §8.6 / R56 |
 //! | [`tool`] | Agent tool invocation 与脱敏结果；没有 actor/policy/target 自报字段 | §8.1 |
 //! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
 //!
@@ -65,6 +66,7 @@
 // 的输出里会被淹没，只有 clippy 的 `-D warnings` 拦得住，那是半道闸门。
 #![deny(missing_docs)]
 
+pub mod audit;
 pub mod auth;
 pub mod command;
 pub mod error;

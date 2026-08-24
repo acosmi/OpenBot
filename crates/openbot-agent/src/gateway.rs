@@ -71,7 +71,8 @@ impl AgentToolGateway {
             | AppReply::CurrentUser(_)
             | AppReply::AdminStatus(_)
             | AppReply::People(_)
-            | AppReply::Person(_) => Err(AppError::DependencyUnavailable {
+            | AppReply::Person(_)
+            | AppReply::AuditEvents(_) => Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }),
         }

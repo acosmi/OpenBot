@@ -86,7 +86,7 @@ pub async fn change_person_access<P: PeopleAdministration>(
         .map_err(|error| error.into_app_error())
 }
 
-fn require_admin(auth: &AuthContext) -> Result<(), AppError> {
+pub(crate) fn require_admin(auth: &AuthContext) -> Result<(), AppError> {
     if auth.has_role(Role::Admin) {
         Ok(())
     } else {

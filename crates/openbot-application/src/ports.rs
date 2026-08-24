@@ -4,11 +4,13 @@
 //! 本模块不 import 任何 I/O crate，也不出现任何 SQL —— 出现了就说明抽象漏了。
 
 use async_trait::async_trait;
+use openbot_contracts::audit::AuditPage;
 use openbot_contracts::auth::Role;
 use openbot_contracts::command::ChannelSummary;
 use openbot_contracts::error::{AppError, IdentityConflictReason};
 use openbot_contracts::ids::ActorId;
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
+use time::OffsetDateTime;
 
 use crate::cursor::ChannelCursor;
 
@@ -120,6 +122,81 @@ pub trait ChannelReader: Send + Sync {
         limit: u32,
         cursor: Option<ChannelCursor>,
     ) -> Result<Vec<ChannelSummary>, PortError>;
+}
+
+/// 管理员审计页的 typed 查询；自由 SQL/列名无法穿越此边界。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuditPageRequest {
+    /// keyset cursor。
+    pub cursor: Option<String>,
+    /// 零个、一个或多个 event type。
+    pub event_types: Vec<String>,
+    /// actor 过滤。
+    pub actor_user_id: Option<ActorId>,
+    /// target type 过滤。
+    pub target_type: Option<String>,
+    /// target id 过滤。
+    pub target_id: Option<String>,
+    /// created_at 开区间下界。
+    pub from: Option<OffsetDateTime>,
+    /// created_at 开区间上界。
+    pub to: Option<OffsetDateTime>,
+    /// application 已钳制到 1..=100。
+    pub limit: u32,
+}
+
+/// 审计读端口错误。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum AuditReadError {
+    /// PostgreSQL 不可用。
+    #[error("audit_reader_unavailable")]
+    Unavailable,
+    /// 持久化行违反 schema/domain 边界。
+    #[error("audit_reader_corrupt field={field}")]
+    Corrupt {
+        /// 静态字段名，不带数据库原值。
+        field: &'static str,
+    },
+    /// opaque cursor 无法验证。
+    #[error("audit_cursor_invalid")]
+    InvalidCursor,
+}
+
+impl AuditReadError {
+    /// 映射为稳定 application 错误。
+    #[must_use]
+    pub const fn into_app_error(self) -> AppError {
+        match self {
+            Self::Unavailable | Self::Corrupt { .. } => AppError::DependencyUnavailable {
+                dependency: "database",
+            },
+            Self::InvalidCursor => AppError::MalformedPayload { field: "cursor" },
+        }
+    }
+}
+
+/// 管理员 audit keyset 读端口。
+#[async_trait]
+pub trait AuditReader: Send + Sync {
+    /// 读取一页已脱敏事件。
+    async fn list_audit_events(
+        &self,
+        request: AuditPageRequest,
+    ) -> Result<AuditPage, AuditReadError>;
+}
+
+/// 未注入 audit reader 时 fail-closed 503。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoAuditReader;
+
+#[async_trait]
+impl AuditReader for NoAuditReader {
+    async fn list_audit_events(
+        &self,
+        _request: AuditPageRequest,
+    ) -> Result<AuditPage, AuditReadError> {
+        Err(AuditReadError::Unavailable)
+    }
 }
 
 /// people 页端口的 keyset 请求；字段均由 typed command 投影，不含自由 SQL。

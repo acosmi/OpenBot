@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use http::HeaderMap;
+use openbot_contracts::audit::AuditPage;
 use openbot_contracts::auth::Role;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
@@ -39,6 +40,28 @@ pub struct PeopleQuery {
     /// opaque cursor。
     pub cursor: Option<String>,
     /// 原始页长。
+    pub limit: Option<String>,
+}
+
+/// audit query；字段逐项对应固定上游 `AuditEventQuery`。
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuditQuery {
+    /// opaque cursor。
+    pub cursor: Option<String>,
+    /// 一个或逗号分隔的多个 event type。
+    pub event_type: Option<String>,
+    /// actor id。
+    pub actor_user_id: Option<String>,
+    /// target type。
+    pub target_type: Option<String>,
+    /// target id。
+    pub target_id: Option<String>,
+    /// RFC3339 下界。
+    pub from: Option<String>,
+    /// RFC3339 上界。
+    pub to: Option<String>,
+    /// 原始页长，走 JS parseInt 十进制前缀语义。
     pub limit: Option<String>,
 }
 
@@ -112,6 +135,39 @@ pub async fn people_list(
         .await?
     {
         AppReply::People(page) => Ok(Json(page)),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `GET /api/admin/audit-events`。
+pub async fn audit_events(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+    query: Result<Query<AuditQuery>, QueryRejection>,
+) -> Result<Json<AuditPage>, HttpError> {
+    let Query(query) = query.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "audit query 解析失败");
+        AppError::MalformedPayload { field: "query" }
+    })?;
+    let limit = query.limit.as_deref().and_then(parse_decimal_prefix);
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::ListAuditEvents {
+                cursor: query.cursor,
+                event_type: query.event_type,
+                actor_user_id: query.actor_user_id.map(ActorId::new),
+                target_type: query.target_type,
+                target_id: query.target_id,
+                from: query.from,
+                to: query.to,
+                limit,
+            },
+        )
+        .await?
+    {
+        AppReply::AuditEvents(page) => Ok(Json(page)),
         _ => Err(application_contract_error()),
     }
 }
@@ -225,12 +281,13 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use http::{Request, StatusCode};
     use openbot_application::{
-        ChannelCursor, ChannelReader, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
-        PeoplePortError, PortError,
+        AuditPageRequest, AuditReadError, AuditReader, ChannelCursor, ChannelReader,
+        OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
     };
+    use openbot_contracts::audit::{AuditEventView, AuditPage};
     use openbot_contracts::auth::{AuthContext, Role};
     use openbot_contracts::command::ChannelSummary;
-    use openbot_contracts::ids::{DeploymentId, TenantId};
+    use openbot_contracts::ids::{AuditEventId, DeploymentId, TenantId};
     use openbot_domain::identity::session::TrustedOrigins;
     use openbot_infra::auth::config::default_session_lifetime;
     use time::OffsetDateTime;
@@ -338,6 +395,43 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct FakeAudit {
+        calls: Arc<Mutex<Vec<AuditPageRequest>>>,
+        page: AuditPage,
+    }
+
+    impl Default for FakeAudit {
+        fn default() -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                page: AuditPage {
+                    events: vec![AuditEventView {
+                        id: AuditEventId::new("event-1"),
+                        actor_user_id: Some(ActorId::new("admin")),
+                        event_type: "connector.sync_succeeded".to_owned(),
+                        target_type: "connector".to_owned(),
+                        target_id: Some("drive-1".to_owned()),
+                        payload: serde_json::json!({"output_bytes": 3}),
+                        created_at: OffsetDateTime::UNIX_EPOCH,
+                    }],
+                    next_cursor: Some("next-page".to_owned()),
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AuditReader for FakeAudit {
+        async fn list_audit_events(
+            &self,
+            request: AuditPageRequest,
+        ) -> Result<AuditPage, AuditReadError> {
+            self.calls.lock().unwrap().push(request);
+            Ok(self.page.clone())
+        }
+    }
+
     fn person(id: &str, role: Role) -> Person {
         Person {
             id: ActorId::new(id),
@@ -353,7 +447,18 @@ mod tests {
     }
 
     fn application(people: FakePeople) -> Arc<dyn openbot_application::ApplicationService> {
-        Arc::new(OpenBotApplication::new(EmptyChannels).with_people(people))
+        application_with_audit(people, FakeAudit::default())
+    }
+
+    fn application_with_audit(
+        people: FakePeople,
+        audit: FakeAudit,
+    ) -> Arc<dyn openbot_application::ApplicationService> {
+        Arc::new(
+            OpenBotApplication::new(EmptyChannels)
+                .with_people(people)
+                .with_audit(audit),
+        )
     }
 
     fn security() -> SensitiveWriteSecurity {
@@ -378,9 +483,13 @@ mod tests {
     }
 
     fn fixed_router(people: FakePeople, auth: AuthContext) -> Router {
+        fixed_router_with_audit(people, FakeAudit::default(), auth)
+    }
+
+    fn fixed_router_with_audit(people: FakePeople, audit: FakeAudit, auth: AuthContext) -> Router {
         router(
             ServerBuilder::new(
-                application(people),
+                application_with_audit(people, audit),
                 Arc::new(FixedAuthResolver::granting(auth)),
             )
             .with_sensitive_write_security(security())
@@ -499,6 +608,46 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&body).unwrap()["code"],
             "forbidden_role",
         );
+    }
+
+    #[tokio::test]
+    async fn audit_page_is_filtered_for_admin_and_denied_before_port_for_member() {
+        let audit = FakeAudit::default();
+        let admin = fixed_router_with_audit(
+            FakePeople::new(),
+            audit.clone(),
+            fixed_auth("admin", Role::Admin),
+        );
+        let (status, body) = send(
+            admin,
+            get("/api/admin/audit-events?eventType=connector.sync_succeeded&limit=10"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(json["events"][0]["id"], "event-1");
+        assert_eq!(json["events"][0]["createdAt"], "1970-01-01T00:00:00.000Z");
+        assert_eq!(json["nextCursor"], "next-page");
+        {
+            let calls = audit.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].event_types, ["connector.sync_succeeded"]);
+            assert_eq!(calls[0].limit, 10);
+        }
+
+        let member_audit = FakeAudit::default();
+        let member = fixed_router_with_audit(
+            FakePeople::new(),
+            member_audit.clone(),
+            fixed_auth("member", Role::User),
+        );
+        let (status, body) = send(member, get("/api/admin/audit-events")).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["code"],
+            "forbidden_role",
+        );
+        assert!(member_audit.calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

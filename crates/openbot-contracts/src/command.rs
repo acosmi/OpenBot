@@ -29,8 +29,9 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::audit::AuditPage;
 use crate::auth::Role;
-use crate::ids::{BotId, ChannelId, ThreadId};
+use crate::ids::{ActorId, BotId, ChannelId, ThreadId};
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
 use crate::tool::{ToolInvocation, ToolResult};
 
@@ -104,6 +105,26 @@ pub enum AppCommand {
         revoked: bool,
     },
 
+    /// 管理员审计 keyset 页；全部过滤条件由 application 归一并绑定到 typed port。
+    ListAuditEvents {
+        /// opaque cursor。
+        cursor: Option<String>,
+        /// 一个或逗号分隔的多个 event type。
+        event_type: Option<String>,
+        /// actor 过滤。
+        actor_user_id: Option<ActorId>,
+        /// target type 过滤。
+        target_type: Option<String>,
+        /// target id 过滤。
+        target_id: Option<String>,
+        /// RFC3339 开区间下界。
+        from: Option<String>,
+        /// RFC3339 开区间上界。
+        to: Option<String>,
+        /// 页长；application 钳制到 1..=100。
+        limit: Option<i64>,
+    },
+
     /// 由 Rust Agent gateway 铸造的一次工具调用；仍须在 application 里走完整 §8.1 管线。
     InvokeTool(ToolInvocation),
 }
@@ -124,6 +145,8 @@ pub enum AppReply {
     People(PeoplePage),
     /// role/access 变更后的最新 person。
     Person(Person),
+    /// [`AppCommand::ListAuditEvents`] 应答。
+    AuditEvents(AuditPage),
     /// [`AppCommand::InvokeTool`] 的已持久化、已脱敏结果。
     Tool(ToolResult),
 }
@@ -429,6 +452,19 @@ mod tests {
             r#"{"kind":"invoke_tool","callId":"call-1","runId":"run-1","botId":"bot-1","callSeq":2,"toolName":"computer.write","arguments":{"x":1}}"#,
         );
         assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), tool);
+
+        let audit = AppCommand::ListAuditEvents {
+            cursor: Some("opaque".to_owned()),
+            event_type: Some("one,two".to_owned()),
+            actor_user_id: Some(crate::ids::ActorId::new("admin")),
+            target_type: Some("connector".to_owned()),
+            target_id: None,
+            from: None,
+            to: None,
+            limit: Some(10),
+        };
+        let wire = serde_json::to_string(&audit).unwrap();
+        assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), audit);
     }
 
     /// 自由 method string 走不通：未知 `kind` 与未知字段都在反序列化阶段就失败，
@@ -469,6 +505,11 @@ mod tests {
             r#"{"kind":"channels","channels":[],"nextCursor":null}"#
         );
         assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), channels);
+
+        let audit = AppReply::AuditEvents(AuditPage::default());
+        let json = serde_json::to_string(&audit).unwrap();
+        assert_eq!(json, r#"{"kind":"audit_events","events":[]}"#);
+        assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), audit);
 
         let tool = AppReply::Tool(ToolResult {
             call_id: crate::ids::ToolCallId::new("call-1"),

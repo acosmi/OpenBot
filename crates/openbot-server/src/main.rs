@@ -24,7 +24,9 @@ use openbot_infra::auth::sso::DynamicSsoService;
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{native, pool};
 use openbot_infra::net::safe_http::{EgressPolicy, SafeDialer};
+use openbot_infra::policy::{PolicyListener, PolicyStore};
 use openbot_infra::repo::ChannelRepo;
+use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_server::config::{DeploymentEnvironment, ServerConfig, env_map_from_process};
 use openbot_server::readiness::ReadinessVerdict;
@@ -64,6 +66,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let database: DatabaseConfig = database_url.parse()?;
     let pool = pool::connect(&database).await?;
     openbot_server::database::initialize(&pool).await?;
+
+    let policy_store = Arc::new(PolicyStore::postgres(
+        pool.clone(),
+        server
+            .computer
+            .as_ref()
+            .and_then(|computer| computer.action_policy.clone()),
+    ));
+    let policy_origin = policy_store.load().await?;
+    let compiled_policy = policy_store.compiled();
+    tracing::info!(
+        origin = ?policy_origin,
+        mode = %compiled_policy.mode(),
+        version = %compiled_policy.version(),
+        configured = compiled_policy.is_configured(),
+        "action policy 已从权威来源加载"
+    );
+    let policy_listener = PolicyListener::start(
+        database
+            .clone()
+            .with_application_name("openbot-action-policy-listener"),
+        policy_store,
+    )
+    .await?;
 
     let key_policy = match server.deployment_environment {
         DeploymentEnvironment::Production => ExampleKeyPolicy::Reject,
@@ -141,8 +167,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let people = PostgresPeopleAdministration::new(pool.clone(), floor, audit_key.to_vec())?;
-    let application: Arc<dyn ApplicationService> =
-        Arc::new(OpenBotApplication::new(ChannelRepo::new(pool.clone())).with_people(people));
+    let application: Arc<dyn ApplicationService> = Arc::new(
+        OpenBotApplication::new(ChannelRepo::new(pool.clone()))
+            .with_people(people)
+            .with_audit(PostgresAuditReader::new(pool.clone())),
+    );
     let metrics = install_recorder()?;
     let db_probe_pool = pool.clone();
     let db_probe = FnReadinessProbe::new("database_native_schema", move || {
@@ -189,14 +218,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let listener = tokio::net::TcpListener::bind(&address).await?;
     tracing::info!(bind = %address, single_user, "OpenBot Server 已启动");
-    axum::serve(
+    let serve_result = axum::serve(
         listener,
         builder
             .into_router()
             .into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
-    .await?;
+    .await;
+    policy_listener.stop().await;
+    serve_result?;
     pool.close();
     Ok(())
 }
