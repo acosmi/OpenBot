@@ -1,24 +1,9 @@
 # OpenBot CI —— 编排依据 = v3 §16.3〈Supply chain〉的固定清单 + v3 §19.3 的 parity 闸门。
 #
-# ===========================================================================
-# 🛑 自动触发已关闭（2026-08-22）
-# ===========================================================================
-# 原因：本账号的 GitHub Actions 额度已耗尽。推 PR / 推分支**不会**有任何检查自己跑起来。
-# 现状：只保留 `workflow_dispatch`。要跑就手动派发：
-#
-#     gh workflow run ci.yml --repo acosmi/OpenBot --ref <分支>
-#
-# 恢复方式：把下面 `# --- 自动触发（关闭中，原样保留）---` 到 `# --- 自动触发结束 ---`
-# 之间每行开头的 `#   ` 去掉即可。**不要重新推导** paths / branches 清单 —— 注释里的这份
-# 就是真源，它记录的是关闭前真实生效过的配置。
-#
-# ⚠️ 后果（必须知道）：自动触发关闭期间，**本机闸门是唯一的闸门**。CLAUDE.md §10 的实跑
-# 清单从"合并前的双保险"变成"唯一保险"，一条都不能省。本机等价命令 = `cargo xtask ci`。
-#
-# ⚠️ 另一个会让人白等的坑：CONFLICTING 的 PR 一条 CI 都不会跑（GitHub 算不出
-# `refs/pull/N/merge`），而 `gh pr checks` 显示 "no checks reported" —— 与"还没开始"
-# 不可区分。先把 base 并进分支让 mergeable 变绿，再派发。
-# ===========================================================================
+# 2026-08-24 首次对固定 head 真实 workflow dispatch 后，GitHub API 与 runner 均证明
+# Actions 已可用；旧的“额度耗尽所以关闭自动触发”前提不再成立。PR 不限定 base branch，
+# 因为本仓以堆叠 PR 推进，限定 `main` 会让中间层永远没有 CI。`workflow_dispatch` 继续保留，
+# 用于对一个精确 head 重跑含供应链在内的完整矩阵。
 
 name: CI
 
@@ -29,35 +14,31 @@ on:
         description: "是否跑 supply-chain job（cargo deny / audit / vet，比 gates 慢）"
         type: boolean
         default: true
-
-# --- 自动触发（关闭中，原样保留）---
-#   pull_request:
-#     branches: [main]
-#     paths:
-#       - "Cargo.toml"
-#       - "Cargo.lock"
-#       - "rust-toolchain.toml"
-#       - "rustfmt.toml"
-#       - "deny.toml"
-#       - "crates/**"
-#       - "parity/**"
-#       - "fixtures/**"
-#       - "tools/**"
-#       - ".github/workflows/ci.yml"
-#   push:
-#     branches: [main]
-#     paths:
-#       - "Cargo.toml"
-#       - "Cargo.lock"
-#       - "rust-toolchain.toml"
-#       - "rustfmt.toml"
-#       - "deny.toml"
-#       - "crates/**"
-#       - "parity/**"
-#       - "fixtures/**"
-#       - "tools/**"
-#       - ".github/workflows/ci.yml"
-# --- 自动触发结束 ---
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
+      - "deny.toml"
+      - "crates/**"
+      - "parity/**"
+      - "fixtures/**"
+      - "tools/**"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
+      - "deny.toml"
+      - "crates/**"
+      - "parity/**"
+      - "fixtures/**"
+      - "tools/**"
+      - ".github/workflows/ci.yml"
 
 permissions:
   contents: read
@@ -153,7 +134,7 @@ jobs:
     name: supply-chain（cargo deny / cargo audit / cargo vet）
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: ${{ inputs.run_supply_chain }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_supply_chain }}
     steps:
       - uses: actions/checkout@v7.0.1
 
