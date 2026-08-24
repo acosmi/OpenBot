@@ -19,9 +19,9 @@
 //!
 //! # Fresh install 与 upgrade 是同一条终态
 //!
-//! Fresh install 调用顺序固定为 `baseline::apply` → [`apply`]；既有库先过 compat，再调用
-//! [`apply`]。这样 0012 fixture 始终只表达固定上游 oracle，每个 native 边界另有自己的
-//! post fixture，事实不会互相污染。
+//! Fresh install 只走 [`crate::db::fresh::apply`]，把 baseline 与本模块的事务内核心/账本同批
+//! 提交；既有库先过 compat，再调用 [`apply`]。这样 0012 fixture 始终只表达固定上游 oracle，
+//! 每个 native 边界另有自己的 post fixture，事实不会互相污染。
 
 use openbot_domain::audit::hash::Sha256Digest;
 use tokio_postgres::Client;
@@ -183,10 +183,34 @@ pub async fn apply_through(
         .await
         .map_err(|source| InfraError::query("开始 native schema migration 事务", source))?;
 
+    let outcome = apply_through_in_transaction(&transaction, max_version).await?;
     transaction
-        .query_one("SELECT pg_advisory_xact_lock($1)", &[&MIGRATION_LOCK_KEY])
+        .commit()
         .await
-        .map_err(|source| InfraError::query("获取 native schema migration 锁", source))?;
+        .map_err(|source| InfraError::query("提交 native schema migrations", source))?;
+    Ok(outcome)
+}
+
+/// 自有账本表是否存在；存在只代表“应走 native 校验”，不代表内容已经可信。
+///
+/// 调用方随后必须调用 [`apply`]，由名字/版本/checksum/空洞四项验证内容。
+pub async fn ledger_exists(client: &Client) -> Result<bool, InfraError> {
+    client
+        .query_one(
+            "SELECT to_regclass($1) IS NOT NULL",
+            &[&NATIVE_LEDGER_TABLE],
+        )
+        .await
+        .map_err(|source| InfraError::query("探测 native schema migration 账本", source))?
+        .try_get(0)
+        .map_err(|source| RowDecodeError::column("(to_regclass)", "exists", source).into())
+}
+
+pub(crate) async fn apply_through_in_transaction(
+    transaction: &tokio_postgres::Transaction<'_>,
+    max_version: i32,
+) -> Result<ApplyOutcome, InfraError> {
+    lock_migrations(transaction).await?;
 
     transaction
         .batch_execute(LEDGER_BOOTSTRAP_SQL)
@@ -261,15 +285,21 @@ pub async fn apply_through(
         applied += 1;
     }
 
-    transaction
-        .commit()
-        .await
-        .map_err(|source| InfraError::query("提交 native schema migrations", source))?;
     Ok(if applied == 0 {
         ApplyOutcome::AlreadyApplied
     } else {
         ApplyOutcome::Applied
     })
+}
+
+pub(crate) async fn lock_migrations(
+    transaction: &tokio_postgres::Transaction<'_>,
+) -> Result<(), InfraError> {
+    transaction
+        .query_one("SELECT pg_advisory_xact_lock($1)", &[&MIGRATION_LOCK_KEY])
+        .await
+        .map(|_| ())
+        .map_err(|source| InfraError::query("获取 native schema migration 锁", source))
 }
 
 #[cfg(test)]

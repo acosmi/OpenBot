@@ -25,4 +25,5 @@
 
 pub mod config;
 pub mod oidc;
+pub mod single_user;
 pub mod sso;

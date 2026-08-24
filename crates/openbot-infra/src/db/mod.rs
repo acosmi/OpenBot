@@ -1,12 +1,13 @@
 //! PostgreSQL 数据库层（v3 §14）。
 //!
-//! 六个子模块各管一件事，互不越界：
+//! 七个子模块各管一件事，互不越界：
 //!
 //! | 模块 | 职责 |
 //! | --- | --- |
 //! | [`tables`] | 上游 28 张表的类型化行结构与列台账 |
 //! | [`baseline`] | fresh install 的 baseline DDL（把空库直接建成 0012 终态） |
 //! | [`compat`] | 迁移边界检查：拒绝没迁到 0012 的库 |
+//! | [`fresh`] | 空库 baseline + native + 自有账本的原子 bootstrap |
 //! | [`native`] | 从 0012 往后施加 Rust-owned、expand-only 的自有增量 |
 //! | [`schema_facts`] | 从活库提取 schema 事实（与 `fixtures/db/schema-0012.json` 同构） |
 //! | [`pool`] | `deadpool-postgres` 连接池 |
@@ -20,6 +21,7 @@
 
 pub mod baseline;
 pub mod compat;
+pub mod fresh;
 pub mod native;
 pub mod pool;
 pub mod schema_facts;

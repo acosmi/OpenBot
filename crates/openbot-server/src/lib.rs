@@ -32,6 +32,7 @@
 //! | 模块 | 内容 | 出处 |
 //! | --- | --- | --- |
 //! | [`auth`] | [`AuthResolver`] port 与 [`auth::Authenticated`] 提取器 | §5.2 / §5.3 |
+//! | [`database`] | fresh / Rust-managed / legacy 启动分流与原子 bootstrap | §14.1 / R54 |
 //! | [`error`] | `AppError` → HTTP 的**投影**（只出稳定码，不出内部细节） | §15.3 |
 //! | [`limits`] | [`limits::REQUEST_BODY_LIMIT_BYTES`] | §5.2 |
 //! | [`metrics`] | Prometheus 指标、label 基数台账、显式 recorder 安装 | §16.4 |
@@ -68,6 +69,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod database;
 pub mod error;
 pub mod http;
 pub mod limits;
@@ -83,4 +85,5 @@ pub use error::HttpError;
 pub use http::{ServerBuilder, ServerState, router};
 pub use limits::REQUEST_BODY_LIMIT_BYTES;
 pub use metrics::{MetricsHandle, install_recorder};
+pub use openbot_infra::auth::single_user::SINGLE_USER_ACTOR_ID;
 pub use readiness::{FnReadinessProbe, ReadinessProbe, ReadinessStatus, ReadinessVerdict};

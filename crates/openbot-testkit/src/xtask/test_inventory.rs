@@ -318,11 +318,11 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
         reason: "v3 §14.1 单数据库裁决：构造数据库边界时不发查询，判据逐条移植。" },
     FileRule { file: "server/tests/deployment-route-bot-end-to-end.test.ts", owner: "openbot-server", target_module: "openbot_server::routes::deployment_route_bot", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §3.2 Routing：以部署路由命名的 Bot 端到端判据逐条移植。" },
-    FileRule { file: "server/tests/dev-actor.integration.test.ts", owner: "openbot-infra", target_module: "openbot_infra::store::dev_actor", tier: Tier::Ported, label: Label::Parity,
+    FileRule { file: "server/tests/dev-actor.integration.test.ts", owner: "openbot-infra", target_module: "openbot_infra::auth::single_user", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §6.1 Desktop 与 Server 身份模型：开发态 actor 的持久化判据逐条移植。" },
     FileRule { file: "server/tests/encrypt-sso-config.test.ts", owner: "openbot-infra", target_module: "openbot_infra::vault::sso_config", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §6.4 Vault：身份提供方配置在数据库里的加密形态判据逐条移植。" },
-    FileRule { file: "server/tests/entra-profile.test.ts", owner: "openbot-infra", target_module: "openbot_infra::auth::entra_profile", tier: Tier::Ported, label: Label::Parity,
+    FileRule { file: "server/tests/entra-profile.test.ts", owner: "openbot-infra", target_module: "openbot_infra::auth::oidc::claims", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §6.2 必须实现的认证面：Entra 档案映射判据逐条移植。" },
     FileRule { file: "server/tests/google-drive-rest.test.ts", owner: "openbot-agent", target_module: "openbot_agent::connectors::google_drive", tier: Tier::Ported, label: Label::Substitute,
         reason: "v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。" },
@@ -354,7 +354,7 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
         reason: "v3 §8.3：运行中设置的边界必须持久，判据逐条移植。" },
     FileRule { file: "server/tests/policy-fanout.integration.test.ts", owner: "openbot-infra", target_module: "openbot_infra::events::policy_fanout", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §8.3 明写沿用上游 policy-listener.ts 形态（LISTEN/NOTIFY 只做唤醒、每个 replica 整表重读、policy_version 进 decision），故 fanout 判据逐条移植。" },
-    FileRule { file: "server/tests/roles.test.ts", owner: "openbot-domain", target_module: "openbot_domain::people::roles", tier: Tier::Ported, label: Label::Parity,
+    FileRule { file: "server/tests/roles.test.ts", owner: "openbot-domain", target_module: "openbot_domain::identity::roles", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。" },
     FileRule { file: "server/tests/routing-classify.test.ts", owner: "openbot-domain", target_module: "openbot_domain::routing::classify", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。" },
@@ -368,8 +368,8 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
         reason: "v3 §14.2 28 表 parity ledger + §21.1 条 3：schema 断言逐条移植，并与 parity/tables.yaml 同一批 28 张表交叉。" },
     FileRule { file: "server/tests/server-side-tools.integration.test.ts", owner: "openbot-agent", target_module: "openbot_agent::tools::server_side", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §8.1 唯一执行管线：Bot 在服务端被交到手上的工具集判据逐条移植。" },
-    FileRule { file: "server/tests/single-user.test.ts", owner: "openbot-server", target_module: "openbot_server::single_user", tier: Tier::Ported, label: Label::Parity,
-        reason: "v3 §6.1 + §6.5 条 3（单用户模式唯一 principal 被 provision 进全部包 channel）：无登录运行判据逐条移植。" },
+    FileRule { file: "server/tests/single-user.test.ts", owner: "openbot-server", target_module: "openbot_infra::auth::config", tier: Tier::Ported, label: Label::Substitute,
+        reason: "v3 §6.1 + §6.5 条 3：无登录运行判据逐条移植；但 §28.1 R34 已把旧 `OPENBOT_DEV_NO_AUTH` 从继续生效改为 rename→`OPENBOT_SINGLE_USER` 且启动拒绝，因此整文件按保守粒度标替代，不能把旧别名那条写成 parity。" },
     FileRule { file: "server/tests/skill-ownership.integration.test.ts", owner: "openbot-application", target_module: "openbot_application::skills::ownership", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §9.6 Skills 与 tool discovery：可见性、归属、编辑保持归属与 HTTP 可做什么，判据逐条移植。" },
     FileRule { file: "server/tests/stall-guard.test.ts", owner: "openbot-agent", target_module: "openbot_agent::stall_guard", tier: Tier::Ported, label: Label::Parity,
@@ -598,10 +598,35 @@ struct ExistingLedger {
 #[derive(Debug, Deserialize)]
 struct ExistingProgressEntry {
     id: String,
+    #[serde(default)]
+    upstream: String,
     target: String,
     migration_rule: String,
     status: String,
     done_evidence: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct G2ProgressCounts {
+    done: usize,
+    todo: usize,
+    in_progress: usize,
+}
+
+impl G2ProgressCounts {
+    const fn total(self) -> usize {
+        self.done + self.todo + self.in_progress
+    }
+
+    fn rendered(self) -> String {
+        format!(
+            "done={} todo={} in_progress={} total={}",
+            self.done,
+            self.todo,
+            self.in_progress,
+            self.total()
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -765,7 +790,8 @@ pub fn run(args: &[String], root: &Path) -> Result<()> {
 
     let yaml_path = root.join("parity/tests.yaml");
     let progress = load_progress_overlays(&yaml_path)?;
-    let yaml = render_ledger(&inventory, &progress)?;
+    let g2_progress = load_g2_progress_counts(&yaml_path)?;
+    let yaml = render_ledger(&inventory, &progress, g2_progress)?;
 
     let json_path = root.join("fixtures/tests/upstream-ast-inventory.json");
     write_json(&json_path, &inventory)?;
@@ -1144,6 +1170,43 @@ fn load_progress_overlays(path: &Path) -> Result<BTreeMap<String, ProgressOverla
         .with_context(|| format!("读取已有 test parity 进度 {} 失败", path.display()))
 }
 
+fn load_g2_progress_counts(path: &Path) -> Result<G2ProgressCounts> {
+    if !path.is_file() {
+        return Ok(G2ProgressCounts {
+            todo: G2_TEST_CASE_COUNT,
+            ..G2ProgressCounts::default()
+        });
+    }
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("读取已有 G2 test 进度 {} 失败", path.display()))?;
+    let ledger: ExistingLedger =
+        serde_yaml::from_str(&source).context("tests.yaml 不是合法 YAML")?;
+    let files: HashSet<&str> = G2_TEST_FILES.into_iter().collect();
+    let mut counts = G2ProgressCounts::default();
+    for entry in ledger.entries {
+        let file = entry.upstream.split("::").next().unwrap_or_default();
+        if !files.contains(file) {
+            continue;
+        }
+        match entry.status.as_str() {
+            "done" => counts.done += 1,
+            "todo" => counts.todo += 1,
+            "in_progress" => counts.in_progress += 1,
+            other => bail!(
+                "test-inventory: G2 条目 `{}` 的 status `{other}` 非法",
+                entry.id
+            ),
+        }
+    }
+    if counts.total() != G2_TEST_CASE_COUNT {
+        bail!(
+            "test-inventory: G2 进度总数实得 {}，固定队列应为 {G2_TEST_CASE_COUNT}",
+            counts.total()
+        );
+    }
+    Ok(counts)
+}
+
 fn parse_progress_overlays(source: &str) -> Result<BTreeMap<String, ProgressOverlay>> {
     let ledger: ExistingLedger =
         serde_yaml::from_str(source).context("tests.yaml 不是合法 YAML")?;
@@ -1197,7 +1260,11 @@ fn parse_progress_overlays(source: &str) -> Result<BTreeMap<String, ProgressOver
     Ok(progress)
 }
 
-fn render_ledger(inv: &Inventory, progress: &BTreeMap<String, ProgressOverlay>) -> Result<String> {
+fn render_ledger(
+    inv: &Inventory,
+    progress: &BTreeMap<String, ProgressOverlay>,
+    g2_progress: G2ProgressCounts,
+) -> Result<String> {
     let cases: Vec<&RawNode> = inv
         .nodes
         .iter()
@@ -1434,6 +1501,13 @@ fn render_ledger(inv: &Inventory, progress: &BTreeMap<String, ProgressOverlay>) 
             ),
             "repo",
             G2_TEST_CASE_COUNT.to_string(),
+        ),
+        (
+            format!(
+                "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '{g2_files_json}'"
+            ),
+            "repo",
+            g2_progress.rendered(),
         ),
         (
             "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"

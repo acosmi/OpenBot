@@ -506,6 +506,36 @@ async fn session_issue_links_accounts_refreshes_groups_revokes_old_generation_an
             {
                 return Err("撤权登录未拒绝并留 audit".to_owned());
             }
+
+            // `seed_role` 的另一半：不在 admin floor 的新身份必须只拿 user，不能因
+            // 单用户模式的固定 admin 规则而被静默提升。
+            let member_identity = identity(&okta, "member@example.com", "subject-member", "[]");
+            issuer
+                .issue(
+                    &member_identity,
+                    &okta,
+                    now + Duration::minutes(5),
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let roles: Vec<String> = client
+                .query(
+                    "SELECT ur.role::text FROM public.user_roles ur \
+                     JOIN public.users u ON u.id=ur.user_id \
+                     WHERE u.email='member@example.com' ORDER BY ur.role",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|row| row.get(0))
+                .collect();
+            if roles != ["user"] {
+                return Err(format!("非 floor 新身份的 seed role 不符：{roles:?}"));
+            }
             Ok(())
         }
         .await;
