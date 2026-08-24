@@ -2050,6 +2050,10 @@ dependencies = [
 [[package]]
 name = "openbot-ui"
 version = "0.0.0"
+dependencies = [
+ "openbot-contracts",
+ "serde_json",
+]
 
 [[package]]
 name = "openidconnect"

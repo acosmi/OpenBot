@@ -127,6 +127,7 @@ pub async fn list(
         | AppReply::People(_)
         | AppReply::Person(_)
         | AppReply::AuditEvents(_)
+        | AppReply::ActionPolicy { .. }
         | AppReply::Tool(_) => {
             tracing::error!(
                 "ListVisibleChannels 收到非 Channels 应答 —— ApplicationService 契约破损"

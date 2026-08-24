@@ -77,7 +77,7 @@ recount:
     expect: 234
   - command: "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]'"
     cwd: repo
-    expect: done=65 todo=169 in_progress=0 total=234
+    expect: done=111 todo=123 in_progress=0 total=234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229
@@ -95,10 +95,10 @@ recount:
     expect: 105
   - command: "grep -c '^    label: parity$' parity/tests.yaml"
     cwd: repo
-    expect: 780
+    expect: 776
   - command: "grep -c '^    label: 替代$' parity/tests.yaml"
     cwd: repo
-    expect: 267
+    expect: 271
   - command: "grep -c '^    label: 新增$' parity/tests.yaml"
     cwd: repo
     expect: 0
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 978
+    expect: 932
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -2493,8 +2493,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0229
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[278]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-ui features::threads::tool_name::tests => 5/0/0：mcp__slack__post_message 精确投影 label=Post message/detail=slack"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「an MCP tool reads as an action against a named server」。"
   - id: "app-tests-tool-name--naming-a-tool-call--the-server-is-dropped-when-the-action-already-names-it"
     upstream: "app/tests/tool-name.test.ts::naming a tool call"
@@ -2503,8 +2504,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0230
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[279]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 5/0/0：mcp__notes__search_notes 实得 label=Search notes/detail=None，不重复 server"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「the server is dropped when the action already names it」。"
   - id: "app-tests-tool-name--naming-a-tool-call--camelcase-from-a-vendor-reads-the-same-way"
     upstream: "app/tests/tool-name.test.ts::naming a tool call"
@@ -2513,8 +2515,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0231
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[280]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 5/0/0：searchJiraIssues 同时切 camelCase 与 sentence case，实得 Search jira issues/detail=None"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「camelCase from a vendor reads the same way」。"
   - id: "app-tests-tool-name--naming-a-tool-call--a-tool-name-containing-the-separator-keeps-all-of-it"
     upstream: "app/tests/tool-name.test.ts::naming a tool call"
@@ -2523,8 +2526,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0232
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[281]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 5/0/0：首个 server 段后的 list__files 全部保留并实得 List files/detail=box"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「a tool name containing the separator keeps all of it」。"
   - id: "app-tests-tool-name--naming-a-tool-call--a-component-the-app-registered-is-left-alone"
     upstream: "app/tests/tool-name.test.ts::naming a tool call"
@@ -2533,8 +2537,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0233
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[282]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 5/0/0：非 MCP 的 showBarChart 逐字保留，detail=None"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「a component the app registered is left alone」。"
   # ---------------------------------------------------------------------------
   # app/tests/tool-result.test.ts —— owner openbot-ui / ported / parity
@@ -2546,8 +2551,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0234
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[284]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-ui features::threads::tool_result::tests => 7/0/0：JSON string 外层解码后引号/转义逐字符恢复"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「a JSON-encoded string is unwrapped, escapes and all」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--a-refusal-is-still-recognisable-as-one-after-decoding"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2556,8 +2562,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0235
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[285]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：编码字符串 raw 不命中 Refused.，解码后命中；新 typed ToolResult 另以稳定 policy_refused code 识别，不猜文案"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「a refusal is still recognisable as one after decoding」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--plain-text-is-left-alone"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2566,8 +2573,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0236
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[286]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：非 JSON 纯文本 Meals under $75 need no receipt. 逐字保留"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「plain text is left alone」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--a-json-object-or-array-is-left-for-fordisplay"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2576,8 +2584,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0237
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[287]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：as_text 对 JSON object 与 array 均原样保留，不提前拆 vendor envelope"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「a JSON object or array is left for forDisplay」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--something-that-only-looks-like-json-is-drawn-as-it-came"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2586,8 +2595,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0238
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[288]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：不完整 JSON string 解析失败后返回原文，不截断/猜测"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「something that only looks like JSON is drawn as it came」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--an-encoded-envelope-is-decoded-and-then-unwrapped"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2596,8 +2606,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0239
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[289]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：先解 JSON string 外层，再从唯一 results markdown 字段实得 # Found\\n\\nBody；ECMAScript BOM/U+0085 边界另有正负对照"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「an encoded envelope is decoded and then unwrapped」。"
   # ---------------------------------------------------------------------------
   # app/tests/transcript-messages.test.ts —— owner openbot-ui / ported / 替代
@@ -5446,360 +5457,395 @@ entries:
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[622]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.1 唯一执行管线 + §10.4：网关裁决、人工输入命名手势而非路径、跨副本解析 ref，判据逐条移植。上游用例标题：「wiping a computer forgets the snapshot, so a reused generation cannot resolve」。"
   # ---------------------------------------------------------------------------
-  # server/tests/computer-policy-route.test.ts —— owner openbot-server / ported / parity
+  # server/tests/computer-policy-route.test.ts —— owner openbot-server / ported / 替代
   # ---------------------------------------------------------------------------
   - id: "server-tests-computer-policy-route--reading-and-writing-the-deployment-s-bou--an-administrator-can-read-it-whatever-bots-they-can-reac"
     upstream: "server/tests/computer-policy-route.test.ts::reading and writing the deployment's boundary"
-    label: parity
-    target: "openbot_server::routes::computer_policy::tests::an_administrator_can_read_it_whatever_bots_they_can_reac"
+    label: 替代
+    target: "openbot_server::http::computers::tests::administrator_can_read_policy_without_any_bot_access"
     owner: openbot-server
     test_id: T-TEST-0518
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[624]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §15.1 + §8.3：部署边界的读写路由判据逐条移植。上游用例标题：「an administrator can read it, whatever Bots they can reach」。"
+    done_evidence: "cargo test -p openbot-server http::computers::tests => 4/0/0 + transport_policy_parity 1/0/0：deployment 精确 GET 在无 Bot port/路径前提下实得 200，mode=enforce；HTTP 与 typed in-process 同一 Arc 应答逐字段相等"
+    notes: "ported —— v3 §15.1 + §8.3 + R57：部署边界读写判据逐条移植；PUT 额外要求 fresh admin + trusted Origin，且 Axum 精确路由取代 Hono wildcard exemption。上游用例标题：「an administrator can read it, whatever Bots they can reach」。"
   - id: "server-tests-computer-policy-route--reading-and-writing-the-deployment-s-bou--an-administrator-can-write-it"
     upstream: "server/tests/computer-policy-route.test.ts::reading and writing the deployment's boundary"
-    label: parity
-    target: "openbot_server::routes::computer_policy::tests::an_administrator_can_write_it"
+    label: 替代
+    target: "openbot_server::http::computers::tests::administrator_can_write_policy_only_after_sensitive_guard"
     owner: openbot-server
     test_id: T-TEST-0519
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[625]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §15.1 + §8.3：部署边界的读写路由判据逐条移植。上游用例标题：「an administrator can write it」。"
+    done_evidence: "server policy route 4/0/0 + application policy 2/0/0 + transport policy 1/0/0 + PG17 policy_store 14/0/0：trusted Origin/fresh admin PUT 实得 200/dry-run，权威 actor id 写 updated_by，raw 与预编译 Arc 同批更新；缺 Origin 在 body parse 前 403"
+    notes: "ported —— v3 §15.1 + §8.3 + R57：部署边界读写判据逐条移植；PUT 额外要求 fresh admin + trusted Origin，且 Axum 精确路由取代 Hono wildcard exemption。上游用例标题：「an administrator can write it」。"
   - id: "server-tests-computer-policy-route--reading-and-writing-the-deployment-s-bou--it-is-still-administrator-only"
     upstream: "server/tests/computer-policy-route.test.ts::reading and writing the deployment's boundary"
-    label: parity
-    target: "openbot_server::routes::computer_policy::tests::it_is_still_administrator_only"
+    label: 替代
+    target: "openbot_server::http::computers::tests::policy_write_remains_administrator_only_after_sensitive_guard"
     owner: openbot-server
     test_id: T-TEST-0520
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[626]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §15.1 + §8.3：部署边界的读写路由判据逐条移植。上游用例标题：「it is still administrator-only」。"
+    done_evidence: "server policy route 4/0/0：live/fresh plain user + trusted Origin PUT 实得 403/identity_sensitive_write_role_insufficient，PolicyAdministration actors/current 均零副作用；admin 正向同路由 200"
+    notes: "ported —— v3 §15.1 + §8.3 + R57：部署边界读写判据逐条移植；PUT 额外要求 fresh admin + trusted Origin，且 Axum 精确路由取代 Hono wildcard exemption。上游用例标题：「it is still administrator-only」。"
   - id: "server-tests-computer-policy-route--reading-and-writing-the-deployment-s-bou--a-bot-route-is-still-gated"
     upstream: "server/tests/computer-policy-route.test.ts::reading and writing the deployment's boundary"
-    label: parity
-    target: "openbot_server::routes::computer_policy::tests::a_bot_route_is_still_gated"
+    label: 替代
+    target: "openbot_server::http::computers::tests::policy_is_an_exact_deployment_route_not_a_wildcard_exemption"
     owner: openbot-server
     test_id: T-TEST-0521
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[627]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §15.1 + §8.3：部署边界的读写路由判据逐条移植。上游用例标题：「a Bot route is still gated」。"
+    done_evidence: "server policy route 4/0/0：精确 /api/computers/policy 正向 200；/some-bot/status 与 /policy/status 两个非声明路径均为 Axum plain 404/空体，证明 deployment route 没有形成 Hono 式 wildcard exemption"
+    notes: "ported —— v3 §15.1 + §8.3 + R57：部署边界读写判据逐条移植；PUT 额外要求 fresh admin + trusted Origin，且 Axum 精确路由取代 Hono wildcard exemption。上游用例标题：「a Bot route is still gated」。"
   # ---------------------------------------------------------------------------
   # server/tests/computer-policy.test.ts —— owner openbot-domain / ported / 替代
   # ---------------------------------------------------------------------------
   - id: "server-tests-computer-policy--evaluateactionpolicy--an-absent-policy-refuses-rather-than-permitting-everythi"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::an_absent_policy_refuses_rather_than_permitting_everythi"
+    target: "openbot_domain::tests::computer_policy_upstream::absent_policy_refuses_rather_than_permitting_everything"
     owner: openbot-domain
     test_id: T-TEST-0522
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[629]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-domain --test computer_policy_upstream => 28/0/0；None 精确编为 Unconfigured，实得 allowed=false/forward=false/source=Default"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「an absent policy refuses, rather than permitting everything」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--an-empty-allow-list-refuses"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::an_empty_allow_list_refuses"
+    target: "openbot_domain::tests::computer_policy_upstream::empty_allow_list_refuses"
     owner: openbot-domain
     test_id: T-TEST-0523
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[630]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：已保存 enforce/deny=[]/allow=[] 实得 allowed=false 且 forward=false；与未配置版本由既有版本测试区分"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「an empty allow list refuses」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--deny-beats-allow-even-when-allow-matches-everything"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::deny_beats_allow_even_when_allow_matches_everything"
+    target: "openbot_domain::tests::computer_policy_upstream::deny_beats_allow_even_when_allow_matches_everything"
     owner: openbot-domain
     test_id: T-TEST-0524
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[631]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：contains submit deny + allow true 实得 Deny/false/false；结构化 Refusal::Element 精确携带 Submit order + example.com，去 deny 的既有正向对照放行"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「deny beats allow, even when allow matches everything」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--a-deny-rule-leaves-unrelated-elements-alone"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_deny_rule_leaves_unrelated_elements_alone"
+    target: "openbot_domain::tests::computer_policy_upstream::deny_rule_leaves_unrelated_elements_alone"
     owner: openbot-domain
     test_id: T-TEST-0525
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[632]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：相同 submit deny 对 element.name=Large 实得 allowed=true/forward=true"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a deny rule leaves unrelated elements alone」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--substring-matching-is-case-insensitive"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::substring_matching_is_case_insensitive"
+    target: "openbot_domain::tests::computer_policy_upstream::substring_matching_is_case_insensitive"
     owner: openbot-domain
     test_id: T-TEST-0526
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[633]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：本项目注册的全局 contains 对 SUBMIT NOW / submit 实得拒绝，锁定固定上游大小写不敏感语义"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「substring matching is case-insensitive」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--a-broken-deny-expression-still-denies"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_broken_deny_expression_still_denies"
+    target: "openbot_domain::tests::computer_policy_upstream::broken_deny_expression_still_denies"
     owner: openbot-domain
     test_id: T-TEST-0527
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[634]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：语法损坏 deny 与 allow=true 并存仍实得 source=Deny/allowed=false；CelFailure 无 context 载荷由 R26 既有闸门锁定"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a BROKEN deny expression still denies」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--a-deny-expression-that-is-not-a-question-s-s-still-denie"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_deny_expression_that_is_not_a_question_s_s_still_denie"
+    target: "openbot_domain::tests::computer_policy_upstream::deny_expressions_that_are_not_questions_still_deny"
     owner: openbot-domain
     test_id: T-TEST-0528
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[635]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：bare string、bare field、返回 string 的 ternary、missing number 四档逐条实得 Deny/false；一个循环覆盖固定 AST test.each 的四样本"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a deny expression that is not a question (%s: %s) still denies」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--an-allow-expression-that-is-not-a-question-does-not-perm"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::an_allow_expression_that_is_not_a_question_does_not_perm"
+    target: "openbot_domain::tests::computer_policy_upstream::allow_expression_that_is_not_a_question_does_not_permit"
     owner: openbot-domain
     test_id: T-TEST-0529
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[636]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：allow bare string 实得 source=Default/allowed=false"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「an allow expression that is not a question does not permit」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--a-deny-expression-that-answers-false-permits"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_deny_expression_that_answers_false_permits"
+    target: "openbot_domain::tests::computer_policy_upstream::deny_expression_that_answers_false_permits"
     owner: openbot-domain
     test_id: T-TEST-0530
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[637]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：deny contains cancel 对 Submit order 正常答 false，随后 allow true 实得 source=Allow/allowed=true，证明 false 不冒充 broken"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a deny expression that answers false permits」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--a-broken-allow-expression-does-not-permit"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_broken_allow_expression_does_not_permit"
+    target: "openbot_domain::tests::computer_policy_upstream::broken_allow_expression_does_not_permit"
     owner: openbot-domain
     test_id: T-TEST-0531
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[638]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：损坏 allow 实得 Default/false，不因解析失败放行"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a broken allow expression does not permit」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--dry-run-records-a-refusal-but-lets-the-work-continue"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::dry_run_records_a_refusal_but_lets_the_work_continue"
+    target: "openbot_domain::tests::computer_policy_upstream::dry_run_records_refusal_but_forwards_work"
     owner: openbot-domain
     test_id: T-TEST-0532
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[639]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：dry-run deny submit 实得 allowed=false/source=Deny/refusal Some，同时 forward=true；enforce 对照 forward=false"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「dry-run records a refusal but lets the work continue」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--rules-can-be-written-against-the-tool-the-host-and-the-b"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::rules_can_be_written_against_the_tool_the_host_and_the_b"
+    target: "openbot_domain::tests::computer_policy_upstream::rules_can_target_tool_host_and_bot"
     owner: openbot-domain
     test_id: T-TEST-0533
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[640]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：tool.name、page.host、bot.id 三份独立 policy/context 各实得拒绝"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「rules can be written against the tool, the host and the Bot」。"
   - id: "server-tests-computer-policy--evaluateactionpolicy--a-rule-about-an-element-still-decides-when-the-element-i"
     upstream: "server/tests/computer-policy.test.ts::evaluateActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_rule_about_an_element_still_decides_when_the_element_i"
+    target: "openbot_domain::tests::computer_policy_upstream::element_rule_still_decides_when_element_is_unknown"
     owner: openbot-domain
     test_id: T-TEST-0534
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[641]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：element=None 时 contains(element.name,submit) 求值失败，deny 侧 fail-closed 实得 false allowed"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a rule about an element still decides when the element is unknown」。"
   - id: "server-tests-computer-policy--parseactionpolicy--accepts-a-well-formed-policy"
     upstream: "server/tests/computer-policy.test.ts::parseActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::accepts_a_well_formed_policy"
+    target: "openbot_server::config::policy::tests::a_complete_policy_round_trips_every_field"
     owner: openbot-domain
     test_id: T-TEST-0535
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[643]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-server config::policy::tests => 7/0/0：完整 dry-run/deny/allow 逐字段往返，enforce 正向对照也可解析；表达式原文不在 transport 预编译"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「accepts a well-formed policy」。"
   - id: "server-tests-computer-policy--parseactionpolicy--defaults-the-lists-but-never-the-mode"
     upstream: "server/tests/computer-policy.test.ts::parseActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::defaults_the_lists_but_never_the_mode"
+    target: "openbot_server::config::policy::tests::absent_rule_lists_are_empty_not_permissive + mode_is_required_and_read_exactly"
     owner: openbot-domain
     test_id: T-TEST-0536
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[644]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 Server parser 7/0/0：deny/allow 缺失、null、[] 三形态均精确空表；mode 缺失/null/大小写/未知均拒绝，enforce/dry-run 两正向均通过"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「defaults the lists but never the mode」。"
   - id: "server-tests-computer-policy--parseactionpolicy--rejects-s-rather-than-coercing-it"
     upstream: "server/tests/computer-policy.test.ts::parseActionPolicy"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::rejects_s_rather_than_coercing_it"
+    target: "openbot_server::config::policy::tests::malformed_json_and_non_objects_are_told_apart + mode_is_required_and_read_exactly + each_rule_list_reports_its_own_expectation"
     owner: openbot-domain
     test_id: T-TEST-0537
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[645]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 Server parser 7/0/0：非 object、missing/unknown mode、非 list deny、非 string allow 五类及扩展负样本逐项拒绝；deny/allow 稳定错误码不同，合法样本正向可达"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「rejects %s rather than coercing it」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-computer-policy--the-second-door--a-rule-can-refuse-a-keypress-not-only-a-click"
     upstream: "server/tests/computer-policy.test.ts::the second door"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_rule_can_refuse_a_keypress_not_only_a_click"
+    target: "openbot_domain::tests::computer_policy_upstream::rule_can_refuse_keypress_not_only_click"
     owner: openbot-domain
     test_id: T-TEST-0538
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[647]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain computer_policy_upstream 28/0/0：tool=computer_key/key=Enter 实得拒绝，同一 guarded policy 对 key=a 实得允许，两个门均行使"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a rule can refuse a keypress, not only a click」。"
   - id: "server-tests-computer-policy--a-rule-written-about-what-an-action-does--catches-the-click-on-the-button"
     upstream: "server/tests/computer-policy.test.ts::a rule written about what an action does"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::catches_the_click_on_the_button"
+    target: "openbot_domain::tests::computer_policy_upstream::intent_rule_catches_click_on_button"
     owner: openbot-domain
     test_id: T-TEST-0539
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[649]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：intent=Activate + submit element + click 机制实得拒绝"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「catches the click on the button」。"
   - id: "server-tests-computer-policy--a-rule-written-about-what-an-action-does--catches-enter-pressed-on-the-same-button-which-a-rule-ab"
     upstream: "server/tests/computer-policy.test.ts::a rule written about what an action does"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::catches_enter_pressed_on_the_same_button_which_a_rule_ab"
+    target: "openbot_domain::tests::computer_policy_upstream::intent_rule_catches_enter_on_same_button"
     owner: openbot-domain
     test_id: T-TEST-0540
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[650]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：同一 submit element 改为 computer_key/Enter 但 intent 仍 Activate，实得拒绝"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「catches Enter pressed on the same button, which a rule about clicking did not」。"
   - id: "server-tests-computer-policy--a-rule-written-about-what-an-action-does--catches-space-on-it-too"
     upstream: "server/tests/computer-policy.test.ts::a rule written about what an action does"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::catches_space_on_it_too"
+    target: "openbot_domain::tests::computer_policy_upstream::intent_rule_catches_space_on_same_button"
     owner: openbot-domain
     test_id: T-TEST-0541
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[651]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：computer_key/Space + intent Activate 命中同一效果规则并拒绝"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「catches Space on it too」。"
   - id: "server-tests-computer-policy--a-rule-written-about-what-an-action-does--leaves-ordinary-typing-alone"
     upstream: "server/tests/computer-policy.test.ts::a rule written about what an action does"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::leaves_ordinary_typing_alone"
+    target: "openbot_domain::tests::computer_policy_upstream::intent_rule_leaves_ordinary_typing_alone"
     owner: openbot-domain
     test_id: T-TEST-0542
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[652]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：computer_type/Intent::Type/textbox 对 activate+submit 规则实得允许"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「leaves ordinary typing alone」。"
   - id: "server-tests-computer-policy--a-rule-written-about-what-an-action-does--does-not-catch-enter-in-a-text-field-which-is-why-the-pr"
     upstream: "server/tests/computer-policy.test.ts::a rule written about what an action does"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::does_not_catch_enter_in_a_text_field_which_is_why_the_pr"
+    target: "openbot_domain::tests::computer_policy_upstream::intent_rule_does_not_catch_enter_in_text_field_but_preset_does"
     owner: openbot-domain
     test_id: T-TEST-0543
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[653]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：textbox Enter 对 submit-name 规则正向允许；追加 key==Enter 第二规则后同一 context 精确拒绝"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「does NOT catch Enter in a text field, which is why the preset also refuses Enter」。"
   - id: "server-tests-computer-policy--a-rule-that-names-an-identifier-only-som--unguarded-it-refuses-a-navigation-that-has-no-key-at-all"
     upstream: "server/tests/computer-policy.test.ts::a rule that names an identifier only some actions carry"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::unguarded_it_refuses_a_navigation_that_has_no_key_at_all"
+    target: "openbot_domain::tests::computer_policy_upstream::unguarded_optional_identifier_refuses_navigation_without_key"
     owner: openbot-domain
     test_id: T-TEST-0544
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[655]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：navigate context 构造性 key=None，裸 key==Enter 在 deny 侧不可求值并 fail-closed 拒绝"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「unguarded, it refuses a navigation that has no key at all」。"
   - id: "server-tests-computer-policy--a-rule-that-names-an-identifier-only-som--guarded-by-the-tool-name-the-navigation-is-allowed"
     upstream: "server/tests/computer-policy.test.ts::a rule that names an identifier only some actions carry"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::guarded_by_the_tool_name_the_navigation_is_allowed"
+    target: "openbot_domain::tests::computer_policy_upstream::tool_guard_allows_navigation_without_key"
     owner: openbot-domain
     test_id: T-TEST-0545
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[656]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：tool.name guard 对 computer_navigate 短路，缺 key 不被读，allow true 实得允许"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「guarded by the tool name, the navigation is allowed」。"
   - id: "server-tests-computer-policy--a-rule-that-names-an-identifier-only-som--and-the-guarded-rule-still-refuses-the-keypress-it-is-ab"
     upstream: "server/tests/computer-policy.test.ts::a rule that names an identifier only some actions carry"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::and_the_guarded_rule_still_refuses_the_keypress_it_is_ab"
+    target: "openbot_domain::tests::computer_policy_upstream::guarded_rule_still_refuses_its_keypress"
     owner: openbot-domain
     test_id: T-TEST-0546
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[657]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：相同 guarded 规则对 computer_key/Enter/Activate context 实得拒绝，证明 guard 未让目标 keypress 漏过"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「and the guarded rule still refuses the keypress it is about」。"
   - id: "server-tests-computer-policy--describing-a-refusal--a-refused-tool-call-names-the-tool-and-the-server-it-was"
     upstream: "server/tests/computer-policy.test.ts::describing a refusal"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_refused_tool_call_names_the_tool_and_the_server_it_was"
+    target: "openbot_domain::tests::computer_policy_upstream::refused_mcp_call_names_tool_and_server_not_neutral_file"
     owner: openbot-domain
     test_id: T-TEST-0547
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[659]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain computer_policy_upstream 28/0/0：MCP context 同时带中性 page/element/key/file，拒绝仍精确投影 Refusal::Mcp{server:notes,tool:search_notes}，不落 File"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a refused tool call names the tool and the server it was aimed at」。"
   - id: "server-tests-computer-policy--describing-a-refusal--a-refused-file-action-still-names-the-file"
     upstream: "server/tests/computer-policy.test.ts::describing a refusal"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_refused_file_action_still_names_the_file"
+    target: "openbot_domain::tests::computer_policy_upstream::refused_file_action_still_names_file"
     owner: openbot-domain
     test_id: T-TEST-0548
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[660]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：file.path secrets deny 实得 Refusal::File{/workspace/secrets.env}；用户文案留 GUI，不在 domain 拼英文"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a refused file action still names the file」。"
   - id: "server-tests-computer-policy--commands--a-deployment-can-refuse-the-shell-outright"
     upstream: "server/tests/computer-policy.test.ts::commands"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_deployment_can_refuse_the_shell_outright"
+    target: "openbot_domain::tests::computer_policy_upstream::deployment_can_refuse_shell_outright"
     owner: openbot-domain
     test_id: T-TEST-0549
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[662]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：Intent::RunCommand 规则拒绝 apt-get，matched 原文精确 intent == run_command"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a deployment can refuse the shell outright」。"
   - id: "server-tests-computer-policy--commands--a-rule-can-name-what-the-command-says"
     upstream: "server/tests/computer-policy.test.ts::commands"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_rule_can_name_what_the_command_says"
+    target: "openbot_domain::tests::computer_policy_upstream::command_rule_can_name_what_command_says"
     owner: openbot-domain
     test_id: T-TEST-0550
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[663]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：contains(command,rm -rf) 对 rm -rf / 拒绝、对 ls -la 允许，正反同规则"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a rule can name what the command says」。"
   - id: "server-tests-computer-policy--commands--commands-are-allowed-when-nothing-refuses-them"
     upstream: "server/tests/computer-policy.test.ts::commands"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::commands_are_allowed_when_nothing_refuses_them"
+    target: "openbot_domain::tests::computer_policy_upstream::commands_are_allowed_when_nothing_refuses_them"
     owner: openbot-domain
     test_id: T-TEST-0551
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[664]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：command echo hello + deny=[]/allow=[true] 实得允许"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「commands are allowed when nothing refuses them」。"
   - id: "server-tests-computer-policy--commands--a-browser-rule-does-not-refuse-a-command"
     upstream: "server/tests/computer-policy.test.ts::commands"
     label: 替代
-    target: "openbot_domain::policy::computer::tests::a_browser_rule_does_not_refuse_a_command"
+    target: "openbot_domain::tests::computer_policy_upstream::browser_rule_does_not_refuse_command_with_neutral_fields"
     owner: openbot-domain
     test_id: T-TEST-0552
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[665]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain 28/0/0：command context 显式携带中性 element.name/key 空串，browser submit/Enter OR 规则答 false，allow true 放行"
     notes: "ported —— v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。上游用例标题：「a browser rule does not refuse a command」。"
   # ---------------------------------------------------------------------------
   # server/tests/computer-provider.test.ts —— owner openbot-computer / ported / parity

@@ -10,6 +10,7 @@ use openbot_contracts::command::ChannelSummary;
 use openbot_contracts::error::{AppError, IdentityConflictReason};
 use openbot_contracts::ids::ActorId;
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
+use openbot_domain::policy::ActionPolicy;
 use time::OffsetDateTime;
 
 use crate::cursor::ChannelCursor;
@@ -196,6 +197,60 @@ impl AuditReader for NoAuditReader {
         _request: AuditPageRequest,
     ) -> Result<AuditPage, AuditReadError> {
         Err(AuditReadError::Unavailable)
+    }
+}
+
+/// Action policy 持久化/热缓存端口错误。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum PolicyAdministrationError {
+    /// 数据库或 listener 依赖不可用。
+    #[error("policy_administration_unavailable")]
+    Unavailable,
+    /// 持久化状态违反 current-row/schema 约束。
+    #[error("policy_administration_corrupt")]
+    Corrupt,
+}
+
+impl PolicyAdministrationError {
+    /// 稳定 application 映射。
+    #[must_use]
+    pub const fn into_app_error(self) -> AppError {
+        AppError::DependencyUnavailable {
+            dependency: "policy_store",
+        }
+    }
+}
+
+/// Deployment-wide action policy 管理端口。
+#[async_trait]
+pub trait PolicyAdministration: Send + Sync {
+    /// 当前 raw policy；`None` = 未配置/default-deny。
+    async fn current_policy(&self) -> Result<Option<ActionPolicy>, PolicyAdministrationError>;
+
+    /// 持久化后更新预编译热缓存；`updated_by` 必须来自权威 `AuthContext`。
+    async fn set_policy(
+        &self,
+        updated_by: &ActorId,
+        policy: ActionPolicy,
+    ) -> Result<(), PolicyAdministrationError>;
+}
+
+/// 未注入 policy store 时 fail-closed 503。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoPolicyAdministration;
+
+#[async_trait]
+impl PolicyAdministration for NoPolicyAdministration {
+    async fn current_policy(&self) -> Result<Option<ActionPolicy>, PolicyAdministrationError> {
+        Err(PolicyAdministrationError::Unavailable)
+    }
+
+    async fn set_policy(
+        &self,
+        _updated_by: &ActorId,
+        _policy: ActionPolicy,
+    ) -> Result<(), PolicyAdministrationError> {
+        Err(PolicyAdministrationError::Unavailable)
     }
 }
 

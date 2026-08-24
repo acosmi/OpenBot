@@ -14,6 +14,7 @@ pub mod audit;
 pub mod health;
 pub mod list_visible_channels;
 pub mod people;
+pub mod policy;
 
 pub use audit::{DEFAULT_AUDIT_PAGE, MAX_AUDIT_PAGE, list_audit_events};
 pub use health::{DEFAULT_HEARTBEAT_PERIOD, health, health_stream};
@@ -22,3 +23,4 @@ pub use people::{
     DEFAULT_PEOPLE_PAGE, MAX_PEOPLE_PAGE, admin_status, change_person_access, change_person_role,
     current_user, list_people,
 };
+pub use policy::{get_action_policy, set_action_policy};

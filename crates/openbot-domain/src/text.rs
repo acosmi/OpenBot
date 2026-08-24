@@ -1,35 +1,9 @@
-//! 固定上游 JavaScript 文本边界的纯语义。
+//! 固定上游 JavaScript 文本边界的 domain 入口。
 //!
-//! 只收那些必须逐字节对齐 ECMAScript、且会被多个 crate 消费的规则。它不是通用 Unicode
-//! 工具箱；当前唯一规则是 `String.prototype.trim()` 使用的 `TrimString` 空白集合。
+//! 实现上收到 wasm-safe `openbot-contracts`，以便 GUI 也能复用同一份
+//! ECMAScript `TrimString`；本模块保留 R51 已固定的公开路径。
 
-/// ECMAScript `TrimString` 的 `WhiteSpace ∪ LineTerminator` 封闭集合。
-///
-/// 不能换成 [`char::is_whitespace`]：Rust 少认 U+FEFF，却多认 ECMAScript 不认的 U+0085。
-/// 两个方向都会改变配置、email 与旧 JavaScript 数据的身份语义。
-#[must_use]
-pub const fn is_ecmascript_whitespace(value: char) -> bool {
-    matches!(
-        value,
-        '\u{0009}'..='\u{000D}'
-            | '\u{0020}'
-            | '\u{00A0}'
-            | '\u{1680}'
-            | '\u{2000}'..='\u{200A}'
-            | '\u{2028}'
-            | '\u{2029}'
-            | '\u{202F}'
-            | '\u{205F}'
-            | '\u{3000}'
-            | '\u{FEFF}'
-    )
-}
-
-/// 与 ECMAScript `String.prototype.trim()` 相同的首尾裁剪。
-#[must_use]
-pub fn trim_ecmascript(value: &str) -> &str {
-    value.trim_matches(is_ecmascript_whitespace)
-}
+pub use openbot_contracts::text::{is_ecmascript_whitespace, trim_ecmascript};
 
 #[cfg(test)]
 mod tests {

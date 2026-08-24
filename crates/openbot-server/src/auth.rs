@@ -534,6 +534,14 @@ impl FixedAuthResolver {
         }
     }
 
+    /// 恒定放行成调用方已构造的 live-session 结果；只供敏感写测试。
+    #[must_use]
+    pub const fn granting_resolved(resolved: ResolvedAuth) -> Self {
+        Self {
+            outcome: Ok(resolved),
+        }
+    }
+
     /// 恒定拒绝，理由由调用方给出。
     #[must_use]
     pub const fn rejecting(error: AppError) -> Self {

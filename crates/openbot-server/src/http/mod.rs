@@ -39,6 +39,7 @@ pub mod admin;
 pub mod auth_oidc;
 pub mod auth_sso;
 pub mod channels;
+pub mod computers;
 pub mod health;
 pub mod metrics;
 
@@ -371,6 +372,10 @@ pub fn router(state: ServerState) -> Router {
         )
         .route("/api/admin/people", get(admin::people_list))
         .route("/api/admin/audit-events", get(admin::audit_events))
+        .route(
+            "/api/computers/policy",
+            get(computers::policy_get).put(computers::policy_put),
+        )
         .route("/api/admin/people/{user_id}/role", post(admin::people_role))
         .route(
             "/api/admin/people/{user_id}/access",

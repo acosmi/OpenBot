@@ -81,7 +81,8 @@ pub use app::OpenBotApplication;
 pub use cursor::{ChannelCursor, channel_recency};
 pub use ports::{
     AuditPageRequest, AuditReadError, AuditReader, ChannelReader, NoAuditReader,
-    NoPeopleAdministration, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
+    NoPeopleAdministration, NoPolicyAdministration, PeopleAdministration, PeoplePageRequest,
+    PeoplePortError, PolicyAdministration, PolicyAdministrationError, PortError,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,
@@ -95,6 +96,6 @@ pub use tool::{
 };
 pub use use_cases::{
     DEFAULT_AUDIT_PAGE, DEFAULT_CHANNEL_PAGE, DEFAULT_PEOPLE_PAGE, MAX_AUDIT_PAGE, MAX_PEOPLE_PAGE,
-    admin_status, change_person_access, change_person_role, current_user, health,
-    list_audit_events, list_people, list_visible_channels,
+    admin_status, change_person_access, change_person_role, current_user, get_action_policy,
+    health, list_audit_events, list_people, list_visible_channels, set_action_policy,
 };
