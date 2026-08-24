@@ -190,6 +190,17 @@ async fn dynamic_saml_is_encrypted_replay_safe_and_delete_cleans_account_anchors
                 .register(registration("acme-saml", "example.com"), &actor, now)
                 .await
                 .map_err(|error| error.to_string())?;
+            let (audience_providers, audience_mappings) = service
+                .group_audience_inputs()
+                .await
+                .map_err(|error| error.to_string())?;
+            if audience_providers.len() != 1
+                || audience_providers[0].as_str() != "acme-saml"
+                || audience_mappings.len() != 1
+                || audience_mappings[0].provider().as_str() != "acme-saml"
+            {
+                return Err("动态 SAML group mapping 没有进入 package audience 输入".to_owned());
+            }
             let client = pool.get().await.map_err(|error| error.to_string())?;
             let encrypted: String = client
                 .query_one(

@@ -2,6 +2,7 @@
 
 use deadpool_postgres::Pool;
 use openbot_contracts::ids::{ActorId, TenantId};
+use openbot_domain::identity::groups::{IdentityProviderId, IdpGroupMapping};
 use openbot_domain::identity::roles::AdminFloor;
 use openbot_domain::identity::session::SessionLifetimePolicy;
 use openbot_domain::vault::{KeyVersion, SecretBytes, WrappingKey};
@@ -241,6 +242,34 @@ impl DynamicSsoService {
 
     pub async fn list(&self) -> Result<Vec<RegisteredIdentityProvider>, DynamicSsoError> {
         self.store.list().await.map_err(Into::into)
+    }
+
+    /// Tenant Package audience 校验所需的非 secret provider/mapping 投影。
+    pub async fn group_audience_inputs(
+        &self,
+    ) -> Result<(Vec<IdentityProviderId>, Vec<IdpGroupMapping>), DynamicSsoError> {
+        let mut providers = Vec::new();
+        let mut mappings = Vec::new();
+        for provider in self.store.list().await? {
+            let id = ProviderId::parse(&provider.provider_id)
+                .map_err(|_| DynamicSsoError::ProviderUnknown)?;
+            let loaded = self
+                .store
+                .load(&id)
+                .await?
+                .ok_or(DynamicSsoError::ProviderUnknown)?;
+            let mapping = match loaded.config {
+                DecodedSecretConfig::Oidc(config) => config.mapping(&id)?,
+                DecodedSecretConfig::Saml(config) => config.mapping(&id)?,
+            };
+            providers.push(IdentityProviderId::new(id.as_str()));
+            mappings.extend(mapping);
+        }
+        providers.sort_unstable();
+        providers.dedup();
+        mappings.sort_by(|left, right| left.provider().cmp(right.provider()));
+        mappings.dedup_by(|left, right| left.provider() == right.provider());
+        Ok((providers, mappings))
     }
 
     pub async fn register(

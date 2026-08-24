@@ -238,6 +238,10 @@ Electron/Chromium browser engine（无业务裁决权）
 - 包声明的 channel 的 membership 由 §6.5 规则在包同步与登录时 provision（保留字 `all` / 具名组 / 单用户模式三档），用户创建的 channel 仍只在创建事务里写创建者 membership；
 - tool/connector holdings 参与 routing 候选描述，但 discovery 不产生权限；
 - tenant package 的 brand、agents、channels、model、knowledge 五类 YAML 继续做 schema 与引用检查；
+- Tenant Package loader **只读上述五份 YAML**；旧 `skin.stylesheet` 只记
+  `compatibility_input_ignored`，不读取/执行 `theme.css`。视觉与主题仍唯一来自 GUI 第一真源的
+  `crates/openbot-ui/design/tokens.toml`；包环境展开只看启动层显式 allowlist，绝不把完整进程环境
+  （尤其 secret）交给 YAML；
 - `knowledge.sources` 保留为兼容输入并产生“不执行本地同步”的明确状态，不建立 customer document index。
 
 ### 3.3 Generative UI 与 Components
@@ -505,6 +509,12 @@ Serialize / Display / PartialEq，只能显式 `expose`。（§28.1 R46）
 4. 登录时将 verified group claims 写入 membership projection；每次 session refresh 重算；包同步时对 `all` 做一次全量 provision，新用户首次登录时补齐。
 5. group 只负责 provision channel membership，所有运行时 channel route 仍检查 materialized membership。
 6. IdP 撤组后递增 auth generation 并撤销相应 membership；不等待下次应用重启。
+
+包同步同样走 materialized membership：`all` 对全部有效用户全量 provision；单用户 principal
+进入全部包 channel；audience 收紧时 membership 删除、auth generation 与 session 清理同事务。
+现有 `users.groups` 没有持久化 provider/normalization provenance，故同步期对具名组只做逐字匹配
+（宁可暂时少授予，不借另一家 IdP 的规则扩大等价类），下一次 verified 登录再用权威 mapping
+经同一 `project_membership` 补齐。（§28.1 R60）
 
 ## 7. Rust Agent、Provider 与 AG-UI
 
@@ -1665,7 +1675,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] 通用 decision→attempt→capability→execute→outcome/audit 构造性边界；
   - [x] v1 credential/SSO 互操作与 v2 record rotation 代码路径；
   - [x] 环境/动态 OIDC、SAML、keyed session/group/replay 本机生产竖切；
-  - [x] W-5 batch 1–6：identity / People / Audit / Policy durability+fanout+管理写面 / tool transcript projection / per-user credential 选择与退役；G2 队列当前 **122 done / 112 todo / 234 total**；
+  - [x] W-5 batch 1–6：identity / People / Audit / Policy durability+fanout+管理写面 / tool transcript projection / per-user credential 选择与退役；
+  - [x] W-5 batch 7：Tenant Package 五 YAML、environment allowlist、theme/brand 替代裁决、PostgreSQL Agent/Profile/Channel 原子同步与 §6.5 membership；G2 队列当前 **149 done / 85 todo / 234 total**；
   - [ ] 独立 SAML/XSW 与整体安全外审、Server KMS/HSM、Linux CI、Windows 原生构建；真实 G4 executor 也仍缺。
 - [ ] **G3**：Native Thread/Realtime/Memory 未完整实施。
 - [ ] **G4**：Agent/AG-UI/MCP/Drive 与真实 browser/file/shell executor 未完整实施。
@@ -1674,7 +1685,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G7**：Screen/Handover 性能、安全票据、human lease 未实施完成。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账：parity **224/1645 done（1421 todo）**，fixtures **9/31 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账：parity **251/1645 done（1394 todo）**，fixtures **9/31 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -1826,6 +1837,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R57 | §5.2 / §8.3 / §15.1 / §19.3（2026-08-24 W-5 G2 ledger batch 4） | R56 的 store 已在生产启动，但没有 ApplicationService policy command/port，产品无法经 Rust-owned API 读写；`computer-policy-route.test.ts` 4 条与 `computer-policy.test.ts` 31 条全 todo。若把 store 直接塞进 Axum 会违反唯一业务入口；照抄上游 PUT 只验 admin 又会让跨站请求改写全 deployment 边界。另：Hono `/:botId/*` 对 `/policy` 零段匹配导致 deployment route 被误当 Bot 的缺陷，不应在 Axum 复刻成 wildcard exemption | 新增 wasm-safe `ActionPolicyDocument`、Get/Set typed command、`PolicyAdministration` port 与 application admin use case；`PolicyStore` 实现 port，updated_by 只取权威 actor id并在 commit 后替换预编译快照。GET/PUT 以精确 `/api/computers/policy` 路由挂载，不设 wildcard bypass；未配置 GET 明示 `policy:null` 并保持 default-deny。PUT 归类为替代：fresh live admin + trusted Origin 在 body parse 前通过，缺 Origin/非 admin/非 fresh 零 port 副作用；合法文档持久化后回显实际生效值。固定上游 31 条中 28 条求值逐项落 `computer_policy_upstream`，3 条 JSON parser 复用唯一 Server parser，不复制第二实现；cel-js→cel 与结构化 Refusal 继续按既有替代裁决 | domain policy matrix=28/0/0、Server parser=7/0/0、application policy=2/0/0、Server route=4/0/0、transport policy=1/0/0；PG17 `policy_store`=14/0/0，Policy HTTP 真腿=1/0/0（GET null、缺 Origin 403、trusted PUT 200、updated_by=`dev-local-user`、新 store 从 DB 恢复）。生成器重放保留全部 overlay；tests=104/943、G2=100/134、API=15/133、parity=202/1443。完整 workspace=`1046/0/96`；PG17 infra+server=`498/0/0`。真实 G4 executor 与 Bot status/access 路由仍未交付；精确未知路径 404 只证明 policy route 没开洞，不冒充 computer surface 完成。详见 `docs/2026-08-24-W5-G2策略写面台账batch4.md` |
 | R58 | §5.1 / §8.1 / §8.2 / §9.1 / §19.3 / §24 G2、G4（2026-08-24 W-5 G2 ledger batch 5） | 移交指南在未亲读源码前把 `tool-name` 5、`tool-result` 6 与 `server-side-tools` 5 条合成一批。固定上游实读表明前 11 条是不依赖 Leptos 的纯 transcript projection；后 5 条却要求真 MCP HTTP、Bot grant、vendor schema、policy 与 MCP audit。与此同时，现有 `mcp_servers/mcp_tools` 没有 §9.3 的 catalog generation/stale-grant 状态。用 fake fetch 或只为测试搭 runtime 会把 G4 生产 executor 冒充成 G2 台账证据 | batch 5 只闭合前 11 条，`server-side-tools` 5 条保持 todo，等 G4 同批落 RMCP 3.1.4、唯一 safe dialer 的 Streamable HTTP、catalog generation/stale grant migration、权威 grant/schema、`ApplicationService` decision/attempt/capability 与 MCP audit 真竖切。UI 只新增纯 Rust `tool_name/tool_result`，不引 Leptos；typed `ToolResult` 以稳定 `policy_refused` code 识别新拒绝，字符标记仅读 legacy transcript。R51 `TrimString` 实现上收 wasm-safe contracts，`openbot_domain::text` 保留原 API 重导出，全仓仍只有一份 U+FEFF/U+0085 封闭集 | `openbot-ui`=12/0/0（固定上游 5+6，另 1 条 BOM/U+0085 正负对照）；contracts 共享 text 测试与 domain 原路径测试均绿。Cargo.lock 只给 `openbot-ui` 记已有 `openbot-contracts/serde_json` 直接边，新 package=0；未引入 RMCP/JSON-schema 依赖。完整 workspace=`1059/0/96`；生成器重放 105/229/1047 且 11 条 overlay 保留；tests=115/932、G2=111/123、API=15/133、parity=213/1432。详见 `docs/2026-08-24-W5-G2工具呈现台账batch5.md` |
 | R59 | §5.2 / §6.2 条 8 / §6.4 / §8.6 / §9.2 / §19.3 / §24 G2、G4（2026-08-24 W-5 G2 ledger batch 6） | `plugin-user-credential.integration.test.ts` 11 条全 todo，而既有 `McpUserCredentialRepo` 与 `CredentialRepo` 只能分别 CRUD 一张表：没有一条生产边界能证明 user-OAuth 精确按 `(server, actor)` 选择、空 actor/缺连接/撤销不 fallback deployment credential，也没有把 refresh exchange 与 vendor token 分型。更严重的是 people 移除已提交 deny/session/generation，却没有执行领域注释明确列出的第二阶段 credential retirement；`mcp_user_credentials.user_id ON DELETE CASCADE` 会先删 join，把仍 active 的 refresh token 留成不可见孤儿 | 新增 `CredentialRecordVault` 与 `PluginUserCredentialStore`：v1 兼容读/v2 六元组 AAD 解封，单条 LEFT JOIN 在任何网络前按 `(server_id, actor_id)` 同快照取得个人 token 与 deployment client，缺失/撤销/错绑定 fail-closed；`OAuthTokenExchanger` 只接窄 exchange material，只有非空且不同于 refresh 的返回值能铸 `VendorAccessToken`。新增 application-owned `OwnedCredentialRetirer` 与 PostgreSQL 实现，直接按 `credentials(kind='mcp_user_token',key_id=owner)` 找正常行和 orphan；revoked_at、join delete 与 allowlisted `mcp.account_disconnected` audit 同事务。People deny/session/generation 先提交，再调用幂等退役端口；即使 access 已是 revoked，重试仍执行第二阶段；Server production assembly 已注入。`SecretId/ServiceId` 只由 infra adapter 就地构造后传给 domain `RecordBinding`，未穿 application/transport port，按 D-2 继续归 domain。它不实现 token endpoint/vendor/RMCP executor，也不声称补齐物理 credential generation/resource/expiry 或 Server KMS/HSM | PG17/SCRAM 定向 11/0/0，含 deployment fallback 正负对照、两 actor token 摘要、refresh 空/echo 构造性拒绝、真实 `DELETE users` FK cascade orphan、People→retire→typed audit 与 2→0→0 幂等计数；credential vault 单测新增 2 条，v2 搬移四维负例与固定上游 v1/明文负例均绿。生成器重放 105/229/1047 且 11 条 overlay 全保留；完整 workspace=`1061/0/107`，PG17 infra+server=`511/0/0`；tests=126/921、G2=122/112、API=15/133、parity=224/1421，fixture=9/22。Cargo.lock 新 package=0、schema/migration 仍止于 0015。详见 `docs/2026-08-24-W5-G2个人凭据台账batch6.md` |
+| R60 | §3.2 / §5.2 / §6.5 / §13.1 / §16.1 / §16.2 / §19.3 / §24 G2、G6（2026-08-24 W-5 G2 ledger batch 7） | `tenant-package.test.ts` 26 条与 fintech fixture 1 条全 todo；上游 runtime theme 允许包覆写 `:root/.dark`，与 GUI 第一真源 `tokens.toml` 单一来源正面冲突。上游 `synchronizeTenantPackage` 又只写 channels.allowed_groups，不写 membership，复制后仍会让包 channel 对所有人不可达；空 audience 也静默接受。另两条实际风险是 environment expander 默认看完整 `process.env`（包可把 secret 展开进 DB/UI），以及随包 brand 直接使用第一真源禁止对外复用的 OpenBot 标记 | Tenant Package 收口到 application 纯 parser/validator + infra 有界 loader/PostgreSQL adapter：输入类型恰为 brand/agents/channels/model/knowledge 五 YAML，单文件 1 MiB，checksum 只覆盖展开后的五文件；`skin.stylesheet` 只记 compatibility ignored，loader 不打开 theme.css。环境只从启动层 allowlist 投影，本批生产只放 `MANAGED_AGENT_AG_UI_URL`；browser configuration 只有 neutral brand。示例改为 fintech/Ledgerline 并保留 MIT provenance。§6.5 复用既有 domain audience：空列表拒绝、named group 要 IdP mapping、single-user group ignored、all 全量 provision；同步锁定 package 表，拒保留名/user/cross-package Agent/Profile/Channel collision，resync audience 收紧时 membership+generation+session 同事务。动态 OIDC/SAML 暴露非 secret provider/mapping 投影；Server 启动经 application use case 同步，未设 DEPLOYMENT_ID 时只用**校验后的 package tenant id**，绝不再用目录猜 identity。runtime theme 两条改记 not-applicable-with-proof | 固定上游三个文件 SHA-256 分别为 `15c08eb…` / `43617c…` / `44f90ac…`。application package=18/0/0；tenant loader+PG17/SCRAM=8/0/0；fintech fixture=1/0/0；SSO mapping 定向=1/0/0。真实 Server 同库二启：tenant=fintech、agents=2、channels=3、membership grants 3→0、health/readiness/me 全绿、库内 package/agents/channels/memberships=1/2/3/3、Ctrl-C 两次 exit 0。完整 workspace=`1083/0/114`，PG17 infra+server=`521/0/0`；生成器重放 105/229/1047 且 27 条 overlay 全保留；tests=153/894、G2=149/85、API=15/133、parity=251/1394，fixtures=9/22。Cargo.lock 新 package=0（只给 application 增加既有 serde_yaml 直接边），schema/migration 仍止于 0015。省略包实体的 soft-delete/removed-channel 生命周期不在固定上游这 27 条内，继续归后续 G3/G4，不借本批宣称 Tenant Package 全生命周期或 G2/G6 整关完成。详见 `docs/2026-08-24-W5-G2租户包台账batch7.md` |
 
 ### 28.2 复核通过、原样保留的断言
 

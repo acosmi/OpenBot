@@ -33,6 +33,7 @@
 //! | [`service`] | [`ApplicationService`] trait 与 [`AppEventStream`] | §5.2 |
 //! | [`ports`] | channel / people / owned-credential retirement / audit typed ports | §5.2 / §6.2 / §6.4 / §8.6 / R40 / R56 / R59 |
 //! | [`cursor`] | keyset 游标 [`ChannelCursor`] 的铸造与 fail-closed 解析 | §15.3 |
+//! | [`tenant`] | Tenant Package 五 YAML、audience 校验与 PostgreSQL 同步 port | §3.2 / §6.5 / R60 |
 //! | [`use_cases`] | health/channel、people role/access 与 admin audit keyset 用例 | §6.2 / §6.5 / §8.6 / R56 |
 //! | [`tool`] | metadata→scope→policy→approval→journal→capability→execute→outcome/audit | §8.1 / R41 |
 //!
@@ -71,6 +72,7 @@ mod app;
 pub mod cursor;
 pub mod ports;
 pub mod service;
+pub mod tenant;
 pub mod tool;
 pub mod use_cases;
 

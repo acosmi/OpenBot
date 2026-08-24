@@ -1,11 +1,16 @@
 //! OpenBot Server 生产二进制组装入口。
 
 use std::error::Error;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use hmac::{Hmac, Mac};
+use openbot_application::tenant::package::{
+    TenantPackageAudienceContext, TenantPackageEnvironment, synchronize_tenant_package,
+};
 use openbot_application::{ApplicationService, OpenBotApplication};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
+use openbot_domain::identity::groups::IdentityProviderId;
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_domain::vault::{KeyVersion, WrappingKey};
 use openbot_infra::auth::config::{
@@ -29,7 +34,10 @@ use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
-use openbot_server::config::{DeploymentEnvironment, ServerConfig, env_map_from_process};
+use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
+use openbot_server::config::{
+    DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, ServerConfig, env_map_from_process,
+};
 use openbot_server::readiness::ReadinessVerdict;
 use openbot_server::telemetry::{self, LogFormat};
 use openbot_server::{
@@ -61,6 +69,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let Some(warning) = server.public_transport().startup_warning() {
         tracing::warn!(code = server.public_transport().as_str(), "{warning}");
     }
+    let package_environment =
+        TenantPackageEnvironment::from_allowlist(&env, &["MANAGED_AGENT_AG_UI_URL"]);
+    let package_directory = tenant_package_directory_for_startup(&server.tenant_package_directory);
+    let tenant_package = load_tenant_package(&package_directory, &package_environment)?;
 
     let database_url = openbot_server::config::env::optional(&env, "DATABASE_URL")
         .ok_or_else(|| startup_error("database_url_missing"))?;
@@ -114,10 +126,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let has_provider = auth_config.is_some();
     let single_user = single_user_enabled(&env, has_provider)?;
-    // 第一真源的缺省是“tenant package 的 id”，不是目录路径。W-4 尚未加载/校验包，
-    // 因而此刻只能要求显式值；拿路径顶替会永久铸造错误的 deployment/thread 身份。
-    let deployment = deployment_id_for_startup(server.deployment_id.as_deref())?;
-    let tenant = TenantId::new("default");
+    let environment_provider_ids = auth_config
+        .as_ref()
+        .map(|config| {
+            config
+                .configured_providers()
+                .into_iter()
+                .map(|provider| IdentityProviderId::new(provider.as_str()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let deployment = deployment_id_for_startup(
+        server.deployment_id.as_deref(),
+        &tenant_package.package.tenant_id,
+    );
+    let tenant = TenantId::new(&tenant_package.package.tenant_id);
 
     initialize_single_user(&pool, single_user).await?;
 
@@ -166,6 +189,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
             None,
         )
     };
+
+    let audience_context = if single_user {
+        TenantPackageAudienceContext::single_user(ActorId::new(SINGLE_USER_ACTOR_ID))?
+    } else {
+        let mut providers = environment_provider_ids;
+        let mut mappings = Vec::new();
+        if let Some((_, dynamic_sso, _, _, _)) = &oidc_login {
+            let (dynamic_providers, dynamic_mappings) = dynamic_sso.group_audience_inputs().await?;
+            providers.extend(dynamic_providers);
+            mappings.extend(dynamic_mappings);
+        }
+        TenantPackageAudienceContext::multi_user(providers, mappings)?
+    };
+    let package_report = synchronize_tenant_package(
+        &PostgresTenantPackageSynchronizer::new(pool.clone()),
+        &tenant_package,
+        &audience_context,
+    )
+    .await?;
+    tracing::info!(
+        tenant = %package_report.tenant_id,
+        agents = package_report.agents,
+        channels = package_report.channels,
+        memberships_granted = package_report.memberships_granted,
+        memberships_revoked = package_report.memberships_revoked,
+        generations_advanced = package_report.generations_advanced,
+        single_user_groups_ignored = package_report.single_user_groups_ignored,
+        knowledge_sources_compatibility_only = package_report.knowledge_sources_compatibility_only,
+        runtime_theme_ignored = package_report.runtime_theme_ignored,
+        "tenant package 已经由 Application use case 同步"
+    );
 
     let owned_credentials = Arc::new(PostgresOwnedCredentialRetirer::new(
         pool.clone(),
@@ -344,10 +398,21 @@ fn derive_audit_key(master: &[u8]) -> [u8; 32] {
     hmac.finalize().into_bytes().into()
 }
 
-fn deployment_id_for_startup(value: Option<&str>) -> Result<DeploymentId, std::io::Error> {
-    value
-        .map(DeploymentId::new)
-        .ok_or_else(|| startup_error("deployment_id_requires_tenant_package_loader"))
+fn deployment_id_for_startup(value: Option<&str>, package_tenant_id: &str) -> DeploymentId {
+    DeploymentId::new(value.unwrap_or(package_tenant_id))
+}
+
+fn tenant_package_directory_for_startup(configured: &str) -> PathBuf {
+    let direct = PathBuf::from(configured);
+    if direct.is_dir() || configured != DEFAULT_TENANT_PACKAGE_DIR {
+        return direct;
+    }
+    let workspace_default = PathBuf::from("examples/fintech");
+    if workspace_default.is_dir() {
+        workspace_default
+    } else {
+        direct
+    }
 }
 
 async fn shutdown_signal() {
@@ -371,14 +436,30 @@ mod tests {
     }
 
     #[test]
-    fn deployment_id_is_never_guessed_from_a_package_directory() {
+    fn deployment_id_uses_explicit_value_or_validated_package_tenant_not_a_directory() {
         assert_eq!(
-            deployment_id_for_startup(Some("tenant-id")).unwrap(),
+            deployment_id_for_startup(Some("tenant-id"), "package-id"),
             DeploymentId::new("tenant-id"),
         );
         assert_eq!(
-            deployment_id_for_startup(None).unwrap_err().to_string(),
-            "deployment_id_requires_tenant_package_loader",
+            deployment_id_for_startup(None, "package-id"),
+            DeploymentId::new("package-id"),
+        );
+        assert_ne!(
+            deployment_id_for_startup(None, "package-id"),
+            DeploymentId::new("../examples/fintech")
+        );
+    }
+
+    #[test]
+    fn default_package_path_resolves_to_the_workspace_fixture_without_rewriting_custom_paths() {
+        assert!(
+            tenant_package_directory_for_startup(DEFAULT_TENANT_PACKAGE_DIR)
+                .ends_with("examples/fintech")
+        );
+        assert_eq!(
+            tenant_package_directory_for_startup("/mounted/customer-package"),
+            PathBuf::from("/mounted/customer-package")
         );
     }
 }
