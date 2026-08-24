@@ -22,13 +22,15 @@ use openbot_contracts::error::AppError;
 use tracing::Span;
 
 use crate::ports::{
-    AuditReader, ChannelReader, NoAuditReader, NoPeopleAdministration, PeopleAdministration,
+    AuditReader, ChannelReader, NoAuditReader, NoPeopleAdministration, NoPolicyAdministration,
+    PeopleAdministration, PolicyAdministration,
 };
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, change_person_access, change_person_role, current_user,
-    health, health_stream, list_audit_events, list_people, list_visible_channels,
+    get_action_policy, health, health_stream, list_audit_events, list_people,
+    list_visible_channels, set_action_policy,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -40,19 +42,28 @@ pub struct OpenBotApplication<
     R,
     P = NoPeopleAdministration,
     A = NoAuditReader,
+    K = NoPolicyAdministration,
     C = NoToolControlPlane,
     J = NoToolJournal,
 > {
     channels: R,
     people: P,
     audit: A,
+    policies: K,
     tool_control: C,
     tool_journal: J,
     heartbeat_period: Duration,
 }
 
 impl<R>
-    OpenBotApplication<R, NoPeopleAdministration, NoAuditReader, NoToolControlPlane, NoToolJournal>
+    OpenBotApplication<
+        R,
+        NoPeopleAdministration,
+        NoAuditReader,
+        NoPolicyAdministration,
+        NoToolControlPlane,
+        NoToolJournal,
+    >
 {
     /// 注入端口实现。
     pub fn new(channels: R) -> Self {
@@ -60,6 +71,7 @@ impl<R>
             channels,
             people: NoPeopleAdministration,
             audit: NoAuditReader,
+            policies: NoPolicyAdministration,
             tool_control: NoToolControlPlane,
             tool_journal: NoToolJournal,
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
@@ -67,14 +79,15 @@ impl<R>
     }
 }
 
-impl<R, P, A, C, J> OpenBotApplication<R, P, A, C, J> {
+impl<R, P, A, K, C, J> OpenBotApplication<R, P, A, K, C, J> {
     /// 注入 people/auth 原子端口。
     #[must_use]
-    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, C, J> {
+    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, K, C, J> {
         OpenBotApplication {
             channels: self.channels,
             people,
             audit: self.audit,
+            policies: self.policies,
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
             heartbeat_period: self.heartbeat_period,
@@ -83,11 +96,26 @@ impl<R, P, A, C, J> OpenBotApplication<R, P, A, C, J> {
 
     /// 注入管理员 audit keyset reader。
     #[must_use]
-    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, C, J> {
+    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, K, C, J> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
             audit,
+            policies: self.policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入 deployment-wide action policy 管理端口。
+    #[must_use]
+    pub fn with_policy<Q>(self, policies: Q) -> OpenBotApplication<R, P, A, Q, C, J> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit: self.audit,
+            policies,
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
             heartbeat_period: self.heartbeat_period,
@@ -96,11 +124,12 @@ impl<R, P, A, C, J> OpenBotApplication<R, P, A, C, J> {
 
     /// 注入 tool control plane 与 durable journal；二者分开，application 才能掌握固定顺序。
     #[must_use]
-    pub fn with_tools<T, K>(self, control: T, journal: K) -> OpenBotApplication<R, P, A, T, K> {
+    pub fn with_tools<T, L>(self, control: T, journal: L) -> OpenBotApplication<R, P, A, K, T, L> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
             audit: self.audit,
+            policies: self.policies,
             tool_control: control,
             tool_journal: journal,
             heartbeat_period: self.heartbeat_period,
@@ -118,11 +147,12 @@ impl<R, P, A, C, J> OpenBotApplication<R, P, A, C, J> {
     }
 }
 
-impl<R, P, A, C, J> OpenBotApplication<R, P, A, C, J>
+impl<R, P, A, K, C, J> OpenBotApplication<R, P, A, K, C, J>
 where
     R: ChannelReader,
     P: PeopleAdministration,
     A: AuditReader,
+    K: PolicyAdministration,
     C: ToolControlPlane,
     J: ToolJournal,
 {
@@ -182,6 +212,12 @@ where
                 )
                 .await?,
             )),
+            AppCommand::GetActionPolicy => Ok(AppReply::ActionPolicy {
+                policy: get_action_policy(&self.policies, auth).await?,
+            }),
+            AppCommand::SetActionPolicy { policy } => Ok(AppReply::ActionPolicy {
+                policy: Some(set_action_policy(&self.policies, auth, policy).await?),
+            }),
             AppCommand::InvokeTool(invocation) => Ok(AppReply::Tool(
                 invoke_tool(&self.tool_control, &self.tool_journal, auth, invocation).await?,
             )),
@@ -190,11 +226,12 @@ where
 }
 
 #[async_trait]
-impl<R, P, A, C, J> ApplicationService for OpenBotApplication<R, P, A, C, J>
+impl<R, P, A, K, C, J> ApplicationService for OpenBotApplication<R, P, A, K, C, J>
 where
     R: ChannelReader + 'static,
     P: PeopleAdministration + 'static,
     A: AuditReader + 'static,
+    K: PolicyAdministration + 'static,
     C: ToolControlPlane + 'static,
     J: ToolJournal + 'static,
 {
@@ -268,6 +305,7 @@ mod tests {
     use openbot_contracts::command::AppEvent;
     use openbot_contracts::error::ErrorCode;
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ToolCallId};
+    use openbot_contracts::policy::{ActionPolicyDocument, ActionPolicyMode};
     use openbot_contracts::tool::ToolInvocation;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
@@ -447,6 +485,30 @@ mod tests {
             audit,
             Err(AppError::DependencyUnavailable {
                 dependency: "database"
+            })
+        ));
+
+        let (get_policy, _) = capture(service.execute(auth.clone(), AppCommand::GetActionPolicy));
+        assert!(matches!(
+            get_policy,
+            Err(AppError::DependencyUnavailable {
+                dependency: "policy_store"
+            })
+        ));
+        let (set_policy, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::SetActionPolicy {
+                policy: ActionPolicyDocument {
+                    mode: ActionPolicyMode::Enforce,
+                    deny: Vec::new(),
+                    allow: vec!["true".to_owned()],
+                },
+            },
+        ));
+        assert!(matches!(
+            set_policy,
+            Err(AppError::DependencyUnavailable {
+                dependency: "policy_store"
             })
         ));
 

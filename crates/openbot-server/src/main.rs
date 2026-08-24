@@ -67,13 +67,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let pool = pool::connect(&database).await?;
     openbot_server::database::initialize(&pool).await?;
 
-    let policy_store = Arc::new(PolicyStore::postgres(
+    let policy_store = PolicyStore::postgres(
         pool.clone(),
         server
             .computer
             .as_ref()
             .and_then(|computer| computer.action_policy.clone()),
-    ));
+    );
     let policy_origin = policy_store.load().await?;
     let compiled_policy = policy_store.compiled();
     tracing::info!(
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         database
             .clone()
             .with_application_name("openbot-action-policy-listener"),
-        policy_store,
+        Arc::new(policy_store.clone()),
     )
     .await?;
 
@@ -170,7 +170,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(ChannelRepo::new(pool.clone()))
             .with_people(people)
-            .with_audit(PostgresAuditReader::new(pool.clone())),
+            .with_audit(PostgresAuditReader::new(pool.clone()))
+            .with_policy(policy_store),
     );
     let metrics = install_recorder()?;
     let db_probe_pool = pool.clone();

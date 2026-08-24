@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use harness::{admin_config, with_temp_database};
+use openbot_application::PolicyAdministration;
+use openbot_contracts::ids::ActorId;
 use openbot_domain::policy::{ActionPolicy, PolicyMode};
 use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::policy::{ACTION_POLICY_TOPIC, PolicyListener, PolicyOrigin, PolicyStore};
@@ -484,6 +486,48 @@ async fn a_saved_rule_is_not_lost_when_no_listener_received_the_announcement() {
                 || scalar(&pool, "SELECT count(*)::bigint FROM public.action_policy").await? != 1
             {
                 return Err("无人接收 NOTIFY 时已提交 rule 丢失".to_owned());
+            }
+            Ok(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn application_policy_port_persists_authoritative_actor_and_updates_compiled_snapshot() {
+    with_policy_database(
+        "application_policy_port_persists_authoritative_actor_and_updates_compiled_snapshot",
+        "policy_application_port",
+        |pool, _config| async move {
+            let store = PolicyStore::postgres(pool.clone(), Some(configured()));
+            store.load().await.map_err(|error| error.to_string())?;
+            let before = store.compiled();
+            let saved = policy(PolicyMode::DryRun, "from-application");
+            PolicyAdministration::set_policy(&store, &ActorId::new("admin-id"), saved.clone())
+                .await
+                .map_err(|error| error.to_string())?;
+            let current = PolicyAdministration::current_policy(&store)
+                .await
+                .map_err(|error| error.to_string())?;
+            let updated_by: Option<String> = pool
+                .get()
+                .await
+                .map_err(|error| error.to_string())?
+                .query_one(
+                    "SELECT updated_by FROM public.action_policy WHERE id='current'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .get(0);
+            if current != Some(saved)
+                || updated_by.as_deref() != Some("admin-id")
+                || Arc::ptr_eq(&before, &store.compiled())
+            {
+                return Err(format!(
+                    "application policy port 不符：current={current:?} updated_by={updated_by:?}"
+                ));
             }
             Ok(())
         },

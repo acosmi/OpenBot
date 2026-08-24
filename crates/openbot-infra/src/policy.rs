@@ -8,7 +8,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use deadpool_postgres::Pool;
+use openbot_application::{PolicyAdministration, PolicyAdministrationError};
+use openbot_contracts::ids::ActorId;
 use openbot_domain::policy::{ActionPolicy, CompiledActionPolicy, PolicyMode};
 use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
@@ -245,6 +248,36 @@ impl PolicyStore {
         self.current
             .send_replace(PolicyState::new(self.configured.clone()));
         Ok(())
+    }
+}
+
+#[async_trait]
+impl PolicyAdministration for PolicyStore {
+    async fn current_policy(&self) -> Result<Option<ActionPolicy>, PolicyAdministrationError> {
+        Ok(self.current())
+    }
+
+    async fn set_policy(
+        &self,
+        updated_by: &ActorId,
+        policy: ActionPolicy,
+    ) -> Result<(), PolicyAdministrationError> {
+        PolicyStore::set(self, policy, Some(updated_by.as_str()))
+            .await
+            .map_err(policy_port_error)
+    }
+}
+
+fn policy_port_error(error: InfraError) -> PolicyAdministrationError {
+    tracing::error!(error = %error, "policy administration adapter 失败");
+    match error {
+        InfraError::RowDecode(_) | InfraError::RepositoryInvariant { .. } => {
+            PolicyAdministrationError::Corrupt
+        }
+        InfraError::Connect { .. }
+        | InfraError::Query { .. }
+        | InfraError::IncompatibleDatabase(_)
+        | InfraError::NativeMigration(_) => PolicyAdministrationError::Unavailable,
     }
 }
 

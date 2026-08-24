@@ -1656,6 +1656,26 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 
 任何闸门失败都只能修复后重跑，不能以“后续补齐”进入下一发布阶段。
 
+### 24.1 实施状态勾选（2026-08-24；进度证据以机器台账为准）
+
+- [ ] **G0**：Phase 0 证据产物已落；仍缺 §1.1 两份输入文档原件，故整关不勾。
+- [x] **G1**：10 crate/locked build、Axum/in-process、28 表/13 migration/read checksum、tracing/metrics 四判据均已通过。
+- [ ] **G2**：整关未通过；以下子项已经有本机机械证据：
+  - [x] CEL 69 条 corpus 与固定 6 条差异台账；
+  - [x] 通用 decision→attempt→capability→execute→outcome/audit 构造性边界；
+  - [x] v1 credential/SSO 互操作与 v2 record rotation 代码路径；
+  - [x] 环境/动态 OIDC、SAML、keyed session/group/replay 本机生产竖切；
+  - [x] W-5 batch 1–4：identity / People / Audit / Policy durability+fanout+管理写面；G2 队列当前 **100 done / 134 todo / 234 total**；
+  - [ ] 独立 SAML/XSW 与整体安全外审、Server KMS/HSM、Linux CI、Windows 原生构建；真实 G4 executor 也仍缺。
+- [ ] **G3**：Native Thread/Realtime/Memory 未完整实施。
+- [ ] **G4**：Agent/AG-UI/MCP/Drive 与真实 browser/file/shell executor 未完整实施。
+- [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
+- [ ] **G6**：Leptos/Tauri GUI、设计系统 golden、a11y/i18n/bundle gates 未实施完成。
+- [ ] **G7**：Screen/Handover 性能、安全票据、human lease 未实施完成。
+- [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
+
+当前总台账：parity **202/1645 done（1443 todo）**，fixtures **9/31 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+
 ## 25. Definition of Done
 
 只有同时满足以下条件，才能称“OpenBot 已完成全量 Rust 重写”：
@@ -1803,6 +1823,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R54 | §14.1 / §16.1（2026-08-23 W-5 batch 1 真实进程复核） | 同一命名 fresh 库首启成功、四 HTTP 面与 canonical user 都正确；Ctrl-C 后二启却稳定报 `legacy_data_migration_unverifiable`。原因是 main 对 compat 明确允许给 Rust baseline 的 `DataMigrationVerdict::Unverifiable` 一刀拒绝：fresh baseline 不伪造 Drizzle 账本，二启必然落该态。更深一层，baseline 与 native 原先分两个事务，进程若死在中间会留下“有 0012 schema、无任何来源账本”的永久歧义；两个 replica 还可同时在锁外看见空库并竞争 baseline DDL | 新增 `db::fresh`：先取同一 migration advisory lock 并在锁内重检 public 表，再把 baseline + 0013–0015 + native ledger 放入一个外层事务；等待者发现已初始化就转 existing 分支。native 施加器抽出事务内核心，既有独立调用仍自己开/提交事务。Server `database::initialize` 三分：空 schema→Fresh；有效 native ledger→schema + checksum/空洞校验后 RustManaged；完整 Drizzle ledger→LegacyUpgraded；两账本都无→拒绝。native ledger 只作来源证明，存在不等于通过 | 负向现场：同库首启 200/ready 后二启实得该稳定错误。修后 PG17/SCRAM `database_initialization`=4/0/0：fresh→二启且 Drizzle 表仍不存在、双 replica 恰 Fresh+RustManaged/账本 3、未知无账本 legacy 拒绝、同名异形 native ledger 失败后 public 表数仍 0；保留现场库重建二进制后二启正常监听，Ctrl-C exit 0；临时库已删除 |
 | R55 | §6.1 / §6.2 / §19.3（2026-08-23 W-5 G2 ledger batch 2） | `people-paging.integration.test.ts` 9 条仍全是 todo，但既有一条聚合测试只显式覆盖页序、wildcard、坏 cursor 与部分投影，不能据此把“name/email 能搜到第一页外目标”、HTTP 端 200 上限、point lookup 不扫 deployment、missing person 零副作用等未行使判据批量算 done。复核同时发现 People 搜索归一仍调用 Rust `str::trim()`，违反 R51 的 ECMAScript TrimString 单一真源。`roles.test.ts` 最后一条则用 fake 制造“session 存在但 user 不存在”，而固定上游与 Rust 生产 schema 都有同一 `sessions.user_id → users.id ON DELETE CASCADE` 外键；复制一个生产不可达的 domain 死分支不是证据 | 搜索归一改为唯一 `openbot_domain::text::trim_ecmascript`，用 U+FEFF/U+0085 双向测试锁住。People 9 条各建独立机械落点：真 PG keyset 页/全量 walk/NULLS LAST/name+email server-side search/wildcard/坏 cursor/full Person/missing NotFound，HTTP→application→typed port 另证明任意大 limit 在碰库前钳到 200；point query 的生产 SQL 必须以参数化 `WHERE u.id=$1` 在聚合前定界且不得复用 list CTE。缺 user 的 session 以真库 23503、正向可插、删 user 后 cascade 三段证明结构不可达，不新增假业务分支 | `people_application` PG17/SCRAM=14/0/0；People application=5/0/0、point SQL shape=1/0/0、HTTP cap=1/0/0。生成器重放仍为 105 文件/229 describe/1047 test 且保留 done overlay；tests ledger=50/997、G2=46/188、parity 总计=145/1500。完整 workspace=`1003/0/79`；PG17 infra+server=`474/0/0`。详见 `docs/2026-08-23-W5-G2身份台账batch2.md` |
 | R56 | §5.2 / §8.3 / §8.6 / §19.3（2026-08-23 W-5 G2 ledger batch 3） | `action_policy` 虽有通用 CRUD 名字，但没有一份 production store 能把 current 行、显式配置、未配置 default-deny 与热路径内存统一起来；没有 LISTEN/NOTIFY、重连 catch-up 或 Server 启动接线，故 durability/fanout 13 条全 todo。Audit 则只有 typed append/checkpoint，没有 ApplicationService 读命令、管理员 HTTP 或 keyset reader；更严重的是 test inventory 把 `audit.test.ts` 标成 parity，但 §8.6 已明确用字段 allowlist 推翻上游自由 JSON + 敏感键黑名单，分类本身失真 | 新增 `PolicyStore`：DB 行是权威记录，内存持有 `raw + Arc<CompiledActionPolicy>` 原子快照，load/set/reset/refresh 才编译，acting 读取只 clone Arc；同进程 operation lock 收敛 refresh/write 竞态，upsert/reset 与空 payload `pg_notify` 同事务。`PolicyListener` 用独占 tokio-postgres 连接，首次 LISTEN 与每次重连后整表重读，断线有界重试；Server main 启动加载并持有 listener 到 graceful shutdown。无显式配置继续是独立 Unconfigured/default-deny，不继承上游隐式 allow。Audit 新增 wasm-safe DTO、typed command/port/use case、PG keyset reader 与 admin GET，Axum/in-process 共用同一 Arc；自由 redactor 两条改记 `rename: ported`，inventory 文件级标签保守改为“替代”。真实 PostgreSQL 中 announcement 无接收者/订阅离线时 row 仍是记录，listener 建立即 catch-up；不靠 fake 推断网络断连下未知 commit | PG17/SCRAM `policy_store`=13/0/0、`audit_reader`=4/0/0；domain audit=53/0/0、application audit=2/0/0、server admin=1/0/0、transport audit=1/0/0。真实 Server fresh 四只读面 200；同库写入 dry-run 后二启日志实得 `origin=Database/mode=dry-run/configured=true` 与内容版本，SIGINT 正常退出、临时库 0。生成器重放 105/229/1047 且 overlay 保留；tests=69/978、G2=65/169、API=13/135、parity 总计=165/1480。完整 workspace=`1010/0/94`；PG17 infra+server=`492/0/0`。Policy 管理写路由与真实 G4 executor 仍未闭合，不借本条宣称 G2/G4 通过；详见 `docs/2026-08-23-W5-G2策略审计台账batch3.md` |
+| R57 | §5.2 / §8.3 / §15.1 / §19.3（2026-08-24 W-5 G2 ledger batch 4） | R56 的 store 已在生产启动，但没有 ApplicationService policy command/port，产品无法经 Rust-owned API 读写；`computer-policy-route.test.ts` 4 条与 `computer-policy.test.ts` 31 条全 todo。若把 store 直接塞进 Axum 会违反唯一业务入口；照抄上游 PUT 只验 admin 又会让跨站请求改写全 deployment 边界。另：Hono `/:botId/*` 对 `/policy` 零段匹配导致 deployment route 被误当 Bot 的缺陷，不应在 Axum 复刻成 wildcard exemption | 新增 wasm-safe `ActionPolicyDocument`、Get/Set typed command、`PolicyAdministration` port 与 application admin use case；`PolicyStore` 实现 port，updated_by 只取权威 actor id并在 commit 后替换预编译快照。GET/PUT 以精确 `/api/computers/policy` 路由挂载，不设 wildcard bypass；未配置 GET 明示 `policy:null` 并保持 default-deny。PUT 归类为替代：fresh live admin + trusted Origin 在 body parse 前通过，缺 Origin/非 admin/非 fresh 零 port 副作用；合法文档持久化后回显实际生效值。固定上游 31 条中 28 条求值逐项落 `computer_policy_upstream`，3 条 JSON parser 复用唯一 Server parser，不复制第二实现；cel-js→cel 与结构化 Refusal 继续按既有替代裁决 | domain policy matrix=28/0/0、Server parser=7/0/0、application policy=2/0/0、Server route=4/0/0、transport policy=1/0/0；PG17 `policy_store`=14/0/0，Policy HTTP 真腿=1/0/0（GET null、缺 Origin 403、trusted PUT 200、updated_by=`dev-local-user`、新 store 从 DB 恢复）。生成器重放保留全部 overlay；tests=104/943、G2=100/134、API=15/133、parity=202/1443。完整 workspace=`1046/0/96`；PG17 infra+server=`498/0/0`。真实 G4 executor 与 Bot status/access 路由仍未交付；精确未知路径 404 只证明 policy route 没开洞，不冒充 computer surface 完成。详见 `docs/2026-08-24-W5-G2策略写面台账batch4.md` |
 
 ### 28.2 复核通过、原样保留的断言
 

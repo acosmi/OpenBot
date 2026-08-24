@@ -107,6 +107,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::ChangePersonRole { .. } => "change_person_role",
         AppCommand::ChangePersonAccess { .. } => "change_person_access",
         AppCommand::ListAuditEvents { .. } => "list_audit_events",
+        AppCommand::GetActionPolicy => "get_action_policy",
+        AppCommand::SetActionPolicy { .. } => "set_action_policy",
         AppCommand::InvokeTool(_) => "invoke_tool",
     }
 }
@@ -201,6 +203,17 @@ mod tests {
                     limit: None,
                 },
                 "list_audit_events",
+            ),
+            (AppCommand::GetActionPolicy, "get_action_policy"),
+            (
+                AppCommand::SetActionPolicy {
+                    policy: openbot_contracts::policy::ActionPolicyDocument {
+                        mode: openbot_contracts::policy::ActionPolicyMode::Enforce,
+                        deny: Vec::new(),
+                        allow: vec!["true".to_owned()],
+                    },
+                },
+                "set_action_policy",
             ),
             (
                 AppCommand::InvokeTool(ToolInvocation {

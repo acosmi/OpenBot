@@ -33,6 +33,7 @@ use crate::audit::AuditPage;
 use crate::auth::Role;
 use crate::ids::{ActorId, BotId, ChannelId, ThreadId};
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
+use crate::policy::ActionPolicyDocument;
 use crate::tool::{ToolInvocation, ToolResult};
 
 /// 单页 channel 的条数上限。
@@ -125,6 +126,15 @@ pub enum AppCommand {
         limit: Option<i64>,
     },
 
+    /// 读取 deployment-wide action policy；不带 Bot id。
+    GetActionPolicy,
+
+    /// 保存 deployment-wide action policy；actor 只能来自 `AuthContext`。
+    SetActionPolicy {
+        /// 已过 wire shape 校验的原始 policy 文档。
+        policy: ActionPolicyDocument,
+    },
+
     /// 由 Rust Agent gateway 铸造的一次工具调用；仍须在 application 里走完整 §8.1 管线。
     InvokeTool(ToolInvocation),
 }
@@ -147,6 +157,11 @@ pub enum AppReply {
     Person(Person),
     /// [`AppCommand::ListAuditEvents`] 应答。
     AuditEvents(AuditPage),
+    /// 当前 action policy；`None` = 尚未首次配置，default-deny。
+    ActionPolicy {
+        /// 当前文档；`None` = 尚未首次配置。
+        policy: Option<ActionPolicyDocument>,
+    },
     /// [`AppCommand::InvokeTool`] 的已持久化、已脱敏结果。
     Tool(ToolResult),
 }
@@ -465,6 +480,20 @@ mod tests {
         };
         let wire = serde_json::to_string(&audit).unwrap();
         assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), audit);
+
+        let policy = AppCommand::SetActionPolicy {
+            policy: ActionPolicyDocument {
+                mode: crate::policy::ActionPolicyMode::DryRun,
+                deny: vec!["false".to_owned()],
+                allow: vec!["true".to_owned()],
+            },
+        };
+        let wire = serde_json::to_string(&policy).unwrap();
+        assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), policy);
+        assert_eq!(
+            serde_json::from_str::<AppCommand>(r#"{"kind":"get_action_policy"}"#).unwrap(),
+            AppCommand::GetActionPolicy,
+        );
     }
 
     /// 自由 method string 走不通：未知 `kind` 与未知字段都在反序列化阶段就失败，
@@ -510,6 +539,11 @@ mod tests {
         let json = serde_json::to_string(&audit).unwrap();
         assert_eq!(json, r#"{"kind":"audit_events","events":[]}"#);
         assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), audit);
+
+        let policy = AppReply::ActionPolicy { policy: None };
+        let json = serde_json::to_string(&policy).unwrap();
+        assert_eq!(json, r#"{"kind":"action_policy","policy":null}"#);
+        assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), policy);
 
         let tool = AppReply::Tool(ToolResult {
             call_id: crate::ids::ToolCallId::new("call-1"),

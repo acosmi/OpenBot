@@ -410,6 +410,8 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::ChangePersonRole { .. }
         | AppCommand::ChangePersonAccess { .. }
         | AppCommand::ListAuditEvents { .. }
+        | AppCommand::GetActionPolicy
+        | AppCommand::SetActionPolicy { .. }
         | AppCommand::InvokeTool(_) => None,
     }
 }
