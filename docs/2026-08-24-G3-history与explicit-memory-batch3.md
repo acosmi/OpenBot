@@ -45,3 +45,11 @@
 本批没有 Memory GUI，也没有 built-in Agent `remember` tool，所以“两种显式写入口”只完成 GUI
 对应的后端 API，不宣称整条用户旅程完成。WebSocket、outbox consumer、lease renew/stale-running
 recovery、terminal/chunk writer、Intelligence importer/checksum 仍是 G3/G4 后续项，G3 整关不勾。
+
+## 5. Git 恢复点
+
+- 实施提交：`8d4ac0bb73b9ae34be65e73bd370297d3c635fcd`；
+- 分支：`feat/2026-08-24-G3-history-memory`；
+- 堆叠 PR：**#20**，base=`feat/2026-08-24-G3-thread-append-live`，创建后
+  `OPEN/CLEAN/MERGEABLE`；
+- 实施 head 的 GitHub Actions run 数：**0**。
