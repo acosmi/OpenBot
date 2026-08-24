@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use deadpool_postgres::{GenericClient, Pool};
-use openbot_application::{PeopleAdministration, PeoplePageRequest, PeoplePortError};
+use openbot_application::{
+    OwnedCredentialRetirementError, OwnedCredentialRetirer, PeopleAdministration,
+    PeoplePageRequest, PeoplePortError,
+};
 use openbot_contracts::auth::{AuthGeneration, Role};
 use openbot_contracts::error::IdentityConflictReason;
 use openbot_contracts::ids::ActorId;
@@ -48,6 +51,7 @@ pub struct PostgresPeopleAdministration {
     pool: Pool,
     floor: Option<AdminFloor>,
     checkpoint_key: std::sync::Arc<[u8]>,
+    owned_credential_retirer: Option<std::sync::Arc<dyn OwnedCredentialRetirer>>,
 }
 
 impl PostgresPeopleAdministration {
@@ -67,7 +71,21 @@ impl PostgresPeopleAdministration {
             pool,
             floor,
             checkpoint_key: checkpoint_key.into(),
+            owned_credential_retirer: None,
         })
+    }
+
+    /// 注入人员移除后的个人凭据退役端口。
+    ///
+    /// 退役在 people deny/session/generation 事务提交后运行；失败不会撤销已经生效的人员移除，
+    /// 重试同一 access revoke 会再次调用该幂等端口，以便恢复上一次未完成的第二阶段。
+    #[must_use]
+    pub fn with_owned_credential_retirer(
+        mut self,
+        retirer: std::sync::Arc<dyn OwnedCredentialRetirer>,
+    ) -> Self {
+        self.owned_credential_retirer = Some(retirer);
+        self
     }
 }
 
@@ -77,6 +95,10 @@ impl core::fmt::Debug for PostgresPeopleAdministration {
             .field(
                 "configured_admins",
                 &self.floor.as_ref().map(AdminFloor::len),
+            )
+            .field(
+                "owned_credential_retirement",
+                &self.owned_credential_retirer.is_some(),
             )
             .field("checkpoint_key", &"<redacted>")
             .finish_non_exhaustive()
@@ -287,6 +309,20 @@ impl PeopleAdministration for PostgresPeopleAdministration {
             .commit()
             .await
             .map_err(|error| port_error(InfraError::query("提交 people access 事务", error)))?;
+        if revoked && let Some(retirer) = &self.owned_credential_retirer {
+            retirer
+                .retire_owned_credentials(subject, actor)
+                .await
+                .map_err(|error| {
+                    tracing::error!(code = %error, "people 已移除，个人 credential 第二阶段退役失败");
+                    match error {
+                        OwnedCredentialRetirementError::Unavailable => PeoplePortError::Unavailable,
+                        OwnedCredentialRetirementError::Corrupt { field } => {
+                            PeoplePortError::Corrupt { field }
+                        }
+                    }
+                })?;
+        }
         Ok(after.person)
     }
 }

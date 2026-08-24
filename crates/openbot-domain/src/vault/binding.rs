@@ -77,10 +77,12 @@ impl KeyVersion {
 ///
 /// # 为什么它在 vault 里而不在 `openbot-contracts::ids`
 ///
-/// D-2 复算时它的全部消费者都在 `openbot-domain::vault`，没有第一条真实跨 crate
-/// 契约。提前上收只会让 contracts 占一个无消费者的名字；将来 repository/application
-/// 第一次使用时必须与那条用例同批移动。语义上它与 §5.3 的 string newtype 一致：**不做 UUID 校验**，
-/// 因为上游 `credentials.id` 是 `uuid defaultRandom`，而兼容端必须接受上游既有字符串。
+/// D-2 复算时它的全部消费者都在 `openbot-domain::vault`，没有第一条真实跨层契约。W-7b/R59
+/// 之后 infra adapter 会在调用本模块的 `RecordBinding` 时**就地构造**它；这仍是 adapter 使用
+/// domain value，不是 application/transport port 传递的 contract。若未来它第一次穿过 port，
+/// 必须与那条用例同批上收，而不是因为 infra 调一次领域纯函数就把领域值全部搬进 contracts。
+/// 语义上它与 §5.3 的 string newtype 一致：**不做 UUID 校验**，因为上游
+/// `credentials.id` 是 `uuid defaultRandom`，而兼容端必须接受上游既有字符串。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SecretId(String);
 
@@ -100,7 +102,7 @@ impl SecretId {
 
 /// 外部服务的登记标识（MCP server、vendor gateway 之类）。
 ///
-/// 与 [`SecretId`] 同理不在 contracts 里。它**不是**一个 §5.3 核心 ID，只是
+/// 与 [`SecretId`] 同理不穿 application/transport port，因此不在 contracts。它**不是**一个 §5.3 核心 ID，只是
 /// [`SecretPrincipal::Service`] 用来指名道姓的那串字符 —— 不给它一个类型的话，AAD 里就会出现
 /// 一个裸 `String` 字段，而裸字符串正是撞车的来源。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

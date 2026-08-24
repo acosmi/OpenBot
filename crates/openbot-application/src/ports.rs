@@ -288,6 +288,38 @@ pub enum PeoplePortError {
     },
 }
 
+/// 人员移除后，退役其仍由部署持有的个人凭据时可能出现的端口失败。
+///
+/// 这一步刻意发生在 deny/session/generation 的 people 事务提交之后：凭据库或审计链故障
+/// 不能把已经生效的人员移除回滚掉。错误只说明依赖状态，不携带凭据、数据库原值或远端文案。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum OwnedCredentialRetirementError {
+    /// 凭据持久化或审计依赖当前不可用。
+    #[error("owned_credential_retirement_unavailable")]
+    Unavailable,
+    /// 持久化状态不满足封闭不变量。
+    #[error("owned_credential_retirement_corrupt field={field}")]
+    Corrupt {
+        /// 出问题的静态字段名，不含字段值。
+        field: &'static str,
+    },
+}
+
+/// 人员移除后的个人凭据退役端口。
+///
+/// `owner` 与 `retired_by` 都来自权威 Rust 身份；transport 不得把请求体里的同名字段传进来。
+/// 实现必须按 vault owner 事实查找，不能只沿已可能被 `ON DELETE CASCADE` 删除的连接表查找，
+/// 否则用户行消失后会留下不可见但仍可用的孤儿 refresh token。
+#[async_trait]
+pub trait OwnedCredentialRetirer: Send + Sync {
+    /// 退役 `owner` 的全部个人凭据；重复调用与空 owner 都返回 `0`。
+    async fn retire_owned_credentials(
+        &self,
+        owner: &ActorId,
+        retired_by: &ActorId,
+    ) -> Result<u64, OwnedCredentialRetirementError>;
+}
+
 impl PeoplePortError {
     /// 映射 §15.3 AppError。
     #[must_use]
