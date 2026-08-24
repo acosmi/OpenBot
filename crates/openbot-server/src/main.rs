@@ -19,10 +19,10 @@ use openbot_infra::auth::oidc::{
     PostgresOidcRateLimiter, PostgresOidcSessionIssuer, PreAuthSurface, ProviderRegistry,
     configured_oidc_providers,
 };
+use openbot_infra::auth::single_user::initialize_single_user;
 use openbot_infra::auth::sso::DynamicSsoService;
-use openbot_infra::db::compat::{DataMigrationVerdict, check_migration_boundary_on};
 use openbot_infra::db::pool::DatabaseConfig;
-use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::db::{native, pool};
 use openbot_infra::net::safe_http::{EgressPolicy, SafeDialer};
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
@@ -30,8 +30,8 @@ use openbot_server::config::{DeploymentEnvironment, ServerConfig, env_map_from_p
 use openbot_server::readiness::ReadinessVerdict;
 use openbot_server::telemetry::{self, LogFormat};
 use openbot_server::{
-    AuthResolver, FnReadinessProbe, PostgresSessionAuthResolver, SensitiveWriteSecurity,
-    ServerBuilder, SingleUserAuthResolver, install_recorder,
+    AuthResolver, FnReadinessProbe, PostgresSessionAuthResolver, SINGLE_USER_ACTOR_ID,
+    SensitiveWriteSecurity, ServerBuilder, SingleUserAuthResolver, install_recorder,
 };
 use sha2::Sha256;
 
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .ok_or_else(|| startup_error("database_url_missing"))?;
     let database: DatabaseConfig = database_url.parse()?;
     let pool = pool::connect(&database).await?;
-    initialize_database(&pool).await?;
+    openbot_server::database::initialize(&pool).await?;
 
     let key_policy = match server.deployment_environment {
         DeploymentEnvironment::Production => ExampleKeyPolicy::Reject,
@@ -92,9 +92,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let deployment = deployment_id_for_startup(server.deployment_id.as_deref())?;
     let tenant = TenantId::new("default");
 
-    if single_user {
-        provision_single_user(&pool).await?;
-    }
+    initialize_single_user(&pool, single_user).await?;
 
     let (auth, sensitive, floor, oidc_login): AuthAssembly = if let Some(config) = auth_config {
         let oidc = build_oidc_login(
@@ -133,7 +131,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Arc::new(SingleUserAuthResolver::new(
                 deployment.clone(),
                 tenant.clone(),
-                ActorId::new("single-user"),
+                ActorId::new(SINGLE_USER_ACTOR_ID),
                 lifetime,
             )),
             SensitiveWriteSecurity::new(lifetime, origins),
@@ -288,56 +286,6 @@ async fn database_has_dynamic_provider(
         .query_one("SELECT EXISTS(SELECT 1 FROM public.sso_providers)", &[])
         .await?
         .try_get(0)?)
-}
-
-async fn initialize_database(pool: &deadpool_postgres::Pool) -> Result<(), Box<dyn Error>> {
-    let mut client = pool.get().await?;
-    let table_count: i64 = client
-        .query_one(
-            "SELECT count(*)::bigint FROM information_schema.tables \
-             WHERE table_schema='public' AND table_type='BASE TABLE'",
-            &[],
-        )
-        .await?
-        .try_get(0)?;
-    if table_count == 0 {
-        baseline::apply(&client).await?;
-    } else {
-        let report = check_migration_boundary_on(&client).await?;
-        if matches!(
-            report.data_migrations,
-            DataMigrationVerdict::Unverifiable { .. }
-        ) {
-            return Err(startup_error("legacy_data_migration_unverifiable").into());
-        }
-    }
-    native::apply(&mut client).await?;
-    Ok(())
-}
-
-async fn provision_single_user(pool: &deadpool_postgres::Pool) -> Result<(), Box<dyn Error>> {
-    let mut client = pool.get().await?;
-    let transaction = client.transaction().await?;
-    transaction
-        .execute(
-            "INSERT INTO public.users \
-             (id,email,name,email_verified,groups,auth_generation) \
-             VALUES('single-user','single-user@localhost','Local Owner',true,'{}',0) \
-             ON CONFLICT(id) DO NOTHING",
-            &[],
-        )
-        .await?;
-    for role in ["admin", "user"] {
-        transaction
-            .execute(
-                "INSERT INTO public.user_roles(user_id,role) \
-                 VALUES('single-user',$1::text::role) ON CONFLICT DO NOTHING",
-                &[&role],
-            )
-            .await?;
-    }
-    transaction.commit().await?;
-    Ok(())
 }
 
 fn configured_origins(

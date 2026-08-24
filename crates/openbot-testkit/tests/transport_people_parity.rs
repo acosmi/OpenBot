@@ -15,7 +15,9 @@ use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use openbot_desktop::InProcessTransport;
 use openbot_domain::identity::session::{SessionLifetimePolicy, TrustedOrigins};
-use openbot_server::{SensitiveWriteSecurity, ServerBuilder, SingleUserAuthResolver, router};
+use openbot_server::{
+    SINGLE_USER_ACTOR_ID, SensitiveWriteSecurity, ServerBuilder, SingleUserAuthResolver, router,
+};
 use time::{Duration, OffsetDateTime};
 use tower::ServiceExt as _;
 
@@ -44,7 +46,7 @@ impl FakePeople {
     fn new() -> Self {
         Self {
             rows: Arc::new(Mutex::new(vec![
-                person("single-user", Role::Admin),
+                person(SINGLE_USER_ACTOR_ID, Role::Admin),
                 person("target", Role::User),
             ])),
             calls: Arc::new(Mutex::new(Vec::new())),
@@ -141,8 +143,8 @@ fn auth() -> AuthContext {
     AuthContext::for_test(
         DeploymentId::new("dep-1"),
         TenantId::new("tenant-1"),
-        ActorId::new("single-user"),
-        [Role::Admin, Role::User],
+        ActorId::new(SINGLE_USER_ACTOR_ID),
+        [Role::Admin],
         openbot_contracts::auth::AuthGeneration::new(0),
         true,
     )
@@ -169,7 +171,7 @@ impl Fixture {
         let resolver = SingleUserAuthResolver::new(
             DeploymentId::new("dep-1"),
             TenantId::new("tenant-1"),
-            ActorId::new("single-user"),
+            ActorId::new(SINGLE_USER_ACTOR_ID),
             lifetime(),
         );
         let security = SensitiveWriteSecurity::new(

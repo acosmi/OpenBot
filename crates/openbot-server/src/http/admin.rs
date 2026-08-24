@@ -236,6 +236,7 @@ mod tests {
     use time::OffsetDateTime;
     use tower::ServiceExt as _;
 
+    use crate::SINGLE_USER_ACTOR_ID;
     use crate::auth::{FixedAuthResolver, SensitiveWriteSecurity, SingleUserAuthResolver};
     use crate::http::{ServerBuilder, router};
 
@@ -266,7 +267,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 people: Arc::new(Mutex::new(vec![
-                    person("single-user", Role::Admin),
+                    person(SINGLE_USER_ACTOR_ID, Role::Admin),
                     person("target", Role::User),
                     person("plain-user", Role::User),
                 ])),
@@ -366,7 +367,7 @@ mod tests {
         let auth = SingleUserAuthResolver::new(
             DeploymentId::new("dep-1"),
             TenantId::new("tenant-1"),
-            ActorId::new("single-user"),
+            ActorId::new(SINGLE_USER_ACTOR_ID),
             default_session_lifetime(),
         );
         router(
@@ -445,7 +446,7 @@ mod tests {
         let (status, body) = send(router.clone(), get("/api/me")).await;
         assert_eq!(status, StatusCode::OK);
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(json["user"]["id"], "single-user");
+        assert_eq!(json["user"]["id"], SINGLE_USER_ACTOR_ID);
         assert_eq!(json["user"]["role"], "admin");
 
         let (status, body) = send(router.clone(), get("/api/admin/status")).await;
@@ -510,7 +511,10 @@ mod tests {
             "identity_sensitive_write_origin_untrusted",
         );
 
-        let no_assurance = fixed_router(people.clone(), fixed_auth("single-user", Role::Admin));
+        let no_assurance = fixed_router(
+            people.clone(),
+            fixed_auth(SINGLE_USER_ACTOR_ID, Role::Admin),
+        );
         let (status, body) = send(
             no_assurance,
             post(

@@ -23,6 +23,7 @@ use openbot_domain::identity::groups::{
 use openbot_domain::identity::revocation::{DenyListAnswer, SignInPath, screen_sign_in};
 use openbot_domain::identity::roles::{
     AdminFloor, AdminFloorDecision, apply_admin_floor, plan_set_role, resolve_effective_role,
+    seed_role,
 };
 use openbot_domain::identity::session::{
     SessionHashKey, SessionLifetimePolicy, SessionToken, SessionTokenHash, authenticate,
@@ -468,12 +469,8 @@ impl PostgresOidcSessionIssuer {
 
         let mut floor_granted = false;
         if is_new_user {
-            let target = if self.floor.contains(&incoming_email) {
-                floor_granted = true;
-                Role::Admin
-            } else {
-                Role::User
-            };
+            let target = seed_role(&self.floor, &incoming_email);
+            floor_granted = target == Role::Admin;
             apply_role_plan(&transaction, &plan_set_role(&actor, target))
                 .await
                 .map_err(|_| SessionIssueError::DependencyUnavailable)?;

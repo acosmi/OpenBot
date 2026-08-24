@@ -75,6 +75,9 @@ recount:
   - command: "jq --argjson files '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]' '[.nodes[] | select(.kind == \"test\" and (.file as $file | $files | index($file)))] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 234
+  - command: "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]'"
+    cwd: repo
+    expect: done=36 todo=198 in_progress=0 total=234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229
@@ -92,10 +95,10 @@ recount:
     expect: 105
   - command: "grep -c '^    label: parity$' parity/tests.yaml"
     cwd: repo
-    expect: 792
+    expect: 786
   - command: "grep -c '^    label: 替代$' parity/tests.yaml"
     cwd: repo
-    expect: 255
+    expect: 261
   - command: "grep -c '^    label: 新增$' parity/tests.yaml"
     cwd: repo
     expect: 0
@@ -110,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 1036
+    expect: 1007
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -7201,32 +7204,35 @@ entries:
   - id: "server-tests-dev-actor-integration--development-actor-persistence--does-not-access-the-database-when-disabled"
     upstream: "server/tests/dev-actor.integration.test.ts::development actor persistence"
     label: parity
-    target: "openbot_infra::store::dev_actor::tests::does_not_access_the_database_when_disabled"
+    target: "openbot_infra::tests::dev_actor::disabled_initialization_never_touches_the_database"
     owner: openbot-infra
     test_id: T-TEST-0690
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[827]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "CARGO_INCREMENTAL=0 cargo test -p openbot-infra --test dev_actor（PG17/SCRAM + --include-ignored）=> 3/0/0；disabled 用指向不可达端口的惰性 Pool，返回 false 后 pool.status().size 精确为 0"
     notes: "ported —— v3 §6.1 Desktop 与 Server 身份模型：开发态 actor 的持久化判据逐条移植。上游用例标题：「does not access the database when disabled」。"
   - id: "server-tests-dev-actor-integration--development-actor-persistence--writes-only-when-enabled-and-restores-the-canonical-user"
     upstream: "server/tests/dev-actor.integration.test.ts::development actor persistence"
     label: parity
-    target: "openbot_infra::store::dev_actor::tests::writes_only_when_enabled_and_restores_the_canonical_user"
+    target: "openbot_infra::tests::dev_actor::enabled_initialization_restores_canonical_identity_and_one_admin_role"
     owner: openbot-infra
     test_id: T-TEST-0691
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[828]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 dev_actor 3/0/0 真库矩阵：首次逐字段断言 dev-local-user/dev@openbot.local/name/emailVerified/groups/generation 与唯一 admin；篡改 email/name、加 user role、generation=7 后重跑，identity 恢复、角色只剩 admin、generation 仍为 7"
     notes: "ported —— v3 §6.1 Desktop 与 Server 身份模型：开发态 actor 的持久化判据逐条移植。上游用例标题：「writes only when enabled and restores the canonical user identity」。"
   - id: "server-tests-dev-actor-integration--development-actor-persistence--fails-loudly-when-another-user-owns-the-development-emai"
     upstream: "server/tests/dev-actor.integration.test.ts::development actor persistence"
     label: parity
-    target: "openbot_infra::store::dev_actor::tests::fails_loudly_when_another_user_owns_the_development_emai"
+    target: "openbot_infra::tests::dev_actor::conflicting_email_fails_loudly_and_rolls_back_the_whole_repair"
     owner: openbot-infra
     test_id: T-TEST-0692
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[829]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 dev_actor 3/0/0 真库矩阵：另一 user 占 canonical email 时实得 SQLSTATE 23505；Display/Debug 不含 email，canonical actor 的改名与两条旧 role 均原样保留，证明整笔 repair 回滚"
     notes: "ported —— v3 §6.1 Desktop 与 Server 身份模型：开发态 actor 的持久化判据逐条移植。上游用例标题：「fails loudly when another user owns the development email」。"
   # ---------------------------------------------------------------------------
   # server/tests/encrypt-sso-config.test.ts —— owner openbot-infra / ported / parity
@@ -7314,52 +7320,57 @@ entries:
   - id: "server-tests-entra-profile--mapentraprofile--uses-the-email-claim-when-it-is-there"
     upstream: "server/tests/entra-profile.test.ts::mapEntraProfile"
     label: parity
-    target: "openbot_infra::auth::entra_profile::tests::uses_the_email_claim_when_it_is_there"
+    target: "openbot_infra::auth::oidc::claims::tests::the_entra_email_chain_follows_upstream_order_and_predicate"
     owner: openbot-infra
     test_id: T-TEST-0700
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[839]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "CARGO_INCREMENTAL=0 cargo test -p openbot-infra auth::oidc::claims::tests => 16/0/0；the_entra_email_chain_follows_upstream_order_and_predicate 同时给 email/upn/preferred_username 三值并逐字断言先取 email"
     notes: "ported —— v3 §6.2 必须实现的认证面：Entra 档案映射判据逐条移植。上游用例标题：「uses the email claim when it is there」。"
   - id: "server-tests-entra-profile--mapentraprofile--falls-back-to-the-directory-s-own-name-for-the-account"
     upstream: "server/tests/entra-profile.test.ts::mapEntraProfile"
     label: parity
-    target: "openbot_infra::auth::entra_profile::tests::falls_back_to_the_directory_s_own_name_for_the_account"
+    target: "openbot_infra::auth::oidc::claims::tests::the_entra_email_chain_follows_upstream_order_and_predicate"
     owner: openbot-infra
     test_id: T-TEST-0701
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[840]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 16/0/0 claims 矩阵：缺 email、同时给 upn/preferred_username 时逐字取 upn；不是只测最终登录成功"
     notes: "ported —— v3 §6.2 必须实现的认证面：Entra 档案映射判据逐条移植。上游用例标题：「falls back to the directory's own name for the account」。"
   - id: "server-tests-entra-profile--mapentraprofile--falls-back-again-to-preferred-username"
     upstream: "server/tests/entra-profile.test.ts::mapEntraProfile"
     label: parity
-    target: "openbot_infra::auth::entra_profile::tests::falls_back_again_to_preferred_username"
+    target: "openbot_infra::auth::oidc::claims::tests::the_entra_email_chain_follows_upstream_order_and_predicate"
     owner: openbot-infra
     test_id: T-TEST-0702
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[841]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 16/0/0 claims 矩阵：只给 preferred_username=third@acme.example 时逐字返回该值"
     notes: "ported —— v3 §6.2 必须实现的认证面：Entra 档案映射判据逐条移植。上游用例标题：「falls back again to preferred_username」。"
   - id: "server-tests-entra-profile--mapentraprofile--ignores-a-preferred-username-that-is-not-an-address"
     upstream: "server/tests/entra-profile.test.ts::mapEntraProfile"
     label: parity
-    target: "openbot_infra::auth::entra_profile::tests::ignores_a_preferred_username_that_is_not_an_address"
+    target: "openbot_infra::auth::oidc::claims::tests::a_candidate_without_an_at_sign_is_skipped_not_taken"
     owner: openbot-infra
     test_id: T-TEST-0703
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[842]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 16/0/0 claims 矩阵：preferred_username/其它候选不含 @ 时不采纳；另有含 @ 的后继候选正向对照，防恒拒实现"
     notes: "ported —— v3 §6.2 必须实现的认证面：Entra 档案映射判据逐条移植。上游用例标题：「ignores a preferred_username that is not an address」。"
   - id: "server-tests-entra-profile--mapentraprofile--finds-nothing-rather-than-inventing-something"
     upstream: "server/tests/entra-profile.test.ts::mapEntraProfile"
     label: parity
-    target: "openbot_infra::auth::entra_profile::tests::finds_nothing_rather_than_inventing_something"
+    target: "openbot_infra::auth::oidc::claims::tests::a_token_without_any_usable_address_fails_the_whole_sign_in"
     owner: openbot-infra
     test_id: T-TEST-0704
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[843]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 16/0/0 claims 矩阵：三候选全缺/全不含 @ 精确为 EmailClaimMissing，并由 a_token_without_any_usable_address_fails_the_whole_sign_in 证明整次登录失败而非发明身份"
     notes: "ported —— v3 §6.2 必须实现的认证面：Entra 档案映射判据逐条移植。上游用例标题：「finds nothing rather than inventing something」。"
   # ---------------------------------------------------------------------------
   # server/tests/google-drive-rest.test.ts —— owner openbot-agent / ported / 替代
@@ -8936,127 +8947,139 @@ entries:
   - id: "server-tests-roles--roleforemail--assigns-an-admin-role-to-allowlisted-addresses-without-c"
     upstream: "server/tests/roles.test.ts::roleForEmail"
     label: parity
-    target: "openbot_domain::people::roles::tests::assigns_an_admin_role_to_allowlisted_addresses_without_c"
+    target: "openbot_domain::identity::roles::tests::seed_role_uses_the_normalized_admin_floor_and_defaults_to_user"
     owner: openbot-domain
     test_id: T-TEST-0857
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1039]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "CARGO_INCREMENTAL=0 cargo test -p openbot-domain identity::roles => 17/0/0；seed_role 对大小写不同的 floor email 实得 Admin；PG17 oidc_session session_issue... 另证明生产新账号落唯一 admin role"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「assigns an admin role to allowlisted addresses without case sensitivity」。"
   - id: "server-tests-roles--roleforemail--assigns-the-user-role-to-addresses-outside-the-initial-a"
     upstream: "server/tests/roles.test.ts::roleForEmail"
     label: parity
-    target: "openbot_domain::people::roles::tests::assigns_the_user_role_to_addresses_outside_the_initial_a"
+    target: "openbot_domain::identity::roles::tests::seed_role_uses_the_normalized_admin_floor_and_defaults_to_user"
     owner: openbot-domain
     test_id: T-TEST-0858
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1040]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 domain roles 17/0/0：floor 外 member 实得 User；更新后的 PG17 oidc_session 真腿再签 member@example.com，数据库 role 集合精确为 [user]"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「assigns the user role to addresses outside the initial admin allowlist」。"
   - id: "server-tests-roles--setrole--replaces-the-set-rather-than-adding-to-it"
     upstream: "server/tests/roles.test.ts::setRole"
     label: parity
-    target: "openbot_domain::people::roles::tests::replaces_the_set_rather_than_adding_to_it"
+    target: "openbot_domain::identity::roles::tests::setting_a_role_always_removes_the_other_rows"
     owner: openbot-domain
     test_id: T-TEST-0859
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1042]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0：RoleAssignmentPlan 对 Admin/User 两目标均精确产生 DeleteAllRolesExcept 后 UpsertRole，且删集+保留项双向等于 ALL_ROLES"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「replaces the set rather than adding to it」。"
   - id: "server-tests-roles--setrole--removes-the-admin-row-when-setting-somebody-back-to-user"
     upstream: "server/tests/roles.test.ts::setRole"
     label: parity
-    target: "openbot_domain::people::roles::tests::removes_the_admin_row_when_setting_somebody_back_to_user"
+    target: "openbot_domain::identity::roles::tests::inserting_only_would_leave_the_admin_row_in_place"
     owner: openbot-domain
     test_id: T-TEST-0860
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1043]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0 的负向对照证明只插 user 后 effective role 仍是 admin，完整 plan 才降为 user；PG people role 真腿 1/0/0 实际提升后再降权并读回 User"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「removes the admin row when setting somebody back to user」。"
   - id: "server-tests-roles--setrole--writes-both-statements-inside-one-transaction"
     upstream: "server/tests/roles.test.ts::setRole"
     label: parity
-    target: "openbot_domain::people::roles::tests::writes_both_statements_inside_one_transaction"
+    target: "openbot_infra::tests::people_application::role_change_is_atomic_idempotent_audited_and_respects_floor_and_self"
     owner: openbot-domain
     test_id: T-TEST-0861
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1044]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG17/SCRAM people role 真腿 1/0/0 走同一 transaction 的删旧/插入/generation/audit；audit_invariant_failure_rolls_back... 1/0/0 证明 audit 失败后 role 与 generation 均零副作用"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「writes both statements inside one transaction」。"
   - id: "server-tests-roles--applyconfiguredadmin--promotes-an-address-the-deployment-names"
     upstream: "server/tests/roles.test.ts::applyConfiguredAdmin"
     label: parity
-    target: "openbot_domain::people::roles::tests::promotes_an_address_the_deployment_names"
+    target: "openbot_domain::identity::roles::tests::floor_promotes_on_every_sign_in_and_reports_whether_it_granted"
     owner: openbot-domain
     test_id: T-TEST-0862
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1046]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0：floor 命中从 User/NoRole 均返回 Granted(Role::Admin)，并逐字段断言 subject/target"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「promotes an address the deployment names」。"
   - id: "server-tests-roles--applyconfiguredadmin--says-so-when-this-sign-in-is-what-granted-the-role"
     upstream: "server/tests/roles.test.ts::applyConfiguredAdmin"
     label: parity
-    target: "openbot_domain::people::roles::tests::says_so_when_this_sign_in_is_what_granted_the_role"
+    target: "openbot_domain::identity::roles::tests::floor_promotes_on_every_sign_in_and_reports_whether_it_granted"
     owner: openbot-domain
     test_id: T-TEST-0863
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1047]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0：首次普通用户命中 floor 精确为 AdminFloorDecision::Granted，供调用方只在本次授予时审计"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「says so when this sign-in is what granted the role」。"
   - id: "server-tests-roles--applyconfiguredadmin--says-nothing-when-they-were-already-an-administrator"
     upstream: "server/tests/roles.test.ts::applyConfiguredAdmin"
     label: parity
-    target: "openbot_domain::people::roles::tests::says_nothing_when_they_were_already_an_administrator"
+    target: "openbot_domain::identity::roles::tests::floor_promotes_on_every_sign_in_and_reports_whether_it_granted"
     owner: openbot-domain
     test_id: T-TEST-0864
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1048]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0：同一 floor 用户已是 Admin 时精确为 AlreadyAdmin，不会把每次登录冒充新授予"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「says nothing when they were already an administrator」。"
   - id: "server-tests-roles--applyconfiguredadmin--says-nothing-for-somebody-the-configuration-does-not-nam"
     upstream: "server/tests/roles.test.ts::applyConfiguredAdmin"
     label: parity
-    target: "openbot_domain::people::roles::tests::says_nothing_for_somebody_the_configuration_does_not_nam"
+    target: "openbot_domain::identity::roles::tests::floor_never_demotes_anybody"
     owner: openbot-domain
     test_id: T-TEST-0865
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1049]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0：非 floor 用户即使已由管理屏设为 Admin 也精确返回 NotOnFloor，证明登录不覆盖管理裁决"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「says nothing for somebody the configuration does not name」。"
   - id: "server-tests-roles--applyconfiguredadmin--says-nothing-when-nothing-is-configured"
     upstream: "server/tests/roles.test.ts::applyConfiguredAdmin"
     label: parity
-    target: "openbot_domain::people::roles::tests::says_nothing_when_nothing_is_configured"
+    target: "openbot_domain::identity::roles::tests::floor_never_demotes_anybody"
     owner: openbot-domain
     test_id: T-TEST-0866
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: 空管理员列表在 Rust 由 Option<AdminFloor>::None 表达，AdminFloor 本身构造性非空"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1050]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0：apply_admin_floor(None, ...) 精确 NotOnFloor；admin_floor_is_never_empty_by_construction 同时证明空/全空白不能伪装成配置对象"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「says nothing when nothing is configured」。"
   - id: "server-tests-roles--applyconfiguredadmin--leaves-everybody-else-exactly-as-the-admin-screen-set-th"
     upstream: "server/tests/roles.test.ts::applyConfiguredAdmin"
     label: parity
-    target: "openbot_domain::people::roles::tests::leaves_everybody_else_exactly_as_the_admin_screen_set_th"
+    target: "openbot_domain::identity::roles::tests::floor_never_demotes_anybody"
     owner: openbot-domain
     test_id: T-TEST-0867
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1051]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0：非 floor 且当前 Admin 的正向样本保持 NotOnFloor，不生成任何 RoleAssignmentPlan"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「leaves everybody else exactly as the admin screen set them」。"
   - id: "server-tests-roles--applyconfiguredadmin--writes-nothing-when-the-deployment-names-nobody"
     upstream: "server/tests/roles.test.ts::applyConfiguredAdmin"
     label: parity
-    target: "openbot_domain::people::roles::tests::writes_nothing_when_the_deployment_names_nobody"
+    target: "openbot_domain::identity::roles::tests::floor_never_demotes_anybody"
     owner: openbot-domain
     test_id: T-TEST-0868
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: 无配置由 None 表达；返回值没有写计划，调用方构造上无语句可执行"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1052]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0：None floor 精确返回零载荷 NotOnFloor；正向 floor 命中另返回带两语句计划，防恒无操作"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「writes nothing when the deployment names nobody」。"
   - id: "server-tests-roles--applyconfiguredadmin--does-nothing-for-a-session-whose-user-is-not-there"
     upstream: "server/tests/roles.test.ts::applyConfiguredAdmin"
     label: parity
-    target: "openbot_domain::people::roles::tests::does_nothing_for_a_session_whose_user_is_not_there"
+    target: "openbot_domain::identity::roles::tests::does_nothing_for_a_session_whose_user_is_not_there"
     owner: openbot-domain
     test_id: T-TEST-0869
     migration_rule: "preserve: ported"
@@ -9066,32 +9089,35 @@ entries:
   - id: "server-tests-roles--seedrole--starts-an-address-on-the-list-as-an-administrator"
     upstream: "server/tests/roles.test.ts::seedRole"
     label: parity
-    target: "openbot_domain::people::roles::tests::starts_an_address_on_the_list_as_an_administrator"
+    target: "openbot_domain::identity::roles::tests::seed_role_uses_the_normalized_admin_floor_and_defaults_to_user"
     owner: openbot-domain
     test_id: T-TEST-0870
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1055]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0 + PG17 oidc_session 1/0/0：seed_role 命中 normalized floor 为 Admin，生产首次签发数据库只出现 admin 一行"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「starts an address on the list as an administrator」。"
   - id: "server-tests-roles--seedrole--starts-everybody-else-as-a-user"
     upstream: "server/tests/roles.test.ts::seedRole"
     label: parity
-    target: "openbot_domain::people::roles::tests::starts_everybody_else_as_a_user"
+    target: "openbot_domain::identity::roles::tests::seed_role_uses_the_normalized_admin_floor_and_defaults_to_user"
     owner: openbot-domain
     test_id: T-TEST-0871
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1056]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0 + 更新后的 PG17 oidc_session 1/0/0：非 floor member 首次签发后 user_roles 精确为 [user]"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「starts everybody else as a user」。"
   - id: "server-tests-roles--isconfiguredadmin--ignores-case-and-surrounding-space-on-both-sides"
     upstream: "server/tests/roles.test.ts::isConfiguredAdmin"
     label: parity
-    target: "openbot_domain::people::roles::tests::ignores_case_and_surrounding_space_on_both_sides"
+    target: "openbot_domain::identity::roles::tests::admin_floor_drops_blank_entries_and_normalizes"
     owner: openbot-domain
     test_id: T-TEST-0872
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1058]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "domain roles 17/0/0：配置侧空白/大小写先经唯一 NormalizedEmail，查询侧 OPS@EXAMPLE.COM 命中；other 正向不命中，且 R51 TrimString 双向边界已锁"
     notes: "ported —— v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。上游用例标题：「ignores case and surrounding space, on both sides」。"
   # ---------------------------------------------------------------------------
   # server/tests/routing-classify.test.ts —— owner openbot-domain / ported / parity
@@ -9572,68 +9598,74 @@ entries:
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1112]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.1 唯一执行管线：Bot 在服务端被交到手上的工具集判据逐条移植。上游用例标题：「a policy that forbids it refuses, and says so as the tool's answer」。"
   # ---------------------------------------------------------------------------
-  # server/tests/single-user.test.ts —— owner openbot-server / ported / parity
+  # server/tests/single-user.test.ts —— owner openbot-server / ported / 替代
   # ---------------------------------------------------------------------------
   - id: "server-tests-single-user--running-with-no-sign-in--a-configured-provider-always-wins-whatever-else-is-set"
     upstream: "server/tests/single-user.test.ts::running with no sign-in"
-    label: parity
-    target: "openbot_server::single_user::tests::a_configured_provider_always_wins_whatever_else_is_set"
+    label: 替代
+    target: "openbot_infra::auth::config::tests::a_provider_always_wins_over_the_flag"
     owner: openbot-server
     test_id: T-TEST-0919
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1114]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.1 + §6.5 条 3（单用户模式唯一 principal 被 provision 进全部包 channel）：无登录运行判据逐条移植。上游用例标题：「a configured provider always wins, whatever else is set」。"
+    done_evidence: "CARGO_INCREMENTAL=0 cargo test -p openbot-infra auth::config => 36/0/0；a_provider_always_wins_over_the_flag 对 flag=true 与未设两形态均实得 false，并以无 provider+同 flag 实得 true 作正向对照"
+    notes: "ported —— v3 §6.1 + §6.5 条 3：无登录运行判据逐条移植；但 §28.1 R34 已把旧 `OPENBOT_DEV_NO_AUTH` 从继续生效改为 rename→`OPENBOT_SINGLE_USER` 且启动拒绝，因此整文件按保守粒度标替代，不能把旧别名那条写成 parity。上游用例标题：「a configured provider always wins, whatever else is set」。"
   - id: "server-tests-single-user--running-with-no-sign-in--no-provider-and-the-flag-set-runs-open-because-somebody"
     upstream: "server/tests/single-user.test.ts::running with no sign-in"
-    label: parity
-    target: "openbot_server::single_user::tests::no_provider_and_the_flag_set_runs_open_because_somebody"
+    label: 替代
+    target: "openbot_infra::auth::config::tests::a_provider_always_wins_over_the_flag"
     owner: openbot-server
     test_id: T-TEST-0920
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1115]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.1 + §6.5 条 3（单用户模式唯一 principal 被 provision 进全部包 channel）：无登录运行判据逐条移植。上游用例标题：「no provider and the flag set runs open, because somebody said so」。"
+    done_evidence: "同一 auth::config 36/0/0：无 provider + OPENBOT_SINGLE_USER=true 精确返回 true；the_flag_is_read_exactly 另钉两侧 ECMAScript trim"
+    notes: "ported —— v3 §6.1 + §6.5 条 3：无登录运行判据逐条移植；但 §28.1 R34 已把旧 `OPENBOT_DEV_NO_AUTH` 从继续生效改为 rename→`OPENBOT_SINGLE_USER` 且启动拒绝，因此整文件按保守粒度标替代，不能把旧别名那条写成 parity。上游用例标题：「no provider and the flag set runs open, because somebody said so」。"
   - id: "server-tests-single-user--running-with-no-sign-in--the-older-name-for-the-flag-still-works-so-an-existing-e"
     upstream: "server/tests/single-user.test.ts::running with no sign-in"
-    label: parity
-    target: "openbot_server::single_user::tests::the_older_name_for_the_flag_still_works_so_an_existing_e"
+    label: 替代
+    target: "openbot_server::config::migration::tests::the_single_user_flag_rename_carries_its_own_code"
     owner: openbot-server
     test_id: T-TEST-0921
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: OPENBOT_DEV_NO_AUTH -> OPENBOT_SINGLE_USER；旧名不再是第二个危险入口，启动扫描给专属迁移 code（R34）"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1116]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.1 + §6.5 条 3（单用户模式唯一 principal 被 provision 进全部包 channel）：无登录运行判据逐条移植。上游用例标题：「the older name for the flag still works, so an existing .env keeps running」。"
+    done_evidence: "cargo test -p openbot-server config::migration => 11/0/0，旧名精确给 renamed_single_user_flag + replacement；auth::config 36/0/0 的 the_older_flag_name_is_not_honoured 证明 infra 不暗认旧名，新名正向仍有效"
+    notes: "ported —— v3 §6.1 + §6.5 条 3：无登录运行判据逐条移植；但 §28.1 R34 已把旧 `OPENBOT_DEV_NO_AUTH` 从继续生效改为 rename→`OPENBOT_SINGLE_USER` 且启动拒绝，因此整文件按保守粒度标替代，不能把旧别名那条写成 parity。上游用例标题：「the older name for the flag still works, so an existing .env keeps running」。"
   - id: "server-tests-single-user--running-with-no-sign-in--no-provider-and-no-flag-refuses-to-start"
     upstream: "server/tests/single-user.test.ts::running with no sign-in"
-    label: parity
-    target: "openbot_server::single_user::tests::no_provider_and_no_flag_refuses_to_start"
+    label: 替代
+    target: "openbot_infra::auth::config::tests::no_provider_and_no_flag_refuses_to_start"
     owner: openbot-server
     test_id: T-TEST-0922
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1117]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.1 + §6.5 条 3（单用户模式唯一 principal 被 provision 进全部包 channel）：无登录运行判据逐条移植。上游用例标题：「no provider and no flag refuses to start」。"
+    done_evidence: "auth::config 36/0/0：无 provider/无 flag 精确返回 single_user_not_requested，不是 warning 或默认开放"
+    notes: "ported —— v3 §6.1 + §6.5 条 3：无登录运行判据逐条移植；但 §28.1 R34 已把旧 `OPENBOT_DEV_NO_AUTH` 从继续生效改为 rename→`OPENBOT_SINGLE_USER` 且启动拒绝，因此整文件按保守粒度标替代，不能把旧别名那条写成 parity。上游用例标题：「no provider and no flag refuses to start」。"
   - id: "server-tests-single-user--running-with-no-sign-in--node-env-decides-nothing-in-either-direction"
     upstream: "server/tests/single-user.test.ts::running with no sign-in"
-    label: parity
-    target: "openbot_server::single_user::tests::node_env_decides_nothing_in_either_direction"
+    label: 替代
+    target: "openbot_server::config::migration::tests::every_renamed_variable_is_caught_on_its_own"
     owner: openbot-server
     test_id: T-TEST-0923
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: NODE_ENV -> OPENBOT_ENV；两者都不铸造单用户准入，旧名出现先给迁移错误（§15.4）"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1118]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.1 + §6.5 条 3（单用户模式唯一 principal 被 provision 进全部包 channel）：无登录运行判据逐条移植。上游用例标题：「NODE_ENV decides nothing, in either direction」。"
+    done_evidence: "config::migration 11/0/0：NODE_ENV 是 rename 且不能供给 OPENBOT_ENV；auth::config 36/0/0：single_user_enabled 只读 OPENBOT_SINGLE_USER，空环境仍精确拒绝"
+    notes: "ported —— v3 §6.1 + §6.5 条 3：无登录运行判据逐条移植；但 §28.1 R34 已把旧 `OPENBOT_DEV_NO_AUTH` 从继续生效改为 rename→`OPENBOT_SINGLE_USER` 且启动拒绝，因此整文件按保守粒度标替代，不能把旧别名那条写成 parity。上游用例标题：「NODE_ENV decides nothing, in either direction」。"
   - id: "server-tests-single-user--running-with-no-sign-in--a-flag-set-to-anything-but-true-is-not-a-yes"
     upstream: "server/tests/single-user.test.ts::running with no sign-in"
-    label: parity
-    target: "openbot_server::single_user::tests::a_flag_set_to_anything_but_true_is_not_a_yes"
+    label: 替代
+    target: "openbot_infra::auth::config::tests::the_flag_is_read_exactly"
     owner: openbot-server
     test_id: T-TEST-0924
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1119]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.1 + §6.5 条 3（单用户模式唯一 principal 被 provision 进全部包 channel）：无登录运行判据逐条移植。上游用例标题：「a flag set to anything but true is not a yes」。"
+    done_evidence: "auth::config 36/0/0：false/1/yes/TRUE/空/大小写混写逐条拒绝，` true ` 正向接受，证明不是恒拒"
+    notes: "ported —— v3 §6.1 + §6.5 条 3：无登录运行判据逐条移植；但 §28.1 R34 已把旧 `OPENBOT_DEV_NO_AUTH` 从继续生效改为 rename→`OPENBOT_SINGLE_USER` 且启动拒绝，因此整文件按保守粒度标替代，不能把旧别名那条写成 parity。上游用例标题：「a flag set to anything but true is not a yes」。"
   # ---------------------------------------------------------------------------
   # server/tests/skill-ownership.integration.test.ts —— owner openbot-application / ported / parity
   # ---------------------------------------------------------------------------
