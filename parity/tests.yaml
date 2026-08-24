@@ -77,7 +77,7 @@ recount:
     expect: 234
   - command: "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]'"
     cwd: repo
-    expect: done=100 todo=134 in_progress=0 total=234
+    expect: done=111 todo=123 in_progress=0 total=234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 943
+    expect: 932
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -2493,8 +2493,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0229
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[278]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-ui features::threads::tool_name::tests => 5/0/0：mcp__slack__post_message 精确投影 label=Post message/detail=slack"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「an MCP tool reads as an action against a named server」。"
   - id: "app-tests-tool-name--naming-a-tool-call--the-server-is-dropped-when-the-action-already-names-it"
     upstream: "app/tests/tool-name.test.ts::naming a tool call"
@@ -2503,8 +2504,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0230
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[279]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 5/0/0：mcp__notes__search_notes 实得 label=Search notes/detail=None，不重复 server"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「the server is dropped when the action already names it」。"
   - id: "app-tests-tool-name--naming-a-tool-call--camelcase-from-a-vendor-reads-the-same-way"
     upstream: "app/tests/tool-name.test.ts::naming a tool call"
@@ -2513,8 +2515,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0231
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[280]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 5/0/0：searchJiraIssues 同时切 camelCase 与 sentence case，实得 Search jira issues/detail=None"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「camelCase from a vendor reads the same way」。"
   - id: "app-tests-tool-name--naming-a-tool-call--a-tool-name-containing-the-separator-keeps-all-of-it"
     upstream: "app/tests/tool-name.test.ts::naming a tool call"
@@ -2523,8 +2526,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0232
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[281]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 5/0/0：首个 server 段后的 list__files 全部保留并实得 List files/detail=box"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「a tool name containing the separator keeps all of it」。"
   - id: "app-tests-tool-name--naming-a-tool-call--a-component-the-app-registered-is-left-alone"
     upstream: "app/tests/tool-name.test.ts::naming a tool call"
@@ -2533,8 +2537,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0233
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[282]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 5/0/0：非 MCP 的 showBarChart 逐字保留，detail=None"
     notes: "ported —— v3 §8.2 Tool metadata：工具调用显示名派生判据逐条移植。上游用例标题：「a component the app registered is left alone」。"
   # ---------------------------------------------------------------------------
   # app/tests/tool-result.test.ts —— owner openbot-ui / ported / parity
@@ -2546,8 +2551,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0234
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[284]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "cargo test -p openbot-ui features::threads::tool_result::tests => 7/0/0：JSON string 外层解码后引号/转义逐字符恢复"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「a JSON-encoded string is unwrapped, escapes and all」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--a-refusal-is-still-recognisable-as-one-after-decoding"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2556,8 +2562,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0235
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[285]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：编码字符串 raw 不命中 Refused.，解码后命中；新 typed ToolResult 另以稳定 policy_refused code 识别，不猜文案"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「a refusal is still recognisable as one after decoding」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--plain-text-is-left-alone"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2566,8 +2573,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0236
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[286]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：非 JSON 纯文本 Meals under $75 need no receipt. 逐字保留"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「plain text is left alone」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--a-json-object-or-array-is-left-for-fordisplay"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2576,8 +2584,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0237
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[287]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：as_text 对 JSON object 与 array 均原样保留，不提前拆 vendor envelope"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「a JSON object or array is left for forDisplay」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--something-that-only-looks-like-json-is-drawn-as-it-came"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2586,8 +2595,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0238
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[288]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：不完整 JSON string 解析失败后返回原文，不截断/猜测"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「something that only looks like JSON is drawn as it came」。"
   - id: "app-tests-tool-result--reading-a-tool-s-answer--an-encoded-envelope-is-decoded-and-then-unwrapped"
     upstream: "app/tests/tool-result.test.ts::reading a tool's answer"
@@ -2596,8 +2606,9 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0239
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[289]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 UI 7/0/0：先解 JSON string 外层，再从唯一 results markdown 字段实得 # Found\\n\\nBody；ECMAScript BOM/U+0085 边界另有正负对照"
     notes: "ported —— v3 §8.2 Tool metadata：工具结果的读取与展示判据逐条移植。上游用例标题：「an encoded envelope is decoded and then unwrapped」。"
   # ---------------------------------------------------------------------------
   # app/tests/transcript-messages.test.ts —— owner openbot-ui / ported / 替代
