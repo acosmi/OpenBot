@@ -151,6 +151,14 @@ ring = "0.17.14"
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
 webpki-roots = "1.0.9"
 
+# W-7b SAML：第一真源 §6.2 精确钉 samael 0.0.22，并要求 xmlsec 签名验证，不允许用
+# `default-features = false` 关闭验证能力冒充对等完成。OpenSSL/libxml2/xmlsec/libclang 的
+# FFI/build delta 必须先判红、审计、再由机器 guard 放行（R29）。
+samael = { version = "=0.0.22", default-features = false, features = ["xmlsec"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
+quick-xml = { version = "=0.41.0", features = ["serialize"] }
+openssl = { version = "=0.10.81", default-features = false }
+
 # metrics（v3 §16.4「Server 暴露 Prometheus metrics」+ §24 G1 判据第四条）
 # 选门面 + exporter 两层，而不是直接依赖 prometheus 客户端库：库代码只调 metrics 门面，
 # 不知道 exporter 是谁；**没装 exporter 就没有任何网络行为**，§16.4 的「零 phone-home」

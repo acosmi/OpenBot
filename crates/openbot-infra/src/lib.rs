@@ -47,9 +47,9 @@
 //! - [`repo::tools::PostgresToolJournal`] —— application 的 decision/attempt/capability/outcome
 //!   journal；outcome 与 audit 同事务，unknown 固定进 reconciliation（R41）。
 //!
-//! W-7 已在独立 TLS delta audit 后落真实 safe dialer、OIDC token/callback/session/group 竖切；
-//! 仍未落地、也不在此假装存在：SAML XML 签名、动态 IdP 注册写面，以及 G4 的真实
-//! browser/file/shell/MCP/Drive executor。
+//! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
+//! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
+//! Server KMS/HSM、多平台原生发行，以及 G4 的真实 browser/file/shell/MCP/Drive executor。
 //! `thread/run/outbox/memory/import` 的 10 个 repo 名对应 G3 尚未创建的物理表，必须与建表同批实现，
 //! 不创建零方法空 struct 冒充完成。
 

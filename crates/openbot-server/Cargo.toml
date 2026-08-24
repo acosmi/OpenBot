@@ -51,6 +51,7 @@ serde = { workspace = true }
 # **不给 `ActionPolicy` 派生 `Deserialize`**：那会开一条"自由 JSON 直接铸造领域类型"的路（§5.2
 # 明令禁止的形态）。这里逐字段读、逐字段校验、再显式构造。
 serde_json = { workspace = true }
+url.workspace = true
 
 # 请求 span。
 tracing.workspace = true

@@ -37,6 +37,7 @@
 
 pub mod admin;
 pub mod auth_oidc;
+pub mod auth_sso;
 pub mod channels;
 pub mod health;
 pub mod metrics;
@@ -49,10 +50,11 @@ use axum::extract::MatchedPath;
 use axum::extract::{DefaultBodyLimit, Request};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use openbot_application::ApplicationService;
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_infra::auth::oidc::{OidcLoginCoordinator, PreAuthSurface};
+use openbot_infra::auth::sso::DynamicSsoService;
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::auth::{AuthResolver, ResolvedAuth, SensitiveWriteSecurity};
@@ -82,6 +84,7 @@ struct StateInner {
     preauth: PreAuthSurface,
     login_origins: Option<TrustedOrigins>,
     secure_session_cookie: bool,
+    dynamic_sso: Option<Arc<DynamicSsoService>>,
 }
 
 impl ServerState {
@@ -144,6 +147,12 @@ impl ServerState {
         self.inner.secure_session_cookie
     }
 
+    /// deployment-owned OIDC/SAML；未注入时管理写面与 email routing fail-closed。
+    #[must_use]
+    pub fn dynamic_sso(&self) -> Option<&DynamicSsoService> {
+        self.inner.dynamic_sso.as_deref()
+    }
+
     /// 敏感写 guard；未注入时 fail-closed 503，不给 handler 任何“暂时跳过”路径。
     pub async fn authorize_sensitive_write(
         &self,
@@ -177,6 +186,7 @@ pub struct ServerBuilder {
     preauth: PreAuthSurface,
     login_origins: Option<TrustedOrigins>,
     secure_session_cookie: bool,
+    dynamic_sso: Option<Arc<DynamicSsoService>>,
 }
 
 impl ServerBuilder {
@@ -194,6 +204,7 @@ impl ServerBuilder {
             preauth: PreAuthSurface::default(),
             login_origins: None,
             secure_session_cookie: false,
+            dynamic_sso: None,
         }
     }
 
@@ -234,19 +245,37 @@ impl ServerBuilder {
         self
     }
 
-    /// 注入完整 OIDC 登录面；四项来自同一份已验证启动配置。
+    /// 注入所有登录协议共用的 Origin 与 cookie 策略。
+    ///
+    /// 它不能附着在 OIDC coordinator 上：只有数据库动态 SAML/OIDC 的部署同样需要这两项，
+    /// 否则匿名 email routing 会在配置正确时仍恒定拒绝。
+    #[must_use]
+    pub fn with_login_security(
+        mut self,
+        trusted_origins: TrustedOrigins,
+        secure_cookie: bool,
+    ) -> Self {
+        self.login_origins = Some(trusted_origins);
+        self.secure_session_cookie = secure_cookie;
+        self
+    }
+
+    /// 注入环境配置的 OIDC coordinator 与其公开投影。
     #[must_use]
     pub fn with_oidc_login(
         mut self,
         coordinator: Arc<OidcLoginCoordinator>,
         preauth: PreAuthSurface,
-        trusted_origins: TrustedOrigins,
-        secure_cookie: bool,
     ) -> Self {
         self.oidc = Some(coordinator);
         self.preauth = preauth;
-        self.login_origins = Some(trusted_origins);
-        self.secure_session_cookie = secure_cookie;
+        self
+    }
+
+    /// 注入跨 replica 的 deployment-owned OIDC/SAML 服务。
+    #[must_use]
+    pub fn with_dynamic_sso(mut self, service: Arc<DynamicSsoService>) -> Self {
+        self.dynamic_sso = Some(service);
         self
     }
 
@@ -265,6 +294,7 @@ impl ServerBuilder {
                 preauth: self.preauth,
                 login_origins: self.login_origins,
                 secure_session_cookie: self.secure_session_cookie,
+                dynamic_sso: self.dynamic_sso,
             }),
         }
     }
@@ -315,9 +345,30 @@ pub fn router(state: ServerState) -> Router {
             "/api/auth/oidc/{provider_id}/callback",
             get(auth_oidc::callback),
         )
+        .route("/api/auth/sso/start", post(auth_sso::route_email))
+        .route("/api/auth/sso/continue", get(auth_sso::continue_route))
+        .route("/api/auth/sso/register", post(auth_sso::register))
+        .route("/api/auth/sso/update-provider", post(auth_sso::update))
+        .route(
+            "/api/auth/sso/delete-provider",
+            post(auth_sso::remove_compat),
+        )
+        .route(
+            "/api/auth/sso/saml2/sp/acs/{provider_id}",
+            post(auth_sso::saml_acs),
+        )
+        .route(
+            "/api/auth/sso/saml2/sp/metadata/{provider_id}",
+            get(auth_sso::saml_metadata),
+        )
         .route("/api/channels", get(channels::list))
         .route("/api/me", get(admin::me))
         .route("/api/admin/status", get(admin::status))
+        .route("/api/admin/identity-providers", get(auth_sso::list))
+        .route(
+            "/api/admin/identity-providers/{provider_id}",
+            delete(auth_sso::remove_admin),
+        )
         .route("/api/admin/people", get(admin::people_list))
         .route("/api/admin/people/{user_id}/role", post(admin::people_role))
         .route(

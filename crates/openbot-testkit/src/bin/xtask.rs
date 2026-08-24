@@ -1444,7 +1444,7 @@ fn cmd_ci() -> Result<()> {
 }
 
 fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
-    // 顺序 = v3 §16.3〈Supply chain〉固定清单的前三条、W-7 的 safe-dialer 依赖 guard，
+    // 顺序 = v3 §16.3〈Supply chain〉固定清单的前三条、W-7 safe-dialer/SAML 两条依赖 guard，
     // 加上 v3 §19.3 的 parity/recount 闸门。
     //
     // 后面几条（cargo deny / cargo audit / cargo vet / OSV / secret scan /
@@ -1452,7 +1452,7 @@ fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
     // 它们各自需要一份本仓此刻还不存在的基线（`supply-chain/` 目录、SBOM 工具链、
     // Electron shim 产物、签名密钥），塞进来只会得到一条恒红的闸门 —— 恒红等于没有闸门。
     // 它们在 .github/workflows/ci.yml 里以独立 job 编排，并在那里写明解除条件。
-    let steps: [(&str, &str, &[&str]); 4] = [
+    let steps: [(&str, &str, &[&str]); 5] = [
         (
             "cargo fmt --check",
             "cargo",
@@ -1481,11 +1481,16 @@ fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
             "bash",
             &["tools/check-safe-dialer-dependencies.sh"],
         ),
+        (
+            "SAML/xmlsec dependency guard",
+            "bash",
+            &["tools/check-saml-dependencies.sh"],
+        ),
     ];
 
     for (index, (label, program, args)) in steps.iter().enumerate() {
         let step_no = index + 1;
-        println!("\n=== xtask ci [{step_no}/6] {label} ===");
+        println!("\n=== xtask ci [{step_no}/7] {label} ===");
         // 显式钉死子构建的 target 目录，不靠继承：alias 那侧的 `--target-dir` 会不会
         // 经环境变量传下来是 cargo 的实现细节，而不变量不能建在实现细节上。
         let status = Command::new(program)
@@ -1505,12 +1510,12 @@ fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
         }
     }
 
-    println!("\n=== xtask ci [5/6] parity-check ===");
+    println!("\n=== xtask ci [6/7] parity-check ===");
     // 进程内调用而不是再 spawn 一次 cargo：避免把刚跑完的 4 分钟编译再等一遍，
     // 也让 parity 违规的退出码来源唯一。
-    cmd_parity_check(&[]).context("第 5 步失败：parity-check")?;
+    cmd_parity_check(&[]).context("第 6 步失败：parity-check")?;
 
-    // 第 5 步 = recount。裁决与理由：
+    // 最后一步 = recount。裁决与理由：
     //
     // **判红口径 = 任何失配都判红，不分 repo / upstream；SKIPPED 不判红但必须打印条数。**
     //
@@ -1522,12 +1527,12 @@ fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
     //    本轮没有被验证"的原文，下面再单独重复一次总数。"静默跳过"与"打印了跳过数"是两回事。
     // 4) 想把跳过也变成硬闸门的场合（CI 里已经 checkout 了上游克隆）用
     //    `cargo xtask recount --require-upstream` —— 这是一条真正的杠杆，不是装饰。
-    println!("\n=== xtask ci [6/6] recount ===");
-    let recount = run_recount(false, false).context("第 6 步失败：recount")?;
+    println!("\n=== xtask ci [7/7] recount ===");
+    let recount = run_recount(false, false).context("第 7 步失败：recount")?;
 
     if recount.skipped > 0 {
         println!(
-            "\nxtask ci: 6/6 通过，但 recount 有 {} 条**没有跑**（{}/{} 条实跑）。\n\
+            "\nxtask ci: 7/7 通过，但 recount 有 {} 条**没有跑**（{}/{} 条实跑）。\n\
              这 {} 条是 cwd:upstream 的判据，本机没有上游克隆。要覆盖它们：\n\
              设 {UPSTREAM_DIR_ENV}=<上游克隆路径> 后 `cargo xtask recount`；\n\
              要让跳过直接判红，用 `cargo xtask recount --require-upstream`。",
@@ -1538,7 +1543,7 @@ fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
         );
     } else {
         println!(
-            "\nxtask ci: 6/6 全绿（recount {} 条全部实跑）",
+            "\nxtask ci: 7/7 全绿（recount {} 条全部实跑）",
             recount.passed
         );
     }

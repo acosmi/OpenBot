@@ -36,18 +36,9 @@
 //! 它宽松得刺眼，但收紧它是一次**产品**决定 —— OIDC 规范并不保证 `preferred_username` 是
 //! 地址，收紧的那一刻，一批今天能登录的人会开始被拒。见 [`super::email::claim_looks_like_an_address`]。
 //!
-//! # 一处诚实的不对称：这里的时间来自系统时钟
-//!
-//! 本模块自己拥有的每条时间判定都收注入的 `now`（`attempt` / `jwks` / `ratelimit` 都是）。
-//! 但 ID token 的 `exp` / `iat` 由库判，而 `IdTokenVerifier::set_time_fn` 的约束是
-//! `T: Fn() -> chrono::DateTime<Utc>` —— `chrono` **不在** `openbot-infra` 的依赖面上，
-//! `openidconnect` 也不 re-export 它，所以本模块**无法构造**那个时间值。
-//!
-//! 因此 [`build_verifier`] 交出的是一个用系统时钟的验证器，而 [`verify_id_token`] 另外
-//! 收一个已建好的 verifier（[`verify_with`]），让能构造该类型的调用方（或测试）自己注入
-//! 时钟。本模块的测试走的就是后者，所以过期那组断言是确定性的。
-//! 想让生产路径也能注入，唯一的办法是把 `chrono` 加进依赖面 —— 那是一次独立的依赖决定，
-//! 不在本轮授权内。
+//! W-7b 的固定 `samael` 图已经把 `chrono` 变成直接依赖；生产协调器因此改用
+//! [`build_verifier_at`]，把本次 callback 的 `OffsetDateTime` 精确注入 ID-token verifier。
+//! [`build_verifier`] 仍保留给需要系统时钟的通用调用点与既有测试，不再把依赖缺口写成事实。
 
 use std::collections::BTreeSet;
 
@@ -196,6 +187,19 @@ pub fn build_verifier<'a>(
         .collect();
 
     verifier.set_allowed_algs(algs)
+}
+
+/// 用调用方时钟构造 verifier；生产 callback 使用，避免 exp/iat 判定偷偷另读一次墙钟。
+pub fn build_verifier_at<'a>(
+    provider: &OidcProviderConfig,
+    client_secret: Option<&ClientSecret>,
+    keys: JsonWebKeySet<CoreJsonWebKey>,
+    allowed_algs: &[CoreJwsSigningAlgorithm],
+    now: time::OffsetDateTime,
+) -> Result<CoreIdTokenVerifier<'a>, OidcError> {
+    let now = chrono::DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
+        .ok_or(OidcError::IdTokenRejected)?;
+    Ok(build_verifier(provider, client_secret, keys, allowed_algs).set_time_fn(move || now))
 }
 
 /// 用一个已建好的验证器校验 ID token，并收敛出 [`VerifiedIdentity`]。

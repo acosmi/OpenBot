@@ -23,9 +23,15 @@ for exact in \
   printf '%s\n' "$normal_tree" | grep -qxF "$exact" || fail "依赖图缺少精确版本 $exact"
 done
 
-if printf '%s\n' "$normal_tree" | grep -Eq '^(reqwest|native-tls|openssl|openssl-sys|aws-lc-rs|aws-lc-sys) v'; then
-  fail 'openbot-infra 图出现第二 HTTP/TLS/FFI 路径（reqwest/native-tls/OpenSSL/aws-lc）'
+if printf '%s\n' "$normal_tree" | grep -Eq '^(reqwest|native-tls|aws-lc-rs|aws-lc-sys) v'; then
+  fail 'openbot-infra 图出现第二 HTTP/TLS 路径（reqwest/native-tls/aws-lc）'
 fi
+
+# W-7b 按 R29 另立审计后为 SAML XMLDSig 引入 OpenSSL；它不是 safe dialer TLS 后端。
+# 源码调用面必须仍然只在 saml.rs，若扩到 HTTP/client 代码则本 guard 先红。
+openssl_callers=$(rg -l 'openssl::' crates/*/src --glob '*.rs' | sort)
+[[ "$openssl_callers" == 'crates/openbot-infra/src/auth/sso/saml.rs' ]] \
+  || fail "OpenSSL 调用面越出 SAML XML/cert 校验：[$openssl_callers]"
 
 feature_tree=$(cargo tree -p openbot-infra -e features --prefix none --locked)
 printf '%s\n' "$feature_tree" | grep -qxF 'rustls feature "ring"' || fail 'rustls ring feature 未启用'

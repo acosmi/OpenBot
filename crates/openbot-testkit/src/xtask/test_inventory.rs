@@ -46,7 +46,7 @@ use oxc_ast::ast::{Argument, CallExpression, Expression, TemplateLiteral};
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // 契约常量
@@ -522,6 +522,33 @@ struct Inventory {
     nodes: Vec<RawNode>,
 }
 
+/// 已有 ledger 里需要跨 AST 重生成保留的实施进度。
+///
+/// `id/upstream/label/owner/test_id/evidence` 仍由固定上游 AST 与 FILE_RULES 重建；只有已经离开
+/// `todo` 的条目才允许覆盖目标、迁移裁决与完成证据。这样上游 inventory 可重放，又不会把
+/// W-5/G8 已经亲跑过的证据静默抹回 todo。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProgressOverlay {
+    target: String,
+    migration_rule: String,
+    status: String,
+    done_evidence: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExistingLedger {
+    entries: Vec<ExistingProgressEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExistingProgressEntry {
+    id: String,
+    target: String,
+    migration_rule: String,
+    status: String,
+    done_evidence: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // 子命令入口
 // ---------------------------------------------------------------------------
@@ -681,12 +708,14 @@ pub fn run(args: &[String], root: &Path) -> Result<()> {
         return Ok(());
     }
 
+    let yaml_path = root.join("parity/tests.yaml");
+    let progress = load_progress_overlays(&yaml_path)?;
+    let yaml = render_ledger(&inventory, &progress)?;
+
     let json_path = root.join("fixtures/tests/upstream-ast-inventory.json");
     write_json(&json_path, &inventory)?;
     println!("已写 {}", json_path.display());
 
-    let yaml_path = root.join("parity/tests.yaml");
-    let yaml = render_ledger(&inventory)?;
     write_text(&yaml_path, &yaml)?;
     println!("已写 {}", yaml_path.display());
 
@@ -1050,7 +1079,70 @@ fn rule_for(file: &str) -> &'static FileRule {
         .expect("nodes 全部来自 FILE_RULES 的路径清单")
 }
 
-fn render_ledger(inv: &Inventory) -> Result<String> {
+fn load_progress_overlays(path: &Path) -> Result<BTreeMap<String, ProgressOverlay>> {
+    if !path.is_file() {
+        return Ok(BTreeMap::new());
+    }
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("读取已有 test parity ledger {} 失败", path.display()))?;
+    parse_progress_overlays(&source)
+        .with_context(|| format!("读取已有 test parity 进度 {} 失败", path.display()))
+}
+
+fn parse_progress_overlays(source: &str) -> Result<BTreeMap<String, ProgressOverlay>> {
+    let ledger: ExistingLedger =
+        serde_yaml::from_str(source).context("tests.yaml 不是合法 YAML")?;
+    let mut progress = BTreeMap::new();
+    for entry in ledger.entries {
+        match entry.status.as_str() {
+            "todo" => {
+                if entry.done_evidence.is_some() {
+                    bail!(
+                        "test-inventory: todo 条目 `{}` 不得携带 done_evidence",
+                        entry.id
+                    );
+                }
+                continue;
+            }
+            "done" => {
+                if entry
+                    .done_evidence
+                    .as_deref()
+                    .is_none_or(|evidence| evidence.trim().is_empty())
+                {
+                    bail!(
+                        "test-inventory: done 条目 `{}` 缺非空 done_evidence",
+                        entry.id
+                    );
+                }
+            }
+            "in_progress" => {}
+            other => bail!(
+                "test-inventory: 条目 `{}` 的 status `{other}` 不在 todo/in_progress/done 封闭域",
+                entry.id
+            ),
+        }
+        if entry.target.trim().is_empty() || entry.migration_rule.trim().is_empty() {
+            bail!(
+                "test-inventory: 非 todo 条目 `{}` 缺 target 或 migration_rule",
+                entry.id
+            );
+        }
+        let id = entry.id;
+        let overlay = ProgressOverlay {
+            target: entry.target,
+            migration_rule: entry.migration_rule,
+            status: entry.status,
+            done_evidence: entry.done_evidence,
+        };
+        if progress.insert(id.clone(), overlay).is_some() {
+            bail!("test-inventory: 已有 ledger 出现重复进度 ID `{id}`");
+        }
+    }
+    Ok(progress)
+}
+
+fn render_ledger(inv: &Inventory, progress: &BTreeMap<String, ProgressOverlay>) -> Result<String> {
     let cases: Vec<&RawNode> = inv
         .nodes
         .iter()
@@ -1075,11 +1167,15 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     writeln!(w, "#")?;
     writeln!(
         w,
-        "# 本文件由 `cargo xtask test-inventory --upstream <上游干净克隆>` 生成，**不要手改**："
+        "# 本文件的 AST 身份字段由 `cargo xtask test-inventory --upstream <上游干净克隆>` 生成："
     )?;
     writeln!(
         w,
-        "# 手改会在下一次生成时被覆盖，且与 fixtures/tests/upstream-ast-inventory.json 的 nodes[] 下标失配。"
+        "# id/upstream/label/owner/test_id/evidence 不手改；非 todo 的 target/migration_rule/status/done_evidence 会按稳定 id 保留。"
+    )?;
+    writeln!(
+        w,
+        "# 已完成 id 若在重生成后消失会硬失败，不会静默丢证据或错接到另一条 AST 用例。"
     )?;
     writeln!(
         w,
@@ -1133,7 +1229,7 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     writeln!(w, "# label 粒度与取向（CLAUDE.md §4）：")?;
     writeln!(
         w,
-        "# label / tier / owner / target 取**文件**粒度。label 取保守方向 —— 只要该文件的被测面在 v3 里"
+        "# label / tier / owner / 初始 target 取**文件**粒度。label 取保守方向 —— 只要该文件的被测面在 v3 里"
     )?;
     writeln!(
         w,
@@ -1163,7 +1259,7 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     )?;
     writeln!(
         w,
-        "# - target = `<Rust 模块路径>::tests::<函数名>`，函数名由用例标题派生。"
+        "# - target 初值由用例标题派生；条目闭合时改成亲跑证据的真实 Rust 落点，并由生成器保留。"
     )?;
     writeln!(
         w,
@@ -1171,7 +1267,7 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     )?;
     writeln!(
         w,
-        "# - status 全为 todo：本仓当前零 Rust 实现代码，任何 done 都会是假 done（校验器规则 4 也会当场红）。"
+        "# - status 初值为 todo；只有本轮亲跑证据齐全时改 done，done_evidence 缺失会被生成器与 parity-check 双重拒绝。"
     )?;
     writeln!(w, "#")?;
     writeln!(
@@ -1345,7 +1441,11 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
         (
             "grep -c '^    status: todo$' parity/tests.yaml".to_string(),
             "repo",
-            cases.len().to_string(),
+            cases
+                .len()
+                .checked_sub(progress.len())
+                .context("test-inventory: 进度条目数超过 AST 用例数")?
+                .to_string(),
         ),
         (
             r#"grep -oE '^    upstream: "[^:"]+' parity/tests.yaml | sed 's/.*"//' | sort -u | wc -l"#
@@ -1375,6 +1475,7 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     writeln!(w, "entries:")?;
 
     let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut used_progress: HashSet<String> = HashSet::new();
     let mut current_file = "";
     for (ordinal, case) in cases.iter().enumerate() {
         let rule = rule_for(&case.file);
@@ -1461,6 +1562,10 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
             56,
         );
         let target = format!("{}::tests::{}", rule.target_module, fn_name);
+        let overlay = progress.get(&id);
+        if overlay.is_some() {
+            used_progress.insert(id.clone());
+        }
 
         let mut markers: Vec<&str> = Vec::new();
         if case.skip {
@@ -1494,15 +1599,26 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
         writeln!(w, "  - id: {}", yaml_quote(&id))?;
         writeln!(w, "    upstream: {}", yaml_quote(&upstream))?;
         writeln!(w, "    label: {}", rule.label.as_str())?;
-        writeln!(w, "    target: {}", yaml_quote(&target))?;
+        writeln!(
+            w,
+            "    target: {}",
+            yaml_quote(overlay.map_or(target.as_str(), |item| item.target.as_str()))
+        )?;
         writeln!(w, "    owner: {}", rule.owner)?;
         writeln!(w, "    test_id: {TEST_ID_PREFIX}{:04}", ordinal + 1)?;
+        let default_migration_rule = rule.tier.migration_rule(rule.label);
         writeln!(
             w,
             "    migration_rule: {}",
-            yaml_quote(&rule.tier.migration_rule(rule.label))
+            yaml_quote(overlay.map_or(default_migration_rule.as_str(), |item| {
+                item.migration_rule.as_str()
+            }))
         )?;
-        writeln!(w, "    status: todo")?;
+        writeln!(
+            w,
+            "    status: {}",
+            overlay.map_or("todo", |item| item.status.as_str())
+        )?;
         writeln!(
             w,
             "    evidence: {}",
@@ -1511,7 +1627,23 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
                 case.index, OXC_VERSION
             ))
         )?;
+        if let Some(done_evidence) = overlay.and_then(|item| item.done_evidence.as_deref()) {
+            writeln!(w, "    done_evidence: {}", yaml_quote(done_evidence))?;
+        }
         writeln!(w, "    notes: {}", yaml_quote(&notes))?;
+    }
+
+    if used_progress.len() != progress.len() {
+        let missing = progress
+            .keys()
+            .filter(|id| !used_progress.contains(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        bail!(
+            "test-inventory: {} 个已有非 todo ID 在重建 AST inventory 后消失；拒绝丢证据：{}",
+            missing.len(),
+            missing.join(", ")
+        );
     }
 
     if cases.len() > 9999 {
@@ -1750,6 +1882,80 @@ if (re.test("x")) {
     fn yaml_quote_escapes_quotes_and_backslashes() {
         assert_eq!(yaml_quote(r#"a"b\c"#), "\"a\\\"b\\\\c\"");
         assert_eq!(yaml_quote("x\ny"), "\"x\\ny\"");
+    }
+
+    #[test]
+    fn regeneration_preserves_only_evidenced_non_todo_progress() {
+        let source = r#"
+entries:
+  - id: todo-case
+    target: generated::todo
+    migration_rule: "preserve: ported"
+    status: todo
+  - id: done-case
+    target: real::integration::test
+    migration_rule: "rename: ported"
+    status: done
+    done_evidence: "cargo test => 1/0/0"
+  - id: active-case
+    target: real::work_in_progress
+    migration_rule: "preserve: ported"
+    status: in_progress
+"#;
+        let progress = parse_progress_overlays(source).expect("合法进度 overlay");
+        assert_eq!(progress.len(), 2);
+        assert!(!progress.contains_key("todo-case"));
+        assert_eq!(
+            progress.get("done-case"),
+            Some(&ProgressOverlay {
+                target: "real::integration::test".to_owned(),
+                migration_rule: "rename: ported".to_owned(),
+                status: "done".to_owned(),
+                done_evidence: Some("cargo test => 1/0/0".to_owned()),
+            })
+        );
+        assert_eq!(
+            progress
+                .get("active-case")
+                .expect("in_progress 也不能被重置")
+                .status,
+            "in_progress"
+        );
+    }
+
+    #[test]
+    fn regeneration_rejects_done_without_evidence_and_duplicate_progress_ids() {
+        let missing = r#"
+entries:
+  - id: done-case
+    target: real::test
+    migration_rule: "preserve: ported"
+    status: done
+"#;
+        assert!(
+            parse_progress_overlays(missing)
+                .unwrap_err()
+                .to_string()
+                .contains("缺非空 done_evidence")
+        );
+
+        let duplicate = r#"
+entries:
+  - id: same
+    target: real::one
+    migration_rule: "preserve: ported"
+    status: in_progress
+  - id: same
+    target: real::two
+    migration_rule: "preserve: ported"
+    status: in_progress
+"#;
+        assert!(
+            parse_progress_overlays(duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("重复进度 ID")
+        );
     }
 
     #[test]

@@ -16,10 +16,11 @@ use time::{Duration, OffsetDateTime};
 use tokio::sync::Mutex;
 use url::Url;
 
+use super::attempt::CallbackLoginAttempt;
 use super::attempt_postgres::{PostgresAttemptError, PostgresLoginAttemptStore};
 use super::authorize::{DEFAULT_SCOPES, authorization_url};
 use super::claims::{
-    DEFAULT_ID_TOKEN_SIGNING_ALGS, build_verifier, validate_entra_token_issuer,
+    DEFAULT_ID_TOKEN_SIGNING_ALGS, build_verifier_at, validate_entra_token_issuer,
     verify_with_group_mapping,
 };
 use super::discovery::{FetchBudget, discover_with_expected_issuer};
@@ -255,6 +256,33 @@ impl OidcLoginCoordinator {
         peer_ip: &str,
         user_agent: Option<&str>,
     ) -> Result<IssuedSession, OidcLoginError> {
+        let attempt = self
+            .begin_callback(provider_id, state, now, peer_ip)
+            .await?;
+        let runtime = self
+            .providers
+            .get(provider_id)
+            .ok_or(OidcError::ProviderUnknown)?;
+        self.finish_callback(
+            runtime,
+            attempt,
+            code,
+            received_redirect_uri,
+            now,
+            peer_ip,
+            user_agent,
+        )
+        .await
+    }
+
+    /// callback 的唯一前半：限速后立即烧 state，不做任何 IdP 网络动作。
+    pub(crate) async fn begin_callback(
+        &self,
+        provider_id: &ProviderId,
+        state: &str,
+        now: OffsetDateTime,
+        peer_ip: &str,
+    ) -> Result<CallbackLoginAttempt, OidcLoginError> {
         if !self
             .rate_limiter
             .evaluate(OidcRateLimitBucket::CallbackIp, peer_ip, CALLBACK_RATE, now)
@@ -264,11 +292,24 @@ impl OidcLoginCoordinator {
             return Err(OidcLoginError::RateLimited);
         }
         // 必须先烧 state。后面的 redirect/code/IdP 任何失败都不得给攻击者重试同一 state。
-        let attempt = self.attempts.consume(state, provider_id, now).await?;
-        let runtime = self
-            .providers
-            .get(provider_id)
-            .ok_or(OidcError::ProviderUnknown)?;
+        self.attempts
+            .consume(state, provider_id, now)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// 已烧 state 后完成 redirect/code/token/JWKS/claims/session；动态 IdP 复用这一半。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn finish_callback(
+        &self,
+        runtime: &OidcProviderRuntime,
+        attempt: CallbackLoginAttempt,
+        code: &str,
+        received_redirect_uri: &str,
+        now: OffsetDateTime,
+        peer_ip: &str,
+        user_agent: Option<&str>,
+    ) -> Result<IssuedSession, OidcLoginError> {
         attempt
             .redirect_uri()
             .assert_exact_match(received_redirect_uri)?;
@@ -319,12 +360,13 @@ impl OidcLoginCoordinator {
         };
         let verified_provider =
             bind_entra_token_issuer(&runtime.config, &raw_id_token, key_issuer.as_deref())?;
-        let verifier = build_verifier(
+        let verifier = build_verifier_at(
             &verified_provider,
             client_secret.as_ref(),
             keys,
             DEFAULT_ID_TOKEN_SIGNING_ALGS,
-        );
+            now,
+        )?;
         let identity = verify_with_group_mapping(
             &raw_id_token,
             &verifier,

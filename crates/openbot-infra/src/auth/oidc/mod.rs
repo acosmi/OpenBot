@@ -36,24 +36,18 @@
 //!
 //! # 时间与随机数都不是本模块自己取的
 //!
-//! 每一条过期 / 冷却 / 限速判定都收一个调用方传入的 `now: OffsetDateTime`。**唯一的例外**
-//! 是 ID token 的 `exp` / `iat`：那由 `openidconnect` 判，而它的时钟注入点要求一个
-//! `chrono::DateTime<Utc>`，`chrono` 不在本 crate 的依赖面上。这条不对称写在 [`claims`]
-//! 的模块文档里，没有藏。
+//! 每一条过期 / 冷却 / 限速判定都收调用方传入的 `now: OffsetDateTime`；W-7b 因 SAML 图
+//! 已直接引入 chrono，ID token 的 `exp` / `iat` 也由 [`claims::build_verifier_at`] 注入同一时刻。
 //!
 //! # 仍明确**不做**（不假装 G2 已整关）
 //!
-//! 1. **SAML**（§6.2 条 4）。`samael 0.0.22` 在本机构建失败：它经 `openssl-sys 0.9.117`
-//!    要求一份 OpenSSL 安装，MSVC 目标上探测不到，另需 libxml2 + xmlsec。SAML 的**校验
-//!    规则**由 domain 层实现，XML 签名验证的落地是一次独立立项（§6.2 本身也写明「SAML
-//!    外审未通过时不得发布 GA」）。
-//! 2. **动态 IdP 注册写面**。运行时 OIDC/SAML 表的 admin API、v1→v2 SSO config 迁移仍须
-//!    与 SAML 批次一起闭合；环境配置三家已经有真实 discovery/callback/session。
-//! 3. **IdP access/refresh token 落库**。身份登录不需要它们，按数据最小化主动丢弃；
+//! 1. **SAML 独立外审/跨平台发行**。协议实现位于兄弟模块 `crate::auth::sso`；本机 xmlsec
+//!    真签名矩阵已过，但 Linux CI、Windows 原生构建与外部 XSW 审计仍未完成（R50）。
+//! 2. **IdP access/refresh token 落库**。身份登录不需要它们，按数据最小化主动丢弃；
 //!    `sso_providers.oidc_config` 的 client secret 仍是 vault 数据。本模块的
 //!    [`OidcProviderConfig`] 里**没有** client secret 字段，secret 只以单次调用的参数形式
 //!    出现在 [`claims::build_verifier`] 上。
-//! 4. **第一次外部安全审计**。本批有本机负向矩阵和供应链 delta，不冒充 §24 G2 的外审。
+//! 3. **第一次外部安全审计**。本批有本机负向矩阵和供应链 delta，不冒充 §24 G2 的外审。
 
 pub mod attempt;
 pub mod attempt_postgres;

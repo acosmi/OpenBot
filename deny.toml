@@ -259,6 +259,27 @@ allow-build-scripts = [
     #     docs/2026-08-23-W7-safe-dialer-TLS-delta审计.md。
     "ring",
     "rustls",
+    # 2026-08-23 W-7b SAML/xmlsec FFI delta：加白名单前 cargo-deny 精确判红以下 8 项。
+    # 完整逐文件行为、crate checksum 与系统动态库闭包见 W-7b delta 文档；机器 guard 锁
+    # 精确版本/行数/SHA。这里概括真正能发生的副作用：
+    # - bindgen 29 行：只在 OUT_DIR 写 host-target.txt；
+    # - clang-sys 53 行入口：定位/链接 libclang（可调用 llvm-config）；
+    # - crc32fast 35 行：只执行 `$RUSTC --version` 后 emit cfg；
+    # - libxml 60 行：只从 LIBXML2/pkg-config/vcpkg 定位并链接 libxml2；
+    # - openssl 167 行：只把 openssl-sys 给出的版本/config 转成 cfg；
+    # - openssl-sys main.rs 551 行：pkg-config/vcpkg/环境定位 OpenSSL，并用 cc 预处理
+    #   expando.c 校验 headers；本图未开 vendored/bindgen；
+    # - prettyplease 21 行：只读 Cargo package version 后 emit；
+    # - samael bindings.rs 88 行：执行 xmlsec1-config --cflags/--libs，bindgen 读取本机
+    #   xmlsec headers 并只向 OUT_DIR 写 xmlsec_bindings.rs（本机 51,495 行）；无下载/HTTP。
+    "bindgen",
+    "clang-sys",
+    "crc32fast",
+    "libxml",
+    "openssl",
+    "openssl-sys",
+    "prettyplease",
+    "samael",
 ]
 # 依赖里夹带的可执行文件 / 解释型脚本一律拒绝：供应链攻击最常见的载荷形态。
 executables = "deny"
@@ -330,6 +351,14 @@ crate = "ring@0.17.14"
 # 任一新脚本/对象换目录、版本改变或多出别的可执行格式，cargo-deny 仍判红。
 # 全包仍由 Cargo.lock registry checksum 固定；build.rs 的独立 SHA 与行为审计见 W-7 delta 文档。
 allow-globs = ["crypto/**/*.pl", "pregenerated/*.o"]
+
+[[bans.build.bypass]]
+crate = "samael@0.0.22"
+# 唯一可执行文件是维护者生成双签名/XSW 测试向量的脚本；build 入口 bindings.rs 与生产
+# src 均不引用它。全文 4 条 openssl/xmlsec1 命令、SHA-256
+# ab091e9a22bc13290acfc03ad2b7ff372465d8e8926330cfa1e56d4d57ccfd2f。
+# 只放这一条精确路径；新增脚本或改版本仍判红。
+allow-globs = ["test_vectors/multi_saml_response.sh"]
 
 [bans.workspace-dependencies]
 # 同一个依赖在多个 crate 里写不同版本 = 版本真源分裂。workspace 根的

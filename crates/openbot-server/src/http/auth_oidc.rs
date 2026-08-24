@@ -28,11 +28,23 @@ struct CapabilitiesResponse<'a> {
 /// 未认证能力面；动态企业 IdP 只贡献布尔值。
 pub(crate) async fn capabilities(State(state): State<ServerState>) -> Response {
     let surface = state.preauth_surface();
+    let dynamic_sso = match state.dynamic_sso() {
+        Some(service) => match service.has_any_provider().await {
+            Ok(value) => value,
+            Err(_) => {
+                return auth_failure(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "authentication_unavailable",
+                );
+            }
+        },
+        None => false,
+    };
     let mut response = Json(CapabilitiesResponse {
         mode: "rust",
         durable_history: true,
         auth_providers: surface.provider_ids(),
-        sso_configured: surface.enterprise_sso_available(),
+        sso_configured: surface.enterprise_sso_available() || dynamic_sso,
     })
     .into_response();
     no_store(response.headers_mut());
@@ -116,16 +128,7 @@ pub(crate) async fn callback(
     let (Some(code), Some(csrf_state)) = (query.code.as_deref(), query.state.as_deref()) else {
         return auth_failure(StatusCode::BAD_REQUEST, "authentication_failed");
     };
-    let Some(coordinator) = state.oidc_login() else {
-        return auth_failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "authentication_unavailable",
-        );
-    };
     let Ok(provider) = ProviderId::parse(&provider_id) else {
-        return auth_failure(StatusCode::BAD_REQUEST, "authentication_failed");
-    };
-    let Some(callback_uri) = coordinator.callback_uri(&provider).map(str::to_owned) else {
         return auth_failure(StatusCode::BAD_REQUEST, "authentication_failed");
     };
     let now = OffsetDateTime::now_utc();
@@ -133,40 +136,63 @@ pub(crate) async fn callback(
     let user_agent = headers
         .get(USER_AGENT)
         .and_then(|value| value.to_str().ok());
-    match coordinator
-        .callback(
-            &provider,
-            csrf_state,
-            code,
-            &callback_uri,
-            now,
-            &peer,
-            user_agent,
-        )
+    if let Some(coordinator) = state.oidc_login()
+        && let Some(callback_uri) = coordinator.callback_uri(&provider).map(str::to_owned)
+    {
+        return match coordinator
+            .callback(
+                &provider,
+                csrf_state,
+                code,
+                &callback_uri,
+                now,
+                &peer,
+                user_agent,
+            )
+            .await
+        {
+            Ok(issued) => issued_session_response(&state, &issued, now),
+            Err(error) => login_error(error),
+        };
+    }
+    let Some(dynamic) = state.dynamic_sso() else {
+        return auth_failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "authentication_unavailable",
+        );
+    };
+    match dynamic
+        .oidc_callback(&provider, csrf_state, code, now, &peer, user_agent)
         .await
     {
-        Ok(issued) => {
-            let Ok(cookie) = session_cookie_header(
-                issued.token().expose(),
-                issued.expires_at(),
-                now,
-                state.secure_session_cookie(),
-            ) else {
-                return auth_failure(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "authentication_unavailable",
-                );
-            };
-            let mut response = StatusCode::SEE_OTHER.into_response();
-            response.headers_mut().insert(SET_COOKIE, cookie);
-            response
-                .headers_mut()
-                .insert(LOCATION, HeaderValue::from_static("/"));
-            no_store(response.headers_mut());
-            response
-        }
-        Err(error) => login_error(error),
+        Ok(issued) => issued_session_response(&state, &issued, now),
+        Err(error) => dynamic_login_error(error),
     }
+}
+
+pub(crate) fn issued_session_response(
+    state: &ServerState,
+    issued: &openbot_infra::auth::oidc::IssuedSession,
+    now: OffsetDateTime,
+) -> Response {
+    let Ok(cookie) = session_cookie_header(
+        issued.token().expose(),
+        issued.expires_at(),
+        now,
+        state.secure_session_cookie(),
+    ) else {
+        return auth_failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "authentication_unavailable",
+        );
+    };
+    let mut response = StatusCode::SEE_OTHER.into_response();
+    response.headers_mut().insert(SET_COOKIE, cookie);
+    response
+        .headers_mut()
+        .insert(LOCATION, HeaderValue::from_static("/"));
+    no_store(response.headers_mut());
+    response
 }
 
 #[derive(Serialize)]
@@ -191,13 +217,35 @@ fn login_error(error: OidcLoginError) -> Response {
     }
 }
 
+pub(crate) fn dynamic_login_error(error: openbot_infra::auth::sso::DynamicSsoError) -> Response {
+    if error.rate_limited() {
+        auth_failure(StatusCode::TOO_MANY_REQUESTS, "authentication_rate_limited")
+    } else if error.dependency_unavailable() {
+        auth_failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "authentication_unavailable",
+        )
+    } else if error.provider_failure() {
+        auth_failure(StatusCode::BAD_GATEWAY, "authentication_unavailable")
+    } else if error.conflict() {
+        auth_failure(
+            StatusCode::CONFLICT,
+            "authentication_configuration_conflict",
+        )
+    } else if error.unknown() {
+        auth_failure(StatusCode::NOT_FOUND, "authentication_failed")
+    } else {
+        auth_failure(StatusCode::BAD_REQUEST, "authentication_failed")
+    }
+}
+
 fn auth_failure(status: StatusCode, code: &'static str) -> Response {
     let mut response = (status, Json(AuthenticationErrorBody { code })).into_response();
     no_store(response.headers_mut());
     response
 }
 
-fn no_store(headers: &mut HeaderMap) {
+pub(crate) fn no_store(headers: &mut HeaderMap) {
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
 }
 

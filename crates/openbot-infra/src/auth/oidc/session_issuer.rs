@@ -34,7 +34,7 @@ use tokio_postgres::Row;
 use uuid::Uuid;
 
 use super::claims::VerifiedIdentity;
-use super::email::domain_of;
+use super::email::{EmailDomain, domain_of};
 use super::provider::{OidcProviderConfig, ProviderKind, ProviderOrigin};
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 use crate::repo::people_admin::{advance_generation, apply_role_plan, lock_people};
@@ -56,6 +56,93 @@ pub enum SessionIssueError {
     Corrupt,
     #[error("oidc_session_random_unavailable")]
     RandomUnavailable,
+}
+
+/// 协议层已经完成密码学与协议校验后，交给统一 session 事务的最小身份事实。
+pub(crate) struct FederatedIdentity {
+    issuer: String,
+    subject: String,
+    email: String,
+    groups: std::collections::BTreeSet<openbot_domain::identity::groups::GroupName>,
+    group_normalization: openbot_domain::identity::groups::GroupNormalization,
+}
+
+impl FederatedIdentity {
+    fn from_oidc(identity: &VerifiedIdentity) -> Self {
+        Self {
+            issuer: identity.issuer().as_str().to_owned(),
+            subject: identity.subject().as_str().to_owned(),
+            email: identity.email().to_owned(),
+            groups: identity.groups().clone(),
+            group_normalization: identity.group_normalization(),
+        }
+    }
+
+    /// 只给同 crate 的 SAML verifier：调用点必须先完成签名覆盖与全部 profile 判定。
+    pub(crate) fn from_verified_saml(
+        issuer: String,
+        subject: String,
+        email: String,
+        groups: std::collections::BTreeSet<openbot_domain::identity::groups::GroupName>,
+        group_normalization: openbot_domain::identity::groups::GroupNormalization,
+    ) -> Self {
+        Self {
+            issuer,
+            subject,
+            email,
+            groups,
+            group_normalization,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn email(&self) -> &str {
+        &self.email
+    }
+
+    #[cfg(test)]
+    pub(crate) fn subject(&self) -> &str {
+        &self.subject
+    }
+}
+
+/// 协议无关的 provider 绑定；字段不公开，只有已验证配置 adapter 能构造。
+pub(crate) struct FederatedProvider {
+    id: super::provider::ProviderId,
+    issuer: String,
+    origin: ProviderOrigin,
+    domains: std::collections::BTreeSet<EmailDomain>,
+    scoped_subject_prefix: Option<&'static str>,
+}
+
+impl FederatedProvider {
+    fn from_oidc(provider: &OidcProviderConfig) -> Self {
+        Self {
+            id: provider.id().clone(),
+            issuer: provider.issuer().as_str().to_owned(),
+            origin: provider.origin(),
+            domains: provider.domains().clone(),
+            scoped_subject_prefix: matches!(
+                provider.kind(),
+                ProviderKind::Entra { tenants, .. } if tenants.is_tenant_independent()
+            )
+            .then_some("entra1_"),
+        }
+    }
+
+    pub(crate) fn verified_saml(
+        id: super::provider::ProviderId,
+        issuer: String,
+        domains: std::collections::BTreeSet<EmailDomain>,
+    ) -> Self {
+        Self {
+            id,
+            issuer,
+            origin: ProviderOrigin::DynamicallyRegistered,
+            domains,
+            scoped_subject_prefix: Some("saml1_"),
+        }
+    }
 }
 
 /// 明文 bearer cookie；不 Clone/Serialize，Debug 永远打码。
@@ -163,17 +250,31 @@ impl PostgresOidcSessionIssuer {
         peer_ip: Option<&str>,
         user_agent: Option<&str>,
     ) -> Result<IssuedSession, SessionIssueError> {
-        if identity.issuer() != &provider.issuer() {
+        let identity = FederatedIdentity::from_oidc(identity);
+        let provider = FederatedProvider::from_oidc(provider);
+        self.issue_federated(&identity, &provider, now, peer_ip, user_agent)
+            .await
+    }
+
+    pub(crate) async fn issue_federated(
+        &self,
+        identity: &FederatedIdentity,
+        provider: &FederatedProvider,
+        now: OffsetDateTime,
+        peer_ip: Option<&str>,
+        user_agent: Option<&str>,
+    ) -> Result<IssuedSession, SessionIssueError> {
+        if identity.issuer != provider.issuer {
             return Err(SessionIssueError::IdentityConflict);
         }
-        if provider.origin() == ProviderOrigin::DynamicallyRegistered {
-            let domain = domain_of(identity.email()).ok_or(SessionIssueError::IdentityConflict)?;
-            if !provider.domains().contains(&domain) {
+        if provider.origin == ProviderOrigin::DynamicallyRegistered {
+            let domain = domain_of(&identity.email).ok_or(SessionIssueError::IdentityConflict)?;
+            if !provider.domains.contains(&domain) {
                 return Err(SessionIssueError::IdentityConflict);
             }
         }
         let incoming_email =
-            NormalizedEmail::normalize(identity.email()).map_err(|_| SessionIssueError::Corrupt)?;
+            NormalizedEmail::normalize(&identity.email).map_err(|_| SessionIssueError::Corrupt)?;
         let token = generate_token()?;
         let token_hash = SessionTokenHash::compute(
             SessionToken::new(token.expose().as_bytes()),
@@ -194,10 +295,10 @@ impl PostgresOidcSessionIssuer {
             .await
             .map_err(|_| SessionIssueError::DependencyUnavailable)?;
 
-        let provider_id = provider.id().as_str();
+        let provider_id = provider.id.as_str();
         let account_subject = account_subject_key(identity, provider);
         let subject = account_subject.as_str();
-        let issuer = identity.issuer().as_str();
+        let issuer = identity.issuer.as_str();
         let account_row = transaction
             .query_opt(
                 "SELECT a.user_id,a.issuer,u.email,u.groups,coalesce(u.auth_generation,0) AS auth_generation \
@@ -397,7 +498,7 @@ impl PostgresOidcSessionIssuer {
         }
 
         let groups: Vec<String> = identity
-            .groups()
+            .groups
             .iter()
             .map(|group| group.as_str().to_owned())
             .collect();
@@ -414,8 +515,8 @@ impl PostgresOidcSessionIssuer {
             &cleared,
             actor.clone(),
             DeploymentMode::MultiUser,
-            identity.groups().clone(),
-            identity.group_normalization(),
+            identity.groups.clone(),
+            identity.group_normalization,
         );
         let projected = project_membership(&principal, &channels);
         let existing_rows = transaction
@@ -609,22 +710,18 @@ fn generate_token() -> Result<SessionCookieValue, SessionIssueError> {
     )))
 }
 
-fn account_subject_key(identity: &VerifiedIdentity, provider: &OidcProviderConfig) -> String {
-    let tenant_independent = matches!(
-        provider.kind(),
-        ProviderKind::Entra { tenants, .. } if tenants.is_tenant_independent()
-    );
-    if !tenant_independent {
-        return identity.subject().as_str().to_owned();
-    }
-    let issuer = identity.issuer().as_str().as_bytes();
-    let subject = identity.subject().as_str().as_bytes();
+fn account_subject_key(identity: &FederatedIdentity, provider: &FederatedProvider) -> String {
+    let Some(prefix) = provider.scoped_subject_prefix else {
+        return identity.subject.clone();
+    };
+    let issuer = identity.issuer.as_bytes();
+    let subject = identity.subject.as_bytes();
     let mut framed = Vec::with_capacity(16 + issuer.len() + subject.len());
     framed.extend_from_slice(&(issuer.len() as u64).to_be_bytes());
     framed.extend_from_slice(issuer);
     framed.extend_from_slice(&(subject.len() as u64).to_be_bytes());
     framed.extend_from_slice(subject);
-    format!("entra1_{}", URL_SAFE_NO_PAD.encode(Sha256::digest(framed)))
+    format!("{prefix}{}", URL_SAFE_NO_PAD.encode(Sha256::digest(framed)))
 }
 
 fn bounded_optional(value: Option<&str>, max_bytes: usize) -> Option<String> {

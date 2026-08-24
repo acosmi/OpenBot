@@ -35,7 +35,7 @@
 //! ```
 //!
 //! [`SingleUserAuthResolver`] 只由二进制在显式 `OPENBOT_SINGLE_USER=true` 且 loopback 绑定时构造。
-//! OIDC/SAML 登录与 session 签发仍是 G2 未闭合面，不能因 resolver 已存在而冒充完成。
+//! OIDC/SAML 登录与 session 签发已由 W-7 接通；G2 仍因外审、KMS/HSM 与跨平台原生发行未闭合。
 
 use async_trait::async_trait;
 use axum::extract::FromRequestParts;
