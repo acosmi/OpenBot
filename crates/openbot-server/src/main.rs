@@ -8,7 +8,9 @@ use hmac::{Hmac, Mac};
 use openbot_application::tenant::package::{
     TenantPackageAudienceContext, TenantPackageEnvironment, synchronize_tenant_package,
 };
-use openbot_application::{ApplicationService, OpenBotApplication};
+use openbot_application::{
+    ApplicationService, NoRunDispatchConsumer, OpenBotApplication, RunRuntime,
+};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
 use openbot_domain::identity::session::TrustedOrigins;
@@ -34,6 +36,7 @@ use openbot_infra::policy::{PolicyListener, PolicyStore};
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
+use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
 use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
 use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
@@ -231,6 +234,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let people = PostgresPeopleAdministration::new(pool.clone(), floor, audit_key.to_vec())?
         .with_owned_credential_retirer(owned_credentials);
     let thread_runtime_owner = format!("runtime:{}", mint_thread_id(&deployment)?);
+    let run_runtime: Arc<dyn RunRuntime> = Arc::new(PostgresRunRuntime::new(
+        pool.clone(),
+        thread_runtime_owner.clone(),
+        DEFAULT_THREAD_LEASE_DURATION,
+        DEFAULT_DISPATCH_CLAIM_DURATION,
+    )?);
+    // G4 consumer 尚未接线时明确 terminal fail-closed；不让 outbox/run 永久伪装 running，
+    // 也绝不生成假回复。G4 只需替换这一 consumer，journal/fencing 路径保持唯一。
+    let run_relay = RunRelay::start(run_runtime, Arc::new(NoRunDispatchConsumer));
     let thread_directory = PostgresThreadDirectory::with_runtime(
         pool.clone(),
         database
@@ -301,6 +313,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .with_graceful_shutdown(shutdown_signal())
     .await;
+    run_relay.stop().await;
     policy_listener.stop().await;
     serve_result?;
     pool.close();

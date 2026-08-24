@@ -12,7 +12,7 @@ use openbot_contracts::memory::{
 };
 use serde::Deserialize;
 
-use crate::auth::{Authenticated, AuthenticatedWrite};
+use crate::auth::{Authenticated, OriginAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
 
@@ -75,7 +75,7 @@ pub async fn recall(
 /// `POST /api/memories`；guard 在 body parse 前。
 pub async fn remember(
     State(state): State<ServerState>,
-    AuthenticatedWrite(auth): AuthenticatedWrite,
+    OriginAuthenticated(auth): OriginAuthenticated,
     body: Result<Json<RememberMemory>, JsonRejection>,
 ) -> Result<(StatusCode, Json<MemoryRecord>), HttpError> {
     let Json(input) = body.map_err(|rejection| {
@@ -95,7 +95,7 @@ pub async fn remember(
 /// `PUT /api/memories/{memory_id}`；correct + supersede。
 pub async fn correct(
     State(state): State<ServerState>,
-    AuthenticatedWrite(auth): AuthenticatedWrite,
+    OriginAuthenticated(auth): OriginAuthenticated,
     Path(memory_id): Path<String>,
     body: Result<Json<CorrectMemory>, JsonRejection>,
 ) -> Result<Json<MemoryRecord>, HttpError> {
@@ -120,7 +120,7 @@ pub async fn correct(
 /// `POST /api/memories/{memory_id}/forbid`。
 pub async fn forbid(
     State(state): State<ServerState>,
-    AuthenticatedWrite(auth): AuthenticatedWrite,
+    OriginAuthenticated(auth): OriginAuthenticated,
     Path(memory_id): Path<String>,
 ) -> Result<Json<MemoryRecord>, HttpError> {
     memory_reply(
@@ -140,7 +140,7 @@ pub async fn forbid(
 /// `DELETE /api/memories/{memory_id}`。
 pub async fn delete(
     State(state): State<ServerState>,
-    AuthenticatedWrite(auth): AuthenticatedWrite,
+    OriginAuthenticated(auth): OriginAuthenticated,
     Path(memory_id): Path<String>,
 ) -> Result<Json<MemoryRecord>, HttpError> {
     memory_reply(

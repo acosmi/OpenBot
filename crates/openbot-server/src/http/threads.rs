@@ -7,13 +7,15 @@ use core::convert::Infallible;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use core::time::Duration;
+use std::future::poll_fn;
 
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive};
-use axum::response::{IntoResponse, Sse};
+use axum::response::{IntoResponse, Response, Sse};
 use futures_core::Stream;
 use openbot_application::AppEventStream;
 use openbot_contracts::command::{
@@ -23,9 +25,12 @@ use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ThreadId;
 use serde::Deserialize;
 
-use crate::auth::Authenticated;
+use crate::auth::{Authenticated, OriginAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
+
+const THREAD_EVENTS_WS_PROTOCOL: &str = "openbot.thread-events.v1";
+const THREAD_EVENTS_WS_INPUT_LIMIT: usize = 1024;
 
 /// `POST /api/threads/mint`：为已认证 actor 铸造当前 deployment 的 UUIDv8。
 pub async fn mint(
@@ -102,6 +107,100 @@ pub async fn history(
     {
         AppReply::ThreadHistory(history) => Ok(Json(history)),
         _ => Err(application_contract_error()),
+    }
+}
+
+/// WebSocket reconnect query；cursor 是客户端最后完整接收的 thread-global sequence。
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventWebSocketQuery {
+    /// `None` 从第一条 durable event replay。
+    pub cursor: Option<u64>,
+}
+
+/// `GET /api/threads/{thread_id}/ws`：与 SSE 共用同一 ApplicationService durable stream。
+pub async fn websocket(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    Path(thread_id): Path<String>,
+    query: Result<Query<EventWebSocketQuery>, QueryRejection>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, HttpError> {
+    let Query(query) = query.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "thread websocket query 解析失败");
+        AppError::MalformedPayload { field: "query" }
+    })?;
+    if !ws
+        .requested_protocols()
+        .any(|protocol| protocol == THREAD_EVENTS_WS_PROTOCOL)
+    {
+        return Err(AppError::MalformedPayload {
+            field: "websocket_protocol",
+        }
+        .into());
+    }
+    let stream = state
+        .application()
+        .subscribe(
+            auth,
+            SubscriptionRequest::ThreadEvents {
+                thread_id: ThreadId::new(thread_id),
+                after_event_sequence: query.cursor,
+            },
+        )
+        .await?;
+    Ok(ws
+        .protocols([THREAD_EVENTS_WS_PROTOCOL])
+        .max_message_size(THREAD_EVENTS_WS_INPUT_LIMIT)
+        .max_frame_size(THREAD_EVENTS_WS_INPUT_LIMIT)
+        .on_failed_upgrade(|error| {
+            tracing::debug!(error = %error, "thread websocket upgrade 失败");
+        })
+        .on_upgrade(move |socket| drive_thread_websocket(socket, stream)))
+}
+
+async fn drive_thread_websocket(mut socket: WebSocket, mut stream: AppEventStream) {
+    loop {
+        tokio::select! {
+            event = poll_fn(|cx| stream.as_mut().poll_next(cx)) => {
+                let Some(event) = event else {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::NORMAL,
+                        reason: "stream_complete".into(),
+                    }))).await;
+                    return;
+                };
+                let text = match serde_json::to_string(&event) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        tracing::error!(error = %error, "typed thread event 序列化失败");
+                        let _ = socket.send(Message::Close(Some(CloseFrame {
+                            code: close_code::ERROR,
+                            reason: "event_encoding_failed".into(),
+                        }))).await;
+                        return;
+                    }
+                };
+                if socket.send(Message::Text(text.into())).await.is_err() {
+                    return;
+                }
+            }
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(Message::Close(_))) | None => return,
+                Some(Ok(Message::Text(_) | Message::Binary(_))) => {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::POLICY,
+                        reason: "thread_events_read_only".into(),
+                    }))).await;
+                    return;
+                }
+                Some(Err(error)) => {
+                    tracing::debug!(error = %error, "thread websocket 输入失败");
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -194,12 +293,13 @@ fn application_contract_error() -> HttpError {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
     use axum::Router;
     use axum::body::{Body, to_bytes};
+    use futures_util::{SinkExt as _, StreamExt as _};
     use http::{Method, Request, StatusCode};
     use openbot_application::ports::{
         ChannelReader, PortError, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
@@ -213,11 +313,15 @@ mod tests {
     };
     use openbot_contracts::ids::thread::ThreadIdentity;
     use openbot_contracts::ids::{ActorId, DeploymentId, RunId, TenantId};
+    use openbot_domain::identity::session::TrustedOrigins;
+    use openbot_infra::auth::config::default_session_lifetime;
     use serde_json::Value;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+    use tokio_tungstenite::tungstenite::{Error as ClientWebSocketError, Message as ClientMessage};
     use tower::ServiceExt as _;
 
     use super::*;
-    use crate::auth::FixedAuthResolver;
+    use crate::auth::{FixedAuthResolver, SensitiveWriteSecurity};
     use crate::http::ServerBuilder;
 
     #[derive(Clone, Copy)]
@@ -255,6 +359,7 @@ mod tests {
         known_calls: Mutex<Vec<KnownCall>>,
         subscription_calls: Mutex<Vec<ThreadEventSubscription>>,
         events: Mutex<Vec<AppEvent>>,
+        hold_stream_open: AtomicBool,
         history: Mutex<Result<ThreadHistory, ThreadDirectoryError>>,
         history_calls: Mutex<Vec<ThreadHistoryRequest>>,
     }
@@ -269,6 +374,7 @@ mod tests {
                     known_calls: Mutex::new(Vec::new()),
                     subscription_calls: Mutex::new(Vec::new()),
                     events: Mutex::new(Vec::new()),
+                    hold_stream_open: AtomicBool::new(false),
                     history: Mutex::new(Ok(ThreadHistory::default())),
                     history_calls: Mutex::new(Vec::new()),
                 }),
@@ -277,6 +383,11 @@ mod tests {
 
         fn with_events(self, events: Vec<AppEvent>) -> Self {
             *self.inner.events.lock().expect("fake lock") = events;
+            self
+        }
+
+        fn holding_stream_open(self) -> Self {
+            self.inner.hold_stream_open.store(true, Ordering::SeqCst);
             self
         }
 
@@ -348,9 +459,13 @@ mod tests {
                 .lock()
                 .expect("fake lock")
                 .push(request);
-            Ok(Box::pin(FiniteEvents(
-                self.inner.events.lock().expect("fake lock").clone().into(),
-            )))
+            if self.inner.hold_stream_open.load(Ordering::SeqCst) {
+                Ok(Box::pin(PendingEvents))
+            } else {
+                Ok(Box::pin(FiniteEvents(
+                    self.inner.events.lock().expect("fake lock").clone().into(),
+                )))
+            }
         }
 
         async fn thread_history(
@@ -376,6 +491,16 @@ mod tests {
         }
     }
 
+    struct PendingEvents;
+
+    impl Stream for PendingEvents {
+        type Item = AppEvent;
+
+        fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Pending
+        }
+    }
+
     fn auth(actor: &str) -> AuthContext {
         AuthContext::for_test(
             DeploymentId::new("openbot-test"),
@@ -389,7 +514,12 @@ mod tests {
 
     fn app(directory: FakeThreadDirectory, resolver: FixedAuthResolver) -> Router {
         let application = Arc::new(OpenBotApplication::new(EmptyChannels).with_threads(directory));
-        ServerBuilder::new(application, Arc::new(resolver)).into_router()
+        ServerBuilder::new(application, Arc::new(resolver))
+            .with_sensitive_write_security(SensitiveWriteSecurity::new(
+                default_session_lifetime(),
+                TrustedOrigins::from_configured(["https://app.example.test"]).unwrap(),
+            ))
+            .into_router()
     }
 
     async fn send(router: Router, method: Method, uri: &str) -> (StatusCode, Value) {
@@ -685,6 +815,194 @@ mod tests {
                 after_event_sequence: Some(6),
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn websocket_requires_origin_and_protocol_then_reuses_the_typed_cursor_stream() {
+        let thread = ThreadId::new("550e8400-e29b-41d4-a716-446655440000");
+        let directory =
+            FakeThreadDirectory::new(Ok(true)).with_events(vec![AppEvent::ThreadRunEvent(
+                ThreadRunEvent {
+                    thread_id: thread.clone(),
+                    run_id: RunId::new("run-ws"),
+                    event_sequence: 8,
+                    event_type: ThreadRunEventKind::SemanticChunk,
+                    payload: serde_json::json!({"channel":"text","delta":"hello"}),
+                    terminal: false,
+                    created_at: time::OffsetDateTime::UNIX_EPOCH,
+                },
+            )]);
+        let visible = directory.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind websocket test");
+        let address = listener.local_addr().expect("test address");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app(directory, FixedAuthResolver::granting(auth("u1"))),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = stopped.await;
+            })
+            .await
+        });
+
+        let untrusted = websocket_request(
+            address,
+            &thread,
+            Some("https://evil.example.test"),
+            Some(THREAD_EVENTS_WS_PROTOCOL),
+            Some(7),
+        )
+        .await;
+        assert_http_handshake_error(untrusted, StatusCode::FORBIDDEN);
+
+        let missing_protocol = websocket_request(
+            address,
+            &thread,
+            Some("https://app.example.test"),
+            None,
+            Some(7),
+        )
+        .await;
+        assert_http_handshake_error(missing_protocol, StatusCode::BAD_REQUEST);
+
+        let (mut socket, response) = websocket_request(
+            address,
+            &thread,
+            Some("https://app.example.test"),
+            Some(THREAD_EVENTS_WS_PROTOCOL),
+            Some(7),
+        )
+        .await
+        .expect("trusted websocket handshake");
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+        assert_eq!(
+            response.headers()[http::header::SEC_WEBSOCKET_PROTOCOL],
+            THREAD_EVENTS_WS_PROTOCOL
+        );
+        let frame = socket
+            .next()
+            .await
+            .expect("event frame")
+            .expect("valid event frame");
+        let ClientMessage::Text(text) = frame else {
+            panic!("首帧必须是 typed JSON text：{frame:?}");
+        };
+        let event: AppEvent = serde_json::from_str(text.as_str()).expect("typed AppEvent");
+        assert!(matches!(
+            event,
+            AppEvent::ThreadRunEvent(ThreadRunEvent {
+                event_sequence: 8,
+                ..
+            })
+        ));
+        let close = socket
+            .next()
+            .await
+            .expect("close frame")
+            .expect("valid close frame");
+        assert!(
+            matches!(close, ClientMessage::Close(Some(frame)) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal)
+        );
+        assert_eq!(
+            visible.subscription_calls(),
+            vec![ThreadEventSubscription {
+                deployment: DeploymentId::new("openbot-test"),
+                tenant: TenantId::new("tenant-test"),
+                actor: ActorId::new("u1"),
+                thread,
+                after_event_sequence: Some(7),
+            }]
+        );
+        let _ = stop.send(());
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test]
+    async fn websocket_is_read_only_and_closes_client_data_with_policy_code() {
+        let thread = ThreadId::new("550e8400-e29b-41d4-a716-446655440000");
+        let directory = FakeThreadDirectory::new(Ok(true)).holding_stream_open();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind websocket test");
+        let address = listener.local_addr().expect("test address");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app(directory, FixedAuthResolver::granting(auth("u1"))),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = stopped.await;
+            })
+            .await
+        });
+        let (mut socket, _) = websocket_request(
+            address,
+            &thread,
+            Some("https://app.example.test"),
+            Some(THREAD_EVENTS_WS_PROTOCOL),
+            None,
+        )
+        .await
+        .expect("trusted websocket handshake");
+        socket
+            .send(ClientMessage::Text("forged client event".into()))
+            .await
+            .expect("send policy violation");
+        let close = socket
+            .next()
+            .await
+            .expect("policy close")
+            .expect("valid policy close");
+        assert!(
+            matches!(close, ClientMessage::Close(Some(frame)) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy)
+        );
+        let _ = stop.send(());
+        server.await.expect("server task").expect("server result");
+    }
+
+    type ClientSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+    type ClientHandshake =
+        Result<(ClientSocket, http::Response<Option<Vec<u8>>>), ClientWebSocketError>;
+
+    async fn websocket_request(
+        address: std::net::SocketAddr,
+        thread: &ThreadId,
+        origin: Option<&str>,
+        protocol: Option<&str>,
+        cursor: Option<u64>,
+    ) -> ClientHandshake {
+        let suffix = cursor.map_or_else(String::new, |value| format!("?cursor={value}"));
+        let mut request = format!("ws://{address}/api/threads/{thread}/ws{suffix}")
+            .into_client_request()
+            .expect("websocket request");
+        if let Some(origin) = origin {
+            request.headers_mut().insert(
+                http::header::ORIGIN,
+                http::HeaderValue::from_str(origin).expect("origin"),
+            );
+        }
+        if let Some(protocol) = protocol {
+            request.headers_mut().insert(
+                http::header::SEC_WEBSOCKET_PROTOCOL,
+                http::HeaderValue::from_str(protocol).expect("protocol"),
+            );
+        }
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("connect websocket test");
+        tokio_tungstenite::client_async(request, stream).await
+    }
+
+    fn assert_http_handshake_error(result: ClientHandshake, expected: StatusCode) {
+        let Err(ClientWebSocketError::Http(response)) = result else {
+            panic!("应为 HTTP handshake 拒绝，实际：{result:?}");
+        };
+        assert_eq!(response.status(), expected);
     }
 
     #[tokio::test]

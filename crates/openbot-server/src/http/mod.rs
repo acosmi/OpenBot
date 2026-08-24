@@ -13,6 +13,7 @@
 //! api-threads-mint-post   target: "openbot-server::http::threads::mint (POST /api/threads/mint)"
 //! api-threads-get         target: "openbot-server::http::threads::status (GET /api/threads/{thread_id})"
 //! thread-events-sse-get   target: "openbot-server::http::threads::events (GET /api/threads/{thread_id}/events)"
+//! thread-events-ws-get    target: "openbot-server::http::threads::websocket (GET /api/threads/{thread_id}/ws)"
 //! memory-list/remember/correct/delete/forbid/recall —— R66 新增 explicit memory API
 //! ```
 //!
@@ -175,8 +176,9 @@ impl ServerState {
         self.inner.auth.touch(resolved).await
     }
 
-    /// Owner-scoped user 写：可信 Origin + 已认证身份，不额外要求 admin/fresh。
-    pub async fn authorize_authenticated_write(
+    /// Same-origin authenticated operation：Memory owner 写与 thread WebSocket 共用；
+    /// 不额外要求 admin/fresh，但 Origin 失败不得 touch session idle。
+    pub async fn authorize_authenticated_origin(
         &self,
         resolved: &ResolvedAuth,
         origin: Option<&str>,
@@ -395,6 +397,7 @@ pub fn router(state: ServerState) -> Router {
         )
         .route("/api/memories/{memory_id}/forbid", post(memories::forbid))
         .route("/api/threads/mint", post(threads::mint))
+        .route("/api/threads/{thread_id}/ws", get(threads::websocket))
         .route("/api/threads/{thread_id}/events", get(threads::events))
         .route("/api/threads/{thread_id}", get(threads::status))
         .route(

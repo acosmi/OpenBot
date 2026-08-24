@@ -24,7 +24,7 @@
 //!   query —— 这四条在 v3 §5.2 是逐字禁止项。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # 当前状态（G1 + people/tool/audit + G3 thread/history/explicit-memory boundary）
+//! # 当前状态（G1 + people/tool/audit + G3 thread/history/memory/run-runtime boundary）
 //!
 //! Phase 0 本 crate 刻意为空；G1 起它承载一个垂直切片所需的全部四层：
 //!
@@ -36,6 +36,7 @@
 //! | [`tenant`] | Tenant Package 五 YAML、audience 校验与 PostgreSQL 同步 port | §3.2 / §6.5 / R60 |
 //! | [`use_cases`] | health/channel、people/audit、thread/history、remember/list/correct/forbid/delete/recall | §4.1–§4.3 / R56 / R64–R66 |
 //! | [`chunk`] | 50ms/8KiB UTF-8 semantic chunk accumulator；真实 provider 接线仍待 G4 | §4.3 / R65 |
+//! | [`run_runtime`] | 非 serde dispatch/lease、expected-sequence writer 与 accumulator→durable journal | §4.3 / §7.2 / R67 |
 //! | [`tool`] | metadata→scope→policy→approval→journal→capability→execute→outcome/audit | §8.1 / R41 |
 //!
 //! 具体实现 [`OpenBotApplication`] 把上面四层接起来，是 transport 唯一需要构造的类型。
@@ -73,6 +74,7 @@ mod app;
 pub mod chunk;
 pub mod cursor;
 pub mod ports;
+pub mod run_runtime;
 pub mod service;
 pub mod tenant;
 pub mod tool;
@@ -93,6 +95,11 @@ pub use ports::{
     PolicyAdministration, PolicyAdministrationError, PortError, RecallMemoriesRequest,
     RememberMemoryRequest, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
     ThreadHistoryRequest,
+};
+pub use run_runtime::{
+    ClaimedRunDispatch, DurableTextRun, NoRunDispatchConsumer, RunDispatchConsumer,
+    RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError,
+    RunTerminal, RunWriteReceipt,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,
