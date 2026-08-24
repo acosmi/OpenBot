@@ -58,3 +58,10 @@
 没有 relay loop；有 memory 表/召回 SQL，但还没有两个显式写入口的 ApplicationService、API 或
 GUI；有 import cursor，但没有 bundle signature/import/checksum 工具。上述项目完成前 G3 整关
 保持未勾，`intelligence_channel_mappings` 继续只读 legacy provenance，不删除、不回退成 live truth。
+
+## 5. Git 恢复点
+
+- 实施提交：`21d25942dd170f12ecf4c050478139a64e77e987`；
+- 分支：`feat/2026-08-24-G3-native-data-base`；
+- PR：#18，base=`fix/2026-08-24-W7c-linux-ci`，head=上述分支；
+- 创建后实查：OPEN / CLEAN / MERGEABLE，`statusCheckRollup=[]`；Actions 无新增 run。
