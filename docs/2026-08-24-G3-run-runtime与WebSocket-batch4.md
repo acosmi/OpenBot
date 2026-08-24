@@ -68,3 +68,11 @@ SHA-1 仅由 RFC6455 `Sec-WebSocket-Accept` handshake 图使用，第一方 Rust
 `DurableTextRun` 已是 production writer，但没有真实 provider producer 调用它；Server 当前只用
 fail-closed consumer 收口为 failed。`remember` tool、Memory GUI、Intelligence importer/checksum
 也仍未实现，所以 G3/G4 整关均不勾。
+
+## 6. Git 恢复点
+
+- 实施提交：`87e6c061319f256ac0754cf3a565e799a8672980`；
+- 分支：`feat/2026-08-24-G3-run-recovery-terminal`；
+- 堆叠 PR：**#21**，base=`feat/2026-08-24-G3-history-memory`，创建后
+  `OPEN/CLEAN/MERGEABLE`；
+- 实施 head 的 GitHub Actions run 数：**0**。
