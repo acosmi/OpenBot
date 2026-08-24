@@ -77,7 +77,7 @@ recount:
     expect: 234
   - command: "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]'"
     cwd: repo
-    expect: done=122 todo=112 in_progress=0 total=234
+    expect: done=149 todo=85 in_progress=0 total=234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229
@@ -95,10 +95,10 @@ recount:
     expect: 105
   - command: "grep -c '^    label: parity$' parity/tests.yaml"
     cwd: repo
-    expect: 776
+    expect: 775
   - command: "grep -c '^    label: 替代$' parity/tests.yaml"
     cwd: repo
-    expect: 271
+    expect: 272
   - command: "grep -c '^    label: 新增$' parity/tests.yaml"
     cwd: repo
     expect: 0
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 921
+    expect: 894
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -10037,20 +10037,22 @@ entries:
     target: "openbot_application::tenant::package::tests::accepts_approved_variables_in_root_and_dark_blocks"
     owner: openbot-application
     test_id: T-TEST-0952
-    migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    migration_rule: "remove: not-applicable-with-proof —— runtime tenant CSS 输入被 GUI 第一真源的 tokens.toml 单一来源删除；旧 skin 字段只产生 ignored 状态"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1158]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「accepts approved variables in root and dark blocks」。"
+    done_evidence: "cargo test -p openbot-application tenant::package::tests --locked => 18/0/0；旧 skin.stylesheet 只投影 compatibility_input_ignored，且测试机械命中 tokens.toml 的 :root/.dark/system 三选择器"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「accepts approved variables in root and dark blocks」。"
   - id: "server-tests-tenant-package--tenant-theme-validation--rejects-imports-selectors-and-unsupported-variables"
     upstream: "server/tests/tenant-package.test.ts::tenant theme validation"
     label: 替代
     target: "openbot_application::tenant::package::tests::rejects_imports_selectors_and_unsupported_variables"
     owner: openbot-application
     test_id: T-TEST-0953
-    migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    migration_rule: "remove: not-applicable-with-proof —— loader 的封闭文件表恰为五份 YAML，既不打开也不承载 theme.css，imports/selectors 无运行时入口"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1159]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「rejects imports, selectors, and unsupported variables」。"
+    done_evidence: "同一 application 18/0/0：TENANT_PACKAGE_FILENAMES 双向等于 brand/agents/channels/model/knowledge 且不含 theme.css；同时拒绝受限对外 brand"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「rejects imports, selectors, and unsupported variables」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--rejects-an-agent-without-a-title"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
@@ -10058,9 +10060,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0954
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1161]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「rejects an agent without a title」。"
+    done_evidence: "application tenant package 18/0/0：缺 title 命中稳定 tenant_package_required_string"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「rejects an agent without a title」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--rejects-an-agent-without-a-role-description"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
@@ -10068,9 +10071,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0955
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1162]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「rejects an agent without a role description」。"
+    done_evidence: "application tenant package 18/0/0：缺 role_description 命中稳定 tenant_package_required_string"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「rejects an agent without a role description」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--rejects-an-agent-whose-id-is-the-deployment-route"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
@@ -10078,9 +10082,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0956
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1163]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「rejects an agent whose id is the deployment route \"${?}\"」。AST 标记：标题是模板串，插值段渲染为 ${?}。"
+    done_evidence: "application tenant package 18/0/0：policy/fleet 在同一表驱动测试中均精确 tenant_package_agent_id_reserved"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「rejects an agent whose id is the deployment route \"${?}\"」。AST 标记：标题是模板串，插值段渲染为 ${?}。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--an-id-that-merely-contains-a-reserved-name-is-fine"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
@@ -10088,19 +10093,21 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0957
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1164]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「an id that merely contains a reserved name is fine」。"
+    done_evidence: "application tenant package 18/0/0：policy-desk 正向解析并被 channel 引用，证明只拒绝精确保留名"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「an id that merely contains a reserved name is fine」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--parses-an-explicit-avatar-seed-and-leaves-an-omitted-see"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
-    target: "openbot_application::tenant::package::tests::parses_an_explicit_avatar_seed_and_leaves_an_omitted_see"
+    target: "openbot_application::tenant::package::tests::parses_an_explicit_avatar_seed_and_leaves_an_omitted_seed_undefined"
     owner: openbot-application
     test_id: T-TEST-0958
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1165]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「parses an explicit avatar seed and leaves an omitted seed undefined」。"
+    done_evidence: "application tenant package 18/0/0：两个 Agent 分别实得 avatar_seed=Some(seed)/None"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「parses an explicit avatar seed and leaves an omitted seed undefined」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--rejects-an-empty-optional-avatar-seed"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
@@ -10108,9 +10115,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0959
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1166]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「rejects an empty optional avatar seed」。"
+    done_evidence: "application tenant package 18/0/0：显式空 avatar seed 命中 required_string，不与 omitted 混同"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「rejects an empty optional avatar seed」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--creates-a-browser-safe-application-configuration"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
@@ -10118,29 +10126,32 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0960
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1167]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「creates a browser-safe application configuration」。"
+    done_evidence: "application tenant package 18/0/0：ApplicationConfiguration 逐字段只有 tenant_id/product_name brand，不含 provider/theme/path/secret"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「creates a browser-safe application configuration」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--loads-the-mounted-fintech-package-without-a-theme-file"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
-    target: "openbot_application::tenant::package::tests::loads_the_mounted_fintech_package_without_a_theme_file"
+    target: "openbot_infra::tests::tenant_package::loads_the_mounted_fintech_package_without_a_theme_file"
     owner: openbot-application
     test_id: T-TEST-0961
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1168]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「loads the mounted fintech package without a theme file」。"
+    done_evidence: "cargo test -p openbot-infra --test tenant_package --locked -- --include-ignored --test-threads=1 => 8/0/0（隔离 PG17 SCRAM）；真实 examples/fintech 五文件加载、checksum 64 lowercase hex、空 endpoint remote 省略、theme absent"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「loads the mounted fintech package without a theme file」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--accepts-the-complete-fintech-package-and-normalizes-agen"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
-    target: "openbot_application::tenant::package::tests::accepts_the_complete_fintech_package_and_normalizes_agen"
+    target: "openbot_application::tenant::package::tests::accepts_the_complete_fintech_package_and_normalizes_agent_types"
     owner: openbot-application
     test_id: T-TEST-0962
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1169]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「accepts the complete fintech package and normalizes agent types」。"
+    done_evidence: "application tenant package 18/0/0：built-in/remote-ag-ui 正规化；knowledge compatibility=1；single-user 忽略 group，多用户无 mapping 拒绝、有 mapping 放行"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「accepts the complete fintech package and normalizes agent types」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--rejects-a-channel-that-refers-to-an-unknown-agent"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
@@ -10148,89 +10159,98 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0963
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1170]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「rejects a channel that refers to an unknown agent」。"
+    done_evidence: "application tenant package 18/0/0：未知 permitted agent 命中 tenant_package_channel_agent_unknown"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「rejects a channel that refers to an unknown agent」。"
   - id: "server-tests-tenant-package--tenant-yaml-validation--omits-a-remote-coworker-whose-endpoint-expanded-to-nothi"
     upstream: "server/tests/tenant-package.test.ts::tenant YAML validation"
     label: 替代
-    target: "openbot_application::tenant::package::tests::omits_a_remote_coworker_whose_endpoint_expanded_to_nothi"
+    target: "openbot_application::tenant::package::tests::omits_a_remote_coworker_whose_endpoint_expanded_to_nothing"
     owner: openbot-application
     test_id: T-TEST-0964
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1171]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「omits a remote coworker whose endpoint expanded to nothing」。"
+    done_evidence: "application tenant package 18/0/0：空 endpoint remote Agent 从 agents 与 permitted_agents 同时移除，built-in 正向保留"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「omits a remote coworker whose endpoint expanded to nothing」。"
   - id: "server-tests-tenant-package--tenant-package-agent-profile-synchroniza--creates-a-public-ownerless-profile-for-a-canonical-packa"
     upstream: "server/tests/tenant-package.test.ts::tenant package agent profile synchronization"
     label: 替代
-    target: "openbot_application::tenant::package::tests::creates_a_public_ownerless_profile_for_a_canonical_packa"
+    target: "openbot_infra::tests::tenant_package::creates_a_public_ownerless_profile_for_a_canonical_package_agent"
     owner: openbot-application
     test_id: T-TEST-0965
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1173]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「creates a public ownerless profile for a canonical package agent」。"
+    done_evidence: "PG17/SCRAM tenant_package 8/0/0：canonical+public ownerless profile 全字段、avatar=id fallback 与 single-user package membership 同事务实得"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「creates a public ownerless profile for a canonical package agent」。"
   - id: "server-tests-tenant-package--tenant-package-agent-profile-synchroniza--refuses-to-synchronize-while-a-bot-named-after-a-deploym"
     upstream: "server/tests/tenant-package.test.ts::tenant package agent profile synchronization"
     label: 替代
-    target: "openbot_application::tenant::package::tests::refuses_to_synchronize_while_a_bot_named_after_a_deploym"
+    target: "openbot_infra::tests::tenant_package::refuses_to_synchronize_while_a_bot_named_after_a_deployment_route_exists"
     owner: openbot-application
     test_id: T-TEST-0966
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1174]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「refuses to synchronize while a Bot named after a deployment route exists」。"
+    done_evidence: "PG17/SCRAM 8/0/0：库内预存 policy 后同步精确 ReservedAgent，deployment_packages 与新 Agent 均 0，证明整事务零副作用"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「refuses to synchronize while a Bot named after a deployment route exists」。"
   - id: "server-tests-tenant-package--tenant-package-agent-profile-synchroniza--synchronizes-normally-when-no-such-bot-exists"
     upstream: "server/tests/tenant-package.test.ts::tenant package agent profile synchronization"
     label: 替代
-    target: "openbot_application::tenant::package::tests::synchronizes_normally_when_no_such_bot_exists"
+    target: "openbot_infra::tests::tenant_package::synchronizes_normally_when_no_such_bot_exists"
     owner: openbot-application
     test_id: T-TEST-0967
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1175]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「synchronizes normally when no such Bot exists」。"
+    done_evidence: "PG17/SCRAM 8/0/0：policy-desk 正向共存，package Agent/channel/multi-user all membership 各 1"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「synchronizes normally when no such Bot exists」。"
   - id: "server-tests-tenant-package--tenant-package-agent-profile-synchroniza--resynchronizes-and-undeletes-an-existing-package-profile"
     upstream: "server/tests/tenant-package.test.ts::tenant package agent profile synchronization"
     label: 替代
-    target: "openbot_application::tenant::package::tests::resynchronizes_and_undeletes_an_existing_package_profile"
+    target: "openbot_infra::tests::tenant_package::resynchronizes_and_undeletes_an_existing_package_profile"
     owner: openbot-application
     test_id: T-TEST-0968
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1176]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「resynchronizes and undeletes an existing package profile」。"
+    done_evidence: "PG17/SCRAM 8/0/0：resync 更新 canonical/profile、private+deleted 恢复 public+NULL；audience all→risk 收紧同时 membership revoke=1/generation+1/session=0"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「resynchronizes and undeletes an existing package profile」。"
   - id: "server-tests-tenant-package--tenant-package-agent-profile-synchroniza--rejects-a-user-created-canonical-and-profile-collision-w"
     upstream: "server/tests/tenant-package.test.ts::tenant package agent profile synchronization"
     label: 替代
-    target: "openbot_application::tenant::package::tests::rejects_a_user_created_canonical_and_profile_collision_w"
+    target: "openbot_infra::tests::tenant_package::rejects_a_user_created_canonical_and_profile_collision_without_changing_them"
     owner: openbot-application
     test_id: T-TEST-0969
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1177]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「rejects a user-created canonical and profile collision without changing them」。"
+    done_evidence: "PG17/SCRAM 8/0/0：package_id NULL canonical 命中 UserAgent；name/profile owner/title 保持且新 deployment package=0"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「rejects a user-created canonical and profile collision without changing them」。"
   - id: "server-tests-tenant-package--tenant-package-agent-profile-synchroniza--rejects-a-user-owned-profile-collision-and-rolls-back-ca"
     upstream: "server/tests/tenant-package.test.ts::tenant package agent profile synchronization"
     label: 替代
-    target: "openbot_application::tenant::package::tests::rejects_a_user_owned_profile_collision_and_rolls_back_ca"
+    target: "openbot_infra::tests::tenant_package::rejects_a_user_owned_profile_collision_and_rolls_back_canonical_changes"
     owner: openbot-application
     test_id: T-TEST-0970
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1178]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「rejects a user-owned profile collision and rolls back canonical changes」。"
+    done_evidence: "PG17/SCRAM 8/0/0：同 package canonical + user-owned profile 命中 UserProfile；canonical/profile/checksum 四项保持"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「rejects a user-owned profile collision and rolls back canonical changes」。"
   - id: "server-tests-tenant-package--tenant-package-agent-profile-synchroniza--rejects-a-cross-package-agent-collision-and-rolls-back-b"
     upstream: "server/tests/tenant-package.test.ts::tenant package agent profile synchronization"
     label: 替代
-    target: "openbot_application::tenant::package::tests::rejects_a_cross_package_agent_collision_and_rolls_back_b"
+    target: "openbot_infra::tests::tenant_package::rejects_a_cross_package_agent_collision_and_rolls_back_both_packages"
     owner: openbot-application
     test_id: T-TEST-0971
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1179]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「rejects a cross-package agent collision and rolls back both packages」。"
+    done_evidence: "PG17/SCRAM 8/0/0：package B 复用 A 的 Agent id 精确 OtherPackageAgent；Agent 仍属 A 且 B package 行=0"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「rejects a cross-package agent collision and rolls back both packages」。"
   - id: "server-tests-tenant-package--expanding-a-package-file-against-the-env--takes-the-value-from-the-environment"
     upstream: "server/tests/tenant-package.test.ts::expanding a package file against the environment"
     label: 替代
@@ -10238,9 +10258,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0972
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1181]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「takes the value from the environment」。"
+    done_evidence: "application tenant package 18/0/0：显式安全环境投影把 AG_UI_URL 替换成给定 endpoint"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「takes the value from the environment」。"
   - id: "server-tests-tenant-package--expanding-a-package-file-against-the-env--falls-back-to-the-default-when-the-name-is-not-set"
     upstream: "server/tests/tenant-package.test.ts::expanding a package file against the environment"
     label: 替代
@@ -10248,9 +10269,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0973
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1182]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「falls back to the default when the name is not set」。"
+    done_evidence: "application tenant package 18/0/0：变量缺失时逐字采用 :- 默认值"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「falls back to the default when the name is not set」。"
   - id: "server-tests-tenant-package--expanding-a-package-file-against-the-env--prefers-the-environment-over-the-default"
     upstream: "server/tests/tenant-package.test.ts::expanding a package file against the environment"
     label: 替代
@@ -10258,9 +10280,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0974
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1183]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「prefers the environment over the default」。"
+    done_evidence: "application tenant package 18/0/0：非空显式值优先于默认值"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「prefers the environment over the default」。"
   - id: "server-tests-tenant-package--expanding-a-package-file-against-the-env--treats-an-empty-value-as-unset"
     upstream: "server/tests/tenant-package.test.ts::expanding a package file against the environment"
     label: 替代
@@ -10268,9 +10291,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0975
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1184]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「treats an empty value as unset」。"
+    done_evidence: "application tenant package 18/0/0：空显式值按未设处理并落默认值"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「treats an empty value as unset」。"
   - id: "server-tests-tenant-package--expanding-a-package-file-against-the-env--an-empty-default-is-allowed-and-is-not-an-error"
     upstream: "server/tests/tenant-package.test.ts::expanding a package file against the environment"
     label: 替代
@@ -10278,9 +10302,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0976
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1185]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「an empty default is allowed and is not an error」。"
+    done_evidence: "application tenant package 18/0/0：空默认值合法且产出空后缀"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「an empty default is allowed and is not an error」。"
   - id: "server-tests-tenant-package--expanding-a-package-file-against-the-env--refuses-a-name-with-neither-a-value-nor-a-default"
     upstream: "server/tests/tenant-package.test.ts::expanding a package file against the environment"
     label: 替代
@@ -10288,9 +10313,10 @@ entries:
     owner: openbot-application
     test_id: T-TEST-0977
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1186]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。上游用例标题：「refuses a name with neither a value nor a default」。"
+    done_evidence: "application tenant package 18/0/0：无值无默认命中 tenant_package_environment_missing，错误不回显输入行/任何环境值"
+    notes: "ported —— v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。上游用例标题：「refuses a name with neither a value nor a default」。"
   # ---------------------------------------------------------------------------
   # server/tests/thread-identity.test.ts —— owner openbot-contracts / ported / parity
   # ---------------------------------------------------------------------------
@@ -10945,18 +10971,19 @@ entries:
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1263]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决（PostgreSQL + pgvector）：docker-compose 提供本地开发数据库的判据逐条移植。上游用例标题：「runs migrations after PostgreSQL becomes healthy」。"
   # ---------------------------------------------------------------------------
-  # tests/fintech-package.test.ts —— owner openbot-testkit / ported / parity
+  # tests/fintech-package.test.ts —— owner openbot-testkit / ported / 替代
   # ---------------------------------------------------------------------------
   - id: "tests-fintech-package--includes-the-complete-fintech-deployment-package-example"
     upstream: "tests/fintech-package.test.ts"
-    label: parity
-    target: "openbot_testkit::fixtures::tenant_package::fintech::tests::includes_the_complete_fintech_deployment_package_example"
+    label: 替代
+    target: "openbot_testkit::fixtures::tenant_package::fintech::includes_the_complete_fintech_deployment_package_example"
     owner: openbot-testkit
     test_id: T-TEST-1040
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1264]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §3.2 Tenant Package + §6.5 条 2 明确引用 examples/fintech/channels.yaml 的 all 写法：随包示例完整性判据逐条移植为 fixture 断言。上游用例标题：「includes the complete fintech deployment package example」。"
+    done_evidence: "cargo test -p openbot-testkit fixtures::tenant_package::fintech --locked => 1/0/0；五文件均带 MIT provenance、可由 Rust parser 完整读取、all audience>=2、risk named group 存在、对外 brand=fintech/Ledgerline 且受限标记零命中"
+    notes: "ported —— v3 §3.2 / §6.5 保留五文件示例与 all audience；§16.2 禁止对外 product name 复用 OpenBot/CopilotKit 标记，所以 fixture 改为 fintech/Ledgerline 并增加反向品牌断言。上游用例标题：「includes the complete fintech deployment package example」。"
   # ---------------------------------------------------------------------------
   # tests/smoke/journey.test.ts —— owner openbot-testkit / ported / parity
   # ---------------------------------------------------------------------------

@@ -188,6 +188,26 @@ pub(crate) struct SamlSecretConfig {
     pub group_normalization: GroupNormalization,
 }
 
+impl SamlSecretConfig {
+    pub(crate) fn mapping(
+        &self,
+        provider: &ProviderId,
+    ) -> Result<Option<IdpGroupMapping>, SsoConfigError> {
+        self.group_attribute
+            .as_ref()
+            .map(|attribute| {
+                let path = GroupClaimPath::from_segments([attribute.as_str()])
+                    .map_err(|_| SsoConfigError::GroupMappingRejected)?;
+                Ok(IdpGroupMapping::new(
+                    IdentityProviderId::new(provider.as_str()),
+                    path,
+                    self.group_normalization,
+                ))
+            })
+            .transpose()
+    }
+}
+
 /// 经过纯配置校验、尚未做 OIDC discovery/SAML metadata 解析的注册计划。
 #[derive(Debug)]
 pub(crate) enum RegistrationPlan {
@@ -756,5 +776,44 @@ mod tests {
             RegistrationPlan::parse(oversized).unwrap_err(),
             SsoConfigError::IssuerRejected
         );
+    }
+
+    #[test]
+    fn oidc_and_saml_expose_the_same_non_secret_group_audience_contract() {
+        let RegistrationPlan::Oidc {
+            provider_id,
+            config,
+            ..
+        } = RegistrationPlan::parse(oidc_body()).unwrap()
+        else {
+            panic!("OIDC 计划漂移")
+        };
+        let oidc = config.mapping(&provider_id).unwrap().unwrap();
+        assert_eq!(oidc.provider().as_str(), "acme-oidc");
+        assert_eq!(oidc.normalization(), GroupNormalization::TrimLowercase);
+
+        let input: RegisterIdentityProviderInput = serde_json::from_value(serde_json::json!({
+            "providerId":"acme-saml",
+            "issuer":"urn:example:idp:directory",
+            "domain":"example.com",
+            "samlConfig":{
+                "entryPoint":"https://idp.example/sso",
+                "idpMetadata":{"metadata":"<metadata/>"},
+                "groupAttribute":"groups",
+                "groupNormalization":"trim_lowercase"
+            }
+        }))
+        .unwrap();
+        let RegistrationPlan::Saml {
+            provider_id,
+            config,
+            ..
+        } = RegistrationPlan::parse(input).unwrap()
+        else {
+            panic!("SAML 计划漂移")
+        };
+        let saml = config.mapping(&provider_id).unwrap().unwrap();
+        assert_eq!(saml.provider().as_str(), "acme-saml");
+        assert_eq!(saml.normalization(), GroupNormalization::TrimLowercase);
     }
 }

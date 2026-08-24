@@ -51,6 +51,8 @@
 //!   listener（R56）。
 //! - [`store::plugin_user_credential`] —— per-user OAuth 按 `(server, actor)` 的网络前选择、
 //!   refresh/access 类型隔离，以及 People 移除后的正常/孤儿 credential 事务退役（R59）。
+//! - [`tenant`] —— 五 YAML 有界 loader、checksum、collision-safe PostgreSQL package sync 与
+//!   materialized membership/generation/session 原子投影（R60）。
 //!
 //! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
 //! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
@@ -64,4 +66,5 @@ pub mod net;
 pub mod policy;
 pub mod repo;
 pub mod store;
+pub mod tenant;
 pub mod vault;
