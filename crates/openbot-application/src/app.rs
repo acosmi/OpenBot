@@ -23,14 +23,15 @@ use tracing::Span;
 
 use crate::ports::{
     AuditReader, ChannelReader, NoAuditReader, NoPeopleAdministration, NoPolicyAdministration,
-    PeopleAdministration, PolicyAdministration,
+    NoThreadDirectory, PeopleAdministration, PolicyAdministration, ThreadDirectory,
 };
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
 use crate::use_cases::{
-    DEFAULT_HEARTBEAT_PERIOD, admin_status, change_person_access, change_person_role, current_user,
-    get_action_policy, health, health_stream, list_audit_events, list_people,
-    list_visible_channels, set_action_policy,
+    DEFAULT_HEARTBEAT_PERIOD, admin_status, begin_thread_run, change_person_access,
+    change_person_role, current_user, get_action_policy, get_thread_status, health, health_stream,
+    list_audit_events, list_people, list_visible_channels, mint_thread_id, set_action_policy,
+    subscribe_thread_events,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -45,6 +46,7 @@ pub struct OpenBotApplication<
     K = NoPolicyAdministration,
     C = NoToolControlPlane,
     J = NoToolJournal,
+    T = NoThreadDirectory,
 > {
     channels: R,
     people: P,
@@ -52,6 +54,7 @@ pub struct OpenBotApplication<
     policies: K,
     tool_control: C,
     tool_journal: J,
+    threads: T,
     heartbeat_period: Duration,
 }
 
@@ -63,6 +66,7 @@ impl<R>
         NoPolicyAdministration,
         NoToolControlPlane,
         NoToolJournal,
+        NoThreadDirectory,
     >
 {
     /// 注入端口实现。
@@ -74,15 +78,16 @@ impl<R>
             policies: NoPolicyAdministration,
             tool_control: NoToolControlPlane,
             tool_journal: NoToolJournal,
+            threads: NoThreadDirectory,
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
 }
 
-impl<R, P, A, K, C, J> OpenBotApplication<R, P, A, K, C, J> {
+impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T> {
     /// 注入 people/auth 原子端口。
     #[must_use]
-    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, K, C, J> {
+    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, K, C, J, T> {
         OpenBotApplication {
             channels: self.channels,
             people,
@@ -90,13 +95,14 @@ impl<R, P, A, K, C, J> OpenBotApplication<R, P, A, K, C, J> {
             policies: self.policies,
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
+            threads: self.threads,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入管理员 audit keyset reader。
     #[must_use]
-    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, K, C, J> {
+    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, K, C, J, T> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -104,13 +110,14 @@ impl<R, P, A, K, C, J> OpenBotApplication<R, P, A, K, C, J> {
             policies: self.policies,
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
+            threads: self.threads,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入 deployment-wide action policy 管理端口。
     #[must_use]
-    pub fn with_policy<Q>(self, policies: Q) -> OpenBotApplication<R, P, A, Q, C, J> {
+    pub fn with_policy<Q>(self, policies: Q) -> OpenBotApplication<R, P, A, Q, C, J, T> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -118,13 +125,18 @@ impl<R, P, A, K, C, J> OpenBotApplication<R, P, A, K, C, J> {
             policies,
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
+            threads: self.threads,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入 tool control plane 与 durable journal；二者分开，application 才能掌握固定顺序。
     #[must_use]
-    pub fn with_tools<T, L>(self, control: T, journal: L) -> OpenBotApplication<R, P, A, K, T, L> {
+    pub fn with_tools<Q, L>(
+        self,
+        control: Q,
+        journal: L,
+    ) -> OpenBotApplication<R, P, A, K, Q, L, T> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -132,6 +144,22 @@ impl<R, P, A, K, C, J> OpenBotApplication<R, P, A, K, C, J> {
             policies: self.policies,
             tool_control: control,
             tool_journal: journal,
+            threads: self.threads,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入 native thread ID / scope-aware directory；未注入时绝不回退 Intelligence。
+    #[must_use]
+    pub fn with_threads<Q>(self, threads: Q) -> OpenBotApplication<R, P, A, K, C, J, Q> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit: self.audit,
+            policies: self.policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            threads,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -147,7 +175,7 @@ impl<R, P, A, K, C, J> OpenBotApplication<R, P, A, K, C, J> {
     }
 }
 
-impl<R, P, A, K, C, J> OpenBotApplication<R, P, A, K, C, J>
+impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T>
 where
     R: ChannelReader,
     P: PeopleAdministration,
@@ -155,6 +183,7 @@ where
     K: PolicyAdministration,
     C: ToolControlPlane,
     J: ToolJournal,
+    T: ThreadDirectory,
 {
     /// 命令派发。**穷举 match 无通配** —— 新增 `AppCommand` 变体会在这里编译失败，
     /// 而不是落进一个 `_ => Err(unknown_method)` 分支。那个分支正是 §5.2 逐字禁止的
@@ -221,12 +250,21 @@ where
             AppCommand::InvokeTool(invocation) => Ok(AppReply::Tool(
                 invoke_tool(&self.tool_control, &self.tool_journal, auth, invocation).await?,
             )),
+            AppCommand::MintThreadId => Ok(AppReply::ThreadMinted(
+                mint_thread_id(&self.threads, auth).await?,
+            )),
+            AppCommand::GetThreadStatus { thread_id } => Ok(AppReply::ThreadStatus(
+                get_thread_status(&self.threads, auth, &thread_id).await?,
+            )),
+            AppCommand::BeginThreadRun(command) => Ok(AppReply::ThreadRunStarted(
+                begin_thread_run(&self.threads, auth, command).await?,
+            )),
         }
     }
 }
 
 #[async_trait]
-impl<R, P, A, K, C, J> ApplicationService for OpenBotApplication<R, P, A, K, C, J>
+impl<R, P, A, K, C, J, T> ApplicationService for OpenBotApplication<R, P, A, K, C, J, T>
 where
     R: ChannelReader + 'static,
     P: PeopleAdministration + 'static,
@@ -234,6 +272,7 @@ where
     K: PolicyAdministration + 'static,
     C: ToolControlPlane + 'static,
     J: ToolJournal + 'static,
+    T: ThreadDirectory + 'static,
 {
     #[tracing::instrument(
         name = "application.execute",
@@ -268,17 +307,6 @@ where
             error.code = tracing::field::Empty,
         )
     )]
-    // `auth` **是被用了的** —— 上面三个 span 字段就在读它（`subscribe_is_instrumented_too`
-    // 断言了这三个值确实落地）。但 `#[async_trait]` 与 `#[instrument]` 叠在一起时，字段
-    // 表达式落在展开后的另一个卫生上下文里，`unused_variables` 看不见它，于是误报。
-    //
-    // 用 `expect` 而不是 `allow`：`expect` 在这条 lint **不再触发**时会自己报 unfulfilled。
-    // 也就是说，等哪天 `auth` 在方法体里有了真实用途、或者宏的展开方式变了，这行会主动
-    // 提醒把它删掉 —— 一个会自己退休的抑制，而不是一条永久失效的静音。
-    #[expect(
-        unused_variables,
-        reason = "auth 由 #[instrument] 的 span 字段消费；async-trait 展开后 lint 看不见"
-    )]
     async fn subscribe(
         &self,
         auth: AuthContext,
@@ -287,6 +315,12 @@ where
         // 穷举 match，理由同 `dispatch`。
         match request {
             SubscriptionRequest::Health => Ok(health_stream(self.heartbeat_period)),
+            SubscriptionRequest::ThreadEvents {
+                thread_id,
+                after_event_sequence,
+            } => {
+                subscribe_thread_events(&self.threads, &auth, thread_id, after_event_sequence).await
+            }
         }
     }
 }
@@ -302,9 +336,11 @@ mod tests {
     use core::fmt;
     use core::future::Future;
     use openbot_contracts::auth::{AuthContext, Role};
-    use openbot_contracts::command::AppEvent;
+    use openbot_contracts::command::{AppEvent, BeginThreadRun, ThreadRunAnchor, ThreadRunStarted};
     use openbot_contracts::error::ErrorCode;
-    use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ToolCallId};
+    use openbot_contracts::ids::{
+        ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
+    };
     use openbot_contracts::policy::{ActionPolicyDocument, ActionPolicyMode};
     use openbot_contracts::tool::ToolInvocation;
     use serde_json::json;
@@ -744,6 +780,91 @@ mod tests {
             },
         ));
         assert!(result.is_err());
+    }
+
+    struct FixedThreadBegin;
+
+    #[async_trait]
+    impl ThreadDirectory for FixedThreadBegin {
+        async fn mint_thread_id(
+            &self,
+            _deployment: &DeploymentId,
+        ) -> Result<ThreadId, crate::ports::ThreadDirectoryError> {
+            Err(crate::ports::ThreadDirectoryError::Unavailable)
+        }
+
+        async fn thread_known(
+            &self,
+            _deployment: &DeploymentId,
+            _tenant: &TenantId,
+            _actor: &ActorId,
+            _thread: &ThreadId,
+        ) -> Result<bool, crate::ports::ThreadDirectoryError> {
+            Err(crate::ports::ThreadDirectoryError::Unavailable)
+        }
+
+        async fn begin_thread_run(
+            &self,
+            request: crate::ports::BeginThreadRunRequest,
+        ) -> Result<ThreadRunStarted, crate::ports::ThreadDirectoryError> {
+            Ok(ThreadRunStarted {
+                thread_id: request.command.thread_id,
+                run_id: request.command.run_id,
+                message_sequence: 4,
+                event_sequence: 9,
+                replayed: false,
+            })
+        }
+
+        async fn subscribe_thread_events(
+            &self,
+            _request: crate::ports::ThreadEventSubscription,
+        ) -> Result<AppEventStream, crate::ports::ThreadDirectoryError> {
+            Ok(health_stream(core::time::Duration::from_secs(1)))
+        }
+    }
+
+    #[test]
+    fn begin_thread_run_reaches_the_port_through_application_service_execute() {
+        let service =
+            OpenBotApplication::new(FakeChannelReader::empty()).with_threads(FixedThreadBegin);
+        let thread_id = ThreadId::new("550e8400-e29b-81d4-a716-446655440000");
+        let run_id = RunId::new("run-through-service");
+        let (reply, _) = capture(service.execute(
+            auth_for("actor-1"),
+            AppCommand::BeginThreadRun(BeginThreadRun {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+                bot_id: BotId::new("bot-1"),
+                anchor: ThreadRunAnchor::DirectBot,
+                message: "hello".to_owned(),
+            }),
+        ));
+        assert_eq!(
+            reply,
+            Ok(AppReply::ThreadRunStarted(ThreadRunStarted {
+                thread_id,
+                run_id,
+                message_sequence: 4,
+                event_sequence: 9,
+                replayed: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn thread_subscription_reaches_the_port_through_application_service_subscribe() {
+        let service =
+            OpenBotApplication::new(FakeChannelReader::empty()).with_threads(FixedThreadBegin);
+        let (result, captured) = capture(service.subscribe(
+            auth_for("actor-1"),
+            SubscriptionRequest::ThreadEvents {
+                thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+                after_event_sequence: Some(0),
+            },
+        ));
+        assert!(result.is_ok());
+        assert_eq!(captured.value_of("operation"), Some("thread_events"));
     }
 
     /// `dyn ApplicationService` 必须可用：transport 持有的是 trait 对象。

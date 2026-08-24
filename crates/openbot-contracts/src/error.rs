@@ -6,7 +6,7 @@
 //! - malformed payload 400，不产生 acting decision；
 //! - policy refusal 403 + stable error code/rule ID；
 //! - unavailable dependency 503；vendor failure 502/normalized tool error；
-//! - stale snapshot/generation 409；lease conflict 409；
+//! - stale snapshot/generation 409；request/idempotency conflict 409；lease conflict 409；
 //! - unknown commit 202/409 对应 reconciliation，不伪装 500 或 success；
 //! - 空、新 thread history 200 + empty list。
 //!
@@ -57,6 +57,8 @@ impl ErrorCode {
     pub const VENDOR_FAILURE: Self = Self("vendor_failure");
     /// snapshot / generation 陈旧（409）。
     pub const STALE_GENERATION: Self = Self("stale_generation");
+    /// 同一个请求/幂等 ID 已绑定到不同内容（409）。
+    pub const REQUEST_CONFLICT: Self = Self("request_conflict");
     /// lease 冲突（409）。
     pub const LEASE_CONFLICT: Self = Self("lease_conflict");
     /// 配置 admin floor 阻止降权。
@@ -337,6 +339,15 @@ pub enum AppError {
         subject: StaleGenerationSubject,
     },
 
+    /// 一个 durable request/idempotency ID 已绑定到不同内容（409）。
+    ///
+    /// `resource` 只能是静态类别名，绝不携带冲突 ID 或原始请求内容。
+    #[error("request_conflict resource={resource}")]
+    RequestConflict {
+        /// 冲突资源类别，例如 `"run"`。
+        resource: &'static str,
+    },
+
     /// lease 冲突（409）。human lease 期间 Agent acting 立即拒绝、不排队（§17.2 条 7）。
     #[error("lease_conflict")]
     LeaseConflict {
@@ -385,6 +396,7 @@ impl AppError {
             Self::DependencyUnavailable { .. } => ErrorCode::DEPENDENCY_UNAVAILABLE,
             Self::VendorFailure { .. } => ErrorCode::VENDOR_FAILURE,
             Self::StaleGeneration { .. } => ErrorCode::STALE_GENERATION,
+            Self::RequestConflict { .. } => ErrorCode::REQUEST_CONFLICT,
             Self::LeaseConflict { .. } => ErrorCode::LEASE_CONFLICT,
             Self::IdentityConflict { reason } => reason.code(),
             Self::SensitiveWriteRefused { reason } => reason.code(),
@@ -408,6 +420,7 @@ impl AppError {
             Self::DependencyUnavailable { .. } => 503,
             Self::VendorFailure { .. } => 502,
             Self::StaleGeneration { .. }
+            | Self::RequestConflict { .. }
             | Self::LeaseConflict { .. }
             | Self::IdentityConflict { .. } => 409,
             Self::SensitiveWriteRefused { .. } => 403,
@@ -434,9 +447,9 @@ impl AppError {
             Self::PolicyRefused { .. } => AuditKind::PolicyRefusal,
             Self::DependencyUnavailable { .. } => AuditKind::DependencyFailure,
             Self::VendorFailure { .. } => AuditKind::VendorFailure,
-            Self::StaleGeneration { .. } | Self::LeaseConflict { .. } => {
-                AuditKind::ConcurrencyConflict
-            }
+            Self::StaleGeneration { .. }
+            | Self::RequestConflict { .. }
+            | Self::LeaseConflict { .. } => AuditKind::ConcurrencyConflict,
             Self::IdentityConflict { .. } => AuditKind::AuthorizationDenied,
             Self::SensitiveWriteRefused { reason } => match reason {
                 SensitiveWriteReason::SessionNotFresh => AuditKind::AuthFailure,
@@ -462,7 +475,7 @@ mod tests {
 
     /// 变体总数。新增变体必须同 PR 改这里 —— 它与 [`variant_index`] 和
     /// [`all_variants_for_test`] 三者互相咬合，见下方三条测试。
-    const VARIANT_COUNT: usize = 12;
+    const VARIANT_COUNT: usize = 13;
 
     /// 无通配 `_` 的穷举 match：**新增变体在这里编译失败**，逼作者同 PR 更新下面的变体台账。
     ///
@@ -479,10 +492,11 @@ mod tests {
             AppError::DependencyUnavailable { .. } => 5,
             AppError::VendorFailure { .. } => 6,
             AppError::StaleGeneration { .. } => 7,
-            AppError::LeaseConflict { .. } => 8,
-            AppError::IdentityConflict { .. } => 9,
-            AppError::SensitiveWriteRefused { .. } => 10,
-            AppError::ReconciliationRequired { .. } => 11,
+            AppError::RequestConflict { .. } => 8,
+            AppError::LeaseConflict { .. } => 9,
+            AppError::IdentityConflict { .. } => 10,
+            AppError::SensitiveWriteRefused { .. } => 11,
+            AppError::ReconciliationRequired { .. } => 12,
         }
     }
 
@@ -516,6 +530,7 @@ mod tests {
                     observed: ComputerGeneration::new(2),
                 },
             },
+            AppError::RequestConflict { resource: "run" },
             AppError::LeaseConflict {
                 holder: Some(ActorId::new("actor-9")),
             },
@@ -626,6 +641,7 @@ mod tests {
                 },
                 409,
             ),
+            (AppError::RequestConflict { resource: "run" }, 409),
             (AppError::LeaseConflict { holder: None }, 409),
             (
                 AppError::IdentityConflict {

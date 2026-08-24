@@ -31,6 +31,8 @@ openbot-infra.workspace = true
 # `AuthResolver` / `ReadinessProbe` 都要对象安全（state 里持的是 `dyn`），
 # edition 2024 的 AFIT 仍不给对象安全，所以走 `async_trait`。
 async-trait.workspace = true
+# SSE framing wrapper 直接实现 `Stream`，不复制业务流、不引 futures-util。
+futures-core.workspace = true
 
 # transport 本体。
 axum.workspace = true

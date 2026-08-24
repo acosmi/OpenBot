@@ -35,6 +35,8 @@ use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
+use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
+use openbot_infra::thread_id::mint_thread_id;
 use openbot_server::config::{
     DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, ServerConfig, env_map_from_process,
 };
@@ -227,11 +229,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?);
     let people = PostgresPeopleAdministration::new(pool.clone(), floor, audit_key.to_vec())?
         .with_owned_credential_retirer(owned_credentials);
+    let thread_runtime_owner = format!("runtime:{}", mint_thread_id(&deployment)?);
+    let thread_directory = PostgresThreadDirectory::with_runtime(
+        pool.clone(),
+        database
+            .clone()
+            .with_application_name("openbot-thread-events"),
+        thread_runtime_owner,
+        DEFAULT_THREAD_LEASE_DURATION,
+    )?;
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(ChannelRepo::new(pool.clone()))
             .with_people(people)
             .with_audit(PostgresAuditReader::new(pool.clone()))
-            .with_policy(policy_store),
+            .with_policy(policy_store)
+            .with_threads(thread_directory),
     );
     let metrics = install_recorder()?;
     let db_probe_pool = pool.clone();

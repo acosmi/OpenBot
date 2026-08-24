@@ -6,6 +6,8 @@
 //! | --- | --- | --- |
 //! | [`list_visible_channels`] | parity | `server/src/routes/channels/routes.ts::list`（ledger `api-channels-list-get`） |
 //! | [`health`] | 新增 | 上游无对应路由；它是 typed 边界的最小活性证据 |
+//! | [`mint_thread_id`] / [`get_thread_status`] | parity + §4.1 替代 | 固定上游 `thread-routes.test.ts`，R64 |
+//! | [`begin_thread_run`] / [`subscribe_thread_events`] | 新增 native control plane | §4.3，R65 |
 //!
 //! 用例是**函数**不是结构体：它们没有需要跨调用保存的状态，依赖由参数传入（port 的
 //! 引用 + `AuthContext`）。做成 struct 只会让「这次调用用了哪些依赖」从签名里消失。
@@ -15,6 +17,7 @@ pub mod health;
 pub mod list_visible_channels;
 pub mod people;
 pub mod policy;
+pub mod thread;
 
 pub use audit::{DEFAULT_AUDIT_PAGE, MAX_AUDIT_PAGE, list_audit_events};
 pub use health::{DEFAULT_HEARTBEAT_PERIOD, health, health_stream};
@@ -24,3 +27,4 @@ pub use people::{
     current_user, list_people,
 };
 pub use policy::{get_action_policy, set_action_policy};
+pub use thread::{begin_thread_run, get_thread_status, mint_thread_id, subscribe_thread_events};

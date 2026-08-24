@@ -1,0 +1,571 @@
+//! Native thread mint/status HTTP framing（parity API T-API-0035/0036）。
+//!
+//! 两条路由都只做认证、path framing、typed command 与错误投影。状态真源固定为 PostgreSQL；
+//! 不存在任何 Intelligence client、条件挂载或 fallback。
+
+use core::convert::Infallible;
+use core::pin::Pin;
+use core::task::{Context, Poll};
+use core::time::Duration;
+
+use axum::Json;
+use axum::extract::{Path, State};
+use axum::http::HeaderMap;
+use axum::response::sse::{Event, KeepAlive};
+use axum::response::{IntoResponse, Sse};
+use futures_core::Stream;
+use openbot_application::AppEventStream;
+use openbot_contracts::command::{
+    AppCommand, AppEvent, AppReply, SubscriptionRequest, ThreadMinted, ThreadStatus,
+};
+use openbot_contracts::error::AppError;
+use openbot_contracts::ids::ThreadId;
+
+use crate::auth::Authenticated;
+use crate::error::HttpError;
+use crate::http::ServerState;
+
+/// `POST /api/threads/mint`：为已认证 actor 铸造当前 deployment 的 UUIDv8。
+pub async fn mint(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+) -> Result<Json<ThreadMinted>, HttpError> {
+    match state
+        .application()
+        .execute(auth, AppCommand::MintThreadId)
+        .await?
+    {
+        AppReply::ThreadMinted(reply) => Ok(Json(reply)),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `GET /api/threads/{thread_id}`：返回当前 actor scope 的 `known` 投影。
+///
+/// 非 UUID 由 application 返回 400；不存在、已删除、scope/membership 不符统一 200 false。
+pub async fn status(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+    Path(thread_id): Path<String>,
+) -> Result<Json<ThreadStatus>, HttpError> {
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::GetThreadStatus {
+                thread_id: ThreadId::new(thread_id),
+            },
+        )
+        .await?
+    {
+        AppReply::ThreadStatus(reply) => Ok(Json(reply)),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `GET /api/threads/{thread_id}/events`：SSE durable replay→live。
+///
+/// reconnect cursor 只认标准 `Last-Event-ID` 十进制值；身份仍由 session 构造。依赖/ACL 在
+/// response headers 发出前失败时返回普通 `AppError`；流建立后的撤权/依赖失败成为
+/// `thread_stream_error` frame 后断流。
+pub async fn events(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+    Path(thread_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, HttpError> {
+    let after_event_sequence = last_event_id(&headers)?;
+    let stream = state
+        .application()
+        .subscribe(
+            auth,
+            SubscriptionRequest::ThreadEvents {
+                thread_id: ThreadId::new(thread_id),
+                after_event_sequence,
+            },
+        )
+        .await?;
+    Ok(Sse::new(ThreadSseStream { inner: stream }).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
+}
+
+/// 把 typed [`AppEventStream`] frame 成 SSE；不实现任何业务判定。
+pub struct ThreadSseStream {
+    inner: AppEventStream,
+}
+
+impl Stream for ThreadSseStream {
+    type Item = Result<Event, Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner
+            .as_mut()
+            .poll_next(cx)
+            .map(|item| item.map(|event| Ok(sse_event(event))))
+    }
+}
+
+fn last_event_id(headers: &HeaderMap) -> Result<Option<u64>, AppError> {
+    let Some(value) = headers.get("last-event-id") else {
+        return Ok(None);
+    };
+    let raw = value.to_str().map_err(|_| AppError::MalformedPayload {
+        field: "last_event_id",
+    })?;
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    raw.parse::<u64>()
+        .map(Some)
+        .map_err(|_| AppError::MalformedPayload {
+            field: "last_event_id",
+        })
+}
+
+fn sse_event(event: AppEvent) -> Event {
+    let (name, id) = match &event {
+        AppEvent::Heartbeat { seq } => ("heartbeat", Some(*seq)),
+        AppEvent::ThreadRunEvent(event) => ("thread_run_event", Some(event.event_sequence)),
+        AppEvent::ThreadStreamError { .. } => ("thread_stream_error", None),
+    };
+    let data = serde_json::to_string(&event).unwrap_or_else(|_| {
+        r#"{"kind":"thread_stream_error","code":"dependency_unavailable"}"#.to_owned()
+    });
+    let frame = Event::default().event(name).data(data);
+    match id {
+        Some(id) => frame.id(id.to_string()),
+        None => frame,
+    }
+}
+
+fn application_contract_error() -> HttpError {
+    tracing::error!("thread command 收到不匹配 reply");
+    AppError::DependencyUnavailable {
+        dependency: "application",
+    }
+    .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use axum::Router;
+    use axum::body::{Body, to_bytes};
+    use http::{Method, Request, StatusCode};
+    use openbot_application::ports::{
+        ChannelReader, PortError, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
+    };
+    use openbot_application::{ChannelCursor, OpenBotApplication};
+    use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
+    use openbot_contracts::command::ChannelSummary;
+    use openbot_contracts::command::{ThreadRunEvent, ThreadRunEventKind};
+    use openbot_contracts::ids::thread::ThreadIdentity;
+    use openbot_contracts::ids::{ActorId, DeploymentId, RunId, TenantId};
+    use serde_json::Value;
+    use tower::ServiceExt as _;
+
+    use super::*;
+    use crate::auth::FixedAuthResolver;
+    use crate::http::ServerBuilder;
+
+    #[derive(Clone, Copy)]
+    struct EmptyChannels;
+
+    #[async_trait]
+    impl ChannelReader for EmptyChannels {
+        async fn list_visible_channels(
+            &self,
+            _actor: &ActorId,
+            _limit: u32,
+            _cursor: Option<ChannelCursor>,
+        ) -> Result<Vec<ChannelSummary>, PortError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct KnownCall {
+        deployment: DeploymentId,
+        tenant: TenantId,
+        actor: ActorId,
+        thread: ThreadId,
+    }
+
+    #[derive(Clone)]
+    struct FakeThreadDirectory {
+        inner: Arc<FakeThreadDirectoryInner>,
+    }
+
+    struct FakeThreadDirectoryInner {
+        next_entropy: AtomicU64,
+        mint_calls: AtomicU64,
+        known: Result<bool, ThreadDirectoryError>,
+        known_calls: Mutex<Vec<KnownCall>>,
+        subscription_calls: Mutex<Vec<ThreadEventSubscription>>,
+        events: Mutex<Vec<AppEvent>>,
+    }
+
+    impl FakeThreadDirectory {
+        fn new(known: Result<bool, ThreadDirectoryError>) -> Self {
+            Self {
+                inner: Arc::new(FakeThreadDirectoryInner {
+                    next_entropy: AtomicU64::new(1),
+                    mint_calls: AtomicU64::new(0),
+                    known,
+                    known_calls: Mutex::new(Vec::new()),
+                    subscription_calls: Mutex::new(Vec::new()),
+                    events: Mutex::new(Vec::new()),
+                }),
+            }
+        }
+
+        fn with_events(self, events: Vec<AppEvent>) -> Self {
+            *self.inner.events.lock().expect("fake lock") = events;
+            self
+        }
+
+        fn mint_calls(&self) -> u64 {
+            self.inner.mint_calls.load(Ordering::SeqCst)
+        }
+
+        fn known_calls(&self) -> Vec<KnownCall> {
+            self.inner.known_calls.lock().expect("fake lock").clone()
+        }
+
+        fn subscription_calls(&self) -> Vec<ThreadEventSubscription> {
+            self.inner
+                .subscription_calls
+                .lock()
+                .expect("fake lock")
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl ThreadDirectory for FakeThreadDirectory {
+        async fn mint_thread_id(
+            &self,
+            deployment: &DeploymentId,
+        ) -> Result<ThreadId, ThreadDirectoryError> {
+            self.inner.mint_calls.fetch_add(1, Ordering::SeqCst);
+            let sequence = self.inner.next_entropy.fetch_add(1, Ordering::SeqCst);
+            let mut entropy = [0_u8; 16];
+            entropy[8..].copy_from_slice(&sequence.to_be_bytes());
+            Ok(ThreadIdentity::new(deployment).mint_from_entropy(entropy))
+        }
+
+        async fn thread_known(
+            &self,
+            deployment: &DeploymentId,
+            tenant: &TenantId,
+            actor: &ActorId,
+            thread: &ThreadId,
+        ) -> Result<bool, ThreadDirectoryError> {
+            self.inner
+                .known_calls
+                .lock()
+                .expect("fake lock")
+                .push(KnownCall {
+                    deployment: deployment.clone(),
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    thread: thread.clone(),
+                });
+            self.inner.known
+        }
+
+        async fn subscribe_thread_events(
+            &self,
+            request: ThreadEventSubscription,
+        ) -> Result<AppEventStream, ThreadDirectoryError> {
+            self.inner
+                .subscription_calls
+                .lock()
+                .expect("fake lock")
+                .push(request);
+            Ok(Box::pin(FiniteEvents(
+                self.inner.events.lock().expect("fake lock").clone().into(),
+            )))
+        }
+    }
+
+    struct FiniteEvents(VecDeque<AppEvent>);
+
+    impl Stream for FiniteEvents {
+        type Item = AppEvent;
+
+        fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Ready(self.0.pop_front())
+        }
+    }
+
+    fn auth(actor: &str) -> AuthContext {
+        AuthContext::for_test(
+            DeploymentId::new("openbot-test"),
+            TenantId::new("tenant-test"),
+            ActorId::new(actor),
+            [Role::User],
+            AuthGeneration::new(1),
+            false,
+        )
+    }
+
+    fn app(directory: FakeThreadDirectory, resolver: FixedAuthResolver) -> Router {
+        let application = Arc::new(OpenBotApplication::new(EmptyChannels).with_threads(directory));
+        ServerBuilder::new(application, Arc::new(resolver)).into_router()
+    }
+
+    async fn send(router: Router, method: Method, uri: &str) -> (StatusCode, Value) {
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("test request"),
+            )
+            .await
+            .expect("router response");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("bounded response");
+        let body = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes).expect("JSON response")
+        };
+        (status, body)
+    }
+
+    #[tokio::test]
+    async fn returns_one_this_deployment_can_recognise_later() {
+        let directory = FakeThreadDirectory::new(Ok(false));
+        let (status, body) = send(
+            app(directory, FixedAuthResolver::granting(auth("u1"))),
+            Method::POST,
+            "/api/threads/mint",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let thread = ThreadId::new(body["threadId"].as_str().expect("threadId"));
+        assert!(ThreadIdentity::new(&DeploymentId::new("openbot-test")).owns(&thread));
+    }
+
+    #[tokio::test]
+    async fn returns_a_different_one_every_time() {
+        let directory = FakeThreadDirectory::new(Ok(false));
+        let router = app(directory, FixedAuthResolver::granting(auth("u1")));
+        let (_, first) = send(router.clone(), Method::POST, "/api/threads/mint").await;
+        let (_, second) = send(router, Method::POST, "/api/threads/mint").await;
+        assert_ne!(first["threadId"], second["threadId"]);
+    }
+
+    #[tokio::test]
+    async fn does_not_answer_a_caller_with_no_session() {
+        let directory = FakeThreadDirectory::new(Ok(false));
+        let visible = directory.clone();
+        let (status, body) = send(
+            app(
+                directory,
+                FixedAuthResolver::rejecting(AppError::Unauthenticated),
+            ),
+            Method::POST,
+            "/api/threads/mint",
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body, serde_json::json!({"code":"unauthenticated"}));
+        assert_eq!(visible.mint_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn answers_known_when_the_native_store_can_produce_the_thread() {
+        let thread = "550e8400-e29b-41d4-a716-446655440000";
+        let (status, body) = send(
+            app(
+                FakeThreadDirectory::new(Ok(true)),
+                FixedAuthResolver::granting(auth("u1")),
+            ),
+            Method::GET,
+            &format!("/api/threads/{thread}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!({"known":true}));
+    }
+
+    #[tokio::test]
+    async fn answers_unknown_when_the_native_store_has_never_heard_of_it() {
+        let thread = "550e8400-e29b-41d4-a716-446655440000";
+        let (status, body) = send(
+            app(
+                FakeThreadDirectory::new(Ok(false)),
+                FixedAuthResolver::granting(auth("u1")),
+            ),
+            Method::GET,
+            &format!("/api/threads/{thread}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!({"known":false}));
+    }
+
+    #[tokio::test]
+    async fn native_store_failure_is_503_and_never_leaks_its_own_error() {
+        let thread = "550e8400-e29b-41d4-a716-446655440000";
+        let (status, body) = send(
+            app(
+                FakeThreadDirectory::new(Err(ThreadDirectoryError::Unavailable)),
+                FixedAuthResolver::granting(auth("u1")),
+            ),
+            Method::GET,
+            &format!("/api/threads/{thread}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, serde_json::json!({"code":"dependency_unavailable"}));
+        assert!(!body.to_string().contains("database"));
+    }
+
+    #[tokio::test]
+    async fn status_is_always_registered_without_intelligence_and_mint_keeps_working() {
+        let router = app(
+            FakeThreadDirectory::new(Ok(false)),
+            FixedAuthResolver::granting(auth("u1")),
+        );
+        let (status, body) = send(
+            router.clone(),
+            Method::GET,
+            "/api/threads/550e8400-e29b-41d4-a716-446655440000",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!({"known":false}));
+
+        let (mint_status, minted) = send(router, Method::POST, "/api/threads/mint").await;
+        assert_eq!(mint_status, StatusCode::OK);
+        assert!(minted["threadId"].is_string());
+    }
+
+    #[tokio::test]
+    async fn asks_about_the_session_actor_not_one_smuggled_in_the_query() {
+        let directory = FakeThreadDirectory::new(Ok(true));
+        let visible = directory.clone();
+        let thread = "550e8400-e29b-41d4-a716-446655440000";
+        let (status, _) = send(
+            app(directory, FixedAuthResolver::granting(auth("u1"))),
+            Method::GET,
+            &format!("/api/threads/{thread}?userId=someone-else"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            visible.known_calls(),
+            vec![KnownCall {
+                deployment: DeploymentId::new("openbot-test"),
+                tenant: TenantId::new("tenant-test"),
+                actor: ActorId::new("u1"),
+                thread: ThreadId::new(thread),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_thread_id_is_400_before_the_store_is_touched() {
+        let directory = FakeThreadDirectory::new(Ok(true));
+        let visible = directory.clone();
+        let (status, body) = send(
+            app(directory, FixedAuthResolver::granting(auth("u1"))),
+            Method::GET,
+            "/api/threads/not-a-uuid",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, serde_json::json!({"code":"malformed_payload"}));
+        assert!(visible.known_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sse_uses_last_event_id_and_frames_typed_events_without_a_second_business_path() {
+        let thread = ThreadId::new("550e8400-e29b-41d4-a716-446655440000");
+        let directory = FakeThreadDirectory::new(Ok(true)).with_events(vec![
+            AppEvent::ThreadRunEvent(ThreadRunEvent {
+                thread_id: thread.clone(),
+                run_id: RunId::new("run-1"),
+                event_sequence: 7,
+                event_type: ThreadRunEventKind::SemanticChunk,
+                payload: serde_json::json!({"text":"hello"}),
+                terminal: false,
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+            }),
+            AppEvent::ThreadStreamError {
+                code: "not_visible".to_owned(),
+            },
+        ]);
+        let visible = directory.clone();
+        let response = app(directory, FixedAuthResolver::granting(auth("u1")))
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/threads/{thread}/events"))
+                    .header("last-event-id", "6")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[http::header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .expect("bounded SSE")
+                .to_vec(),
+        )
+        .expect("UTF-8 SSE");
+        assert!(body.contains("id: 7\n"), "{body}");
+        assert!(body.contains("event: thread_run_event\n"), "{body}");
+        assert!(body.contains(r#""eventSequence":7"#), "{body}");
+        assert!(body.contains("event: thread_stream_error\n"), "{body}");
+        assert_eq!(
+            visible.subscription_calls(),
+            vec![ThreadEventSubscription {
+                deployment: DeploymentId::new("openbot-test"),
+                tenant: TenantId::new("tenant-test"),
+                actor: ActorId::new("u1"),
+                thread,
+                after_event_sequence: Some(6),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_last_event_id_is_400_before_subscribe() {
+        let directory = FakeThreadDirectory::new(Ok(true));
+        let visible = directory.clone();
+        let response = app(directory, FixedAuthResolver::granting(auth("u1")))
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/threads/550e8400-e29b-41d4-a716-446655440000/events")
+                    .header("last-event-id", "not-a-cursor")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(visible.subscription_calls().is_empty());
+    }
+}

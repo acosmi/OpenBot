@@ -107,6 +107,7 @@ impl IntoResponse for HttpError {
             | AppError::DependencyUnavailable { .. }
             | AppError::VendorFailure { .. }
             | AppError::StaleGeneration { .. }
+            | AppError::RequestConflict { .. }
             | AppError::LeaseConflict { .. }
             | AppError::IdentityConflict { .. }
             | AppError::SensitiveWriteRefused { .. }
@@ -161,6 +162,7 @@ mod tests {
                     observed: ComputerGeneration::new(6),
                 },
             },
+            AppError::RequestConflict { resource: "run" },
             AppError::LeaseConflict {
                 holder: Some(ActorId::new("actor-other-tenant-user")),
             },

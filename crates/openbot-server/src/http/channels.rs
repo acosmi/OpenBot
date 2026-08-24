@@ -128,7 +128,10 @@ pub async fn list(
         | AppReply::Person(_)
         | AppReply::AuditEvents(_)
         | AppReply::ActionPolicy { .. }
-        | AppReply::Tool(_) => {
+        | AppReply::Tool(_)
+        | AppReply::ThreadMinted(_)
+        | AppReply::ThreadStatus(_)
+        | AppReply::ThreadRunStarted(_) => {
             tracing::error!(
                 "ListVisibleChannels 收到非 Channels 应答 —— ApplicationService 契约破损"
             );

@@ -24,14 +24,15 @@
 //! # 用例随已闭合 slice 扩展
 //!
 //! 没有 parity ledger/第一真源条目背书的用例不能进（CLAUDE.md §4）。G1 从 channel/health
-//! 起步，W-3a 追加 people，W-3b 追加 tool pipeline；thread 订阅仍是 G3，届时同批加入。
+//! 起步，W-3a 追加 people，W-3b 追加 tool pipeline；R64 追加 thread mint/status，R65 同批
+//! 追加 BeginThreadRun 与 durable ThreadEvents subscription/event。
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::audit::AuditPage;
 use crate::auth::Role;
-use crate::ids::{ActorId, BotId, ChannelId, ThreadId};
+use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
 use crate::policy::ActionPolicyDocument;
 use crate::tool::{ToolInvocation, ToolResult};
@@ -45,6 +46,13 @@ use crate::tool::{ToolInvocation, ToolResult};
 /// 语义：[`AppCommand::ListVisibleChannels::limit`] 为 `None` 或大于本值时，application
 /// 按本值截断；本 crate 只定义常量，不在这里做钳制 —— 钳制是 use case 的职责。
 pub const MAX_CHANNEL_PAGE: u32 = 200;
+
+/// 单条 initial user message 的 application 级字节上限。
+///
+/// 与 Server 全局 request body 1 MiB 上限取同一值；typed in-process 不经过 HTTP body layer，
+/// 所以 application 必须自己守住同一资源边界。JSON framing 会让 HTTP 实际可用文本略小，
+/// 但绝不能让 Desktop 绕过全局数量级。
+pub const MAX_THREAD_MESSAGE_BYTES: usize = 1024 * 1024;
 
 /// 应用层命令。封闭 enum。
 ///
@@ -137,6 +145,24 @@ pub enum AppCommand {
 
     /// 由 Rust Agent gateway 铸造的一次工具调用；仍须在 application 里走完整 §8.1 管线。
     InvokeTool(ToolInvocation),
+
+    /// 为一次 direct Bot 对话铸造带 deployment fingerprint 的 thread ID。
+    ///
+    /// 没有 deployment/actor 输入字段：二者只能来自权威 [`crate::auth::AuthContext`]。
+    MintThreadId,
+
+    /// 查询当前 actor 是否仍可见一条 native thread。
+    GetThreadStatus {
+        /// 兼容端接受任意既有 [`ThreadId`] 字符串；application 再按固定路由契约检查 UUID
+        /// 外形，不能用“是否由本 deployment 铸造”替代可见性查询。
+        thread_id: ThreadId,
+    },
+
+    /// 原子创建/恢复 thread 并开始一次 foreground run。
+    ///
+    /// actor、tenant、deployment、fencing、时间与 sequence 均不在输入面；只能由权威
+    /// `AuthContext` / PostgreSQL transaction 铸造。`run_id` 同时是幂等键。
+    BeginThreadRun(BeginThreadRun),
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -164,6 +190,12 @@ pub enum AppReply {
     },
     /// [`AppCommand::InvokeTool`] 的已持久化、已脱敏结果。
     Tool(ToolResult),
+    /// [`AppCommand::MintThreadId`] 的应答。
+    ThreadMinted(ThreadMinted),
+    /// [`AppCommand::GetThreadStatus`] 的应答。
+    ThreadStatus(ThreadStatus),
+    /// [`AppCommand::BeginThreadRun`] 的 durable receipt。
+    ThreadRunStarted(ThreadRunStarted),
 }
 
 /// 探活结果。
@@ -176,6 +208,69 @@ pub struct HealthReport {
     /// §16.4 的 metrics 与 `openbot-server` 的 `/readyz`，不是跨边界 DTO 的内容。把依赖
     /// 明细放进公开应答会顺带泄漏部署拓扑。
     pub ok: bool,
+}
+
+/// `POST /api/threads/mint` 的稳定应答形状。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadMinted {
+    /// 带 deployment fingerprint 的 UUIDv8。
+    pub thread_id: ThreadId,
+}
+
+/// `GET /api/threads/{thread_id}` 的稳定应答形状。
+///
+/// `false` 同时覆盖“不存在、已删除、对当前 actor 不可见”，避免用状态接口枚举别人的 thread。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadStatus {
+    /// 当前权威 scope 能否产生这条 thread。
+    pub known: bool,
+}
+
+/// 一次新 thread/run 的 anchor；不能同时自报 channel 与 direct Bot。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ThreadRunAnchor {
+    /// Channel transcript；application/infra 仍须验证 actor membership 与 Bot attachment。
+    Channel {
+        /// 权威 channel 候选。
+        channel_id: ChannelId,
+    },
+    /// Direct Bot chat；anchor id 等于 [`BeginThreadRun::bot_id`]。
+    DirectBot,
+}
+
+/// 开始一次 native foreground turn 的最小输入。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BeginThreadRun {
+    /// 由 `/api/threads/mint` 或迁移输入得到的 thread id。
+    pub thread_id: ThreadId,
+    /// 调用方铸造的 durable 幂等键；相同 ID + 相同内容返回同一 receipt。
+    pub run_id: RunId,
+    /// 要运行的 Bot；可见性由权威存储验证。
+    pub bot_id: BotId,
+    /// Channel/direct 互斥 anchor。
+    pub anchor: ThreadRunAnchor,
+    /// initial user message；原样保存，不做 Unicode normalization。
+    pub message: String,
+}
+
+/// thread/message/run/event/outbox 同事务提交后的 receipt。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadRunStarted {
+    /// Thread id。
+    pub thread_id: ThreadId,
+    /// Run id / 幂等键。
+    pub run_id: RunId,
+    /// initial user message 的 thread-local sequence。
+    pub message_sequence: u64,
+    /// `started` semantic event 的 thread-global reconnect cursor。
+    pub event_sequence: u64,
+    /// `true` 表示完全相同的 run_id 请求已提交过，本次没有新增行/通知。
+    pub replayed: bool,
 }
 
 /// 一页 channel。
@@ -259,13 +354,19 @@ pub struct ChannelSummary {
 
 /// 订阅请求。封闭 enum，理由同 [`AppCommand`]。
 ///
-/// G1 只有探活一项：真正的 thread 订阅是 G3 的工作，提前定义会得到一个没有消费者、
-/// 也没有 ledger 条目背书的形状。
+/// R65 后有探活与 durable thread events 两项；后者必须由 PostgreSQL replay→live producer 承担。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SubscriptionRequest {
     /// 订阅心跳流。
     Health,
+    /// 订阅一条可见 thread 的 durable semantic events。
+    ThreadEvents {
+        /// Thread id；scope 仍只取 AuthContext。
+        thread_id: ThreadId,
+        /// 客户端最后完整接收的 thread-global cursor；`None` 从第一条开始。
+        after_event_sequence: Option<u64>,
+    },
 }
 
 /// 订阅流上的事件。封闭 enum。
@@ -280,6 +381,80 @@ pub enum AppEvent {
         /// 序号。
         seq: u64,
     },
+    /// 从 PostgreSQL durable journal replay/live 得到的一条 semantic event。
+    ThreadRunEvent(ThreadRunEvent),
+    /// 订阅建立后依赖失败；只携带稳定 code，随后流结束，客户端按 cursor 重连。
+    ThreadStreamError {
+        /// 稳定错误码；不携带数据库/网络原文。
+        code: String,
+    },
+}
+
+/// 跨 transport 的封闭 semantic run event 类型。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadRunEventKind {
+    /// Run 开始。
+    Started,
+    /// 50ms/8KiB 合并后的文本/推理 chunk。
+    SemanticChunk,
+    /// Operational checkpoint；不是 memory。
+    Checkpoint,
+    /// 正常 terminal。
+    Completed,
+    /// 确定失败 terminal。
+    Failed,
+    /// 取消 terminal。
+    Cancelled,
+    /// 未知提交 terminal。
+    ReconciliationRequired,
+}
+
+impl ThreadRunEventKind {
+    /// 从 PostgreSQL 封闭值解析；未知值返回 `None`，不能降级成 custom。
+    #[must_use]
+    pub const fn from_database(value: &str) -> Option<Self> {
+        match value.as_bytes() {
+            b"started" => Some(Self::Started),
+            b"semantic_chunk" => Some(Self::SemanticChunk),
+            b"checkpoint" => Some(Self::Checkpoint),
+            b"completed" => Some(Self::Completed),
+            b"failed" => Some(Self::Failed),
+            b"cancelled" => Some(Self::Cancelled),
+            b"reconciliation_required" => Some(Self::ReconciliationRequired),
+            _ => None,
+        }
+    }
+
+    /// terminal 属性由 kind 决定，不能由 payload 自报。
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Cancelled | Self::ReconciliationRequired
+        )
+    }
+}
+
+/// 一条可重放的 thread-global semantic event。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadRunEvent {
+    /// Thread。
+    pub thread_id: ThreadId,
+    /// Run。
+    pub run_id: RunId,
+    /// thread-global cursor，严格递增。
+    pub event_sequence: u64,
+    /// 封闭 event kind。
+    pub event_type: ThreadRunEventKind,
+    /// 已结构验证的 semantic payload。
+    pub payload: serde_json::Value,
+    /// 必须与 [`ThreadRunEventKind::is_terminal`] 相等。
+    pub terminal: bool,
+    /// PostgreSQL commit timestamp。
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
 }
 
 #[cfg(test)]
@@ -468,6 +643,35 @@ mod tests {
         );
         assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), tool);
 
+        let mint = AppCommand::MintThreadId;
+        let wire = serde_json::to_string(&mint).unwrap();
+        assert_eq!(wire, r#"{"kind":"mint_thread_id"}"#);
+        assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), mint);
+
+        let status = AppCommand::GetThreadStatus {
+            thread_id: ThreadId::new("550e8400-e29b-41d4-a716-446655440000"),
+        };
+        let wire = serde_json::to_string(&status).unwrap();
+        assert_eq!(
+            wire,
+            r#"{"kind":"get_thread_status","thread_id":"550e8400-e29b-41d4-a716-446655440000"}"#
+        );
+        assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), status);
+
+        let begin = AppCommand::BeginThreadRun(BeginThreadRun {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+            run_id: RunId::new("run-1"),
+            bot_id: BotId::new("bot-1"),
+            anchor: ThreadRunAnchor::DirectBot,
+            message: "hello".to_owned(),
+        });
+        let wire = serde_json::to_string(&begin).unwrap();
+        assert_eq!(
+            wire,
+            r#"{"kind":"begin_thread_run","threadId":"550e8400-e29b-81d4-a716-446655440000","runId":"run-1","botId":"bot-1","anchor":{"kind":"direct_bot"},"message":"hello"}"#
+        );
+        assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), begin);
+
         let audit = AppCommand::ListAuditEvents {
             cursor: Some("opaque".to_owned()),
             event_type: Some("one,two".to_owned()),
@@ -560,16 +764,86 @@ mod tests {
         );
         assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), tool);
 
+        let minted = AppReply::ThreadMinted(ThreadMinted {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+        });
+        let json = serde_json::to_string(&minted).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"thread_minted","threadId":"550e8400-e29b-81d4-a716-446655440000"}"#
+        );
+        assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), minted);
+
+        let status = AppReply::ThreadStatus(ThreadStatus { known: false });
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, r#"{"kind":"thread_status","known":false}"#);
+        assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), status);
+
+        let started = AppReply::ThreadRunStarted(ThreadRunStarted {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+            run_id: RunId::new("run-1"),
+            message_sequence: 3,
+            event_sequence: 7,
+            replayed: false,
+        });
+        let json = serde_json::to_string(&started).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"thread_run_started","threadId":"550e8400-e29b-81d4-a716-446655440000","runId":"run-1","messageSequence":3,"eventSequence":7,"replayed":false}"#
+        );
+        assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), started);
+
         let request = SubscriptionRequest::Health;
         assert_eq!(
             serde_json::to_string(&request).unwrap(),
             r#"{"kind":"health"}"#
         );
 
+        let request = SubscriptionRequest::ThreadEvents {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+            after_event_sequence: Some(7),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"thread_events","thread_id":"550e8400-e29b-81d4-a716-446655440000","after_event_sequence":7}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<SubscriptionRequest>(&json).unwrap(),
+            request
+        );
+
         let event = AppEvent::Heartbeat { seq: 7 };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(json, r#"{"kind":"heartbeat","seq":7}"#);
         assert_eq!(serde_json::from_str::<AppEvent>(&json).unwrap(), event);
+
+        let event = AppEvent::ThreadRunEvent(ThreadRunEvent {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+            run_id: RunId::new("run-1"),
+            event_sequence: 8,
+            event_type: ThreadRunEventKind::SemanticChunk,
+            payload: serde_json::json!({"text":"hello"}),
+            terminal: false,
+            created_at: datetime!(2026-08-24 12:00:00 UTC),
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""kind":"thread_run_event""#), "{json}");
+        assert!(json.contains(r#""eventSequence":8"#), "{json}");
+        assert_eq!(serde_json::from_str::<AppEvent>(&json).unwrap(), event);
+
+        for (kind, terminal) in [
+            (ThreadRunEventKind::Started, false),
+            (ThreadRunEventKind::SemanticChunk, false),
+            (ThreadRunEventKind::Checkpoint, false),
+            (ThreadRunEventKind::Completed, true),
+            (ThreadRunEventKind::Failed, true),
+            (ThreadRunEventKind::Cancelled, true),
+            (ThreadRunEventKind::ReconciliationRequired, true),
+        ] {
+            assert_eq!(kind.is_terminal(), terminal);
+        }
+        assert!(ThreadRunEventKind::from_database("unknown").is_none());
     }
 
     /// parity 常量固定为上游 `channels/routes.ts::MAX_CHANNEL_PAGE` 的取值。

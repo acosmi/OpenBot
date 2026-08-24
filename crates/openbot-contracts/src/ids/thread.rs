@@ -53,6 +53,16 @@ impl ThreadIdentity {
         };
         bytes[6] & UUID_VERSION_MASK == UUID_V8 && bytes[..FINGERPRINT_BYTES] == self.fingerprint
     }
+
+    /// 只检查 thread ID 是否是标准的 8-4-4-4-12 UUID 文本，不要求由当前 deployment 铸造。
+    ///
+    /// 状态查询必须兼容另一个 deployment 或旧版铸造的 UUID；因此不能用 [`Self::owns`]
+    /// 做输入校验。另一方面，完全不是 UUID 的字符串不应到达持久化查询（固定上游
+    /// `PLAUSIBLE_THREAD_ID` 判据）。把解析器留在这里可避免 contracts/application 各写一份。
+    #[must_use]
+    pub fn is_plausible(thread: &ThreadId) -> bool {
+        parse_uuid(thread.as_str()).is_some()
+    }
 }
 
 fn format_uuid(bytes: [u8; UUID_BYTES]) -> String {
@@ -186,5 +196,13 @@ mod tests {
         ] {
             assert!(!here().owns(&ThreadId::new(value)));
         }
+    }
+
+    #[test]
+    fn plausibility_accepts_legacy_and_foreign_uuid_without_claiming_ownership() {
+        let legacy = ThreadId::new("550e8400-e29b-41d4-a716-446655440000");
+        assert!(ThreadIdentity::is_plausible(&legacy));
+        assert!(!here().owns(&legacy));
+        assert!(!ThreadIdentity::is_plausible(&ThreadId::new("not-a-uuid")));
     }
 }

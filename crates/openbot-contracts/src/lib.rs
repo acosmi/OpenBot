@@ -25,7 +25,7 @@
 //!   同名字段一律是普通不可信输入。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # 当前状态（G1 + people/tool + W-5 audit contracts）
+//! # 当前状态（G1 + people/tool/audit + G3 thread contracts）
 //!
 //! Phase 0（Evidence Freeze）本 crate 刻意为空；G1 起它承载五个模块：
 //!
@@ -34,22 +34,23 @@
 //! | [`ids`] | 十五个核心 ID + 三个不 serde 的跨层内部 ID/generation | §5.3 / R47 |
 //! | [`auth`] | [`auth::AuthContext`]、[`auth::AuthGeneration`]、[`auth::Role`]、受限构造入口 | §5.3 / §5.2 / R47 |
 //! | [`error`] | [`error::AppError`]、稳定 code、HTTP status、audit 类型 | §15.3 |
-//! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent` | §5.2 |
+//! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent`，含 R64 thread mint/status | §5.2 / §4.1 |
 //! | [`people`] | current user / admin status / people page 与 person 公开 DTO | §6.2 / R40 |
 //! | [`audit`] | 管理员 audit event/page DTO 与 JavaScript 毫秒时间 wire | §8.6 / R56 |
 //! | [`tool`] | Agent tool invocation 与脱敏结果；没有 actor/policy/target 自报字段 | §8.1 |
 //! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
 //!
 //! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：W-3a 只在 G1 的
-//! channel/health 之外追加 fixed-upstream people slice；thread 订阅、工具管线、browser 协议分别是
-//! 后续工作，届时随各自 ledger 条目一起加。本 crate 里凡是与上游行为对齐的取值
+//! channel/health 之外追加 fixed-upstream people slice；R64 已加 thread request/reply，thread live
+//! 订阅与 browser 协议仍是后续工作，届时随各自 ledger 条目一起加。本 crate 里凡是与上游行为对齐的取值
 //! （如 [`command::MAX_CHANNEL_PAGE`]）都在注释里标了 parity 出处，新增项同理 —— 把新增
 //! 写成"当前行为"是 v2 审计里最重的一类错误（§28.1 R1）。
 //!
 //! # 依赖面为什么这么窄
 //!
 //! 本 crate 必须编到 `wasm32-unknown-unknown`（`openbot-ui` 是 Leptos CSR/WASM 且只依赖它）。
-//! 所以依赖只有 `serde` / `serde_json` / `thiserror` / `time`；`serde_json::Value` 只出现在封闭
+//! 所以依赖只有 `serde` / `serde_json` / `thiserror` / `time` / 纯 Rust `sha2`；`sha2` 只做
+//! ThreadIdentity fingerprint，随机源仍在 infra。`serde_json::Value` 只出现在封闭
 //! `InvokeTool` 的 arguments 字段，actor/policy/target 仍无自报入口。**禁止**引入 `tokio` /
 //! `axum` / `tokio-postgres` 或任何做 I/O 的 crate ——
 //! 那会让整个 GUI 编译失败，或者更糟：编过了但在浏览器里运行期炸。闸门是

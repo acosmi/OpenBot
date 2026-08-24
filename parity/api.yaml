@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 148
+    expect: 149
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 2
+    expect: 3
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 148
+    expect: 149
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -117,6 +117,17 @@ entries:
       §16.4 逐字「高基数 actor/thread 不进入 metrics label，只进入受控 trace/log」，
       actor_id / thread_id 必须不在白名单里（contracts 侧已有负向 + 正向对照测试钉死）。
       访问控制：G1 未实现。生产部署必须把它挡在内网或鉴权之后 —— 这一条属 G2 的 method/origin 面。
+  - id: "thread-events-sse-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::threads::events (GET /api/threads/{thread_id}/events, SSE)"
+    owner: "openbot-server"
+    test_id: "T-API-0149"
+    migration_rule: "n/a: §4.1 退出 Intelligence 后新增 native durable replay transport；上游只有 deployment-wide channel WebSocket"
+    status: "done"
+    done_evidence: "openbot-server http::threads::tests 11/0/0：SSE Last-Event-ID=6 精确变成 typed ThreadEvents(after=6)，frame 含 id:7/event:thread_run_event；坏 cursor 在 subscribe 前 400。PG17/SCRAM thread_live 1/0/0 证明丢 NOTIFY replay、双 replica wake、cursor 不重复与撤权 not_visible 断流"
+    evidence: "v3 §4.3 条 4/6：NOTIFY 只唤醒、按 sequence 补取；SSE/WS reconnect 携带 last cursor 且先 replay 再 live。§5.1 明列 openbot-server 负责 Axum HTTP/SSE/WS"
+    notes: "新增 authenticated SSE；标准 Last-Event-ID 是唯一 reconnect cursor 输入，transport 不解析业务 payload。当前完成 SSE 腿；固定上游 /api/channels/events WebSocket parity 条目仍独立 todo，不借本条冒充 WebSocket 已完成"
   - id: "api-capabilities-get"
     upstream: "server/src/app.ts::createApp"
     label: "parity"
@@ -464,7 +475,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0035"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "openbot-server http::threads::tests 9/0/0：POST /api/threads/mint 经 Authenticated→AppCommand::MintThreadId→production ThreadDirectory；无 session=401 且 issuer 调用数 0，连续 ID 唯一并被 deployment owns"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "session。thread id 含 DEPLOYMENT_ID 的 6 字节指纹（§20.3，该变量 preserve）。错误码：401"
   - id: "api-threads-get"
@@ -474,7 +486,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0036"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "openbot-server thread routes 9/0/0 + openbot-application thread 4/0/0 + PG17/SCRAM thread_directory 1/0/0：恒注册、UUID shape 400、unknown/invisible/deleted=200 false、DB failure=503、scope 只取 AuthContext"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "session。缺陷修正，不照译：上游此路由靠 Intelligence reader 存在与否决定是否注册，reader 抛错一律 502；§4.1 退出 Intelligence 后真源是 PostgreSQL，路由恒注册，未知 thread 返回 known:false 而非 502。§15.3：空/新 thread 一律 200 + 空列表。错误码：400 thread id 不合法 / 401 / 503 数据库不可用"
   - id: "api-components-list-get"
