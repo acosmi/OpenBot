@@ -1,5 +1,5 @@
 //! 认证边界 —— [`AuthResolver`] port 与它在 Axum 侧的提取器 [`Authenticated`] /
-//! [`AuthenticatedWrite`]。
+//! [`OriginAuthenticated`]。
 //!
 //! # port 与 W-4 production 实现
 //!
@@ -190,13 +190,13 @@ impl FromRequestParts<ServerState> for SensitiveAuthenticated {
     }
 }
 
-/// 已认证的 owner-scoped 普通写；trusted Origin 在任何 body extractor 运行前判定。
+/// 已认证的 same-origin 操作；trusted Origin 在任何 body/upgrade 业务运行前判定。
 ///
-/// `FromRequestParts` 构造性拿不到 body，handler 把本提取器放在 `Json` 之前后，Axum 会在
-/// Origin/身份失败时直接停止，不读取或解析请求体。
-pub struct AuthenticatedWrite(pub AuthContext);
+/// `FromRequestParts` 构造性拿不到 body，Memory 写与 thread WebSocket 共用它，避免 CSRF
+/// 失败仍读取 body 或建立能外泄 durable thread 的 cross-origin socket。
+pub struct OriginAuthenticated(pub AuthContext);
 
-impl FromRequestParts<ServerState> for AuthenticatedWrite {
+impl FromRequestParts<ServerState> for OriginAuthenticated {
     type Rejection = HttpError;
 
     async fn from_request_parts(
@@ -209,7 +209,7 @@ impl FromRequestParts<ServerState> for AuthenticatedWrite {
             .get(http::header::ORIGIN)
             .map(|value| value.to_str().unwrap_or(""));
         state
-            .authorize_authenticated_write(&resolved, origin)
+            .authorize_authenticated_origin(&resolved, origin)
             .await?;
         let auth = resolved.into_context();
         Span::current().record(ACTOR_ID_FIELD, tracing::field::display(auth.actor()));
@@ -269,7 +269,8 @@ impl SensitiveWriteSecurity {
         })
     }
 
-    /// 普通已认证 user 写只要求可信 Origin，不要求 admin/fresh；用于 owner-scoped memory。
+    /// 普通已认证 same-origin 操作只要求可信 Origin，不要求 admin/fresh；用于 owner memory
+    /// 写与 thread WebSocket，避免跨站带 cookie 读取 durable event。
     pub fn authorize_origin(&self, origin: Option<&str>) -> Result<(), AppError> {
         let Some(origin) = origin else {
             return Err(AppError::SensitiveWriteRefused {

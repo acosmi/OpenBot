@@ -92,6 +92,10 @@ openbot-contracts = { workspace = true, features = ["testkit"] }
 # `util` 不改根 Cargo.toml，也不影响任何生产依赖图（`tower` 不在 `[dependencies]` 里）。
 tower = { workspace = true, features = ["util"] }
 
+# 真实 TCP/WebSocket handshake + frame 测试；不进 production dependency 图。
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+
 # 注：`serde_json` 已上移到 [dependencies]（G2 起启动期要解析 `AGENT_COMPUTER_POLICY`），
 # 这里不再重复声明。它进生产依赖**不等于**放开"自由 params"：那条禁令针对的是
 # `AppCommand` 面接受任意 JSON，而 `AppCommand` 仍是封闭 enum，本 crate 的路由一个

@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 155
+    expect: 156
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 9
+    expect: 10
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 155
+    expect: 156
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -128,6 +128,17 @@ entries:
     done_evidence: "openbot-server http::threads::tests 11/0/0：SSE Last-Event-ID=6 精确变成 typed ThreadEvents(after=6)，frame 含 id:7/event:thread_run_event；坏 cursor 在 subscribe 前 400。PG17/SCRAM thread_live 1/0/0 证明丢 NOTIFY replay、双 replica wake、cursor 不重复与撤权 not_visible 断流"
     evidence: "v3 §4.3 条 4/6：NOTIFY 只唤醒、按 sequence 补取；SSE/WS reconnect 携带 last cursor 且先 replay 再 live。§5.1 明列 openbot-server 负责 Axum HTTP/SSE/WS"
     notes: "新增 authenticated SSE；标准 Last-Event-ID 是唯一 reconnect cursor 输入，transport 不解析业务 payload。当前完成 SSE 腿；固定上游 /api/channels/events WebSocket parity 条目仍独立 todo，不借本条冒充 WebSocket 已完成"
+  - id: "thread-events-websocket-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::threads::websocket (GET /api/threads/{thread_id}/ws)"
+    owner: "openbot-server"
+    test_id: "T-API-0156"
+    migration_rule: "n/a: §4.1 退出 Intelligence 后 native thread durable replay 的 WebSocket 腿；不复用 deployment-wide channel activity socket"
+    status: "done"
+    done_evidence: "真实 loopback TCP/WebSocket 测试 2/0/0：untrusted Origin=403、缺 openbot.thread-events.v1 subprotocol=400；trusted handshake=101 并回显协议，cursor=7 精确进入同一 typed ThreadEvents port，首帧 event_sequence=8，finite stream 以 normal close 收口；任意 client Text/Binary 以 1008 policy close 拒绝"
+    evidence: "v3 §4.3 条 6：WebSocket/SSE reconnect 必须携带 last cursor，服务端先 replay 再 live；§5.1 明列 openbot-server 负责 Axum HTTP/SSE/WS"
+    notes: "session + trusted Origin；只读 socket，Text/Binary client data 以 1008 关闭；输入 frame/message 上限 1KiB。与 SSE 共用 ApplicationService/PostgreSQL producer，不建立第二份 cursor/ACL。错误码：401/403 Origin/400 query-protocol/404/503"
   - id: "memory-list-get"
     upstream: "-"
     label: "新增"

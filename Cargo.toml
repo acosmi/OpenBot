@@ -124,7 +124,10 @@ postgres-types = { version = "0.2", features = ["derive", "with-serde_json-1", "
 time = { version = "0.3.55", features = ["serde", "formatting", "parsing", "macros"] }
 
 # Axum transport（v3 §5.2：transport 只做认证 / framing / 大小限制 / 错误映射）
-axum = { version = "0.8.9", features = ["macros"] }
+axum = { version = "0.8.9", features = ["macros", "ws"] }
+# 只给 Server WebSocket 真 socket 测试使用；生产走 axum::extract::ws 的同一 tungstenite 图。
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 tower = { version = "0.5.3", features = ["timeout", "limit"] }
 tower-http = { version = "0.6", features = ["trace", "limit"] }
 http = "1.5.0"
