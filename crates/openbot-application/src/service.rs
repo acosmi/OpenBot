@@ -113,6 +113,12 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::MintThreadId => "mint_thread_id",
         AppCommand::GetThreadStatus { .. } => "get_thread_status",
         AppCommand::BeginThreadRun(_) => "begin_thread_run",
+        AppCommand::GetThreadHistory { .. } => "get_thread_history",
+        AppCommand::RememberMemory(_) => "remember_memory",
+        AppCommand::ListMemories { .. } => "list_memories",
+        AppCommand::CorrectMemory { .. } => "correct_memory",
+        AppCommand::MutateMemory { .. } => "mutate_memory",
+        AppCommand::RecallMemories(_) => "recall_memories",
     }
 }
 
@@ -250,6 +256,62 @@ mod tests {
                     message: "hello".to_owned(),
                 }),
                 "begin_thread_run",
+            ),
+            (
+                AppCommand::GetThreadHistory {
+                    thread_id: openbot_contracts::ids::ThreadId::new(
+                        "550e8400-e29b-81d4-a716-446655440000",
+                    ),
+                },
+                "get_thread_history",
+            ),
+            (
+                AppCommand::RememberMemory(openbot_contracts::memory::RememberMemory {
+                    memory_kind: openbot_contracts::memory::MemoryKind::Preference,
+                    scope: openbot_contracts::memory::MemoryScope::User,
+                    content: "tea".to_owned(),
+                    tags: Vec::new(),
+                    sensitivity: openbot_contracts::memory::MemorySensitivity::Normal,
+                    source: None,
+                    expires_at: None,
+                }),
+                "remember_memory",
+            ),
+            (
+                AppCommand::ListMemories {
+                    cursor: None,
+                    limit: None,
+                },
+                "list_memories",
+            ),
+            (
+                AppCommand::CorrectMemory {
+                    memory_id: "m".to_owned(),
+                    correction: openbot_contracts::memory::CorrectMemory {
+                        content: "coffee".to_owned(),
+                        tags: Vec::new(),
+                        sensitivity: openbot_contracts::memory::MemorySensitivity::Normal,
+                        expires_at: None,
+                    },
+                },
+                "correct_memory",
+            ),
+            (
+                AppCommand::MutateMemory {
+                    memory_id: "m".to_owned(),
+                    mutation: openbot_contracts::memory::MemoryMutation::Delete,
+                },
+                "mutate_memory",
+            ),
+            (
+                AppCommand::RecallMemories(openbot_contracts::memory::RecallMemories {
+                    query: "office".to_owned(),
+                    tags: Vec::new(),
+                    bot_id: None,
+                    thread_id: None,
+                    limit: None,
+                }),
+                "recall_memories",
             ),
         ];
         for (command, expected) in commands {

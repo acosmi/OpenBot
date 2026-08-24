@@ -1,4 +1,5 @@
-//! 认证边界 —— [`AuthResolver`] port 与它在 Axum 侧的提取器 [`Authenticated`]。
+//! 认证边界 —— [`AuthResolver`] port 与它在 Axum 侧的提取器 [`Authenticated`] /
+//! [`AuthenticatedWrite`]。
 //!
 //! # port 与 W-4 production 实现
 //!
@@ -189,6 +190,33 @@ impl FromRequestParts<ServerState> for SensitiveAuthenticated {
     }
 }
 
+/// 已认证的 owner-scoped 普通写；trusted Origin 在任何 body extractor 运行前判定。
+///
+/// `FromRequestParts` 构造性拿不到 body，handler 把本提取器放在 `Json` 之前后，Axum 会在
+/// Origin/身份失败时直接停止，不读取或解析请求体。
+pub struct AuthenticatedWrite(pub AuthContext);
+
+impl FromRequestParts<ServerState> for AuthenticatedWrite {
+    type Rejection = HttpError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &ServerState,
+    ) -> Result<Self, Self::Rejection> {
+        let resolved = state.auth_resolver().resolve_with_assurance(parts).await?;
+        let origin = parts
+            .headers
+            .get(http::header::ORIGIN)
+            .map(|value| value.to_str().unwrap_or(""));
+        state
+            .authorize_authenticated_write(&resolved, origin)
+            .await?;
+        let auth = resolved.into_context();
+        Span::current().record(ACTOR_ID_FIELD, tracing::field::display(auth.actor()));
+        Ok(Self(auth))
+    }
+}
+
 /// 敏感 admin 写的 session/origin 配置；未注入时 ServerState 会 fail-closed。
 #[derive(Clone, Debug)]
 pub struct SensitiveWriteSecurity {
@@ -239,6 +267,21 @@ impl SensitiveWriteSecurity {
                 SensitiveWriteRejection::SessionNotFresh => SensitiveWriteReason::SessionNotFresh,
             },
         })
+    }
+
+    /// 普通已认证 user 写只要求可信 Origin，不要求 admin/fresh；用于 owner-scoped memory。
+    pub fn authorize_origin(&self, origin: Option<&str>) -> Result<(), AppError> {
+        let Some(origin) = origin else {
+            return Err(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::OriginMissing,
+            });
+        };
+        if !self.trusted_origins.trusts(origin) {
+            return Err(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::OriginUntrusted,
+            });
+        }
+        Ok(())
     }
 }
 

@@ -33,6 +33,10 @@ use time::OffsetDateTime;
 use crate::audit::AuditPage;
 use crate::auth::Role;
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
+use crate::memory::{
+    CorrectMemory, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, RecallMemories,
+    RememberMemory,
+};
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
 use crate::policy::ActionPolicyDocument;
 use crate::tool::{ToolInvocation, ToolResult};
@@ -53,6 +57,8 @@ pub const MAX_CHANNEL_PAGE: u32 = 200;
 /// 所以 application 必须自己守住同一资源边界。JSON framing 会让 HTTP 实际可用文本略小，
 /// 但绝不能让 Desktop 绕过全局数量级。
 pub const MAX_THREAD_MESSAGE_BYTES: usize = 1024 * 1024;
+/// Memory 管理页上限。
+pub const MAX_MEMORY_PAGE: u32 = 100;
 
 /// 应用层命令。封闭 enum。
 ///
@@ -163,6 +169,42 @@ pub enum AppCommand {
     /// actor、tenant、deployment、fencing、时间与 sequence 均不在输入面；只能由权威
     /// `AuthContext` / PostgreSQL transaction 铸造。`run_id` 同时是幂等键。
     BeginThreadRun(BeginThreadRun),
+
+    /// 读取当前 actor 可见的完整 native thread history。
+    GetThreadHistory {
+        /// Thread id；未知/空/不可见统一成功空列表，非 UUID 外形仍是 400。
+        thread_id: ThreadId,
+    },
+
+    /// GUI “记住这条”；application 固定 origin=user_action。
+    RememberMemory(RememberMemory),
+
+    /// 当前 actor 的 memory keyset 页。
+    ListMemories {
+        /// 上一页最后一条 memory id；opaque。
+        cursor: Option<String>,
+        /// Application 钳制到 1..=100。
+        limit: Option<u32>,
+    },
+
+    /// Correct 创建一条新 memory 并 supersede 旧记录。
+    CorrectMemory {
+        /// 当前 actor 拥有的 memory id。
+        memory_id: String,
+        /// 新内容字段。
+        correction: CorrectMemory,
+    },
+
+    /// Forbid/delete 擦除内容并写 lifecycle event。
+    MutateMemory {
+        /// 当前 actor 拥有的 memory id。
+        memory_id: String,
+        /// 目标动作。
+        mutation: MemoryMutation,
+    },
+
+    /// Scope-aware FTS recall；owner 只取 AuthContext。
+    RecallMemories(RecallMemories),
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -196,6 +238,14 @@ pub enum AppReply {
     ThreadStatus(ThreadStatus),
     /// [`AppCommand::BeginThreadRun`] 的 durable receipt。
     ThreadRunStarted(ThreadRunStarted),
+    /// [`AppCommand::GetThreadHistory`] 的应答。
+    ThreadHistory(ThreadHistory),
+    /// Remember/correct/mutate 后的记录。
+    Memory(MemoryRecord),
+    /// [`AppCommand::ListMemories`] 的页。
+    Memories(MemoryPage),
+    /// [`AppCommand::RecallMemories`] 的结果。
+    MemoryRecall(MemoryRecall),
 }
 
 /// 探活结果。
@@ -271,6 +321,46 @@ pub struct ThreadRunStarted {
     pub event_sequence: u64,
     /// `true` 表示完全相同的 run_id 请求已提交过，本次没有新增行/通知。
     pub replayed: bool,
+}
+
+/// AG-UI history 可观察的 message role 子集。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadHistoryRole {
+    /// 人类输入。
+    User,
+    /// Agent 文本/工具调用。
+    Assistant,
+    /// System/summary 上下文。
+    System,
+    /// Tool result。
+    Tool,
+}
+
+/// compatibility facade 与 native GUI 共用的 history message。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadHistoryMessage {
+    /// Durable message id。
+    pub id: String,
+    /// AG-UI role。
+    pub role: ThreadHistoryRole,
+    /// 文本 content；assistant tool-only message 可为空。
+    pub content: String,
+    /// Tool result 指向的 call id；只对 role=tool 存在。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// Assistant tool calls 的结构化 AG-UI 值；当前 begin slice 为空，G4 writer 接入后使用。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<serde_json::Value>>,
+}
+
+/// 完整 thread history；空列表是成功值而不是错误。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadHistory {
+    /// Durable sequence 顺序的 messages。
+    pub messages: Vec<ThreadHistoryMessage>,
 }
 
 /// 一页 channel。
@@ -672,6 +762,30 @@ mod tests {
         );
         assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), begin);
 
+        let history = AppCommand::GetThreadHistory {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+        };
+        let wire = serde_json::to_string(&history).unwrap();
+        assert_eq!(
+            wire,
+            r#"{"kind":"get_thread_history","thread_id":"550e8400-e29b-81d4-a716-446655440000"}"#
+        );
+        assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), history);
+
+        let remember = AppCommand::RememberMemory(RememberMemory {
+            memory_kind: crate::memory::MemoryKind::Preference,
+            scope: crate::memory::MemoryScope::User,
+            content: "tea".to_owned(),
+            tags: vec!["drink".to_owned()],
+            sensitivity: crate::memory::MemorySensitivity::Normal,
+            source: None,
+            expires_at: None,
+        });
+        let wire = serde_json::to_string(&remember).unwrap();
+        assert!(wire.contains(r#""kind":"remember_memory""#), "{wire}");
+        assert!(!wire.contains("origin"), "{wire}");
+        assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), remember);
+
         let audit = AppCommand::ListAuditEvents {
             cursor: Some("opaque".to_owned()),
             event_type: Some("one,two".to_owned()),
@@ -792,6 +906,48 @@ mod tests {
             r#"{"kind":"thread_run_started","threadId":"550e8400-e29b-81d4-a716-446655440000","runId":"run-1","messageSequence":3,"eventSequence":7,"replayed":false}"#
         );
         assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), started);
+
+        let history = AppReply::ThreadHistory(ThreadHistory {
+            messages: vec![ThreadHistoryMessage {
+                id: "m-1".to_owned(),
+                role: ThreadHistoryRole::User,
+                content: "hello".to_owned(),
+                tool_call_id: None,
+                tool_calls: None,
+            }],
+        });
+        let json = serde_json::to_string(&history).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"thread_history","messages":[{"id":"m-1","role":"user","content":"hello"}]}"#
+        );
+        assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), history);
+
+        assert_eq!(
+            serde_json::to_string(&ThreadHistory::default()).unwrap(),
+            r#"{"messages":[]}"#
+        );
+
+        let memory = AppReply::Memory(MemoryRecord {
+            memory_id: "memory-1".to_owned(),
+            owner_user_id: "u1".to_owned(),
+            scope: crate::memory::MemoryScope::User,
+            memory_kind: crate::memory::MemoryKind::Preference,
+            content: Some("tea".to_owned()),
+            tags: Vec::new(),
+            sensitivity: crate::memory::MemorySensitivity::Normal,
+            source: None,
+            origin: crate::memory::MemoryOrigin::UserAction,
+            created_by: "u1".to_owned(),
+            supersedes_id: None,
+            status: crate::memory::MemoryStatus::Active,
+            expires_at: None,
+            created_at: datetime!(2026-08-24 00:00:00 UTC),
+            updated_at: datetime!(2026-08-24 00:00:00 UTC),
+        });
+        let json = serde_json::to_string(&memory).unwrap();
+        assert!(json.contains(r#""kind":"memory""#), "{json}");
+        assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), memory);
 
         let request = SubscriptionRequest::Health;
         assert_eq!(

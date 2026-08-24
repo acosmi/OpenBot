@@ -23,7 +23,7 @@
 //! - 把 computer token 交给浏览器（v3 §12.4）；Server 的 screen viewer 用同源 `wss` +
 //!   session cookie + CSRF-style origin check。
 //!
-//! # 当前状态（G1 + W-4 Server slice + W-5 audit/policy + G3 thread routes/SSE）
+//! # 当前状态（G1 + W-4/W-5 + G3 thread/history/memory routes/SSE）
 //!
 //! Phase 0 本 crate 刻意为空；G1 落**第一个垂直切片**所需的最小集合。四条 G1 判据里
 //! 「ApplicationService 经 Axum/Tauri 结果一致」与「tracing/metrics/redaction 从首个
@@ -57,6 +57,8 @@
 //!   framing，CSPRNG 与 PostgreSQL scope 判定均经 typed ApplicationService。
 //! - `GET /api/threads/{thread_id}/events` —— R65 authenticated SSE；只把 Last-Event-ID 变成
 //!   typed cursor 并 frame AppEvent，replay/LISTEN/ACL 全在 application/infra。
+//! - `/api/memories` 六条读写/recall —— R66；owner scope/原子写在 application/infra，Server
+//!   只做 session、trusted Origin、JSON/path/query framing。
 //!
 //! # 还没有的东西（不要当成"已经有了"）
 //!

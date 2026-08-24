@@ -55,16 +55,20 @@
 //!   materialized membership/generation/session 原子投影（R60）。
 //! - [`thread_directory`] —— OS CSPRNG mint、scope status、同事务 BeginThreadRun 与
 //!   LISTEN-before-replay/SSE producer；最终请求路径零 Intelligence fallback（R64–R65）。
+//! - [`memory_admin`] —— explicit user_action create/list/correct/supersede/forbid/delete 与
+//!   user+exact Bot/thread FTS + structured-tag recall；无 background extraction（R66）。
 //!
 //! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
 //! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
 //! Server KMS/HSM、多平台原生发行，以及 G4 的真实 browser/file/shell/MCP/Drive executor。
 //! 0016 已把 `thread/run/outbox/memory/import` 的 10 个 repo 与对应物理表同批实现；R64/R65
-//! 又接 mint/status、transactional begin 与 SSE live。WebSocket/history、真实 Agent consumer、
-//! memory user journey 仍归后续 G3/G4。
+//! 又接 mint/status、transactional begin 与 SSE live，R66 接 history 与 explicit memory backend。
+//! WebSocket、真实 Agent consumer、terminal/outbox/lease recovery、remember tool/Memory GUI/importer
+//! 仍归后续 G3/G4/G6。
 
 pub mod auth;
 pub mod db;
+pub mod memory_admin;
 pub mod net;
 pub mod policy;
 pub mod repo;

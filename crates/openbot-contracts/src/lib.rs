@@ -38,6 +38,7 @@
 //! | [`people`] | current user / admin status / people page 与 person 公开 DTO | §6.2 / R40 |
 //! | [`audit`] | 管理员 audit event/page DTO 与 JavaScript 毫秒时间 wire | §8.6 / R56 |
 //! | [`tool`] | Agent tool invocation 与脱敏结果；没有 actor/policy/target 自报字段 | §8.1 |
+//! | [`memory`] | explicit memory scope/provenance/lifecycle/recall DTO；wire 无 owner/origin 自报 | §4.3 / R66 |
 //! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
 //!
 //! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：W-3a 只在 G1 的
@@ -72,6 +73,7 @@ pub mod auth;
 pub mod command;
 pub mod error;
 pub mod ids;
+pub mod memory;
 pub mod people;
 pub mod policy;
 pub mod telemetry;
