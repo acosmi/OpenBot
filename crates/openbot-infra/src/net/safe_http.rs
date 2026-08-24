@@ -1229,13 +1229,30 @@ mod tests {
                 response.push_str("\r\n");
             }
             response.push_str("Connection: close\r\n\r\n");
-            stream.write_all(response.as_bytes()).await.unwrap();
-            stream.write_all(body).await.unwrap();
+            if let Err(error) = stream.write_all(response.as_bytes()).await {
+                assert_peer_closed_after_client_outcome(error);
+                return;
+            }
+            if let Err(error) = stream.write_all(body).await {
+                assert_peer_closed_after_client_outcome(error);
+            }
         });
         (
             Url::parse(&format!("http://127.0.0.1:{}/", address.port())).unwrap(),
             server,
         )
+    }
+
+    fn assert_peer_closed_after_client_outcome(error: std::io::Error) {
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+            ),
+            "测试服务端只允许客户端先完成/超时后的对端关闭，实际：{error}"
+        );
     }
 
     async fn tls_response_server() -> (SocketAddr, CertificateDer<'static>, JoinHandle<()>) {
