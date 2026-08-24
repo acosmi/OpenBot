@@ -22,16 +22,18 @@ use openbot_contracts::error::AppError;
 use tracing::Span;
 
 use crate::ports::{
-    AuditReader, ChannelReader, NoAuditReader, NoPeopleAdministration, NoPolicyAdministration,
-    NoThreadDirectory, PeopleAdministration, PolicyAdministration, ThreadDirectory,
+    AuditReader, ChannelReader, MemoryAdministration, NoAuditReader, NoMemoryAdministration,
+    NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory, PeopleAdministration,
+    PolicyAdministration, ThreadDirectory,
 };
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, begin_thread_run, change_person_access,
-    change_person_role, current_user, get_action_policy, get_thread_status, health, health_stream,
-    list_audit_events, list_people, list_visible_channels, mint_thread_id, set_action_policy,
-    subscribe_thread_events,
+    change_person_role, correct_memory, current_user, get_action_policy, get_thread_history,
+    get_thread_status, health, health_stream, list_audit_events, list_memories, list_people,
+    list_visible_channels, mint_thread_id, mutate_memory, recall_memories, remember_memory,
+    set_action_policy, subscribe_thread_events,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -47,6 +49,7 @@ pub struct OpenBotApplication<
     C = NoToolControlPlane,
     J = NoToolJournal,
     T = NoThreadDirectory,
+    M = NoMemoryAdministration,
 > {
     channels: R,
     people: P,
@@ -55,6 +58,7 @@ pub struct OpenBotApplication<
     tool_control: C,
     tool_journal: J,
     threads: T,
+    memory: M,
     heartbeat_period: Duration,
 }
 
@@ -67,6 +71,7 @@ impl<R>
         NoToolControlPlane,
         NoToolJournal,
         NoThreadDirectory,
+        NoMemoryAdministration,
     >
 {
     /// 注入端口实现。
@@ -79,15 +84,16 @@ impl<R>
             tool_control: NoToolControlPlane,
             tool_journal: NoToolJournal,
             threads: NoThreadDirectory,
+            memory: NoMemoryAdministration,
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
 }
 
-impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T> {
+impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
     /// 注入 people/auth 原子端口。
     #[must_use]
-    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, K, C, J, T> {
+    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, K, C, J, T, M> {
         OpenBotApplication {
             channels: self.channels,
             people,
@@ -96,13 +102,14 @@ impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T> {
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
             threads: self.threads,
+            memory: self.memory,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入管理员 audit keyset reader。
     #[must_use]
-    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, K, C, J, T> {
+    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, K, C, J, T, M> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -111,13 +118,14 @@ impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T> {
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
             threads: self.threads,
+            memory: self.memory,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入 deployment-wide action policy 管理端口。
     #[must_use]
-    pub fn with_policy<Q>(self, policies: Q) -> OpenBotApplication<R, P, A, Q, C, J, T> {
+    pub fn with_policy<Q>(self, policies: Q) -> OpenBotApplication<R, P, A, Q, C, J, T, M> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -126,6 +134,7 @@ impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T> {
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
             threads: self.threads,
+            memory: self.memory,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -136,7 +145,7 @@ impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T> {
         self,
         control: Q,
         journal: L,
-    ) -> OpenBotApplication<R, P, A, K, Q, L, T> {
+    ) -> OpenBotApplication<R, P, A, K, Q, L, T, M> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -145,13 +154,14 @@ impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T> {
             tool_control: control,
             tool_journal: journal,
             threads: self.threads,
+            memory: self.memory,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入 native thread ID / scope-aware directory；未注入时绝不回退 Intelligence。
     #[must_use]
-    pub fn with_threads<Q>(self, threads: Q) -> OpenBotApplication<R, P, A, K, C, J, Q> {
+    pub fn with_threads<Q>(self, threads: Q) -> OpenBotApplication<R, P, A, K, C, J, Q, M> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -160,6 +170,23 @@ impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T> {
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
             threads,
+            memory: self.memory,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入 explicit memory administration；未注入时 fail-closed。
+    #[must_use]
+    pub fn with_memory<Q>(self, memory: Q) -> OpenBotApplication<R, P, A, K, C, J, T, Q> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit: self.audit,
+            policies: self.policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            threads: self.threads,
+            memory,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -175,7 +202,7 @@ impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T> {
     }
 }
 
-impl<R, P, A, K, C, J, T> OpenBotApplication<R, P, A, K, C, J, T>
+impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M>
 where
     R: ChannelReader,
     P: PeopleAdministration,
@@ -184,6 +211,7 @@ where
     C: ToolControlPlane,
     J: ToolJournal,
     T: ThreadDirectory,
+    M: MemoryAdministration,
 {
     /// 命令派发。**穷举 match 无通配** —— 新增 `AppCommand` 变体会在这里编译失败，
     /// 而不是落进一个 `_ => Err(unknown_method)` 分支。那个分支正是 §5.2 逐字禁止的
@@ -259,12 +287,36 @@ where
             AppCommand::BeginThreadRun(command) => Ok(AppReply::ThreadRunStarted(
                 begin_thread_run(&self.threads, auth, command).await?,
             )),
+            AppCommand::GetThreadHistory { thread_id } => Ok(AppReply::ThreadHistory(
+                get_thread_history(&self.threads, auth, thread_id).await?,
+            )),
+            AppCommand::RememberMemory(input) => Ok(AppReply::Memory(
+                remember_memory(&self.memory, auth, input).await?,
+            )),
+            AppCommand::ListMemories { cursor, limit } => Ok(AppReply::Memories(
+                list_memories(&self.memory, auth, cursor, limit).await?,
+            )),
+            AppCommand::CorrectMemory {
+                memory_id,
+                correction,
+            } => Ok(AppReply::Memory(
+                correct_memory(&self.memory, auth, memory_id, correction).await?,
+            )),
+            AppCommand::MutateMemory {
+                memory_id,
+                mutation,
+            } => Ok(AppReply::Memory(
+                mutate_memory(&self.memory, auth, memory_id, mutation).await?,
+            )),
+            AppCommand::RecallMemories(input) => Ok(AppReply::MemoryRecall(
+                recall_memories(&self.memory, auth, input).await?,
+            )),
         }
     }
 }
 
 #[async_trait]
-impl<R, P, A, K, C, J, T> ApplicationService for OpenBotApplication<R, P, A, K, C, J, T>
+impl<R, P, A, K, C, J, T, M> ApplicationService for OpenBotApplication<R, P, A, K, C, J, T, M>
 where
     R: ChannelReader + 'static,
     P: PeopleAdministration + 'static,
@@ -273,6 +325,7 @@ where
     C: ToolControlPlane + 'static,
     J: ToolJournal + 'static,
     T: ThreadDirectory + 'static,
+    M: MemoryAdministration + 'static,
 {
     #[tracing::instrument(
         name = "application.execute",
@@ -340,6 +393,10 @@ mod tests {
     use openbot_contracts::error::ErrorCode;
     use openbot_contracts::ids::{
         ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
+    };
+    use openbot_contracts::memory::{
+        CorrectMemory, MemoryKind, MemoryMutation, MemoryScope, MemorySensitivity, RecallMemories,
+        RememberMemory,
     };
     use openbot_contracts::policy::{ActionPolicyDocument, ActionPolicyMode};
     use openbot_contracts::tool::ToolInvocation;
@@ -549,7 +606,7 @@ mod tests {
         ));
 
         let (tool, _) = capture(service.execute(
-            auth,
+            auth.clone(),
             AppCommand::InvokeTool(ToolInvocation {
                 call_id: ToolCallId::new("call-1"),
                 run_id: RunId::new("run-1"),
@@ -565,6 +622,75 @@ mod tests {
                 dependency: "tool_catalog"
             })
         ));
+
+        for command in [
+            AppCommand::MintThreadId,
+            AppCommand::GetThreadStatus {
+                thread_id: ThreadId::new("550e8400-e29b-41d4-a716-446655440000"),
+            },
+            AppCommand::BeginThreadRun(BeginThreadRun {
+                thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+                run_id: RunId::new("run-thread"),
+                bot_id: BotId::new("bot-1"),
+                anchor: ThreadRunAnchor::DirectBot,
+                message: "hello".to_owned(),
+            }),
+            AppCommand::GetThreadHistory {
+                thread_id: ThreadId::new("550e8400-e29b-41d4-a716-446655440000"),
+            },
+        ] {
+            let (reply, _) = capture(service.execute(auth.clone(), command));
+            assert!(matches!(
+                reply,
+                Err(AppError::DependencyUnavailable {
+                    dependency: "thread_directory"
+                })
+            ));
+        }
+
+        for command in [
+            AppCommand::RememberMemory(RememberMemory {
+                memory_kind: MemoryKind::Preference,
+                scope: MemoryScope::User,
+                content: "tea".to_owned(),
+                tags: Vec::new(),
+                sensitivity: MemorySensitivity::Normal,
+                source: None,
+                expires_at: None,
+            }),
+            AppCommand::ListMemories {
+                cursor: None,
+                limit: None,
+            },
+            AppCommand::CorrectMemory {
+                memory_id: "memory-1".to_owned(),
+                correction: CorrectMemory {
+                    content: "coffee".to_owned(),
+                    tags: Vec::new(),
+                    sensitivity: MemorySensitivity::Normal,
+                    expires_at: None,
+                },
+            },
+            AppCommand::MutateMemory {
+                memory_id: "memory-1".to_owned(),
+                mutation: MemoryMutation::Delete,
+            },
+            AppCommand::RecallMemories(RecallMemories {
+                query: "office".to_owned(),
+                tags: Vec::new(),
+                bot_id: None,
+                thread_id: None,
+                limit: None,
+            }),
+        ] {
+            let (reply, _) = capture(service.execute(auth.clone(), command));
+            assert!(matches!(
+                reply,
+                Err(AppError::DependencyUnavailable {
+                    dependency: "memory_store"
+                })
+            ));
+        }
     }
 
     /// 订阅回来的流是**活的**：拿到就能取到第一拍。

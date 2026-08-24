@@ -2,14 +2,16 @@
 
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{
-    BeginThreadRun, MAX_THREAD_MESSAGE_BYTES, ThreadMinted, ThreadRunAnchor, ThreadRunStarted,
-    ThreadStatus,
+    BeginThreadRun, MAX_THREAD_MESSAGE_BYTES, ThreadHistory, ThreadMinted, ThreadRunAnchor,
+    ThreadRunStarted, ThreadStatus,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ThreadId;
 use openbot_contracts::ids::thread::ThreadIdentity;
 
-use crate::ports::{BeginThreadRunRequest, ThreadDirectory, ThreadEventSubscription};
+use crate::ports::{
+    BeginThreadRunRequest, ThreadDirectory, ThreadEventSubscription, ThreadHistoryRequest,
+};
 use crate::service::AppEventStream;
 
 /// 为权威 deployment 铸造一个 thread ID。
@@ -105,6 +107,26 @@ pub async fn subscribe_thread_events<D: ThreadDirectory>(
             actor: auth.actor().clone(),
             thread,
             after_event_sequence,
+        })
+        .await
+        .map_err(|error| error.into_app_error())
+}
+
+/// 读取 scope-aware durable history；未知/不可见/已删除由 port 统一投影为空列表。
+pub async fn get_thread_history<D: ThreadDirectory>(
+    directory: &D,
+    auth: &AuthContext,
+    thread: ThreadId,
+) -> Result<ThreadHistory, AppError> {
+    if !ThreadIdentity::is_plausible(&thread) {
+        return Err(AppError::MalformedPayload { field: "thread_id" });
+    }
+    directory
+        .thread_history(ThreadHistoryRequest {
+            deployment: auth.deployment().clone(),
+            tenant: auth.tenant().clone(),
+            actor: auth.actor().clone(),
+            thread,
         })
         .await
         .map_err(|error| error.into_app_error())
@@ -484,5 +506,77 @@ mod tests {
             );
             assert_eq!(directory.calls.lock().expect("fake lock").len(), before);
         }
+    }
+
+    struct HistoryDirectory {
+        result: Result<ThreadHistory, ThreadDirectoryError>,
+        calls: Mutex<Vec<ThreadHistoryRequest>>,
+    }
+
+    #[async_trait]
+    impl ThreadDirectory for HistoryDirectory {
+        async fn mint_thread_id(
+            &self,
+            _deployment: &DeploymentId,
+        ) -> Result<ThreadId, ThreadDirectoryError> {
+            Err(ThreadDirectoryError::Unavailable)
+        }
+
+        async fn thread_known(
+            &self,
+            _deployment: &DeploymentId,
+            _tenant: &TenantId,
+            _actor: &ActorId,
+            _thread: &ThreadId,
+        ) -> Result<bool, ThreadDirectoryError> {
+            Err(ThreadDirectoryError::Unavailable)
+        }
+
+        async fn thread_history(
+            &self,
+            request: ThreadHistoryRequest,
+        ) -> Result<ThreadHistory, ThreadDirectoryError> {
+            self.calls.lock().expect("fake lock").push(request);
+            self.result.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn history_uses_authoritative_scope_and_empty_is_a_success_value() {
+        let directory = HistoryDirectory {
+            result: Ok(ThreadHistory::default()),
+            calls: Mutex::new(Vec::new()),
+        };
+        let thread = ThreadId::new("550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(
+            get_thread_history(&directory, &auth(), thread.clone())
+                .await
+                .unwrap(),
+            ThreadHistory::default()
+        );
+        assert_eq!(
+            directory.calls.lock().expect("fake lock").as_slice(),
+            &[ThreadHistoryRequest {
+                deployment: DeploymentId::new("dep-authoritative"),
+                tenant: TenantId::new("tenant-authoritative"),
+                actor: ActorId::new("actor-authoritative"),
+                thread,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_history_id_never_reaches_the_port() {
+        let directory = HistoryDirectory {
+            result: Ok(ThreadHistory::default()),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            get_thread_history(&directory, &auth(), ThreadId::new("not-a-uuid"))
+                .await
+                .unwrap_err(),
+            AppError::MalformedPayload { field: "thread_id" }
+        );
+        assert!(directory.calls.lock().expect("fake lock").is_empty());
     }
 }

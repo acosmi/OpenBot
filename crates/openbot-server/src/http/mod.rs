@@ -13,6 +13,7 @@
 //! api-threads-mint-post   target: "openbot-server::http::threads::mint (POST /api/threads/mint)"
 //! api-threads-get         target: "openbot-server::http::threads::status (GET /api/threads/{thread_id})"
 //! thread-events-sse-get   target: "openbot-server::http::threads::events (GET /api/threads/{thread_id}/events)"
+//! memory-list/remember/correct/delete/forbid/recall —— R66 新增 explicit memory API
 //! ```
 //!
 //! 所以 [`health`] / [`channels`] / [`metrics`] 这几个模块名、[`channels::list`] 这个函数名
@@ -44,6 +45,7 @@ pub mod auth_sso;
 pub mod channels;
 pub mod computers;
 pub mod health;
+pub mod memories;
 pub mod metrics;
 pub mod threads;
 
@@ -170,6 +172,21 @@ impl ServerState {
             });
         };
         let _approved = security.authorize(resolved, origin)?;
+        self.inner.auth.touch(resolved).await
+    }
+
+    /// Owner-scoped user 写：可信 Origin + 已认证身份，不额外要求 admin/fresh。
+    pub async fn authorize_authenticated_write(
+        &self,
+        resolved: &ResolvedAuth,
+        origin: Option<&str>,
+    ) -> Result<(), openbot_contracts::error::AppError> {
+        let Some(security) = &self.inner.sensitive_write else {
+            return Err(openbot_contracts::error::AppError::DependencyUnavailable {
+                dependency: "sensitive_write_security",
+            });
+        };
+        security.authorize_origin(origin)?;
         self.inner.auth.touch(resolved).await
     }
 }
@@ -367,9 +384,23 @@ pub fn router(state: ServerState) -> Router {
             get(auth_sso::saml_metadata),
         )
         .route("/api/channels", get(channels::list))
+        .route(
+            "/api/memories",
+            get(memories::list).post(memories::remember),
+        )
+        .route("/api/memories/recall", post(memories::recall))
+        .route(
+            "/api/memories/{memory_id}",
+            axum::routing::put(memories::correct).delete(memories::delete),
+        )
+        .route("/api/memories/{memory_id}/forbid", post(memories::forbid))
         .route("/api/threads/mint", post(threads::mint))
         .route("/api/threads/{thread_id}/events", get(threads::events))
         .route("/api/threads/{thread_id}", get(threads::status))
+        .route(
+            "/api/copilotkit/threads/{thread_id}/messages",
+            get(threads::history),
+        )
         .route("/api/me", get(admin::me))
         .route("/api/admin/status", get(admin::status))
         .route("/api/admin/identity-providers", get(auth_sso::list))

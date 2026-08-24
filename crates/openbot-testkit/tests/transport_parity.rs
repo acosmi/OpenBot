@@ -302,7 +302,7 @@ impl ChannelReader for FakeChannels {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Outcome {
     /// 成功：typed 应答。
-    Reply(AppReply),
+    Reply(Box<AppReply>),
     /// 失败：只有 §15.3 的稳定码。
     Failure { code: String },
 }
@@ -311,7 +311,7 @@ impl Outcome {
     /// 把 in-process 腿的 `Result` 归一。
     fn from_typed(result: Result<AppReply, openbot_contracts::error::AppError>) -> Self {
         match result {
-            Ok(reply) => Self::Reply(reply),
+            Ok(reply) => Self::Reply(Box::new(reply)),
             Err(error) => Self::Failure {
                 code: error.code().as_str().to_owned(),
             },
@@ -326,7 +326,7 @@ impl Outcome {
         if status == StatusCode::OK {
             let page: ChannelPage = serde_json::from_str(body)
                 .unwrap_or_else(|e| panic!("200 的 body 必须能解回 ChannelPage：{e}；原文 {body}"));
-            return Self::Reply(AppReply::Channels(page));
+            return Self::Reply(Box::new(AppReply::Channels(page)));
         }
 
         let envelope: serde_json::Value = serde_json::from_str(body)
@@ -343,16 +343,22 @@ impl Outcome {
     /// 取出 channel id 列表（正向对照用）。
     fn channel_ids(&self) -> Vec<&str> {
         match self {
-            Self::Reply(AppReply::Channels(page)) => {
-                page.channels.iter().map(|row| row.id.as_str()).collect()
-            }
+            Self::Reply(reply) => match reply.as_ref() {
+                AppReply::Channels(page) => {
+                    page.channels.iter().map(|row| row.id.as_str()).collect()
+                }
+                _ => panic!("不是一页 channel：{self:?}"),
+            },
             _ => panic!("不是一页 channel：{self:?}"),
         }
     }
 
     fn next_cursor(&self) -> Option<&str> {
         match self {
-            Self::Reply(AppReply::Channels(page)) => page.next_cursor.as_deref(),
+            Self::Reply(reply) => match reply.as_ref() {
+                AppReply::Channels(page) => page.next_cursor.as_deref(),
+                _ => panic!("不是一页 channel：{self:?}"),
+            },
             _ => panic!("不是一页 channel：{self:?}"),
         }
     }
@@ -415,7 +421,13 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::InvokeTool(_)
         | AppCommand::MintThreadId
         | AppCommand::GetThreadStatus { .. }
-        | AppCommand::BeginThreadRun(_) => None,
+        | AppCommand::BeginThreadRun(_)
+        | AppCommand::GetThreadHistory { .. }
+        | AppCommand::RememberMemory(_)
+        | AppCommand::ListMemories { .. }
+        | AppCommand::CorrectMemory { .. }
+        | AppCommand::MutateMemory { .. }
+        | AppCommand::RecallMemories(_) => None,
     }
 }
 
@@ -711,10 +723,11 @@ async fn transport_parity_matrix() {
     // 交错确实存在：`c-a3` / `c-a5` 没有 `last_message_at`，却排在中间而不是末尾。
     assert!(matches!(
         &pair.http.outcome,
-        Outcome::Reply(AppReply::Channels(page))
-            if page.channels[2].last_message_at.is_none()
-                && page.channels[4].last_message_at.is_none()
-                && page.channels[0].last_message_at.is_some()
+        Outcome::Reply(reply)
+            if matches!(reply.as_ref(), AppReply::Channels(page)
+                if page.channels[2].last_message_at.is_none()
+                    && page.channels[4].last_message_at.is_none()
+                    && page.channels[0].last_message_at.is_some())
     ));
 
     // --- 3. limit 越界 ---------------------------------------------------
@@ -972,8 +985,8 @@ async fn the_comparison_normalizes_away_transport_shape_on_purpose() {
 
     // (d) in-process 是 typed 值，带着 `AppReply` 的外壳。
     assert!(matches!(
-        pair.in_process,
-        Outcome::Reply(AppReply::Channels(_))
+        &pair.in_process,
+        Outcome::Reply(reply) if matches!(reply.as_ref(), AppReply::Channels(_))
     ));
 
     // 归一之后（HTTP 的字节**反序列化回** typed 值，in-process 的 typed 值原样使用），

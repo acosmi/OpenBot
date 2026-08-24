@@ -6,9 +6,13 @@
 use async_trait::async_trait;
 use openbot_contracts::audit::AuditPage;
 use openbot_contracts::auth::Role;
-use openbot_contracts::command::{BeginThreadRun, ChannelSummary, ThreadRunStarted};
+use openbot_contracts::command::{BeginThreadRun, ChannelSummary, ThreadHistory, ThreadRunStarted};
 use openbot_contracts::error::{AppError, IdentityConflictReason};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
+use openbot_contracts::memory::{
+    CorrectMemory, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, RecallMemories,
+    RememberMemory,
+};
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use openbot_domain::policy::ActionPolicy;
 use time::OffsetDateTime;
@@ -203,6 +207,19 @@ pub struct ThreadEventSubscription {
     pub after_event_sequence: Option<u64>,
 }
 
+/// 权威 scope 合并后的 thread history 请求。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreadHistoryRequest {
+    /// 权威 deployment。
+    pub deployment: DeploymentId,
+    /// 权威 tenant。
+    pub tenant: TenantId,
+    /// 权威 actor。
+    pub actor: ActorId,
+    /// Thread。
+    pub thread: ThreadId,
+}
+
 /// Native thread ID 铸造与 scope-aware 可见性查询。
 ///
 /// 查询同时接收 deployment、tenant 与 actor，三者都来自权威 [`AuthContext`](openbot_contracts::auth::AuthContext)，
@@ -241,6 +258,14 @@ pub trait ThreadDirectory: Send + Sync {
     ) -> Result<AppEventStream, ThreadDirectoryError> {
         Err(ThreadDirectoryError::Unavailable)
     }
+
+    /// 读取完整 durable history；不存在/不可见/已删除统一成功空列表。
+    async fn thread_history(
+        &self,
+        _request: ThreadHistoryRequest,
+    ) -> Result<ThreadHistory, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
 }
 
 /// 未注入 native thread 适配器时 fail-closed；不回退到 Intelligence。
@@ -264,6 +289,184 @@ impl ThreadDirectory for NoThreadDirectory {
         _thread: &ThreadId,
     ) -> Result<bool, ThreadDirectoryError> {
         Err(ThreadDirectoryError::Unavailable)
+    }
+}
+
+/// Explicit memory application port 错误。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum MemoryAdministrationError {
+    /// PostgreSQL/随机源不可用。
+    #[error("memory_administration_unavailable")]
+    Unavailable,
+    /// 持久化状态损坏。
+    #[error("memory_administration_corrupt field={field}")]
+    Corrupt {
+        /// 静态字段名。
+        field: &'static str,
+    },
+    /// 当前 actor 不可见该 memory/source/scope target。
+    #[error("memory_not_visible")]
+    NotVisible,
+    /// 事务内才能判定的坏输入。
+    #[error("memory_input_invalid field={field}")]
+    InvalidInput {
+        /// 静态字段名。
+        field: &'static str,
+    },
+    /// 非 active correction 或 cursor/id binding 冲突。
+    #[error("memory_request_conflict")]
+    Conflict,
+    /// Commit 结果未知。
+    #[error("memory_commit_unknown")]
+    CommitUnknown,
+}
+
+impl MemoryAdministrationError {
+    /// 稳定 AppError 投影。
+    #[must_use]
+    pub const fn into_app_error(self) -> AppError {
+        match self {
+            Self::Unavailable | Self::Corrupt { .. } => AppError::DependencyUnavailable {
+                dependency: "memory_store",
+            },
+            Self::NotVisible => AppError::NotVisible,
+            Self::InvalidInput { field } => AppError::MalformedPayload { field },
+            Self::Conflict => AppError::RequestConflict { resource: "memory" },
+            Self::CommitUnknown => AppError::ReconciliationRequired { accepted: true },
+        }
+    }
+}
+
+/// GUI remember 的权威 scope 请求。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RememberMemoryRequest {
+    /// Tenant。
+    pub tenant: TenantId,
+    /// Owner/created_by。
+    pub actor: ActorId,
+    /// 无 owner/origin 字段的 wire input。
+    pub input: RememberMemory,
+}
+
+/// Memory list keyset 请求。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryPageRequest {
+    /// Tenant。
+    pub tenant: TenantId,
+    /// Owner。
+    pub actor: ActorId,
+    /// Opaque memory-id cursor。
+    pub cursor: Option<String>,
+    /// Application 已钳制。
+    pub limit: u32,
+}
+
+/// Correct 请求。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CorrectMemoryRequest {
+    /// Tenant。
+    pub tenant: TenantId,
+    /// Owner/created_by。
+    pub actor: ActorId,
+    /// 旧 memory id。
+    pub memory_id: String,
+    /// 新内容。
+    pub correction: CorrectMemory,
+}
+
+/// Forbid/delete 请求。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MutateMemoryRequest {
+    /// Tenant。
+    pub tenant: TenantId,
+    /// Owner/actor。
+    pub actor: ActorId,
+    /// Memory id。
+    pub memory_id: String,
+    /// Mutation。
+    pub mutation: MemoryMutation,
+}
+
+/// Scope-aware recall 请求。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecallMemoriesRequest {
+    /// Tenant。
+    pub tenant: TenantId,
+    /// Owner。
+    pub actor: ActorId,
+    /// 无 owner 的 wire input。
+    pub input: RecallMemories,
+}
+
+/// Explicit memory 的唯一 GUI application port；remember tool 必须经工具管线另接。
+#[async_trait]
+pub trait MemoryAdministration: Send + Sync {
+    /// Create origin=user_action。
+    async fn remember(
+        &self,
+        request: RememberMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError>;
+    /// List all statuses；deleted/forbidden content 为 None。
+    async fn list_memories(
+        &self,
+        request: MemoryPageRequest,
+    ) -> Result<MemoryPage, MemoryAdministrationError>;
+    /// Correct + supersede 同事务。
+    async fn correct(
+        &self,
+        request: CorrectMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError>;
+    /// Forbid/delete + content erase + event 同事务。
+    async fn mutate(
+        &self,
+        request: MutateMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError>;
+    /// User + exact Bot/thread scope FTS recall。
+    async fn recall(
+        &self,
+        request: RecallMemoriesRequest,
+    ) -> Result<MemoryRecall, MemoryAdministrationError>;
+}
+
+/// 未注入 memory store 时 fail-closed。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoMemoryAdministration;
+
+#[async_trait]
+impl MemoryAdministration for NoMemoryAdministration {
+    async fn remember(
+        &self,
+        _request: RememberMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError> {
+        Err(MemoryAdministrationError::Unavailable)
+    }
+
+    async fn list_memories(
+        &self,
+        _request: MemoryPageRequest,
+    ) -> Result<MemoryPage, MemoryAdministrationError> {
+        Err(MemoryAdministrationError::Unavailable)
+    }
+
+    async fn correct(
+        &self,
+        _request: CorrectMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError> {
+        Err(MemoryAdministrationError::Unavailable)
+    }
+
+    async fn mutate(
+        &self,
+        _request: MutateMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError> {
+        Err(MemoryAdministrationError::Unavailable)
+    }
+
+    async fn recall(
+        &self,
+        _request: RecallMemoriesRequest,
+    ) -> Result<MemoryRecall, MemoryAdministrationError> {
+        Err(MemoryAdministrationError::Unavailable)
     }
 }
 

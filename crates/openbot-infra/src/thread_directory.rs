@@ -8,10 +8,11 @@ use async_trait::async_trait;
 use futures_core::Stream;
 use openbot_application::{
     AppEventStream, BeginThreadRunRequest, ThreadDirectory, ThreadDirectoryError,
-    ThreadEventSubscription,
+    ThreadEventSubscription, ThreadHistoryRequest,
 };
 use openbot_contracts::command::{
-    AppEvent, ThreadRunAnchor, ThreadRunEvent, ThreadRunEventKind, ThreadRunStarted,
+    AppEvent, ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole, ThreadRunAnchor,
+    ThreadRunEvent, ThreadRunEventKind, ThreadRunStarted,
 };
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
@@ -209,6 +210,101 @@ impl ThreadDirectory for PostgresThreadDirectory {
         ));
         Ok(Box::pin(ThreadEventReceiver { receiver, stop }))
     }
+
+    async fn thread_history(
+        &self,
+        request: ThreadHistoryRequest,
+    ) -> Result<ThreadHistory, ThreadDirectoryError> {
+        let client = self.pool.get().await.map_err(|error| {
+            tracing::error!(error = %error, "thread history 获取数据库连接失败");
+            ThreadDirectoryError::Unavailable
+        })?;
+        let rows = client
+            .query(
+                "SELECT m.message_id,m.role,m.content \
+                 FROM public.messages m \
+                 JOIN public.threads t ON t.thread_id=m.thread_id \
+                 JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id \
+                 WHERE t.thread_id=$1 AND t.deployment_id=$2 AND t.tenant_id=$3 \
+                   AND tm.user_id=$4 AND t.status<>'deleted' \
+                 ORDER BY m.seq",
+                &[
+                    &request.thread.as_str(),
+                    &request.deployment.as_str(),
+                    &request.tenant.as_str(),
+                    &request.actor.as_str(),
+                ],
+            )
+            .await
+            .map_err(|error| unavailable("读取 thread history 失败", error))?;
+        let messages = rows
+            .iter()
+            .map(decode_history_message)
+            .collect::<Result<_, _>>()?;
+        Ok(ThreadHistory { messages })
+    }
+}
+
+fn decode_history_message(
+    row: &tokio_postgres::Row,
+) -> Result<ThreadHistoryMessage, ThreadDirectoryError> {
+    let id: String = decode(row, "message_id")?;
+    let raw_role: String = decode(row, "role")?;
+    let value: Value = decode(row, "content")?;
+    let role = match raw_role.as_str() {
+        "user" => ThreadHistoryRole::User,
+        "assistant" => ThreadHistoryRole::Assistant,
+        "system" | "summary" => ThreadHistoryRole::System,
+        "tool" => ThreadHistoryRole::Tool,
+        _ => return Err(ThreadDirectoryError::Corrupt { field: "role" }),
+    };
+    let content = history_text(&value).ok_or(ThreadDirectoryError::Corrupt { field: "content" })?;
+    let tool_call_id = if role == ThreadHistoryRole::Tool {
+        Some(
+            value
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or(ThreadDirectoryError::Corrupt {
+                    field: "toolCallId",
+                })?,
+        )
+    } else {
+        None
+    };
+    let tool_calls = if role == ThreadHistoryRole::Assistant {
+        value.get("toolCalls").and_then(Value::as_array).cloned()
+    } else {
+        None
+    };
+    Ok(ThreadHistoryMessage {
+        id,
+        role,
+        content,
+        tool_call_id,
+        tool_calls,
+    })
+}
+
+fn history_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_owned());
+    }
+    if let Some(text) = value
+        .get("text")
+        .or_else(|| value.get("content"))
+        .and_then(Value::as_str)
+    {
+        return Some(text.to_owned());
+    }
+    value.as_array().map(|parts| {
+        parts
+            .iter()
+            .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
 }
 
 struct ThreadEventReceiver {

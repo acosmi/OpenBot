@@ -28,6 +28,7 @@ use openbot_infra::auth::single_user::initialize_single_user;
 use openbot_infra::auth::sso::DynamicSsoService;
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{native, pool};
+use openbot_infra::memory_admin::PostgresMemoryAdministration;
 use openbot_infra::net::safe_http::{EgressPolicy, SafeDialer};
 use openbot_infra::policy::{PolicyListener, PolicyStore};
 use openbot_infra::repo::ChannelRepo;
@@ -243,7 +244,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_people(people)
             .with_audit(PostgresAuditReader::new(pool.clone()))
             .with_policy(policy_store)
-            .with_threads(thread_directory),
+            .with_threads(thread_directory)
+            .with_memory(PostgresMemoryAdministration::new(pool.clone())),
     );
     let metrics = install_recorder()?;
     let db_probe_pool = pool.clone();

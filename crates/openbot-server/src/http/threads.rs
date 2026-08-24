@@ -9,17 +9,19 @@ use core::task::{Context, Poll};
 use core::time::Duration;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive};
 use axum::response::{IntoResponse, Sse};
 use futures_core::Stream;
 use openbot_application::AppEventStream;
 use openbot_contracts::command::{
-    AppCommand, AppEvent, AppReply, SubscriptionRequest, ThreadMinted, ThreadStatus,
+    AppCommand, AppEvent, AppReply, SubscriptionRequest, ThreadHistory, ThreadMinted, ThreadStatus,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ThreadId;
+use serde::Deserialize;
 
 use crate::auth::Authenticated;
 use crate::error::HttpError;
@@ -59,6 +61,46 @@ pub async fn status(
         .await?
     {
         AppReply::ThreadStatus(reply) => Ok(Json(reply)),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// 固定上游 compatibility query；`agentId` 只维持 wire，不参与 native ACL/过滤。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HistoryQuery {
+    /// 上游 runtime agent id；native thread 自身已是唯一 history 真源。
+    pub agent_id: String,
+}
+
+/// `GET /api/copilotkit/threads/{thread_id}/messages` compatibility history。
+///
+/// unknown/new/invisible/deleted 全部 200 + `{"messages":[]}`；坏 UUID/query 400，数据库故障
+/// 503。`agentId` 不得覆盖 AuthContext scope。
+pub async fn history(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+    Path(thread_id): Path<String>,
+    query: Result<Query<HistoryQuery>, QueryRejection>,
+) -> Result<Json<ThreadHistory>, HttpError> {
+    let Query(query) = query.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "thread history query 解析失败");
+        AppError::MalformedPayload { field: "query" }
+    })?;
+    if query.agent_id.is_empty() {
+        return Err(AppError::MalformedPayload { field: "agent_id" }.into());
+    }
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::GetThreadHistory {
+                thread_id: ThreadId::new(thread_id),
+            },
+        )
+        .await?
+    {
+        AppReply::ThreadHistory(history) => Ok(Json(history)),
         _ => Err(application_contract_error()),
     }
 }
@@ -161,11 +203,14 @@ mod tests {
     use http::{Method, Request, StatusCode};
     use openbot_application::ports::{
         ChannelReader, PortError, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
+        ThreadHistoryRequest,
     };
     use openbot_application::{ChannelCursor, OpenBotApplication};
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
-    use openbot_contracts::command::{ThreadRunEvent, ThreadRunEventKind};
+    use openbot_contracts::command::{
+        ThreadHistoryMessage, ThreadHistoryRole, ThreadRunEvent, ThreadRunEventKind,
+    };
     use openbot_contracts::ids::thread::ThreadIdentity;
     use openbot_contracts::ids::{ActorId, DeploymentId, RunId, TenantId};
     use serde_json::Value;
@@ -210,6 +255,8 @@ mod tests {
         known_calls: Mutex<Vec<KnownCall>>,
         subscription_calls: Mutex<Vec<ThreadEventSubscription>>,
         events: Mutex<Vec<AppEvent>>,
+        history: Mutex<Result<ThreadHistory, ThreadDirectoryError>>,
+        history_calls: Mutex<Vec<ThreadHistoryRequest>>,
     }
 
     impl FakeThreadDirectory {
@@ -222,12 +269,19 @@ mod tests {
                     known_calls: Mutex::new(Vec::new()),
                     subscription_calls: Mutex::new(Vec::new()),
                     events: Mutex::new(Vec::new()),
+                    history: Mutex::new(Ok(ThreadHistory::default())),
+                    history_calls: Mutex::new(Vec::new()),
                 }),
             }
         }
 
         fn with_events(self, events: Vec<AppEvent>) -> Self {
             *self.inner.events.lock().expect("fake lock") = events;
+            self
+        }
+
+        fn with_history(self, history: Result<ThreadHistory, ThreadDirectoryError>) -> Self {
+            *self.inner.history.lock().expect("fake lock") = history;
             self
         }
 
@@ -245,6 +299,10 @@ mod tests {
                 .lock()
                 .expect("fake lock")
                 .clone()
+        }
+
+        fn history_calls(&self) -> Vec<ThreadHistoryRequest> {
+            self.inner.history_calls.lock().expect("fake lock").clone()
         }
     }
 
@@ -293,6 +351,18 @@ mod tests {
             Ok(Box::pin(FiniteEvents(
                 self.inner.events.lock().expect("fake lock").clone().into(),
             )))
+        }
+
+        async fn thread_history(
+            &self,
+            request: ThreadHistoryRequest,
+        ) -> Result<ThreadHistory, ThreadDirectoryError> {
+            self.inner
+                .history_calls
+                .lock()
+                .expect("fake lock")
+                .push(request);
+            self.inner.history.lock().expect("fake lock").clone()
         }
     }
 
@@ -491,6 +561,73 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body, serde_json::json!({"code":"malformed_payload"}));
         assert!(visible.known_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn empty_or_unknown_history_is_200_with_an_empty_messages_array() {
+        let directory = FakeThreadDirectory::new(Ok(false));
+        let (status, body) = send(
+            app(directory, FixedAuthResolver::granting(auth("u1"))),
+            Method::GET,
+            "/api/copilotkit/threads/550e8400-e29b-41d4-a716-446655440099/messages?agentId=runtime-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!({"messages":[]}));
+    }
+
+    #[tokio::test]
+    async fn history_ignores_smuggled_agent_id_and_uses_only_session_scope() {
+        let thread = ThreadId::new("550e8400-e29b-41d4-a716-446655440000");
+        let directory = FakeThreadDirectory::new(Ok(true)).with_history(Ok(ThreadHistory {
+            messages: vec![ThreadHistoryMessage {
+                id: "m-1".to_owned(),
+                role: ThreadHistoryRole::User,
+                content: "hello".to_owned(),
+                tool_call_id: None,
+                tool_calls: None,
+            }],
+        }));
+        let visible = directory.clone();
+        let (status, body) = send(
+            app(directory, FixedAuthResolver::granting(auth("u1"))),
+            Method::GET,
+            &format!(
+                "/api/copilotkit/threads/{thread}/messages?agentId=someone-elses-private-agent"
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["messages"][0]["content"], "hello");
+        assert_eq!(
+            visible.history_calls(),
+            vec![ThreadHistoryRequest {
+                deployment: DeploymentId::new("openbot-test"),
+                tenant: TenantId::new("tenant-test"),
+                actor: ActorId::new("u1"),
+                thread,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_history_query_is_400_before_the_port() {
+        for uri in [
+            "/api/copilotkit/threads/550e8400-e29b-41d4-a716-446655440000/messages",
+            "/api/copilotkit/threads/550e8400-e29b-41d4-a716-446655440000/messages?agentId=",
+            "/api/copilotkit/threads/550e8400-e29b-41d4-a716-446655440000/messages?agentId=a&principal=admin",
+        ] {
+            let directory = FakeThreadDirectory::new(Ok(true));
+            let visible = directory.clone();
+            let (status, _) = send(
+                app(directory, FixedAuthResolver::granting(auth("u1"))),
+                Method::GET,
+                uri,
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+            assert!(visible.history_calls().is_empty(), "{uri}");
+        }
     }
 
     #[tokio::test]
