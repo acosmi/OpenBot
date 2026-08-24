@@ -20,10 +20,10 @@ for exact in \
   'rustls-webpki v0.103.15' \
   'tokio-rustls v0.26.4' \
   'webpki-roots v1.0.9'; do
-  printf '%s\n' "$normal_tree" | grep -qxF "$exact" || fail "依赖图缺少精确版本 $exact"
+  grep -qxF "$exact" <<< "$normal_tree" || fail "依赖图缺少精确版本 $exact"
 done
 
-if printf '%s\n' "$normal_tree" | grep -Eq '^(reqwest|native-tls|aws-lc-rs|aws-lc-sys) v'; then
+if grep -Eq '^(reqwest|native-tls|aws-lc-rs|aws-lc-sys) v' <<< "$normal_tree"; then
   fail 'openbot-infra 图出现第二 HTTP/TLS 路径（reqwest/native-tls/aws-lc）'
 fi
 
@@ -34,14 +34,14 @@ openssl_callers=$(rg -l 'openssl::' crates/*/src --glob '*.rs' | sort)
   || fail "OpenSSL 调用面越出 SAML XML/cert 校验：[$openssl_callers]"
 
 feature_tree=$(cargo tree -p openbot-infra -e features --prefix none --locked)
-printf '%s\n' "$feature_tree" | grep -qxF 'rustls feature "ring"' || fail 'rustls ring feature 未启用'
+grep -qxF 'rustls feature "ring"' <<< "$feature_tree" || fail 'rustls ring feature 未启用'
 for forbidden in \
   'rustls feature "aws_lc_rs"' \
   'rustls feature "prefer-post-quantum"' \
   'hyper feature "http2"' \
   'hyper-util feature "client-proxy"' \
   'hyper-util feature "client-proxy-system"'; do
-  if printf '%s\n' "$feature_tree" | grep -qxF "$forbidden"; then
+  if grep -qxF "$forbidden" <<< "$feature_tree"; then
     fail "出现未审 feature: $forbidden"
   fi
 done

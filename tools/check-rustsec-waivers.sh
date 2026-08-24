@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 private_key_pattern='\b(RsaPrivateKey|CoreRsaPrivateSigningKey|PrivateSigningKey|private_key_jwt)\b'
 
 # 正向对照：证明扫描器和 pattern 本轮确实说得出“命中”。
-printf '%s\n' 'CoreRsaPrivateSigningKey' | rg -q "$private_key_pattern"
+rg -q "$private_key_pattern" <<< 'CoreRsaPrivateSigningKey'
 
 if rg -n "$private_key_pattern" crates --glob '*.rs'; then
   printf '%s\n' 'RUSTSEC-2023-0071 豁免失效：仓内出现 RSA 私钥/私签路径，必须重新可达性审查。' >&2
