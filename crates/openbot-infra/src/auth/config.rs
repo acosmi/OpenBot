@@ -49,7 +49,7 @@
 //! - session 的三个时间窗口是**新增裁决**，不是上游行为。见
 //!   [`DEFAULT_SESSION_IDLE`] 一组常量的文档。
 //!
-//! # 规范化与集合类型一律复用 `openbot-domain`，本模块不再自造
+//! # TrimString、规范化与集合类型一律复用 `openbot-domain`，本模块不再自造
 //!
 //! `INITIAL_ADMIN_EMAILS` 落成 [`AdminFloor`]（内含 [`NormalizedEmail`](openbot_domain::identity::email::NormalizedEmail)），
 //! `TRUSTED_ORIGINS` 落成 [`TrustedOrigins`]。**不在这里再写一份规范化**，理由是
@@ -60,13 +60,15 @@
 //! 那一条 floor 条目永远匹配不上任何人，**而且没有任何报错**。
 //!
 //! 这正是"同一判据两份实现"的标准结局：两份都自认为正确，差异只在一个看不见的码点上。
-//! 本模块只负责逗号切分（那是配置层的事），切完的条目交给领域类型。
+//! 本模块只负责逗号切分（那是配置层的事），trim 复用同一份 ECMAScript 封闭表，切完的
+//! 条目交给领域类型。
 
 use core::fmt;
 use std::collections::BTreeMap;
 
 use openbot_domain::identity::roles::AdminFloor;
 use openbot_domain::identity::session::{OriginMalformed, SessionLifetimePolicy, TrustedOrigins};
+use openbot_domain::text::trim_ecmascript;
 use openbot_domain::vault::{SecretBytes, WrappingKey};
 use time::Duration;
 
@@ -180,7 +182,7 @@ pub fn default_session_lifetime() -> SessionLifetimePolicy {
 
 /// 读一个可选变量：两侧 `trim`，空串**等同未设**（上游 `config.ts::optional`）。
 fn optional<'a>(env: &'a EnvMap, name: &str) -> Option<&'a str> {
-    let value = env.get(name)?.trim();
+    let value = trim_ecmascript(env.get(name)?);
     if value.is_empty() { None } else { Some(value) }
 }
 
@@ -189,7 +191,7 @@ fn comma_separated(env: &EnvMap, name: &str) -> Vec<String> {
     optional(env, name)
         .unwrap_or_default()
         .split(',')
-        .map(str::trim)
+        .map(trim_ecmascript)
         .filter(|part| !part.is_empty())
         .map(str::to_owned)
         .collect()
@@ -1083,7 +1085,7 @@ pub fn single_user_enabled(env: &EnvMap, has_provider: bool) -> Result<bool, Aut
     }
     if env
         .get("OPENBOT_SINGLE_USER")
-        .is_some_and(|value| value.trim() == "true")
+        .is_some_and(|value| trim_ecmascript(value) == "true")
     {
         return Ok(true);
     }

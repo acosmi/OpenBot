@@ -27,6 +27,8 @@
 
 use core::fmt;
 
+use openbot_domain::text::trim_ecmascript;
+
 /// 地址的 scheme。**只有两个**，因为本类型只服务 HTTP(S) 端点。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scheme {
@@ -75,7 +77,7 @@ impl DeploymentAddress {
     ///
     /// 缺 scheme、scheme 不是 `http`/`https`、或 host 为空时返回 [`AddressParseError`]。
     pub fn parse(raw: &str) -> Result<Self, AddressParseError> {
-        let text = crate::config::env::strip_trailing_slashes(raw.trim());
+        let text = crate::config::env::strip_trailing_slashes(trim_ecmascript(raw));
 
         let (scheme_text, rest) = text.split_once("://").ok_or(AddressParseError)?;
         let scheme = match scheme_text.to_ascii_lowercase().as_str() {
@@ -254,6 +256,7 @@ mod tests {
             "https://",
             "://openbot.test",
             "",
+            "\u{0085}https://openbot.test\u{0085}",
         ] {
             assert_eq!(
                 DeploymentAddress::parse(bad),

@@ -43,6 +43,7 @@
 
 use core::num::NonZeroU32;
 
+use openbot_domain::audit::retention::{RetentionPolicy, parse_retention_days};
 use openbot_domain::policy::ActionPolicy;
 
 use crate::config::address::DeploymentAddress;
@@ -347,11 +348,11 @@ fn parse_optional_address(
 
 /// 审计留存：未设 = 永久；否则必须是 ≥ 1 的整数天。
 fn parse_audit_retention(env_map: &EnvMap, problems: &mut Vec<ConfigProblem>) -> AuditRetention {
-    let Some(raw) = env::optional(env_map, "AUDIT_RETENTION_DAYS") else {
-        return AuditRetention::Forever;
-    };
-    match raw.parse::<NonZeroU32>() {
-        Ok(days) => AuditRetention::Days(days),
+    match parse_retention_days(env::optional(env_map, "AUDIT_RETENTION_DAYS")) {
+        Ok(RetentionPolicy::Forever) => AuditRetention::Forever,
+        Ok(RetentionPolicy::Days(days)) => AuditRetention::Days(
+            NonZeroU32::new(days.get()).expect("domain RetentionDays 已排除 0"),
+        ),
         Err(_) => {
             problems.push(ConfigProblem::Malformed {
                 variable: "AUDIT_RETENTION_DAYS",
@@ -511,10 +512,31 @@ mod tests {
             days,
             AuditRetention::Days(NonZeroU32::new(365).expect("365"))
         );
+        assert_eq!(
+            ServerConfig::from_env_map(&env(&[(
+                "AUDIT_RETENTION_DAYS",
+                "\u{FEFF}\u{3000}365\u{00A0}",
+            )]))
+            .expect("环境 trim 必须逐字对齐 ECMAScript")
+            .audit_retention,
+            AuditRetention::Days(NonZeroU32::new(365).expect("365"))
+        );
 
-        for bad in ["0", "-1", "1.5", "forever", "365 days"] {
+        for bad in [
+            "0",
+            "-1",
+            "1.5",
+            "forever",
+            "365 days",
+            "+7",
+            "0x10",
+            "0b101",
+            "1e3",
+            "7.0",
+            "\u{0085}365\u{0085}",
+        ] {
             let error = ServerConfig::from_env_map(&env(&[("AUDIT_RETENTION_DAYS", bad)]))
-                .expect_err("上游对同样这批值也拒绝启动");
+                .expect_err("Rust 审计控制只收十进制正整数，不能借上游 Number 强转");
             assert_eq!(
                 codes(&error),
                 vec![("malformed_env_var", "AUDIT_RETENTION_DAYS")]
