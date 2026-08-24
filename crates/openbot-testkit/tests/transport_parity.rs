@@ -402,13 +402,14 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
             }
             Some(uri)
         }
-        // People 五条的 W-4 HTTP 腿由同目录 `transport_people_parity.rs` 单独覆盖（含 POST
-        // body/origin/fresh guard）；本文件只维护 channel 专项矩阵。InvokeTool 尚无公开 HTTP 路由。
+        // People 与 audit 的 HTTP 腿由同目录专项 transport parity 覆盖；本文件只维护 channel
+        // 专项矩阵。InvokeTool 尚无公开 HTTP 路由。
         AppCommand::GetCurrentUser
         | AppCommand::AdminStatus
         | AppCommand::ListPeople { .. }
         | AppCommand::ChangePersonRole { .. }
         | AppCommand::ChangePersonAccess { .. }
+        | AppCommand::ListAuditEvents { .. }
         | AppCommand::InvokeTool(_) => None,
     }
 }

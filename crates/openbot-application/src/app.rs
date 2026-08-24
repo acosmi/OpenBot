@@ -21,12 +21,14 @@ use openbot_contracts::command::{AppCommand, AppReply, SubscriptionRequest};
 use openbot_contracts::error::AppError;
 use tracing::Span;
 
-use crate::ports::{ChannelReader, NoPeopleAdministration, PeopleAdministration};
+use crate::ports::{
+    AuditReader, ChannelReader, NoAuditReader, NoPeopleAdministration, PeopleAdministration,
+};
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, change_person_access, change_person_role, current_user,
-    health, health_stream, list_people, list_visible_channels,
+    health, health_stream, list_audit_events, list_people, list_visible_channels,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -37,22 +39,27 @@ use crate::use_cases::{
 pub struct OpenBotApplication<
     R,
     P = NoPeopleAdministration,
+    A = NoAuditReader,
     C = NoToolControlPlane,
     J = NoToolJournal,
 > {
     channels: R,
     people: P,
+    audit: A,
     tool_control: C,
     tool_journal: J,
     heartbeat_period: Duration,
 }
 
-impl<R> OpenBotApplication<R, NoPeopleAdministration, NoToolControlPlane, NoToolJournal> {
+impl<R>
+    OpenBotApplication<R, NoPeopleAdministration, NoAuditReader, NoToolControlPlane, NoToolJournal>
+{
     /// 注入端口实现。
     pub fn new(channels: R) -> Self {
         Self {
             channels,
             people: NoPeopleAdministration,
+            audit: NoAuditReader,
             tool_control: NoToolControlPlane,
             tool_journal: NoToolJournal,
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
@@ -60,13 +67,27 @@ impl<R> OpenBotApplication<R, NoPeopleAdministration, NoToolControlPlane, NoTool
     }
 }
 
-impl<R, P, C, J> OpenBotApplication<R, P, C, J> {
+impl<R, P, A, C, J> OpenBotApplication<R, P, A, C, J> {
     /// 注入 people/auth 原子端口。
     #[must_use]
-    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, C, J> {
+    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, C, J> {
         OpenBotApplication {
             channels: self.channels,
             people,
+            audit: self.audit,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入管理员 audit keyset reader。
+    #[must_use]
+    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, C, J> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit,
             tool_control: self.tool_control,
             tool_journal: self.tool_journal,
             heartbeat_period: self.heartbeat_period,
@@ -75,10 +96,11 @@ impl<R, P, C, J> OpenBotApplication<R, P, C, J> {
 
     /// 注入 tool control plane 与 durable journal；二者分开，application 才能掌握固定顺序。
     #[must_use]
-    pub fn with_tools<T, K>(self, control: T, journal: K) -> OpenBotApplication<R, P, T, K> {
+    pub fn with_tools<T, K>(self, control: T, journal: K) -> OpenBotApplication<R, P, A, T, K> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
+            audit: self.audit,
             tool_control: control,
             tool_journal: journal,
             heartbeat_period: self.heartbeat_period,
@@ -96,10 +118,11 @@ impl<R, P, C, J> OpenBotApplication<R, P, C, J> {
     }
 }
 
-impl<R, P, C, J> OpenBotApplication<R, P, C, J>
+impl<R, P, A, C, J> OpenBotApplication<R, P, A, C, J>
 where
     R: ChannelReader,
     P: PeopleAdministration,
+    A: AuditReader,
     C: ToolControlPlane,
     J: ToolJournal,
 {
@@ -135,6 +158,30 @@ where
             AppCommand::ChangePersonAccess { user_id, revoked } => Ok(AppReply::Person(
                 change_person_access(&self.people, auth, &user_id, revoked).await?,
             )),
+            AppCommand::ListAuditEvents {
+                cursor,
+                event_type,
+                actor_user_id,
+                target_type,
+                target_id,
+                from,
+                to,
+                limit,
+            } => Ok(AppReply::AuditEvents(
+                list_audit_events(
+                    &self.audit,
+                    auth,
+                    cursor,
+                    event_type,
+                    actor_user_id,
+                    target_type,
+                    target_id,
+                    from,
+                    to,
+                    limit,
+                )
+                .await?,
+            )),
             AppCommand::InvokeTool(invocation) => Ok(AppReply::Tool(
                 invoke_tool(&self.tool_control, &self.tool_journal, auth, invocation).await?,
             )),
@@ -143,10 +190,11 @@ where
 }
 
 #[async_trait]
-impl<R, P, C, J> ApplicationService for OpenBotApplication<R, P, C, J>
+impl<R, P, A, C, J> ApplicationService for OpenBotApplication<R, P, A, C, J>
 where
     R: ChannelReader + 'static,
     P: PeopleAdministration + 'static,
+    A: AuditReader + 'static,
     C: ToolControlPlane + 'static,
     J: ToolJournal + 'static,
 {
@@ -381,6 +429,26 @@ mod tests {
             },
         ));
         assert!(matches!(access, Ok(AppReply::Person(_))));
+
+        let (audit, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::ListAuditEvents {
+                cursor: None,
+                event_type: None,
+                actor_user_id: None,
+                target_type: None,
+                target_id: None,
+                from: None,
+                to: None,
+                limit: None,
+            },
+        ));
+        assert!(matches!(
+            audit,
+            Err(AppError::DependencyUnavailable {
+                dependency: "database"
+            })
+        ));
 
         let (tool, _) = capture(service.execute(
             auth,

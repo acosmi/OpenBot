@@ -24,16 +24,16 @@
 //!   query —— 这四条在 v3 §5.2 是逐字禁止项。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # 当前状态（G1 + W-3a people + W-3b tool boundary）
+//! # 当前状态（G1 + people/tool + W-5 audit read boundary）
 //!
 //! Phase 0 本 crate 刻意为空；G1 起它承载一个垂直切片所需的全部四层：
 //!
 //! | 模块 | 内容 | 方案出处 |
 //! | --- | --- | --- |
 //! | [`service`] | [`ApplicationService`] trait 与 [`AppEventStream`] | §5.2 |
-//! | [`ports`] | [`ChannelReader`] 与原子 [`PeopleAdministration`] 端口 | §5.2 / §6.2 / R40 |
+//! | [`ports`] | channel / people / audit typed ports | §5.2 / §6.2 / §8.6 / R40 / R56 |
 //! | [`cursor`] | keyset 游标 [`ChannelCursor`] 的铸造与 fail-closed 解析 | §15.3 |
-//! | [`use_cases`] | health/channel，以及 current user/admin/people role/access 用例 | §6.2 / §6.5 / R40 |
+//! | [`use_cases`] | health/channel、people role/access 与 admin audit keyset 用例 | §6.2 / §6.5 / §8.6 / R56 |
 //! | [`tool`] | metadata→scope→policy→approval→journal→capability→execute→outcome/audit | §8.1 / R41 |
 //!
 //! 具体实现 [`OpenBotApplication`] 把上面四层接起来，是 transport 唯一需要构造的类型。
@@ -49,14 +49,14 @@
 //! # 401 留在认证 transport，403 已由 application 生产
 //!
 //! `AppError::Unauthenticated`（401）在本 crate 里没有生产者，而
-//! `AppError::ForbiddenRole`（403）从 W-3a 起有 admin people 用例这一组真实生产者：
+//! `AppError::ForbiddenRole`（403）从 W-3a 起有 admin people、W-5 起有 admin audit 真实生产者：
 //!
 //! - **401**：`AuthContext` 无法由外部字节铸造（contracts 里它既不 `Serialize` 也不
 //!   `Deserialize`），所以「拿到了一个 `AuthContext`」本身就是「已认证」的证据。未登录
 //!   请求在 transport 的认证层就被挡下，根本走不到 [`ApplicationService::execute`]。
 //!   在这里再写一次 401 检查，就是给一个类型系统已经排除的世界写分支。
-//! - **403**：health 与 channel list 仍不要求角色；admin status/list/role/access 在调用
-//!   people port 之前统一检查权威 `AuthContext` 的 `Role::Admin`。所以同一个 roleless actor
+//! - **403**：health 与 channel list 仍不要求角色；admin status/people/audit 在调用各自 port
+//!   之前统一检查权威 `AuthContext` 的 `Role::Admin`。所以同一个 roleless actor
 //!   对前两类成功、对后一类得到稳定 `forbidden_role`，不是 transport 自己复制一道门。
 //!
 //! `app::a_roleless_authenticated_actor_is_not_rejected` 把两侧一起钉住。W-3b 已把通用 tool
@@ -80,8 +80,8 @@ mod fakes;
 pub use app::OpenBotApplication;
 pub use cursor::{ChannelCursor, channel_recency};
 pub use ports::{
-    ChannelReader, NoPeopleAdministration, PeopleAdministration, PeoplePageRequest,
-    PeoplePortError, PortError,
+    AuditPageRequest, AuditReadError, AuditReader, ChannelReader, NoAuditReader,
+    NoPeopleAdministration, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,
@@ -94,6 +94,7 @@ pub use tool::{
     ToolRefusalDraft, invoke_tool,
 };
 pub use use_cases::{
-    DEFAULT_CHANNEL_PAGE, DEFAULT_PEOPLE_PAGE, MAX_PEOPLE_PAGE, admin_status, change_person_access,
-    change_person_role, current_user, health, list_people, list_visible_channels,
+    DEFAULT_AUDIT_PAGE, DEFAULT_CHANNEL_PAGE, DEFAULT_PEOPLE_PAGE, MAX_AUDIT_PAGE, MAX_PEOPLE_PAGE,
+    admin_status, change_person_access, change_person_role, current_user, health,
+    list_audit_events, list_people, list_visible_channels,
 };

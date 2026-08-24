@@ -23,7 +23,7 @@
 //! - 把 computer token 交给浏览器（v3 §12.4）；Server 的 screen viewer 用同源 `wss` +
 //!   session cookie + CSRF-style origin check。
 //!
-//! # 当前状态（G1 + W-4 Server production slice）
+//! # 当前状态（G1 + W-4 Server slice + W-5 audit/policy）
 //!
 //! Phase 0 本 crate 刻意为空；G1 落**第一个垂直切片**所需的最小集合。四条 G1 判据里
 //! 「ApplicationService 经 Axum/Tauri 结果一致」与「tracing/metrics/redaction 从首个
@@ -40,8 +40,8 @@
 //! | [`telemetry`] | request span、request_id 消毒、subscriber 构造器 | §16.4 |
 //! | [`http`] | 路由表与 handler | parity ledger 四条，见下表 |
 //!
-//! G1 四条路由之外，W-4 追加 `/api/me`、admin status/people list/role/access；它们仍只做
-//! framing，全部穿同一个 `ApplicationService`。
+//! G1 四条路由之外，W-4 追加 `/api/me`、admin status/people list/role/access，W-5 batch 3
+//! 追加 admin audit keyset GET；它们仍只做 framing，全部穿同一个 `ApplicationService`。
 //!
 //! - `GET /api/channels` —— 台账 `api-channels-list-get`（parity）把落点钉成
 //!   `openbot-server::http::channels::list`，[`http::channels::list`] 逐字兑现它。
@@ -51,6 +51,8 @@
 //!   fail-closed 503 裁决见 [`readiness`] 模块文档。
 //! - `GET /metrics` —— 台账 `metrics-get`（新增，`T-API-0148`），落点
 //!   `openbot-server::http::metrics`。不另开监听端口，见 [`http::metrics`] 模块文档。
+//! - `GET /api/admin/audit-events` —— 台账 `api-admin-audit-events-get`（parity），只做 query
+//!   framing；admin gate、归一与页长在 application，SQL/keyset 在 infra（R56）。
 //!
 //! # 还没有的东西（不要当成"已经有了"）
 //!
@@ -61,7 +63,7 @@
 //!   而配置面是 G2（§15.4）。此刻引入只会得到一个零调用点的依赖，所以刻意不引入。
 //!   **本 crate 没有任何默认外发的遥测端点**（§16.4「零 phone-home」）。
 //! - **SSE / WebSocket / 静态 GUI bundle**：分别是 G3 与 GUI 线的工作。
-//! - credentials/computer 等其余 HTTP 路由仍未落地。W-7 已接环境/动态 OIDC、SAML
+//! - credentials/computer（含 policy 管理写面）等其余 HTTP 路由仍未落地。W-7 已接环境/动态 OIDC、SAML
 //!   routing/metadata/ACS、动态 IdP 管理与 keyed session/group refresh；外部 SAML/XSW 审计、
 //!   KMS/HSM 与跨平台原生发行未完成，不能据此宣称 G2。
 

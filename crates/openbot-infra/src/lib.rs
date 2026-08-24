@@ -41,11 +41,14 @@
 //!   [`repo::channels::ChannelRepo`] 同时实现 `openbot_application::ChannelReader`。
 //! - [`vault::CredentialRepo`] —— credential CAS 轮换/撤销；
 //!   [`repo::audit::AuditEventRepo`] —— hash chain/checkpoint；
+//!   [`repo::audit::PostgresAuditReader`] —— admin filter/keyset 读面；
 //!   [`repo::tools`] —— decision+attempt 同事务与 commit 后 receipt；
 //! - [`repo::people_admin`] —— `PeopleAdministration` 的 PostgreSQL 原子适配器：role/access
 //!   判定、业务写、auth generation 与 audit 同事务（R40）。
 //! - [`repo::tools::PostgresToolJournal`] —— application 的 decision/attempt/capability/outcome
 //!   journal；outcome 与 audit 同事务，unknown 固定进 reconciliation（R41）。
+//! - [`policy`] —— action policy 权威行、raw+预编译内存快照、同事务 NOTIFY 与专用重连
+//!   listener（R56）。
 //!
 //! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
 //! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
@@ -56,5 +59,6 @@
 pub mod auth;
 pub mod db;
 pub mod net;
+pub mod policy;
 pub mod repo;
 pub mod vault;

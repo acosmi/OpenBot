@@ -77,7 +77,7 @@ recount:
     expect: 234
   - command: "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]'"
     cwd: repo
-    expect: done=46 todo=188 in_progress=0 total=234
+    expect: done=65 todo=169 in_progress=0 total=234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229
@@ -95,10 +95,10 @@ recount:
     expect: 105
   - command: "grep -c '^    label: parity$' parity/tests.yaml"
     cwd: repo
-    expect: 786
+    expect: 780
   - command: "grep -c '^    label: 替代$' parity/tests.yaml"
     cwd: repo
-    expect: 261
+    expect: 267
   - command: "grep -c '^    label: 新增$' parity/tests.yaml"
     cwd: repo
     expect: 0
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 997
+    expect: 978
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -3707,68 +3707,74 @@ entries:
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[416]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §16.5 Retention：审计留存策略的裁剪判据逐条移植。上游用例标题：「the lock is released, so the next sweep can run」。"
   # ---------------------------------------------------------------------------
-  # server/tests/audit.test.ts —— owner openbot-application / ported / parity
+  # server/tests/audit.test.ts —— owner openbot-application / ported / 替代
   # ---------------------------------------------------------------------------
   - id: "server-tests-audit--audit-payload-redaction--defines-the-v1-audit-event-taxonomy"
     upstream: "server/tests/audit.test.ts::audit payload redaction"
-    label: parity
-    target: "openbot_application::audit::tests::defines_the_v1_audit_event_taxonomy"
+    label: 替代
+    target: "openbot_domain::audit::event::tests::catalog_matches_the_upstream_count_and_has_no_duplicates"
     owner: openbot-application
     test_id: T-TEST-0348
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[418]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §8.6 Audit：脱敏、不可变与管理端读取判据逐条移植（写面唯一入口是 ApplicationService，v3 §5.2）。上游用例标题：「defines the v1 audit event taxonomy」。"
+    done_evidence: "CARGO_INCREMENTAL=0 cargo test -p openbot-domain audit:: => 53/0/0；AUDIT_EVENT_TYPES 实得 57 个且 BTreeSet 双向等长，parse 对全集逐项成功并拒绝拼错/大小写/未知值"
+    notes: "ported —— v3 §8.6 Audit：上游自由 JSON + 敏感键黑名单改为封闭 AuditFact 字段 allowlist；事件目录、不可变与管理端读取判据逐条移植（写/读面均穿 ApplicationService，v3 §5.2）。上游用例标题：「defines the v1 audit event taxonomy」。"
   - id: "server-tests-audit--audit-payload-redaction--removes-secret-values-and-document-content-recursively"
     upstream: "server/tests/audit.test.ts::audit payload redaction"
-    label: parity
-    target: "openbot_application::audit::tests::removes_secret_values_and_document_content_recursively"
+    label: 替代
+    target: "openbot_domain::audit::payload::tests::field_ledger_is_disjoint_from_upstream_sensitive_keys + openbot_infra::tests::audit_reader::secret_input_writes_only_allowlisted_metadata_never_the_value_or_hash"
     owner: openbot-application
     test_id: T-TEST-0349
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— v3 §8.6 以封闭 AuditFact 字段 allowlist 取代自由 JSON 的递归敏感键黑名单"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[419]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §8.6 Audit：脱敏、不可变与管理端读取判据逐条移植（写面唯一入口是 ApplicationService，v3 §5.2）。上游用例标题：「removes secret values and document content recursively」。"
+    done_evidence: "domain audit 53/0/0：字段 ledger 与固定上游敏感键规范化集合不相交、secret 只承载 id/purpose/target_field/value_len 且无 hash 变体；PG17 audit_reader 4/0/0 又证明持有 plaintext-key 的调用只落 allowlisted metadata，库内原值/hash 均零命中"
+    notes: "ported —— v3 §8.6 Audit：上游自由 JSON + 敏感键黑名单改为封闭 AuditFact 字段 allowlist；事件目录、不可变与管理端读取判据逐条移植（写/读面均穿 ApplicationService，v3 §5.2）。上游用例标题：「removes secret values and document content recursively」。"
   - id: "server-tests-audit--audit-payload-redaction--writes-only-the-redacted-payload-to-the-audit-store"
     upstream: "server/tests/audit.test.ts::audit payload redaction"
-    label: parity
-    target: "openbot_application::audit::tests::writes_only_the_redacted_payload_to_the_audit_store"
+    label: 替代
+    target: "openbot_infra::tests::audit_reader::secret_input_writes_only_allowlisted_metadata_never_the_value_or_hash"
     owner: openbot-application
     test_id: T-TEST-0350
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— AuditEventRepo 只接受已构造的 AuditPayload，不再暴露可绕过 redactor 的自由 insert"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[420]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §8.6 Audit：脱敏、不可变与管理端读取判据逐条移植（写面唯一入口是 ApplicationService，v3 §5.2）。上游用例标题：「writes only the redacted payload to the audit store」。"
+    done_evidence: "OPENBOT_TEST_DATABASE_URL=… cargo test -p openbot-infra --test audit_reader -- --include-ignored => 4/0/0；真表 payload 精确含 secret_id/purpose/target_field/value_len，不含调用方 plaintext-key 或 value_hash"
+    notes: "ported —— v3 §8.6 Audit：上游自由 JSON + 敏感键黑名单改为封闭 AuditFact 字段 allowlist；事件目录、不可变与管理端读取判据逐条移植（写/读面均穿 ApplicationService，v3 §5.2）。上游用例标题：「writes only the redacted payload to the audit store」。"
   - id: "server-tests-audit--audit-event-immutability--some-migration-still-installs-the-append-only-guard"
     upstream: "server/tests/audit.test.ts::audit event immutability"
-    label: parity
-    target: "openbot_application::audit::tests::some_migration_still_installs_the_append_only_guard"
+    label: 替代
+    target: "openbot_infra::tests::audit_reader::current_schema_installs_and_enforces_both_append_only_triggers"
     owner: openbot-application
     test_id: T-TEST-0351
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[422]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §8.6 Audit：脱敏、不可变与管理端读取判据逐条移植（写面唯一入口是 ApplicationService，v3 §5.2）。上游用例标题：「some migration still installs the append-only guard」。"
+    done_evidence: "PG17 audit_reader 4/0/0：pg_trigger 集合精确 [audit_events_append_only,audit_events_no_truncate]；UPDATE/DELETE/TRUNCATE 三路各得 P0001 且正向 seed 3 行仍为 3"
+    notes: "ported —— v3 §8.6 Audit：上游自由 JSON + 敏感键黑名单改为封闭 AuditFact 字段 allowlist；事件目录、不可变与管理端读取判据逐条移植（写/读面均穿 ApplicationService，v3 §5.2）。上游用例标题：「some migration still installs the append-only guard」。"
   - id: "server-tests-audit--admin-audit-api--returns-a-filtered-audit-page-to-an-administrator"
     upstream: "server/tests/audit.test.ts::admin audit API"
-    label: parity
-    target: "openbot_application::audit::tests::returns_a_filtered_audit_page_to_an_administrator"
+    label: 替代
+    target: "openbot_application::use_cases::audit + openbot_infra::repo::audit::PostgresAuditReader + openbot_server::http::admin::audit_events"
     owner: openbot-application
     test_id: T-TEST-0352
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[424]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §8.6 Audit：脱敏、不可变与管理端读取判据逐条移植（写面唯一入口是 ApplicationService，v3 §5.2）。上游用例标题：「returns a filtered audit page to an administrator」。"
+    done_evidence: "application audit 2/0/0 + server admin 1/0/0 + transport_audit_parity 1/0/0 + PG17 audit_reader 4/0/0：管理员 eventType/limit 过滤穿同一 ApplicationService，keyset 两页逐行精确、wire UTC 毫秒与 nextCursor 相等"
+    notes: "ported —— v3 §8.6 Audit：上游自由 JSON + 敏感键黑名单改为封闭 AuditFact 字段 allowlist；事件目录、不可变与管理端读取判据逐条移植（写/读面均穿 ApplicationService，v3 §5.2）。上游用例标题：「returns a filtered audit page to an administrator」。"
   - id: "server-tests-audit--admin-audit-api--denies-a-non-admin-caller"
     upstream: "server/tests/audit.test.ts::admin audit API"
-    label: parity
-    target: "openbot_application::audit::tests::denies_a_non_admin_caller"
+    label: 替代
+    target: "openbot_application::use_cases::audit::tests::non_admin_and_malformed_time_stop_before_the_port + openbot_server::http::admin::tests::audit_page_is_filtered_for_admin_and_denied_before_port_for_member"
     owner: openbot-application
     test_id: T-TEST-0353
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[425]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §8.6 Audit：脱敏、不可变与管理端读取判据逐条移植（写面唯一入口是 ApplicationService，v3 §5.2）。上游用例标题：「denies a non-admin caller」。"
+    done_evidence: "application audit 2/0/0：Role::User 在 port 前精确 ForbiddenRole(Admin)、calls=0；真 Axum member GET 实得 403/forbidden_role 且 FakeAudit calls=0，admin 正向同路由 200"
+    notes: "ported —— v3 §8.6 Audit：上游自由 JSON + 敏感键黑名单改为封闭 AuditFact 字段 allowlist；事件目录、不可变与管理端读取判据逐条移植（写/读面均穿 ApplicationService，v3 §5.2）。上游用例标题：「denies a non-admin caller」。"
   # ---------------------------------------------------------------------------
   # server/tests/bot-access.test.ts —— owner openbot-server / ported / parity
   # ---------------------------------------------------------------------------
@@ -8820,62 +8826,68 @@ entries:
   - id: "server-tests-policy-durability-integration--a-boundary-set-while-running--is-still-there-after-a-restart"
     upstream: "server/tests/policy-durability.integration.test.ts::a boundary set while running"
     label: parity
-    target: "openbot_infra::store::policy_durability::tests::is_still_there_after_a_restart"
+    target: "openbot_infra::tests::policy_store::a_boundary_set_while_running_is_still_there_after_restart"
     owner: openbot-infra
     test_id: T-TEST-0844
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1022]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "OPENBOT_TEST_DATABASE_URL=… cargo test -p openbot-infra --test policy_store -- --include-ignored --test-threads=1 => 13/0/0；第二个全新 PolicyStore 从同一库 load 实得 Database 且 raw policy 逐字段等于首实例保存值"
     notes: "ported —— v3 §8.3：运行中设置的边界必须持久，判据逐条移植。上游用例标题：「is still there after a restart」。"
   - id: "server-tests-policy-durability-integration--a-boundary-set-while-running--a-deployment-that-never-set-one-gets-its-configured-defa"
     upstream: "server/tests/policy-durability.integration.test.ts::a boundary set while running"
     label: parity
-    target: "openbot_infra::store::policy_durability::tests::a_deployment_that_never_set_one_gets_its_configured_defa"
+    target: "openbot_infra::tests::policy_store::a_deployment_that_never_set_one_gets_its_configured_default"
     owner: openbot-infra
     test_id: T-TEST-0845
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1023]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 13/0/0：空 action_policy 表 + 显式 configured policy 的 load 来源精确 Configuration，内存值逐字段相等；None 配置另由内存正向落独立 Unconfigured/default-deny"
     notes: "ported —— v3 §8.3：运行中设置的边界必须持久，判据逐条移植。上游用例标题：「a deployment that never set one gets its configured default」。"
   - id: "server-tests-policy-durability-integration--a-boundary-set-while-running--resetting-forgets-it-so-a-restart-returns-to-configurati"
     upstream: "server/tests/policy-durability.integration.test.ts::a boundary set while running"
     label: parity
-    target: "openbot_infra::store::policy_durability::tests::resetting_forgets_it_so_a_restart_returns_to_configurati"
+    target: "openbot_infra::tests::policy_store::resetting_forgets_the_saved_row_and_restart_returns_to_configuration"
     owner: openbot-infra
     test_id: T-TEST-0846
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1024]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 13/0/0：set 后 reset 删除 current 行，第二个 store load 来源 Configuration、deny 回空且真表 count=0"
     notes: "ported —— v3 §8.3：运行中设置的边界必须持久，判据逐条移植。上游用例标题：「resetting forgets it, so a restart returns to configuration」。"
   - id: "server-tests-policy-durability-integration--a-boundary-set-while-running--setting-twice-keeps-one-row-and-the-latest-rule"
     upstream: "server/tests/policy-durability.integration.test.ts::a boundary set while running"
     label: parity
-    target: "openbot_infra::store::policy_durability::tests::setting_twice_keeps_one_row_and_the_latest_rule"
+    target: "openbot_infra::tests::policy_store::setting_twice_keeps_one_row_and_the_latest_rule"
     owner: openbot-infra
     test_id: T-TEST-0847
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1025]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 13/0/0：enforce/first 后 dry-run/second 两次 set，窗口 count 精确 1、mode=dry-run、deny=[second]，内存 raw 与最新行相等"
     notes: "ported —— v3 §8.3：运行中设置的边界必须持久，判据逐条移植。上游用例标题：「setting twice keeps one row and the latest rule」。"
   - id: "server-tests-policy-durability-integration--a-boundary-set-while-running--records-who-changed-it"
     upstream: "server/tests/policy-durability.integration.test.ts::a boundary set while running"
     label: parity
-    target: "openbot_infra::store::policy_durability::tests::records_who_changed_it"
+    target: "openbot_infra::tests::policy_store::setting_records_who_changed_it"
     owner: openbot-infra
     test_id: T-TEST-0848
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1026]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 13/0/0：set(updated_by=admin@example.test) 后真表 current.updated_by 逐字相等"
     notes: "ported —— v3 §8.3：运行中设置的边界必须持久，判据逐条移植。上游用例标题：「records who changed it」。"
   - id: "server-tests-policy-durability-integration--a-boundary-set-while-running--without-a-database-it-still-works-in-memory"
     upstream: "server/tests/policy-durability.integration.test.ts::a boundary set while running"
     label: parity
-    target: "openbot_infra::store::policy_durability::tests::without_a_database_it_still_works_in_memory"
+    target: "openbot_infra::tests::policy_store::without_a_database_it_still_works_in_memory"
     owner: openbot-infra
     test_id: T-TEST-0849
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1027]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "policy_store 默认矩阵 2/0/11 ignored：无 DB load/set/reset 全可用；连续 compiled() Arc::ptr_eq，policy 变化才换 Arc，证明 acting 读取预编译快照而非每次解析 CEL；None 配置保持 Unconfigured"
     notes: "ported —— v3 §8.3：运行中设置的边界必须持久，判据逐条移植。上游用例标题：「without a database it still works, in memory」。"
   # ---------------------------------------------------------------------------
   # server/tests/policy-fanout.integration.test.ts —— owner openbot-infra / ported / parity
@@ -8883,72 +8895,79 @@ entries:
   - id: "server-tests-policy-fanout-integration--a-rule-added-on-one-server--is-enforced-on-a-server-that-never-received-the-request"
     upstream: "server/tests/policy-fanout.integration.test.ts::a rule added on one server"
     label: parity
-    target: "openbot_infra::events::policy_fanout::tests::is_enforced_on_a_server_that_never_received_the_request"
+    target: "openbot_infra::tests::policy_store::a_rule_added_on_one_server_is_enforced_on_the_other_server"
     owner: openbot-infra
     test_id: T-TEST-0850
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1029]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG17/SCRAM policy_store 13/0/0：两个独立 store/同一库，listener 专用连接；writer set 后另一 replica 在 3s 有界轮询内整行重读并逐字段得到同一 deny"
     notes: "ported —— v3 §8.3 明写沿用上游 policy-listener.ts 形态（LISTEN/NOTIFY 只做唤醒、每个 replica 整表重读、policy_version 进 decision），故 fanout 判据逐条移植。上游用例标题：「is enforced on a server that never received the request」。"
   - id: "server-tests-policy-fanout-integration--a-rule-added-on-one-server--a-reset-reaches-the-other-servers-too"
     upstream: "server/tests/policy-fanout.integration.test.ts::a rule added on one server"
     label: parity
-    target: "openbot_infra::events::policy_fanout::tests::a_reset_reaches_the_other_servers_too"
+    target: "openbot_infra::tests::policy_store::a_reset_reaches_the_other_servers_too"
     owner: openbot-infra
     test_id: T-TEST-0851
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1030]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 13/0/0：other 先从 DB 读到 deny，writer reset 后 listener 收空 payload、整表重读并精确回 configured allow=[true]/deny=[]"
     notes: "ported —— v3 §8.3 明写沿用上游 policy-listener.ts 形态（LISTEN/NOTIFY 只做唤醒、每个 replica 整表重读、policy_version 进 decision），故 fanout 判据逐条移植。上游用例标题：「a reset reaches the other servers too」。"
   - id: "server-tests-policy-fanout-integration--a-rule-added-on-one-server--the-mode-travels-so-dry-run-does-not-stay-on-somewhere"
     upstream: "server/tests/policy-fanout.integration.test.ts::a rule added on one server"
     label: parity
-    target: "openbot_infra::events::policy_fanout::tests::the_mode_travels_so_dry_run_does_not_stay_on_somewhere"
+    target: "openbot_infra::tests::policy_store::the_mode_travels_so_dry_run_does_not_stay_on_somewhere"
     owner: openbot-infra
     test_id: T-TEST-0852
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1031]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 PG17/SCRAM 13/0/0：other 初始从 DB 读 dry-run；writer 改 enforce 后 listener 重读，另一 replica mode 精确变 Enforce"
     notes: "ported —— v3 §8.3 明写沿用上游 policy-listener.ts 形态（LISTEN/NOTIFY 只做唤醒、每个 replica 整表重读、policy_version 进 decision），故 fanout 判据逐条移植。上游用例标题：「the mode travels, so dry-run does not stay on somewhere」。"
   - id: "server-tests-policy-fanout-integration--a-rule-added-on-one-server--a-store-with-no-database-is-unaffected-so-a-test-without"
     upstream: "server/tests/policy-fanout.integration.test.ts::a rule added on one server"
     label: parity
-    target: "openbot_infra::events::policy_fanout::tests::a_store_with_no_database_is_unaffected_so_a_test_without"
+    target: "openbot_infra::tests::policy_store::a_store_with_no_database_is_unaffected_by_refresh"
     owner: openbot-infra
     test_id: T-TEST-0853
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1032]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "policy_store 默认矩阵 2/0/11 ignored：无 DB store set 后 refresh 为真 no-op，当前 deny 仍逐字段等于刚 set 值；set 的正向变化排除恒无操作"
     notes: "ported —— v3 §8.3 明写沿用上游 policy-listener.ts 形态（LISTEN/NOTIFY 只做唤醒、每个 replica 整表重读、policy_version 进 decision），故 fanout 判据逐条移植。上游用例标题：「a store with no database is unaffected, so a test without Postgres still works」。"
   - id: "server-tests-policy-fanout-integration--a-server-that-was-not-listening-when-it--catches-up-when-its-subscription-comes-back"
     upstream: "server/tests/policy-fanout.integration.test.ts::a server that was not listening when it changed"
     label: parity
-    target: "openbot_infra::events::policy_fanout::tests::catches_up_when_its_subscription_comes_back"
+    target: "openbot_infra::tests::policy_store::a_server_catches_up_when_its_subscription_comes_back"
     owner: openbot-infra
     test_id: T-TEST-0854
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1034]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG17/SCRAM 13/0/0：writer 在 was_down 尚无订阅时 set，was_down 内存保持旧值；PolicyListener::start 在 LISTEN 建立后先 refresh，返回后精确追上保存值"
     notes: "ported —— v3 §8.3 明写沿用上游 policy-listener.ts 形态（LISTEN/NOTIFY 只做唤醒、每个 replica 整表重读、policy_version 进 decision），故 fanout 判据逐条移植。上游用例标题：「catches up when its subscription comes back」。"
   - id: "server-tests-policy-fanout-integration--the-announcement-itself--a-write-that-rolls-back-announces-nothing"
     upstream: "server/tests/policy-fanout.integration.test.ts::the announcement itself"
     label: parity
-    target: "openbot_infra::events::policy_fanout::tests::a_write_that_rolls_back_announces_nothing"
+    target: "openbot_infra::tests::policy_store::a_write_that_rolls_back_announces_nothing"
     owner: openbot-infra
     test_id: T-TEST-0855
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1036]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG17/SCRAM 13/0/0：手工同事务 INSERT+pg_notify 后 ROLLBACK，200ms 内 listener 不移动且表 count=0；随后真 commit 通知使同 listener 移到 committed，提供正向对照"
     notes: "ported —— v3 §8.3 明写沿用上游 policy-listener.ts 形态（LISTEN/NOTIFY 只做唤醒、每个 replica 整表重读、policy_version 进 decision），故 fanout 判据逐条移植。上游用例标题：「a write that rolls back announces nothing」。"
   - id: "server-tests-policy-fanout-integration--the-announcement-itself--a-saved-rule-is-not-lost-when-the-announcement-fails"
     upstream: "server/tests/policy-fanout.integration.test.ts::the announcement itself"
     label: parity
-    target: "openbot_infra::events::policy_fanout::tests::a_saved_rule_is_not_lost_when_the_announcement_fails"
+    target: "openbot_infra::tests::policy_store::a_saved_rule_is_not_lost_when_no_listener_received_the_announcement"
     owner: openbot-infra
     test_id: T-TEST-0856
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: ported —— 真 PostgreSQL 的可观察 delivery failure 是提交时没有 subscriber；空 payload NOTIFY 本身与 row 同事务，断连时 commit 结果不得靠 fake 推断"
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1037]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG17/SCRAM 13/0/0：零 listener 时 set 正常 commit，writer 内存/真表 count=1；新 store 重启 load 来源 Database 且完整 rule 相等，证明无人接收 announcement 不丢权威行"
     notes: "ported —— v3 §8.3 明写沿用上游 policy-listener.ts 形态（LISTEN/NOTIFY 只做唤醒、每个 replica 整表重读、policy_version 进 decision），故 fanout 判据逐条移植。上游用例标题：「a saved rule is not lost when the announcement fails」。"
   # ---------------------------------------------------------------------------
   # server/tests/roles.test.ts —— owner openbot-domain / ported / parity
