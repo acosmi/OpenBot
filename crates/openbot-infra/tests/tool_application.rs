@@ -208,6 +208,17 @@ async fn provision(pool: &deadpool_postgres::Pool) -> Result<(), String> {
     native::apply(&mut client)
         .await
         .map_err(|error| error.to_string())?;
+    client
+        .batch_execute(
+            "INSERT INTO public.threads(\
+               thread_id,tenant_id,deployment_id,created_by,anchor_kind,anchor_id) \
+             VALUES('thread-tool-1','tenant-1','dep-1','actor-1','direct_bot','bot-1'); \
+             INSERT INTO public.runs(\
+               run_id,thread_id,bot_id,actor_id,foreground,status,fencing_token,started_at) \
+             VALUES('run-1','thread-tool-1','bot-1','actor-1',false,'running',1,now());",
+        )
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 

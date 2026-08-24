@@ -38,12 +38,10 @@
 # "Rust aggregate/repository" 规划落点，属 G2 及以后的工作。G1 交付的是 db::tables 的
 # 保真行结构 + baseline + compat 边界检查，不是仓储层。别把 done 读成"仓储已就绪"。
 #
-# 【2026-08-23 W-2】当前已有物理表的 30 个具名 repository 已实现：上游 28 表各一个，
-# 0013 再加 ToolCallRepo / ToolAttemptRepo；audit_checkpoints 与 audit_events 共用
-# AuditEventRepo。`repo::IMPLEMENTED_REPOSITORIES` 是可复算台账，PG17 真库测试
-# all_thirty_current_repositories_touch_their_real_tables 逐个调用。剩余 10 个 repo= 落点恰好
-# 对应 G3 尚未建表的 threads/messages/runs/outbox/memory/import 面；在表不存在时造同名空 struct
-# 不叫实现，所以明确留给建表同批闭合。下面四条 recount 双向保证 40 / 30 / 10 / 越界 0。
+# 【2026-08-24 G3 native base】0016 十张物理表与剩余十个 repository 同批落地；
+# `repo::IMPLEMENTED_REPOSITORIES` 现为 40，PG17 真库测试
+# all_forty_current_repositories_touch_their_real_tables 逐个调用。下面四条 recount 双向保证
+# planned 40 / implemented 40 / 缺失 0 / 越界 0；没有用空 struct 占名。
 #
 # 迁移边界（v3 §14.1 + §14.3）：Rust 只接收已迁到第 13 条 migration（0012）的库；
 # 兼容期只允许新表 / nullable column / backfill / index / 非破坏性 constraint 验证，
@@ -92,10 +90,10 @@ recount:
     expect: 40
   - command: "sed -n '/pub const IMPLEMENTED_REPOSITORIES/,/^];/p' crates/openbot-infra/src/repo/mod.rs | grep -oE '\"openbot-infra::[^\"]+Repo\"' | tr -d '\"' | sort -u | wc -l"
     cwd: repo
-    expect: 30
+    expect: 40
   - command: "comm -23 <(grep -oE 'repo=([A-Za-z0-9_:-]+)' parity/tables.yaml | sed 's/repo=//' | sort -u) <(sed -n '/pub const IMPLEMENTED_REPOSITORIES/,/^];/p' crates/openbot-infra/src/repo/mod.rs | grep -oE '\"openbot-infra::[^\"]+Repo\"' | tr -d '\"' | sort -u) | wc -l"
     cwd: repo
-    expect: 10
+    expect: 0
   - command: "comm -13 <(grep -oE 'repo=([A-Za-z0-9_:-]+)' parity/tables.yaml | sed 's/repo=//' | sort -u) <(sed -n '/pub const IMPLEMENTED_REPOSITORIES/,/^];/p' crates/openbot-infra/src/repo/mod.rs | grep -oE '\"openbot-infra::[^\"]+Repo\"' | tr -d '\"' | sort -u) | wc -l"
     cwd: repo
     expect: 0
@@ -630,9 +628,10 @@ entries:
     owner: "openbot-domain"
     test_id: "T-TBL-0042"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 PG17/SCRAM 3/0/0；threads typed row + domain Thread + ThreadRepo 均存在，soft_delete 保留 message/run 历史；post-0016 fixture 与活库逐字段相等"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"threads\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::thread::ThreadRepo（表 openbot-infra::db::tables::threads） | 计划 PK=thread_id | 计划 unique=thread_id | 计划 FK=无（membership 侧持有） | delete=待定，倾向软删 + 保留 run 历史 | 加密=无 | retention=待产品裁决 | API owner=openbot-server 的 thread 面（v3 §15.1 canonical inventory 内） | 不变量（§4.3 条 1）：每个 thread 同时只允许一个 foreground run | thread id 布局沿用上游 app 侧 thread-identity.ts 的 RFC 9562 UUIDv8：前 6 字节 = SHA-256(DEPLOYMENT_ID) 指纹，其余随机；owns() 语义在导入前后不断档（§20.3 条 2） | 上游 pgTable 零命中，本条是新增不是 parity"
+    notes: "repo=openbot-infra::repo::thread::ThreadRepo（表 openbot-infra::db::tables::threads） | PK/unique=thread_id | FK=无（membership 侧持有） | delete=typed soft_delete，status/deleted_at 形状 CHECK，保留 run/message 历史；物理 retention 不猜固定天数，归 G8 策略 | 加密=无；title 的 Row::Debug 脱敏 | API owner=openbot-server thread 面 | anchor 封闭为 channel/direct_bot；next_message_seq/next_event_seq 非负 | 每 thread 单 foreground run 由 runs 部分唯一索引承担 | RFC 9562 UUIDv8 前 6 字节 deployment fingerprint 已落 contracts::ids::thread；上游 pgTable 零命中，本条是新增"
 
   - id: "native-thread-memberships"
     upstream: "-"
@@ -641,9 +640,10 @@ entries:
     owner: "openbot-infra"
     test_id: "T-TBL-0043"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 建复合 PK 与 thread/user 双 FK cascade；ThreadMembershipRepo 进入 40/40 真库 inventory，行为测试实写并回读唯一 membership"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"thread_memberships\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::thread::ThreadMembershipRepo | 计划 PK=复合(thread_id, user_id) | 计划 unique=复合主键 | 计划 FK=thread_id->threads、user_id->users | delete=计划 cascade，与上游 channel_memberships 同形 | 加密=无 | retention=无 | API owner=openbot-server thread 面 | §4.3 未给本表专属不变量，故 owner 落 openbot-infra（表结构 + repository） | 访问判据必须 fail-closed：缺行即拒，照抄 channel_memberships 的既有语义 | 条 11：撤权后 realtime subscription 与 memory recall 必须同时失效，本表是那道判据的落点"
+    notes: "repo=openbot-infra::repo::thread::ThreadMembershipRepo | PK/unique=(thread_id,user_id) | FK=thread_id->threads、user_id->users，均 ON DELETE CASCADE | 加密/retention=无 | API owner=openbot-server thread 面 | 访问判据 fail-closed：缺行即拒；撤权后 realtime/memory 失效的 application 编排仍归后续 G3，不借物理表冒充完整订阅已落"
 
   - id: "native-messages"
     upstream: "-"
@@ -652,9 +652,10 @@ entries:
     owner: "openbot-domain"
     test_id: "T-TBL-0044"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 PG fixture：message_id PK、(thread_id,seq)/(thread_id,message_id) unique、thread cascade FK、role/content CHECK 与 simple FTS GIN；MessageRepo replay 真库按 seq 补回 1 行"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"messages\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::thread::MessageRepo（表 openbot-infra::db::tables::messages） | 计划 PK=message_id | 计划 unique=(thread_id, seq) | 计划 FK=thread_id->threads | delete=计划 cascade | 加密=无 | retention=待产品裁决 | API owner=openbot-server thread 面 | 不变量（§4.3 条 7）：token delta 以 50 ms 或 8 KiB 为上限合并成 semantic chunk 后再持久化，避免逐 token 行爆炸 | 不变量（§4.3 条 10）：自动 thread summary 是上下文压缩产物，不冒充用户事实，原消息仍是可追溯来源 | 上游 channels.last_message / last_message_at 是频道粒度的去规范化缓存，不是本表的上游对应物"
+    notes: "repo=openbot-infra::repo::thread::MessageRepo（表 openbot-infra::db::tables::messages） | PK=message_id；unique=(thread_id,seq) 与 memory provenance 用 (thread_id,message_id) | FK thread cascade | role=user/assistant/system/tool/summary；content/search_text Debug 脱敏；simple FTS expression index | retention 不猜天数，随 thread policy | 50ms/8KiB accumulator 与 summary application 用例尚属后续 G3，本批只闭合不会逐 token 建行的持久化形状与 replay repository"
 
   - id: "native-runs"
     upstream: "-"
@@ -663,9 +664,10 @@ entries:
     owner: "openbot-domain"
     test_id: "T-TBL-0045"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 真库：run PK/thread FK、状态/terminal/fencing/time CHECK；部分唯一索引实证第二个 active foreground run 命中拒绝；Run/RunStatus 纯状态机 terminal exactly-once 测试全绿"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"runs\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::run::RunRepo（表 openbot-infra::db::tables::runs） | 计划 PK=run_id | 计划 unique=run_id，另需一条保证「每 thread 至多一个活跃 foreground run」的部分唯一索引 | 计划 FK=thread_id->threads | delete=计划 cascade | 加密=无 | retention=待产品裁决 | API owner=openbot-server run 面 | 不变量（§4.3 条 1 + 条 2）：单 foreground run；terminal 状态恰好一次 | §4.3 条 8 明确：Bot 的 operational checkpoint 不是 memory，归 runs / run_events"
+    notes: "repo=openbot-infra::repo::run::RunRepo（表 openbot-infra::db::tables::runs） | PK=run_id；FK thread cascade | `runs_one_foreground_active_per_thread` 覆盖 queued/running/reconciliation_required，unknown commit 继续占 slot | terminal_event_seq/status/finished_at 同形 CHECK，failed/reconciliation 必须 error_code | fencing_token Debug 脱敏 | tool_calls→runs 为 NOT VALID staged FK：不扫描历史但约束新写 | retention 不猜固定天数；operational checkpoint 归 run_events，不进 memory"
 
   - id: "native-run-events"
     upstream: "-"
@@ -674,9 +676,10 @@ entries:
     owner: "openbot-domain"
     test_id: "T-TBL-0046"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 真库：PK(run_id,seq)、unique(thread_id,event_seq)、run/thread 双 FK；partial unique 实证第二 terminal 拒绝；RunEventRepo replay_after(-1) 按 cursor 补回 started+completed 两条"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"run_events\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::run::RunEventRepo（表 openbot-infra::db::tables::run_events） | 计划 PK=(run_id, seq) | 计划 unique=(run_id, seq) 与 (thread_id, event_seq) 两条 | 计划 FK=run_id->runs、thread_id->threads | delete=计划 cascade | 加密=无 | retention=待产品裁决 | API owner=openbot-server 的 SSE/WS 面 | 不变量（§4.3 条 2）：两条 unique 都必须建，terminal event 恰好一次 | 不变量（§4.3 条 4）：PostgreSQL LISTEN/NOTIFY 只作唤醒不是真源，消费者按 sequence 从本表补取，通知丢失不丢事件 | 不变量（§4.3 条 6）：WebSocket/SSE reconnect 必须携带 last cursor，服务端先 replay 再进 live"
+    notes: "repo=openbot-infra::repo::run::RunEventRepo（表 openbot-infra::db::tables::run_events） | PK=(run_id,seq)，unique=(thread_id,event_seq)，双 FK cascade | event_type 与 terminal 布尔等价 CHECK + terminal partial unique | payload Debug 脱敏 | repository 已提供持久化 cursor replay；LISTEN/NOTIFY/live SSE/WS 尚属后续 G3，不能仅凭表标称 realtime 整体完成"
 
   - id: "native-thread-leases"
     upstream: "-"
@@ -685,9 +688,10 @@ entries:
     owner: "openbot-domain"
     test_id: "T-TBL-0047"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 真库：thread PK/FK、expiry/time/fencing CHECK；ThreadLeaseRepo 实证 live owner B 获取=None、过期接管 token 1→2；domain old token/expiry 负向全绿"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"thread_leases\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::thread::ThreadLeaseRepo（表 openbot-infra::db::tables::thread_leases） | 计划 PK=thread_id（每 thread 至多一份租约） | 计划 unique=主键 | 计划 FK=thread_id->threads | delete=计划 cascade | 加密=无 | retention=到期即可回收 | API owner=openbot-application 的 run 启动路径 | 不变量（§4.3 条 1）：expiry + fencing token，旧 owner 即使恢复也不能提交 —— 判据必须是 fencing token 单调而不是「进程还活着」 | 与上游 server/src/audit-retention.ts 的 advisory lock 不是一回事：那是单机扫表互斥，本表是跨副本的写权归属"
+    notes: "repo=openbot-infra::repo::thread::ThreadLeaseRepo（表 openbot-infra::db::tables::thread_leases） | PK/FK=thread_id->threads cascade | acquire_or_renew 单 SQL：同 owner 活租约只续期，过期接管推进 token，i64::MAX fail-closed 不回绕 | fencing_token Row::Debug 脱敏 | retention=到期可回收 | application run-start/commit 同事务核验仍在后续 G3；本表不是 audit retention advisory lock"
 
   - id: "native-tool-calls"
     upstream: "-"
@@ -720,9 +724,10 @@ entries:
     owner: "openbot-infra"
     test_id: "T-TBL-0050"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 真库：PK 与 (aggregate_id,seq,destination) unique，delivery_class CHECK 拒 non_idempotent；OutboxRepo SKIP LOCKED claim 得 attempt=1，只有同 worker CAS delivered"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"outbox\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::outbox::OutboxRepo | 计划 PK=outbox_id | 计划 unique=(aggregate_id, seq, destination) | 计划 FK=无（跨聚合，故意不绑外键） | delete=投递确认后可归档 | 加密=无 | retention=投递完成 + 保留窗口后清理 | API owner=openbot-infra 的 relay | owner 落 openbot-infra：§4.3 条 3 与条 5 都是事务与投递语义（写 domain state、semantic event、outbox 必须在同一个数据库事务内；outbox 是 at-least-once，destination 按 (aggregate_id, seq, destination) 去重） | 硬约束：任何外部非幂等 effect 不得通过普通 outbox 自动重放"
+    notes: "repo=openbot-infra::repo::outbox::OutboxRepo | PK=outbox_id；unique=(aggregate_id,seq,destination)；跨聚合故意无 FK | delivery_class 只许 internal/idempotent_external，普通 outbox 构造性装不进 non-idempotent | ready/expired claim 用 FOR UPDATE SKIP LOCKED，attempt 单调，delivery 绑定 worker CAS | payload Debug 脱敏 | 与 domain state/event 同事务 append 的 application use case 和 relay loop 仍归后续 G3"
 
   - id: "native-memories"
     upstream: "-"
@@ -731,9 +736,10 @@ entries:
     owner: "openbot-domain"
     test_id: "T-TBL-0051"
     migration_rule: "n/a: 新表，无上游数据；Intelligence 隐式记忆不可复刻，不伪造导入"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 真库：owner/source/supersedes FK、scope/kind/origin/status/content/source/expiry CHECK、tags+simple FTS GIN；无 source fact 被拒，同 owner user-scope query 命中；delete_content 错 owner=None、真 owner 同写 content=NULL"
     evidence: "grep -rn -i '\\bmemor' app/src server/src --include=*.ts --include=*.tsx | grep -v test | grep -vE ':[0-9]+:[[:space:]]*(\\*|//|/\\*)' | wc -l == 0（正向对照同管线 channel == 437）"
-    notes: "repo=openbot-infra::repo::memory::MemoryRepo（表 openbot-infra::db::tables::memories） | 计划 PK=memory_id | 计划 unique=无 | 计划 FK=owner user / source thread / source message | delete=用户可删（§4.3 条 11） | 加密=无（sensitivity 列决定投影与召回，不决定落盘加密） | retention=expires_at 到期失效 | API owner=openbot-server memory 面 | 列（§4.3 条 8）：scope、source message/thread、sensitivity、created_by、supersedes、expires_at | 不变量（条 8）：只保存两类（用户明确要求保留的 preference、带来源的事实）；写入只有两个显式入口 —— built-in Agent 的 remember tool（经 §8.1 管线，effect=write）与 GUI「记住这条」；R1 没有后台抽取、没有跨会话 learning job | 不变量（条 9）：检索用 PostgreSQL full-text + 结构化 tag + scope + recency，不重建 document index，不要求 pgvector | 这是替代面不是 parity 面（v3 §28.1 R7）：上游 app/src 与 server/src 的非注释行里 memor 零命中，负向断言已配正向对照"
+    notes: "repo=openbot-infra::repo::memory::MemoryRepo（表 openbot-infra::db::tables::memories） | PK=memory_id；FK owner cascade、source message/thread restrict、supersedes set null | scope=user/bot/thread；kind=preference/fact；origin=user_action/remember_tool/verified_import，无 background learning 值 | fact/import 强制 provenance；forbidden/deleted 强制 content NULL；content/tags Debug 脱敏 | recall 同 tenant+owner+scope、active、expiry、simple FTS，limit<=100 | remember tool/GUI 两个 application 写入口与禁止开关仍归后续 G3/G4/G6；本批不冒充完整 memory user journey"
 
   - id: "native-memory-events"
     upstream: "-"
@@ -742,9 +748,10 @@ entries:
     owner: "openbot-infra"
     test_id: "T-TBL-0052"
     migration_rule: "n/a: 新表，无上游数据"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 建 (memory_id,seq) PK、memory cascade FK、create/supersede/correct/forbid/delete 封闭 CHECK；MemoryEventRepo 进入 40/40 inventory 并在真库写 create metadata"
     evidence: "grep -rn -i '\\bmemor' app/src server/src --include=*.ts --include=*.tsx | grep -v test | grep -vE ':[0-9]+:[[:space:]]*(\\*|//|/\\*)' | wc -l == 0（正向对照同管线 channel == 437）"
-    notes: "repo=openbot-infra::repo::memory::MemoryEventRepo | 计划 PK=(memory_id, seq) | 计划 unique=主键 | 计划 FK=memory_id->memories | delete=随 memory 级联 | 加密=无 | retention=随 memories | API owner=openbot-server memory 面 | §4.3 未给本表专属不变量，owner 落 openbot-infra（追加日志 + repository） | 记 create / supersede / correct / forbid / delete 五类动作，兑现条 11 的「列出、删除、纠正和禁止」可审计"
+    notes: "repo=openbot-infra::repo::memory::MemoryEventRepo | PK=(memory_id,seq)，FK memory cascade | event_type 封闭 create/supersede/correct/forbid/delete，metadata 必须 object 且 Debug 脱敏 | retention 随 memory 物理清理策略；业务状态与 event 同事务写仍由后续 application use case 闭合"
 
   - id: "native-intelligence-import-cursors"
     upstream: "-"
@@ -753,6 +760,7 @@ entries:
     owner: "openbot-infra"
     test_id: "T-TBL-0053"
     migration_rule: "n/a: 新表；与 intelligence_channel_mappings 的 legacy provenance 配对读取"
-    status: "todo"
+    status: "done"
+    done_evidence: "native 0016 建 (bundle_id,aggregate_kind) PK、kind/hash/count/status/provenance CHECK；ImportCursorRepo 进入 40/40 inventory，真库写 verified provenance + 64 位 lowercase hash"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"intelligence_import_cursors\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::import::ImportCursorRepo | 计划 PK=(bundle_id, aggregate_kind) | 计划 unique=主键 | 计划 FK=无（bundle 是外部制品） | delete=导入工具退役后由运维清理 | 加密=无（bundle 本身加密签名，落盘的是游标与 hash） | retention=随 §14.2 末段的审计保留期 | API owner=openbot-application 的 importer（v3 §20.3 条 6：写 intelligence_import_cursors 与 provenance） | 导入只认 thread id 指纹 owns() 为真的 thread；指纹不匹配或前缀期铸造的 thread 列入报告由管理员逐个认领（§20.3 条 2） | 导入工具不包含在最终运行 image（§20.3 条 7） | 不导入未公开的 proprietary learning internal state；没有可验证来源的 hidden learning 不伪造（§20.3 末段）"
+    notes: "repo=openbot-infra::repo::import::ImportCursorRepo | PK=(bundle_id,aggregate_kind)，外部 bundle 故意无 FK | aggregate_kind=thread/message/run_event/memory，last_hash lowercase SHA-256，provenance object；cursor/provenance Debug 脱敏 | retention 随导入审计期 | importer/bundle signature、owns 分类与最终 image 排除仍归 G3/G8，物理 cursor 不冒充完整迁移工具；hidden learning 无来源继续不导入"

@@ -26,6 +26,9 @@ use core::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+/// RFC 9562 UUIDv8 thread identity 布局与 deployment 归属判定。
+pub mod thread;
+
 /// 生成 string newtype ID。
 ///
 /// 十三个类型的实现逐字相同，手抄十三份的唯一结果是十三份各自漂移的机会 ——

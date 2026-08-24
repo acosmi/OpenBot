@@ -52,7 +52,10 @@
 
 pub mod audit;
 pub mod identity;
+pub mod memory;
 pub mod policy;
+pub mod run;
 pub mod text;
+pub mod thread;
 pub mod tool;
 pub mod vault;

@@ -5,6 +5,7 @@ mod harness {
 }
 
 use harness::{admin_config, with_temp_database};
+use openbot_infra::db::tables::{ALL_TABLES, NATIVE_0013_TABLES, NATIVE_0016_TABLES};
 use openbot_infra::db::{baseline, native, pool};
 use openbot_server::database::{DatabaseInitializationError, DatabaseOrigin, initialize};
 
@@ -28,6 +29,11 @@ async fn fresh_bootstrap_survives_a_second_start_without_a_drizzle_ledger() {
             .await
             .map_err(|error| error.to_string())?;
         let outcome = async {
+            let expected_native = i64::try_from(native::NATIVE_MIGRATION_COUNT).unwrap();
+            let expected_public_tables = i64::try_from(
+                ALL_TABLES.len() + NATIVE_0013_TABLES.len() + NATIVE_0016_TABLES.len(),
+            )
+            .unwrap();
             if initialize(&pool).await.map_err(|error| error.to_string())? != DatabaseOrigin::Fresh
             {
                 return Err("空库首次启动没有识别为 Fresh".to_owned());
@@ -38,14 +44,14 @@ async fn fresh_bootstrap_survives_a_second_start_without_a_drizzle_ledger() {
                     "SELECT count(*)::bigint FROM openbot_internal.schema_migrations",
                 )
                 .await?
-                    != 3
+                    != expected_native
                 || scalar(
                     &pool,
                     "SELECT count(*)::bigint FROM information_schema.tables \
                      WHERE table_schema='public' AND table_type='BASE TABLE'",
                 )
                 .await?
-                    != 31
+                    != expected_public_tables
             {
                 return Err("fresh baseline/native 终态计数不符".to_owned());
             }
@@ -70,7 +76,7 @@ async fn fresh_bootstrap_survives_a_second_start_without_a_drizzle_ledger() {
                     "SELECT count(*)::bigint FROM openbot_internal.schema_migrations",
                 )
                 .await?
-                    != 3
+                    != expected_native
             {
                 return Err("二次启动没有以 checksum native ledger 识别 Rust-managed 库".to_owned());
             }
@@ -92,6 +98,7 @@ async fn concurrent_fresh_initializers_serialize_to_fresh_plus_rust_managed() {
             .await
             .map_err(|error| error.to_string())?;
         let outcome = async {
+            let expected_native = i64::try_from(native::NATIVE_MIGRATION_COUNT).unwrap();
             let (left, right) = tokio::join!(initialize(&pool), initialize(&pool));
             let origins = [
                 left.map_err(|error| error.to_string())?,
@@ -112,7 +119,7 @@ async fn concurrent_fresh_initializers_serialize_to_fresh_plus_rust_managed() {
                     "SELECT count(*)::bigint FROM openbot_internal.schema_migrations",
                 )
                 .await?
-                    != 3
+                    != expected_native
             {
                 return Err(format!("并发 fresh 分流/账本不符：{origins:?}"));
             }

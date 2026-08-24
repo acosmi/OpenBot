@@ -1,9 +1,8 @@
 # OpenBot CI —— 编排依据 = v3 §16.3〈Supply chain〉的固定清单 + v3 §19.3 的 parity 闸门。
 #
-# 2026-08-24 首次对固定 head 真实 workflow dispatch 后，GitHub API 与 runner 均证明
-# Actions 已可用；旧的“额度耗尽所以关闭自动触发”前提不再成立。PR 不限定 base branch，
-# 因为本仓以堆叠 PR 推进，限定 `main` 会让中间层永远没有 CI。`workflow_dispatch` 继续保留，
-# 用于对一个精确 head 重跑含供应链在内的完整矩阵。
+# 2026-08-24 用户明确要求停止消耗 GitHub Actions 额度：自动 `pull_request` / `push`
+# 触发关闭，只保留显式 `workflow_dispatch`。没有用户再次授权，不得手动派发；日常验证
+# 改在本机运行定向测试。此前 W-7c 的 Ubuntu 24.04 x86_64 成功证据仍是有效历史证据。
 
 name: CI
 
@@ -14,31 +13,6 @@ on:
         description: "是否跑 supply-chain job（cargo deny / audit / vet，比 gates 慢）"
         type: boolean
         default: true
-  pull_request:
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "rustfmt.toml"
-      - "deny.toml"
-      - "crates/**"
-      - "parity/**"
-      - "fixtures/**"
-      - "tools/**"
-      - ".github/workflows/ci.yml"
-  push:
-    branches: [main]
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "rustfmt.toml"
-      - "deny.toml"
-      - "crates/**"
-      - "parity/**"
-      - "fixtures/**"
-      - "tools/**"
-      - ".github/workflows/ci.yml"
 
 permissions:
   contents: read
@@ -58,8 +32,8 @@ env:
 #   actions/checkout        v7.0.1
 #   Swatinem/rust-cache     v2.9.2
 #   taiki-e/install-action  v2.86.5
-# 注：本 workflow 从未在 GitHub Actions 上真跑过（额度耗尽，见文件头），
-# 只在本机用 `python3 -c "import yaml; yaml.safe_load(...)"` 验过 YAML 可解析。
+# 注：W-7c 已在 GitHub Actions 上得到 Ubuntu 24.04 x86_64 两 job 全绿的历史证据；
+# 当前 manual-only 是用户的额度控制指令，不是对该证据的撤销。
 
 jobs:
   # =========================================================================
@@ -134,7 +108,7 @@ jobs:
     name: supply-chain（cargo deny / cargo audit / cargo vet）
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_supply_chain }}
+    if: ${{ inputs.run_supply_chain }}
     steps:
       - uses: actions/checkout@v7.0.1
 
