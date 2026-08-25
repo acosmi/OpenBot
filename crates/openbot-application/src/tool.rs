@@ -6,7 +6,9 @@ use core::time::Duration;
 use async_trait::async_trait;
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::error::AppError;
-use openbot_contracts::ids::{ActorId, BotId, CapabilityId, CatalogGeneration, RunId, ToolCallId};
+use openbot_contracts::ids::{
+    ActorId, BotId, CapabilityId, CatalogGeneration, RunId, TenantId, ThreadId, ToolCallId,
+};
 use openbot_contracts::tool::{ToolCommitState, ToolInvocation, ToolResult};
 use openbot_domain::audit::hash::Sha256Digest;
 use openbot_domain::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
@@ -40,6 +42,12 @@ pub enum ToolPortError {
         /// 静态字段名。
         field: &'static str,
     },
+    /// Arguments failed a first-party schema/shape validation before any acting decision.
+    #[error("tool_input_invalid field={field}")]
+    InvalidInput {
+        /// Static field name.
+        field: &'static str,
+    },
     /// journal CAS 没命中或发生并发冲突。
     #[error("tool_journal_conflict")]
     Conflict,
@@ -50,6 +58,7 @@ impl ToolPortError {
         match self {
             Self::NotVisible => AppError::NotVisible,
             Self::Unavailable { dependency } => AppError::DependencyUnavailable { dependency },
+            Self::InvalidInput { field } => AppError::MalformedPayload { field },
             Self::Corrupt { .. } | Self::Conflict => AppError::DependencyUnavailable {
                 dependency: "tool_runtime",
             },
@@ -59,7 +68,10 @@ impl ToolPortError {
     const fn dependency(self) -> &'static str {
         match self {
             Self::Unavailable { dependency } => dependency,
-            Self::NotVisible | Self::Corrupt { .. } | Self::Conflict => "tool_runtime",
+            Self::NotVisible
+            | Self::Corrupt { .. }
+            | Self::InvalidInput { .. }
+            | Self::Conflict => "tool_runtime",
         }
     }
 }
@@ -67,8 +79,12 @@ impl ToolPortError {
 /// Catalog 校验后由权威 runtime 解析出的 scope。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedToolScope {
+    /// Authoritative tenant.
+    pub tenant_id: TenantId,
     /// 权威 run。
     pub run_id: RunId,
+    /// Authoritative thread.
+    pub thread_id: ThreadId,
     /// 权威 Bot。
     pub bot_id: BotId,
     /// 权威 run 内序号。
@@ -263,6 +279,10 @@ fn common_audit_facts(
 pub struct AuthorizedToolCall {
     metadata: ToolMetadata,
     arguments: ToolArguments,
+    tenant: TenantId,
+    run: RunId,
+    thread: ThreadId,
+    auth_generation: openbot_contracts::auth::AuthGeneration,
     actor: AuthoritativeActor,
     target: ApprovalTarget,
     capability: SingleUseCapability,
@@ -274,6 +294,8 @@ impl fmt::Debug for AuthorizedToolCall {
             .field("tool", &self.metadata.name)
             .field("actor", self.actor.actor())
             .field("bot", self.actor.bot())
+            .field("run", &self.run)
+            .field("thread", &self.thread)
             .field("target", &self.target)
             .field("arguments", &"<redacted>")
             .field("capability", &"<redacted>")
@@ -290,6 +312,10 @@ impl AuthorizedToolCall {
             ExecutableToolCall {
                 metadata: self.metadata,
                 arguments: self.arguments,
+                tenant: self.tenant,
+                run: self.run,
+                thread: self.thread,
+                auth_generation: self.auth_generation,
                 actor: self.actor,
                 target: self.target,
             },
@@ -302,6 +328,10 @@ impl AuthorizedToolCall {
 pub struct ExecutableToolCall {
     metadata: ToolMetadata,
     arguments: ToolArguments,
+    tenant: TenantId,
+    run: RunId,
+    thread: ThreadId,
+    auth_generation: openbot_contracts::auth::AuthGeneration,
     actor: AuthoritativeActor,
     target: ApprovalTarget,
 }
@@ -317,6 +347,30 @@ impl ExecutableToolCall {
     #[must_use]
     pub const fn arguments(&self) -> &ToolArguments {
         &self.arguments
+    }
+
+    /// Authoritative tenant.
+    #[must_use]
+    pub const fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// Authoritative run.
+    #[must_use]
+    pub const fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    /// Authoritative thread.
+    #[must_use]
+    pub const fn thread(&self) -> &ThreadId {
+        &self.thread
+    }
+
+    /// Auth generation observed immediately before the pipeline.
+    #[must_use]
+    pub const fn auth_generation(&self) -> openbot_contracts::auth::AuthGeneration {
+        self.auth_generation
     }
 
     /// 权威 actor/Bot。
@@ -547,13 +601,15 @@ pub async fn invoke_tool<C: ToolControlPlane, J: ToolJournal>(
         .resolve_scope(auth, &invocation, &arguments, &metadata)
         .await
         .map_err(ToolPortError::into_app_error)?;
-    if scope.run_id != invocation.run_id
+    if scope.tenant_id != *auth.tenant()
+        || scope.run_id != invocation.run_id
         || scope.bot_id != invocation.bot_id
         || scope.call_seq != invocation.call_seq
     {
         return Err(AppError::NotVisible);
     }
     let actor = AuthoritativeActor::from_auth_context(auth.actor().clone(), scope.bot_id.clone());
+    let auth_generation = auth.auth_generation();
     let classified = validated
         .resolve(actor.clone(), scope.target.clone())
         .classify_effect();
@@ -636,7 +692,30 @@ pub async fn invoke_tool<C: ToolControlPlane, J: ToolJournal>(
         }
     };
 
-    execute_after_approval(control, journal, settled, base_draft, arguments, actor).await
+    let execution_scope = ToolExecutionScope {
+        tenant: scope.tenant_id,
+        run: scope.run_id,
+        thread: scope.thread_id,
+        auth_generation,
+        actor,
+    };
+    execute_after_approval(
+        control,
+        journal,
+        settled,
+        base_draft,
+        arguments,
+        execution_scope,
+    )
+    .await
+}
+
+struct ToolExecutionScope {
+    tenant: TenantId,
+    run: RunId,
+    thread: ThreadId,
+    auth_generation: openbot_contracts::auth::AuthGeneration,
+    actor: AuthoritativeActor,
 }
 
 async fn execute_after_approval<C: ToolControlPlane, J: ToolJournal>(
@@ -645,7 +724,7 @@ async fn execute_after_approval<C: ToolControlPlane, J: ToolJournal>(
     settled: ApprovalSettled,
     decision: ToolDecisionDraft,
     arguments: ToolArguments,
-    actor: AuthoritativeActor,
+    scope: ToolExecutionScope,
 ) -> Result<ToolResult, AppError> {
     let written = journal.record_decision(&decision).await;
     let recorded = settled
@@ -678,7 +757,11 @@ async fn execute_after_approval<C: ToolControlPlane, J: ToolJournal>(
         .execute(AuthorizedToolCall {
             metadata: decision.metadata.clone(),
             arguments,
-            actor,
+            tenant: scope.tenant,
+            run: scope.run,
+            thread: scope.thread,
+            auth_generation: scope.auth_generation,
+            actor: scope.actor,
             target: decision.target.clone(),
             capability,
         })
@@ -939,11 +1022,13 @@ mod tests {
         ) -> Result<ResolvedToolScope, ToolPortError> {
             self.trace.lock().unwrap().push("scope");
             Ok(ResolvedToolScope {
+                tenant_id: auth.tenant().clone(),
                 run_id: if self.scope_matches {
                     invocation.run_id.clone()
                 } else {
                     RunId::new("other-run")
                 },
+                thread_id: ThreadId::new("thread-1"),
                 bot_id: invocation.bot_id.clone(),
                 call_seq: invocation.call_seq,
                 target: ApprovalTarget {

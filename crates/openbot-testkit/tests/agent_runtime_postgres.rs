@@ -5,29 +5,40 @@ mod harness {
 }
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use harness::{admin_config, with_temp_database};
 use openbot_agent::{
-    BuiltInAgentConfig, BuiltInAgentRuntime, ProviderRouter, RetryingProvider,
-    RetryingProviderConfig,
+    AgentToolInvoker, AuthorizedAgentToolGateway, BuiltInAgentConfig, BuiltInAgentRuntime,
+    NoAgentToolInvoker, ProviderRouter, RetryingProvider, RetryingProviderConfig,
 };
 use openbot_application::{
-    BeginThreadRunRequest, ProviderAdapter, ProviderEvent, ProviderMessage, ProviderPortError,
-    ProviderRequest, ProviderSession, ProviderUsage, RunRuntime, ThreadDirectory,
+    ApplicationService, BeginThreadRunRequest, MemoryAdministrationError, OpenBotApplication,
+    ProviderAdapter, ProviderEvent, ProviderMessage, ProviderPortError, ProviderRequest,
+    ProviderSession, ProviderUsage, RememberToolMemory, RememberToolMemoryRequest,
+    RunExecutionLease, RunRuntime, RunToolExchange, ThreadDirectory, remember_provider_tool,
 };
 use openbot_contracts::command::{BeginThreadRun, ThreadRunAnchor};
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
+use openbot_contracts::memory::MemoryRecord;
+use openbot_domain::policy::{ActionPolicy, PolicyMode};
+use openbot_domain::thread::FencingToken;
 use openbot_domain::vault::{KeyVersion, SecretBytes, SecretKind, SecretPrincipal, WrappingKey};
 use openbot_infra::agent_audit::PostgresAgentAudit;
+use openbot_infra::agent_tools::{
+    PostgresAgentAuthorizationSource, PostgresBuiltInToolControlPlane,
+};
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::memory_admin::PostgresMemoryAdministration;
 use openbot_infra::net::safe_http::{
     CidrAllowlist, EgressPolicy, SafeDialer, SafeHttpBudget, SchemePolicy,
 };
+use openbot_infra::policy::PolicyStore;
 use openbot_infra::provider::anthropic::{
     AnthropicApiKey, AnthropicProvider, AnthropicProviderConfig,
 };
@@ -38,6 +49,8 @@ use openbot_infra::provider::openai::{
     OpenAiApiKey, OpenAiCredentialError, OpenAiCredentialSource, OpenAiProtocol, OpenAiProvider,
     OpenAiProviderConfig,
 };
+use openbot_infra::repo::ChannelRepo;
+use openbot_infra::repo::tools::PostgresToolJournal;
 use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
 use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
 use openbot_infra::vault::CredentialRecordVault;
@@ -57,6 +70,7 @@ async fn provision(pool: &deadpool_postgres::Pool) -> Result<(), String> {
     client
         .batch_execute(
             "INSERT INTO public.users(id,email) VALUES('actor-a','a@example.test');
+             INSERT INTO public.user_roles(user_id,role) VALUES('actor-a','user');
              INSERT INTO public.deployment_packages(tenant_id,source_path,checksum)
                VALUES('tenant-a','/fixture',repeat('a',64));
              INSERT INTO public.agents(id,name,type,configuration,package_id)
@@ -107,6 +121,149 @@ impl ProviderAdapter for RecordedProvider {
 
 struct RecordedSession {
     events: VecDeque<ProviderEvent>,
+}
+
+#[derive(Default)]
+struct RememberLoopProvider {
+    requests: Mutex<Vec<ProviderRequest>>,
+}
+
+struct RevokeBeforeSecondRemember {
+    inner: PostgresMemoryAdministration,
+    pool: deadpool_postgres::Pool,
+    policy: PolicyStore,
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl RememberToolMemory for RevokeBeforeSecondRemember {
+    async fn remember_from_tool(
+        &self,
+        request: RememberToolMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 1 {
+            self.pool
+                .get()
+                .await
+                .map_err(|_| MemoryAdministrationError::Unavailable)?
+                .execute(
+                    "UPDATE public.users SET auth_generation=coalesce(auth_generation,0)+1 \
+                     WHERE id='actor-a'",
+                    &[],
+                )
+                .await
+                .map_err(|_| MemoryAdministrationError::Unavailable)?;
+            self.policy
+                .set(
+                    ActionPolicy {
+                        mode: PolicyMode::Enforce,
+                        deny: vec![r#"tool.name == "remember""#.to_owned()],
+                        allow: Vec::new(),
+                    },
+                    Some("actor-a"),
+                )
+                .await
+                .map_err(|_| MemoryAdministrationError::Unavailable)?;
+        }
+        self.inner.remember_from_tool(request).await
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for RememberLoopProvider {
+    async fn start(
+        &self,
+        request: ProviderRequest,
+    ) -> Result<Box<dyn ProviderSession>, ProviderPortError> {
+        let turn = {
+            let mut requests = self.requests.lock().expect("remember provider lock");
+            let turn = requests.len();
+            requests.push(request);
+            turn
+        };
+        let events = match turn {
+            0 => vec![
+                ProviderEvent::ToolCallCompleted {
+                    index: 0,
+                    call_id: "provider-remember-1".to_owned(),
+                    name: "remember".to_owned(),
+                    arguments: serde_json::json!({
+                        "memoryKind":"fact",
+                        "scope":"thread",
+                        "content":"The user prefers tea.",
+                        "tags":["drink"],
+                        "sensitivity":"normal"
+                    }),
+                },
+                ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 5,
+                    output_tokens: 3,
+                    total_tokens: 8,
+                }),
+                ProviderEvent::Completed,
+            ],
+            1 => vec![
+                ProviderEvent::ToolCallCompleted {
+                    index: 0,
+                    call_id: "provider-remember-2".to_owned(),
+                    name: "remember".to_owned(),
+                    arguments: serde_json::json!({
+                        "memoryKind":"preference",
+                        "scope":"user",
+                        "content":"The user prefers coffee.",
+                        "tags":["drink"],
+                        "sensitivity":"normal"
+                    }),
+                },
+                ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 9,
+                    output_tokens: 3,
+                    total_tokens: 12,
+                }),
+                ProviderEvent::Completed,
+            ],
+            2 => vec![
+                ProviderEvent::ToolCallCompleted {
+                    index: 0,
+                    call_id: "provider-remember-3".to_owned(),
+                    name: "remember".to_owned(),
+                    arguments: serde_json::json!({
+                        "memoryKind":"preference",
+                        "scope":"user",
+                        "content":"The user prefers water.",
+                        "tags":["drink"],
+                        "sensitivity":"normal"
+                    }),
+                },
+                ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 13,
+                    output_tokens: 3,
+                    total_tokens: 16,
+                }),
+                ProviderEvent::Completed,
+            ],
+            3 => vec![
+                ProviderEvent::TextDelta {
+                    index: 0,
+                    delta: "I remembered that.".to_owned(),
+                },
+                ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 17,
+                    output_tokens: 4,
+                    total_tokens: 21,
+                }),
+                ProviderEvent::Completed,
+            ],
+            _ => {
+                return Err(ProviderPortError::InvalidRequest {
+                    field: "remember_turn_count",
+                });
+            }
+        };
+        Ok(Box::new(RecordedSession {
+            events: events.into(),
+        }))
+    }
 }
 
 #[derive(Default)]
@@ -191,6 +348,7 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
                 runtime.clone(),
                 context,
                 provider.clone(),
+                Arc::new(NoAgentToolInvoker),
                 Arc::new(
                     PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
                         .map_err(|error| error.to_string())?,
@@ -203,7 +361,7 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
                 },
             )
             .map_err(|code| format!("agent config {code:?}"))?;
-            let relay = RunRelay::start(runtime, agent.consumer());
+            let relay = RunRelay::start(runtime.clone(), agent.consumer());
             let mut entropy = [0_u8; 16];
             entropy[15] = 1;
             let thread = ThreadIdentity::new(&deployment).mint_from_entropy(entropy);
@@ -280,6 +438,7 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
                         content: "hello provider".to_owned(),
                         tool_call_id: None,
                         tool_name: None,
+                        tool_calls: Vec::new(),
                     })
             {
                 return Err(format!("provider context projection 漂移：{requests:?}"));
@@ -297,6 +456,361 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
                 .map_err(|error| error.to_string())?;
             if invoked != 1 {
                 return Err(format!("agent.invoked audit 漂移：{invoked}"));
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_SOCKET/PORT/USER 后加 --include-ignored 运行"]
+async fn remember_tool_runs_through_policy_capability_memory_audit_and_second_sampling() {
+    let admin = batch6_admin_config(
+        "remember_tool_runs_through_policy_capability_memory_audit_and_second_sampling",
+    );
+    with_temp_database(&admin, "agentremember", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let owner = "runtime-remember".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner,
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let policy = PolicyStore::postgres(pool.clone(), None);
+            policy.load().await.map_err(|error| error.to_string())?;
+            policy
+                .set(
+                    ActionPolicy {
+                        mode: PolicyMode::Enforce,
+                        deny: Vec::new(),
+                        allow: vec![r#"tool.name == "remember""#.to_owned()],
+                    },
+                    Some("actor-a"),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let memory = PostgresMemoryAdministration::new(pool.clone());
+            let tool_memory = Arc::new(RevokeBeforeSecondRemember {
+                inner: memory.clone(),
+                pool: pool.clone(),
+                policy: policy.clone(),
+                calls: AtomicUsize::new(0),
+            });
+            let control = PostgresBuiltInToolControlPlane::new(
+                pool.clone(),
+                deployment.clone(),
+                tenant.clone(),
+                policy.clone(),
+                tool_memory.clone(),
+            );
+            let application: Arc<dyn ApplicationService> = Arc::new(
+                OpenBotApplication::new(ChannelRepo::new(pool.clone()))
+                    .with_policy(policy)
+                    .with_tools(
+                        control,
+                        PostgresToolJournal::new(pool.clone(), vec![0xa5; 32])
+                            .map_err(|error| error.to_string())?,
+                    )
+                    .with_memory(memory),
+            );
+            let tools: Arc<dyn AgentToolInvoker> = Arc::new(AuthorizedAgentToolGateway::new(
+                application,
+                Arc::new(PostgresAgentAuthorizationSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    false,
+                )),
+            ));
+            let context = Arc::new(
+                PostgresAgentContextSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    Some(64),
+                )
+                .map_err(|error| error.to_string())?
+                .with_tools(vec![remember_provider_tool()]),
+            );
+            let provider = Arc::new(RememberLoopProvider::default());
+            let agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                context,
+                provider.clone(),
+                tools,
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 1,
+                    lease_renew_interval: Duration::from_secs(1),
+                    run_deadline: Some(Duration::from_secs(5)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let relay = RunRelay::start(runtime.clone(), agent.consumer());
+            let remember_thread = begin_test_run(
+                &directory,
+                &deployment,
+                &tenant,
+                9,
+                "run-remember",
+                "Please remember that I prefer tea.",
+            )
+            .await?;
+            wait_for_terminal(&pool, "run-remember", "I remembered that.").await?;
+            relay.stop().await;
+            agent.stop().await;
+
+            let requests = provider
+                .requests
+                .lock()
+                .expect("remember provider lock")
+                .clone();
+            if requests.len() != 4
+                || requests[0].tools.len() != 1
+                || requests[0].tools[0].name != "remember"
+                || requests[1].messages.iter().all(|message| {
+                    message.role != openbot_application::ProviderMessageRole::Assistant
+                        || message.tool_calls.len() != 1
+                        || message.tool_calls[0].call_id != "provider-remember-1"
+                })
+                || requests[1].messages.iter().all(|message| {
+                    message.role != openbot_application::ProviderMessageRole::Tool
+                        || message.tool_call_id.as_deref() != Some("provider-remember-1")
+                        || message.tool_name.as_deref() != Some("remember")
+                })
+                || requests[3]
+                    .messages
+                    .iter()
+                    .filter(|message| {
+                        message.role == openbot_application::ProviderMessageRole::Tool
+                    })
+                    .count()
+                    != 3
+            {
+                return Err(format!("remember provider history 漂移：{requests:?}"));
+            }
+            if tool_memory.calls.load(Ordering::SeqCst) != 2 {
+                return Err("policy refusal reached remember executor".to_owned());
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let replay_row = client
+                .query_one(
+                    "SELECT c.tool_call_id,m.content->>'text' AS result \
+                     FROM public.tool_calls c JOIN public.messages m ON m.run_id=c.run_id \
+                     WHERE c.run_id='run-remember' AND c.call_seq=0 AND m.role='tool' \
+                       AND m.content->>'toolCallId'='provider-remember-1'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let internal_call_id: String = replay_row
+                .try_get("tool_call_id")
+                .map_err(|error| error.to_string())?;
+            let model_result: String = replay_row
+                .try_get("result")
+                .map_err(|error| error.to_string())?;
+            let replay_lease = RunExecutionLease::new(
+                RunId::new("run-remember"),
+                remember_thread.clone(),
+                BotId::new("bot-1"),
+                ActorId::new("actor-a"),
+                FencingToken::new(1).map_err(|error| error.to_string())?,
+                1,
+            )
+            .map_err(|error| error.to_string())?;
+            let exact_exchange = RunToolExchange::new(
+                openbot_contracts::ids::ToolCallId::new(internal_call_id),
+                "provider-remember-1".to_owned(),
+                "remember".to_owned(),
+                serde_json::json!({
+                    "memoryKind":"fact",
+                    "scope":"thread",
+                    "content":"The user prefers tea.",
+                    "tags":["drink"],
+                    "sensitivity":"normal"
+                }),
+                model_result,
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+            let replay = runtime
+                .append_tool_exchange(&replay_lease, 1, &exact_exchange)
+                .await
+                .map_err(|error| error.to_string())?;
+            if !replay.replayed {
+                return Err("tool exchange exact replay 没返回 replayed".to_owned());
+            }
+            let tampered = RunToolExchange::new(
+                exact_exchange.internal_call_id().clone(),
+                "provider-remember-1".to_owned(),
+                "remember".to_owned(),
+                exact_exchange.arguments().clone(),
+                "tampered".to_owned(),
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+            if runtime
+                .append_tool_exchange(&replay_lease, 1, &tampered)
+                .await
+                != Err(openbot_application::RunRuntimeError::Conflict)
+            {
+                return Err("tool exchange tampered replay 未拒绝".to_owned());
+            }
+            let memory = client
+                .query_one(
+                    "SELECT owner_user_id,scope_kind,scope_id,memory_kind,content,origin, \
+                            source_thread_id,source_message_id,status \
+                     FROM public.memories",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let memory_shape = (
+                memory.try_get::<_, String>(0).map_err(|error| error.to_string())?,
+                memory.try_get::<_, String>(1).map_err(|error| error.to_string())?,
+                memory.try_get::<_, Option<String>>(2).map_err(|error| error.to_string())?,
+                memory.try_get::<_, String>(3).map_err(|error| error.to_string())?,
+                memory.try_get::<_, Option<String>>(4).map_err(|error| error.to_string())?,
+                memory.try_get::<_, String>(5).map_err(|error| error.to_string())?,
+                memory.try_get::<_, Option<String>>(6).map_err(|error| error.to_string())?,
+                memory.try_get::<_, Option<String>>(7).map_err(|error| error.to_string())?,
+                memory.try_get::<_, String>(8).map_err(|error| error.to_string())?,
+            );
+            if memory_shape.0 != "actor-a"
+                || memory_shape.1 != "thread"
+                || memory_shape.2.as_deref() != Some(remember_thread.as_str())
+                || memory_shape.3 != "fact"
+                || memory_shape.4.as_deref() != Some("The user prefers tea.")
+                || memory_shape.5 != "remember_tool"
+                || memory_shape.6 != memory_shape.2
+                || memory_shape.7.as_deref().is_none_or(str::is_empty)
+                || memory_shape.8 != "active"
+            {
+                return Err(format!("remember memory shape 漂移：{memory_shape:?}"));
+            }
+            let tool_shape = client
+                .query(
+                    "SELECT c.tool_name,c.call_seq,a.status,a.commit_state \
+                     FROM public.tool_calls c JOIN public.tool_attempts a USING(tool_call_id) \
+                     WHERE c.run_id='run-remember' ORDER BY c.call_seq",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .iter()
+                .map(|row| {
+                    Ok::<_, String>((
+                        row.try_get::<_, String>(0).map_err(|error| error.to_string())?,
+                        row.try_get::<_, i64>(1).map_err(|error| error.to_string())?,
+                        row.try_get::<_, String>(2).map_err(|error| error.to_string())?,
+                        row.try_get::<_, Option<String>>(3).map_err(|error| error.to_string())?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if tool_shape
+                != [
+                    (
+                        "remember".to_owned(),
+                        0,
+                        "completed".to_owned(),
+                        Some("committed".to_owned()),
+                    ),
+                    (
+                        "remember".to_owned(),
+                        1,
+                        "completed".to_owned(),
+                        Some("not_committed".to_owned()),
+                    ),
+                ]
+            {
+                return Err(format!("remember tool journal 漂移：{tool_shape:?}"));
+            }
+            let memory_audits: Vec<String> = client
+                .query(
+                    "SELECT event_type FROM public.audit_events \
+                     WHERE event_type LIKE 'memory.remember_%' ORDER BY created_at,id",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .iter()
+                .map(|row| row.try_get(0).map_err(|error| error.to_string()))
+                .collect::<Result<_, _>>()?;
+            let checkpoint_count: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM public.run_events \
+                     WHERE run_id='run-remember' AND event_type='checkpoint' \
+                       AND payload->>'kind'='tool_exchange'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            let roles: Vec<String> = client
+                .query(
+                    "SELECT role FROM public.messages WHERE run_id='run-remember' ORDER BY seq",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .iter()
+                .map(|row| row.try_get(0).map_err(|error| error.to_string()))
+                .collect::<Result<_, _>>()?;
+            let auth_generation: i64 = client
+                .query_one("SELECT auth_generation FROM public.users WHERE id='actor-a'", &[])
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if memory_audits
+                != [
+                    "memory.remember_succeeded".to_owned(),
+                    "memory.remember_failed".to_owned(),
+                    "memory.remember_refused".to_owned(),
+                ]
+                || checkpoint_count != 3
+                || roles
+                    != [
+                        "user",
+                        "assistant",
+                        "tool",
+                        "assistant",
+                        "tool",
+                        "assistant",
+                        "tool",
+                        "assistant",
+                    ]
+                || auth_generation != 1
+            {
+                return Err(format!(
+                    "remember durable projection 漂移：audits={memory_audits:?} checkpoint={checkpoint_count} roles={roles:?} generation={auth_generation}"
+                ));
             }
             Ok(())
         }
@@ -494,6 +1008,7 @@ async fn real_openai_http_stream_uses_fresh_vault_credential_and_durable_reasoni
                 runtime.clone(),
                 context,
                 provider,
+                Arc::new(NoAgentToolInvoker),
                 Arc::new(
                     PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
                         .map_err(|error| error.to_string())?,
@@ -856,6 +1371,7 @@ async fn deadline_and_real_stream_stall_append_hash_chain_audits_before_terminal
                 runtime.clone(),
                 Arc::new(HoldingAgentContext),
                 Arc::new(RejectingPackageProvider::default()),
+                Arc::new(NoAgentToolInvoker),
                 Arc::new(
                     PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
                         .map_err(|error| error.to_string())?,
@@ -923,6 +1439,7 @@ async fn deadline_and_real_stream_stall_append_hash_chain_audits_before_terminal
                 runtime.clone(),
                 context,
                 stall_provider,
+                Arc::new(NoAgentToolInvoker),
                 Arc::new(
                     PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
                         .map_err(|error| error.to_string())?,
@@ -1033,6 +1550,7 @@ impl ManagedRunHarness<'_> {
             self.runtime.clone(),
             self.context.clone(),
             provider,
+            Arc::new(NoAgentToolInvoker),
             Arc::new(
                 PostgresAgentAudit::new(self.pool.clone(), vec![0xa5; 32])
                     .map_err(|error| error.to_string())?,
@@ -1084,7 +1602,7 @@ async fn begin_test_run(
     entropy_tail: u8,
     run_id: &str,
     message: &str,
-) -> Result<(), String> {
+) -> Result<openbot_contracts::ids::ThreadId, String> {
     let mut entropy = [0_u8; 16];
     entropy[15] = entropy_tail;
     let thread = ThreadIdentity::new(deployment).mint_from_entropy(entropy);
@@ -1094,7 +1612,7 @@ async fn begin_test_run(
             tenant: tenant.clone(),
             actor: ActorId::new("actor-a"),
             command: BeginThreadRun {
-                thread_id: thread,
+                thread_id: thread.clone(),
                 run_id: RunId::new(run_id),
                 bot_id: BotId::new("bot-1"),
                 anchor: ThreadRunAnchor::DirectBot,
@@ -1102,7 +1620,7 @@ async fn begin_test_run(
             },
         })
         .await
-        .map(|_| ())
+        .map(|_| thread)
         .map_err(|error| error.to_string())
 }
 
@@ -1116,7 +1634,8 @@ async fn wait_for_terminal(
         let row = client
             .query_one(
                 "SELECT status,error_code,(SELECT content->>'text' FROM public.messages \
-                 WHERE run_id=$1 AND role='assistant') FROM public.runs WHERE run_id=$1",
+                 WHERE run_id=$1 AND role='assistant' ORDER BY seq DESC LIMIT 1) \
+                 FROM public.runs WHERE run_id=$1",
                 &[&run_id],
             )
             .await

@@ -23,9 +23,9 @@
 //!
 //! # 当前状态
 //!
-//! W-3b 只落 [`AgentToolGateway`]：它铸造 call ID/sequence，并把调用交给同一个
-//! `ApplicationService`；实际 built-in reducer、provider、AG-UI、MCP/Drive executor 仍属 G4，
-//! 不在这里用空壳冒充。
+//! [`AgentToolGateway`] 铸造 call ID/sequence，并把调用交给同一个 `ApplicationService`；
+//! production built-in host 可注入 [`AuthorizedAgentToolGateway`] 以在每次 effect 前重读 DB ACL。
+//! RMCP/Drive/browser/file/shell executor 仍未因内建 remember tool 而完成。
 
 #![deny(missing_docs)]
 
@@ -34,7 +34,10 @@ mod provider_router;
 mod retry;
 mod runtime;
 
-pub use gateway::AgentToolGateway;
+pub use gateway::{
+    AgentToolGateway, AgentToolInvokeError, AgentToolInvoker, AgentToolReply,
+    AuthorizedAgentToolGateway, NoAgentToolInvoker,
+};
 pub use provider_router::ProviderRouter;
 pub use retry::{RetryingProvider, RetryingProviderConfig};
 pub use runtime::{

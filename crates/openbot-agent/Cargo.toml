@@ -22,6 +22,7 @@ tokio.workspace = true
 tracing.workspace = true
 getrandom.workspace = true
 metrics.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 openbot-contracts = { workspace = true, features = ["testkit"] }

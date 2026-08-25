@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use openbot_application::ApplicationService;
+use async_trait::async_trait;
+use openbot_application::{AgentAuthorizationSource, ApplicationService, RunExecutionLease};
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
@@ -11,6 +12,107 @@ use openbot_contracts::ids::{BotId, RunId, ToolCallId};
 use openbot_contracts::tool::{ToolInvocation, ToolResult};
 use serde_json::Value;
 use uuid::Uuid;
+
+/// Model-visible, redacted reply paired with a Rust-minted control-plane call id.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AgentToolReply {
+    call_id: ToolCallId,
+    content: String,
+    error_code: Option<String>,
+}
+
+impl AgentToolReply {
+    /// Construct from an already-redacted tool-pipeline projection.
+    pub fn new(
+        call_id: ToolCallId,
+        content: String,
+        error_code: Option<String>,
+    ) -> Result<Self, AgentToolInvokeError> {
+        if call_id.as_str().is_empty()
+            || content.as_bytes().contains(&0)
+            || error_code
+                .as_ref()
+                .is_some_and(|value| value.is_empty() || value.as_bytes().contains(&0))
+        {
+            return Err(AgentToolInvokeError::Unavailable);
+        }
+        Ok(Self {
+            call_id,
+            content,
+            error_code,
+        })
+    }
+
+    /// Rust-minted tool call id used for durable decision/message identities.
+    #[must_use]
+    pub const fn call_id(&self) -> &ToolCallId {
+        &self.call_id
+    }
+
+    /// Redacted model-visible content.
+    #[must_use]
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    /// Stable error code; absence means success.
+    #[must_use]
+    pub fn error_code(&self) -> Option<&str> {
+        self.error_code.as_deref()
+    }
+}
+
+impl core::fmt::Debug for AgentToolReply {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AgentToolReply")
+            .field("call_id", &self.call_id)
+            .field("content_bytes", &self.content.len())
+            .field("error_code", &self.error_code)
+            .finish()
+    }
+}
+
+/// Tool invocation cannot safely become another provider sample.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum AgentToolInvokeError {
+    /// Auth/application/tool dependency is unavailable or the current scope was revoked.
+    #[error("agent_tool_unavailable")]
+    Unavailable,
+    /// A tool effect/outcome has unknown commit state.
+    #[error("agent_tool_reconciliation_required")]
+    ReconciliationRequired,
+}
+
+/// Host-facing tool boundary. Production implementation always reloads AuthContext first.
+#[async_trait]
+pub trait AgentToolInvoker: Send + Sync {
+    /// Invoke one provider call through ApplicationService's unique tool pipeline.
+    async fn invoke(
+        &self,
+        lease: &RunExecutionLease,
+        tool_name: &str,
+        arguments: Value,
+    ) -> Result<AgentToolReply, AgentToolInvokeError>;
+
+    /// Release bounded per-run sequence state after terminal cleanup.
+    fn release(&self, _run_id: &RunId) {}
+}
+
+/// Explicit fail-closed placeholder for tests/runtime configurations without a real tool plane.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoAgentToolInvoker;
+
+#[async_trait]
+impl AgentToolInvoker for NoAgentToolInvoker {
+    async fn invoke(
+        &self,
+        _lease: &RunExecutionLease,
+        _tool_name: &str,
+        _arguments: Value,
+    ) -> Result<AgentToolReply, AgentToolInvokeError> {
+        Err(AgentToolInvokeError::Unavailable)
+    }
+}
 
 /// Agent tool gateway。调用方只能给 run/Bot/tool/args；actor 来自 `AuthContext`，call id 与
 /// sequence 由本类型铸造，模型/remote Agent 没有自报三者的参数位。
@@ -38,51 +140,87 @@ impl AgentToolGateway {
         tool_name: impl Into<String>,
         arguments: Value,
     ) -> Result<ToolResult, AppError> {
+        self.invoke_captured(auth, run_id, bot_id, tool_name.into(), arguments)
+            .await
+            .1
+    }
+
+    async fn invoke_captured(
+        &self,
+        auth: AuthContext,
+        run_id: RunId,
+        bot_id: BotId,
+        tool_name: String,
+        arguments: Value,
+    ) -> (ToolCallId, Result<ToolResult, AppError>) {
         let call_seq = {
-            let mut sequences =
-                self.next_sequence
-                    .lock()
-                    .map_err(|_| AppError::DependencyUnavailable {
-                        dependency: "agent_tool_sequence",
-                    })?;
+            let mut sequences = match self.next_sequence.lock() {
+                Ok(sequences) => sequences,
+                Err(_) => {
+                    return (
+                        ToolCallId::new("unavailable"),
+                        Err(AppError::DependencyUnavailable {
+                            dependency: "agent_tool_sequence",
+                        }),
+                    );
+                }
+            };
             let next = sequences.entry(run_id.clone()).or_insert(0);
             let current = *next;
-            *next = next.checked_add(1).ok_or(AppError::DependencyUnavailable {
-                dependency: "agent_tool_sequence",
-            })?;
+            let Some(incremented) = next.checked_add(1) else {
+                return (
+                    ToolCallId::new("unavailable"),
+                    Err(AppError::DependencyUnavailable {
+                        dependency: "agent_tool_sequence",
+                    }),
+                );
+            };
+            *next = incremented;
             current
         };
+        let call_id = ToolCallId::new(Uuid::now_v7().to_string());
         let invocation = ToolInvocation {
-            call_id: ToolCallId::new(Uuid::now_v7().to_string()),
+            call_id: call_id.clone(),
             run_id,
             bot_id,
             call_seq,
-            tool_name: tool_name.into(),
+            tool_name,
             arguments,
         };
-        match self
+        let result = match self
             .application
             .execute(auth, AppCommand::InvokeTool(invocation))
-            .await?
+            .await
         {
-            AppReply::Tool(result) => Ok(result),
-            AppReply::Health(_)
-            | AppReply::Channels(_)
-            | AppReply::CurrentUser(_)
-            | AppReply::AdminStatus(_)
-            | AppReply::People(_)
-            | AppReply::Person(_)
-            | AppReply::AuditEvents(_)
-            | AppReply::ActionPolicy { .. }
-            | AppReply::ThreadMinted(_)
-            | AppReply::ThreadStatus(_)
-            | AppReply::ThreadRunStarted(_)
-            | AppReply::ThreadHistory(_)
-            | AppReply::Memory(_)
-            | AppReply::Memories(_)
-            | AppReply::MemoryRecall(_) => Err(AppError::DependencyUnavailable {
+            Ok(AppReply::Tool(result)) => Ok(result),
+            Ok(
+                AppReply::Health(_)
+                | AppReply::Channels(_)
+                | AppReply::CurrentUser(_)
+                | AppReply::AdminStatus(_)
+                | AppReply::People(_)
+                | AppReply::Person(_)
+                | AppReply::AuditEvents(_)
+                | AppReply::ActionPolicy { .. }
+                | AppReply::ThreadMinted(_)
+                | AppReply::ThreadStatus(_)
+                | AppReply::ThreadRunStarted(_)
+                | AppReply::ThreadHistory(_)
+                | AppReply::Memory(_)
+                | AppReply::Memories(_)
+                | AppReply::MemoryRecall(_),
+            ) => Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }),
+            Err(error) => Err(error),
+        };
+        (call_id, result)
+    }
+
+    /// Drop per-run sequence state after the host has committed a terminal.
+    pub fn release(&self, run_id: &RunId) {
+        if let Ok(mut sequences) = self.next_sequence.lock() {
+            sequences.remove(run_id);
         }
     }
 
@@ -91,6 +229,104 @@ impl AgentToolGateway {
     pub fn application(&self) -> &Arc<dyn ApplicationService> {
         &self.application
     }
+}
+
+/// Production wrapper that reloads current DB authorization before each tool effect.
+pub struct AuthorizedAgentToolGateway {
+    gateway: AgentToolGateway,
+    authorization: Arc<dyn AgentAuthorizationSource>,
+}
+
+impl AuthorizedAgentToolGateway {
+    /// Bind one ApplicationService and one authoritative authorization source.
+    #[must_use]
+    pub fn new(
+        application: Arc<dyn ApplicationService>,
+        authorization: Arc<dyn AgentAuthorizationSource>,
+    ) -> Self {
+        Self {
+            gateway: AgentToolGateway::new(application),
+            authorization,
+        }
+    }
+}
+
+impl core::fmt::Debug for AuthorizedAgentToolGateway {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AuthorizedAgentToolGateway")
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl AgentToolInvoker for AuthorizedAgentToolGateway {
+    async fn invoke(
+        &self,
+        lease: &RunExecutionLease,
+        tool_name: &str,
+        arguments: Value,
+    ) -> Result<AgentToolReply, AgentToolInvokeError> {
+        let auth = self
+            .authorization
+            .load(lease)
+            .await
+            .map_err(|_| AgentToolInvokeError::Unavailable)?;
+        let (call_id, result) = self
+            .gateway
+            .invoke_captured(
+                auth,
+                lease.run_id().clone(),
+                lease.bot_id().clone(),
+                tool_name.to_owned(),
+                arguments,
+            )
+            .await;
+        match result {
+            Ok(result) => Ok(AgentToolReply {
+                call_id,
+                content: result.content,
+                error_code: result.error_code.or_else(|| {
+                    (result.commit_state == openbot_contracts::tool::ToolCommitState::NotCommitted)
+                        .then(|| "tool_not_committed".to_owned())
+                }),
+            }),
+            Err(AppError::PolicyRefused { .. }) => Ok(normalized_error_reply(
+                call_id,
+                "policy_refused",
+                "Tool call was refused by policy.",
+            )),
+            Err(AppError::MalformedPayload { .. }) => Ok(normalized_error_reply(
+                call_id,
+                "invalid_arguments",
+                "Tool arguments were invalid.",
+            )),
+            Err(AppError::NotVisible | AppError::ForbiddenRole { .. }) => Ok(
+                normalized_error_reply(call_id, "tool_not_available", "Tool is not available."),
+            ),
+            Err(AppError::ReconciliationRequired { .. }) => {
+                Err(AgentToolInvokeError::ReconciliationRequired)
+            }
+            Err(
+                AppError::Unauthenticated
+                | AppError::DependencyUnavailable { .. }
+                | AppError::VendorFailure { .. }
+                | AppError::StaleGeneration { .. }
+                | AppError::RequestConflict { .. }
+                | AppError::LeaseConflict { .. }
+                | AppError::IdentityConflict { .. }
+                | AppError::SensitiveWriteRefused { .. },
+            ) => Err(AgentToolInvokeError::Unavailable),
+        }
+    }
+
+    fn release(&self, run_id: &RunId) {
+        self.gateway.release(run_id);
+    }
+}
+
+fn normalized_error_reply(call_id: ToolCallId, error_code: &str, content: &str) -> AgentToolReply {
+    AgentToolReply::new(call_id, content.to_owned(), Some(error_code.to_owned()))
+        .expect("static normalized tool reply is valid")
 }
 
 impl core::fmt::Debug for AgentToolGateway {

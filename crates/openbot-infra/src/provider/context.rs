@@ -1,9 +1,11 @@
 //! PostgreSQL run/thread history → provider-neutral bounded context。
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use openbot_application::{
     AgentContextError, AgentContextSource, ProviderMessage, ProviderMessageRole, ProviderRequest,
-    ProviderRoute, RunExecutionLease,
+    ProviderRoute, ProviderToolCall, ProviderToolDefinition, RunExecutionLease,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use serde_json::Value;
@@ -40,10 +42,11 @@ pub struct PostgresAgentContextSource {
     deployment: DeploymentId,
     tenant: TenantId,
     max_output_tokens: Option<u32>,
+    tools: Vec<ProviderToolDefinition>,
 }
 
 impl PostgresAgentContextSource {
-    /// Construct text-only context source。
+    /// Construct a bounded context source; first-party tools may be attached with [`Self::with_tools`].
     pub fn new(
         pool: deadpool_postgres::Pool,
         deployment: DeploymentId,
@@ -60,7 +63,15 @@ impl PostgresAgentContextSource {
             deployment,
             tenant,
             max_output_tokens,
+            tools: Vec::new(),
         })
+    }
+
+    /// Attach the first-party catalog projected to model-visible JSON Schema.
+    #[must_use]
+    pub fn with_tools(mut self, tools: Vec<ProviderToolDefinition>) -> Self {
+        self.tools = tools;
+        self
     }
 }
 
@@ -144,7 +155,9 @@ impl AgentContextSource for PostgresAgentContextSource {
             content: standing_prompt,
             tool_call_id: None,
             tool_name: None,
+            tool_calls: Vec::new(),
         });
+        let mut pending_tool_calls = BTreeMap::<String, String>::new();
         for row in rows {
             let role: String = row
                 .try_get("role")
@@ -152,14 +165,83 @@ impl AgentContextSource for PostgresAgentContextSource {
             let content: Value = row
                 .try_get("content")
                 .map_err(|_| AgentContextError::Corrupt { field: "content" })?;
-            if role == "tool" || (role == "assistant" && content.get("toolCalls").is_some()) {
-                return Err(AgentContextError::ToolHistoryUnsupported);
-            }
             let text = text_content(&content).ok_or(AgentContextError::Corrupt {
                 field: "message_content",
             })?;
+            let tool_calls = if role == "assistant" {
+                if !pending_tool_calls.is_empty() {
+                    return Err(AgentContextError::Corrupt {
+                        field: "unfinished_tool_pair",
+                    });
+                }
+                provider_tool_calls(&content)?
+            } else {
+                if content.get("toolCalls").is_some() {
+                    return Err(AgentContextError::Corrupt {
+                        field: "tool_calls_role",
+                    });
+                }
+                Vec::new()
+            };
+            let tool_call_id = if role == "tool" {
+                Some(required_content_string(&content, "toolCallId")?)
+            } else {
+                None
+            };
+            let tool_name = if role == "tool" {
+                Some(required_content_string(&content, "toolName")?)
+            } else {
+                None
+            };
+            if role == "assistant" {
+                for call in &tool_calls {
+                    if pending_tool_calls
+                        .insert(call.call_id.clone(), call.name.clone())
+                        .is_some()
+                    {
+                        return Err(AgentContextError::Corrupt {
+                            field: "duplicate_tool_call_id",
+                        });
+                    }
+                }
+            } else if role == "tool" {
+                let (Some(call_id), Some(name)) = (tool_call_id.as_deref(), tool_name.as_deref())
+                else {
+                    return Err(AgentContextError::Corrupt {
+                        field: "tool_pair_binding",
+                    });
+                };
+                if pending_tool_calls.remove(call_id).as_deref() != Some(name) {
+                    return Err(AgentContextError::Corrupt {
+                        field: "tool_pair_binding",
+                    });
+                }
+            } else if !pending_tool_calls.is_empty() {
+                return Err(AgentContextError::Corrupt {
+                    field: "unfinished_tool_pair",
+                });
+            }
+            let tool_bytes = tool_calls.iter().try_fold(0_usize, |total, call| {
+                serde_json::to_vec(&call.arguments)
+                    .ok()
+                    .and_then(|arguments| {
+                        total
+                            .checked_add(call.call_id.len())?
+                            .checked_add(call.name.len())?
+                            .checked_add(arguments.len())
+                    })
+                    .ok_or(AgentContextError::TooLarge)
+            })?;
+            let result_pair_bytes = tool_call_id
+                .as_ref()
+                .zip(tool_name.as_ref())
+                .map_or(0, |(call_id, name)| {
+                    call_id.len().saturating_add(name.len())
+                });
             total_bytes = total_bytes
                 .checked_add(text.len())
+                .and_then(|value| value.checked_add(tool_bytes))
+                .and_then(|value| value.checked_add(result_pair_bytes))
                 .ok_or(AgentContextError::TooLarge)?;
             if total_bytes > MAX_AGENT_CONTEXT_BYTES {
                 return Err(AgentContextError::TooLarge);
@@ -168,22 +250,96 @@ impl AgentContextSource for PostgresAgentContextSource {
                 "user" => ProviderMessageRole::User,
                 "assistant" => ProviderMessageRole::Assistant,
                 "system" | "summary" => ProviderMessageRole::System,
+                "tool" => ProviderMessageRole::Tool,
                 _ => return Err(AgentContextError::Corrupt { field: "role" }),
             };
             messages.push(ProviderMessage {
                 role,
                 content: text,
-                tool_call_id: None,
-                tool_name: None,
+                tool_call_id,
+                tool_name,
+                tool_calls,
             });
+        }
+        if !pending_tool_calls.is_empty() {
+            return Err(AgentContextError::ToolHistoryUnsupported);
         }
         Ok(ProviderRequest {
             route,
             messages,
-            tools: Vec::new(),
+            tools: self.tools.clone(),
             max_output_tokens: self.max_output_tokens,
         })
     }
+}
+
+fn provider_tool_calls(content: &Value) -> Result<Vec<ProviderToolCall>, AgentContextError> {
+    let Some(calls) = content.get("toolCalls") else {
+        return Ok(Vec::new());
+    };
+    let calls = calls.as_array().ok_or(AgentContextError::Corrupt {
+        field: "tool_calls",
+    })?;
+    if calls.len() > 256 {
+        return Err(AgentContextError::TooLarge);
+    }
+    calls
+        .iter()
+        .map(|call| {
+            let call_id = call
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or(AgentContextError::Corrupt {
+                    field: "tool_call_id",
+                })?
+                .to_owned();
+            let function = call.get("function").and_then(Value::as_object).ok_or(
+                AgentContextError::Corrupt {
+                    field: "tool_call_function",
+                },
+            )?;
+            let name = function
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or(AgentContextError::Corrupt {
+                    field: "tool_call_name",
+                })?
+                .to_owned();
+            let arguments = match function.get("arguments") {
+                Some(value) if value.is_object() => value.clone(),
+                Some(Value::String(value)) => serde_json::from_str(value)
+                    .ok()
+                    .filter(Value::is_object)
+                    .ok_or(AgentContextError::Corrupt {
+                        field: "tool_call_arguments",
+                    })?,
+                _ => {
+                    return Err(AgentContextError::Corrupt {
+                        field: "tool_call_arguments",
+                    });
+                }
+            };
+            Ok(ProviderToolCall {
+                call_id,
+                name,
+                arguments,
+            })
+        })
+        .collect()
+}
+
+fn required_content_string(
+    content: &Value,
+    field: &'static str,
+) -> Result<String, AgentContextError> {
+    content
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or(AgentContextError::Corrupt { field })
 }
 
 fn provider_route(configuration: &Value) -> Result<ProviderRoute, AgentContextError> {

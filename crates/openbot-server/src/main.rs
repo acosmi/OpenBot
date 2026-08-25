@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use hmac::{Hmac, Mac};
 use openbot_agent::{
-    BuiltInAgentConfig, BuiltInAgentRuntime, ProviderRouter, RetryingProvider,
-    RetryingProviderConfig,
+    AgentToolInvoker, AuthorizedAgentToolGateway, BuiltInAgentConfig, BuiltInAgentRuntime,
+    ProviderRouter, RetryingProvider, RetryingProviderConfig,
 };
 use openbot_application::tenant::package::{
     BuiltInProviderSource, TenantAgentConfiguration, TenantAgentType, TenantPackageAudienceContext,
@@ -16,13 +16,16 @@ use openbot_application::tenant::package::{
 };
 use openbot_application::{
     AgentAudit, ApplicationService, NoRunDispatchConsumer, OpenBotApplication, ProviderAdapter,
-    RunDispatchConsumer, RunRuntime,
+    RunDispatchConsumer, RunRuntime, remember_provider_tool,
 };
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_domain::vault::{KeyVersion, WrappingKey};
 use openbot_infra::agent_audit::PostgresAgentAudit;
+use openbot_infra::agent_tools::{
+    PostgresAgentAuthorizationSource, PostgresBuiltInToolControlPlane,
+};
 use openbot_infra::auth::config::{
     AuthConfig, BindingExposure, ExampleKeyPolicy, KeyEncryptionKey, SingleUserAdmission,
     auth_config_with_dynamic_provider, default_session_lifetime, single_user_binding_verdict,
@@ -55,6 +58,7 @@ use openbot_infra::provider::openai::{
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
+use openbot_infra::repo::tools::PostgresToolJournal;
 use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
 use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
@@ -103,6 +107,7 @@ struct BuiltInAgentAssemblyInput {
     provider: PackageOpenAiProviderConfig,
     managed_provider: Option<ManagedProviderConfig>,
     credential_vault: CredentialRecordVault,
+    tools: Arc<dyn AgentToolInvoker>,
     audit: Arc<dyn AgentAudit>,
     budgets: AgentBudgets,
 }
@@ -299,6 +304,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
         DEFAULT_THREAD_LEASE_DURATION,
         DEFAULT_DISPATCH_CLAIM_DURATION,
     )?);
+    let thread_directory = PostgresThreadDirectory::with_runtime(
+        pool.clone(),
+        database
+            .clone()
+            .with_application_name("openbot-thread-events"),
+        thread_runtime_owner,
+        DEFAULT_THREAD_LEASE_DURATION,
+    )?;
+    let memory = PostgresMemoryAdministration::new(pool.clone());
+    let tool_control = PostgresBuiltInToolControlPlane::new(
+        pool.clone(),
+        deployment.clone(),
+        tenant.clone(),
+        policy_store.clone(),
+        Arc::new(memory.clone()),
+    );
+    let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.to_vec())?;
+    let application: Arc<dyn ApplicationService> = Arc::new(
+        OpenBotApplication::new(ChannelRepo::new(pool.clone()))
+            .with_people(people)
+            .with_audit(PostgresAuditReader::new(pool.clone()))
+            .with_policy(policy_store)
+            .with_tools(tool_control, tool_journal)
+            .with_threads(thread_directory)
+            .with_memory(memory),
+    );
+    let agent_tools: Arc<dyn AgentToolInvoker> = Arc::new(AuthorizedAgentToolGateway::new(
+        application.clone(),
+        Arc::new(PostgresAgentAuthorizationSource::new(
+            pool.clone(),
+            deployment.clone(),
+            tenant.clone(),
+            single_user,
+        )),
+    ));
     let managed_provider = managed_provider_for_slot(&server);
     let agent_audit: Arc<dyn AgentAudit> =
         Arc::new(PostgresAgentAudit::new(pool.clone(), audit_key.to_vec())?);
@@ -314,27 +354,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         provider: server.package_openai_provider.clone(),
         managed_provider,
         credential_vault: model_credential_vault,
+        tools: agent_tools,
         audit: agent_audit,
         budgets: server.agent_budgets,
     })?;
     let built_in_agent_ready = built_in_agent.is_some() || !requires_built_in_agent;
     let run_relay = RunRelay::start(run_runtime, run_consumer);
-    let thread_directory = PostgresThreadDirectory::with_runtime(
-        pool.clone(),
-        database
-            .clone()
-            .with_application_name("openbot-thread-events"),
-        thread_runtime_owner,
-        DEFAULT_THREAD_LEASE_DURATION,
-    )?;
-    let application: Arc<dyn ApplicationService> = Arc::new(
-        OpenBotApplication::new(ChannelRepo::new(pool.clone()))
-            .with_people(people)
-            .with_audit(PostgresAuditReader::new(pool.clone()))
-            .with_policy(policy_store)
-            .with_threads(thread_directory)
-            .with_memory(PostgresMemoryAdministration::new(pool.clone())),
-    );
     let metrics = install_recorder()?;
     let db_probe_pool = pool.clone();
     let db_probe = FnReadinessProbe::new("database_native_schema", move || {
@@ -418,6 +443,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         provider,
         managed_provider,
         credential_vault,
+        tools,
         audit,
         budgets,
     } = input;
@@ -472,16 +498,15 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         Arc::new(ProviderRouter::new(package_provider, managed)),
         RetryingProviderConfig::default(),
     )?);
-    let context = Arc::new(PostgresAgentContextSource::new(
-        pool,
-        deployment,
-        tenant,
-        Some(budgets.max_output_tokens),
-    )?);
+    let context = Arc::new(
+        PostgresAgentContextSource::new(pool, deployment, tenant, Some(budgets.max_output_tokens))?
+            .with_tools(vec![remember_provider_tool()]),
+    );
     let agent = BuiltInAgentRuntime::start(
         runtime,
         context,
         provider,
+        tools,
         audit,
         BuiltInAgentConfig {
             run_deadline: budgets.run_deadline,

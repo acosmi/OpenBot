@@ -15,7 +15,7 @@ use openbot_application::{
 use openbot_contracts::auth::{AuthContext, AuthContextBuilder, Role};
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::{
-    ActorId, BotId, CatalogGeneration, DeploymentId, RunId, TenantId, ToolCallId,
+    ActorId, BotId, CatalogGeneration, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
 };
 use openbot_contracts::tool::ToolInvocation;
 use openbot_domain::audit::hash::Sha256Digest;
@@ -87,7 +87,9 @@ impl ToolControlPlane for FakeControl {
         _metadata: &ToolMetadata,
     ) -> Result<ResolvedToolScope, ToolPortError> {
         Ok(ResolvedToolScope {
+            tenant_id: auth.tenant().clone(),
             run_id: invocation.run_id.clone(),
+            thread_id: ThreadId::new("thread-tool-1"),
             bot_id: invocation.bot_id.clone(),
             call_seq: invocation.call_seq,
             target: ApprovalTarget {

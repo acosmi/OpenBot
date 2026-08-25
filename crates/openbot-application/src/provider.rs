@@ -2,9 +2,35 @@
 
 use async_trait::async_trait;
 use core::time::Duration;
+use openbot_contracts::auth::AuthContext;
 use serde_json::Value;
 
 use crate::RunExecutionLease;
+
+/// Loading a fresh authoritative actor context for an asynchronous Agent effect failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum AgentAuthorizationError {
+    /// Database/ACL source unavailable.
+    #[error("agent_authorization_unavailable")]
+    Unavailable,
+    /// Actor/run/lease no longer authorized. This remains non-enumerating.
+    #[error("agent_authorization_refused")]
+    Refused,
+    /// Durable role/generation data is malformed.
+    #[error("agent_authorization_corrupt field={field}")]
+    Corrupt {
+        /// Static field name only.
+        field: &'static str,
+    },
+}
+
+/// Rebuilds AuthContext from current database ACL before every Agent tool effect.
+#[async_trait]
+pub trait AgentAuthorizationSource: Send + Sync {
+    /// Load a fresh non-serializable context bound to the active run lease.
+    async fn load(&self, lease: &RunExecutionLease)
+    -> Result<AuthContext, AgentAuthorizationError>;
+}
 
 /// Authoritative provider routing class loaded with the Bot row；不是 model 自报字段。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,17 +54,40 @@ pub enum ProviderMessageRole {
     Tool,
 }
 
+/// A normalized assistant tool call retained as part of the next sampling history.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProviderToolCall {
+    /// Vendor call id used only to pair the subsequent tool result.
+    pub call_id: String,
+    /// Authoritative catalog name after application validation.
+    pub name: String,
+    /// Validated object arguments. Debug never renders them.
+    pub arguments: Value,
+}
+
+impl core::fmt::Debug for ProviderToolCall {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProviderToolCall")
+            .field("call_id", &self.call_id)
+            .field("name", &self.name)
+            .field("arguments", &"[redacted]")
+            .finish()
+    }
+}
+
 /// Provider-neutral input message；Debug 只显示长度。
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProviderMessage {
     /// Role。
     pub role: ProviderMessageRole,
-    /// Plain text projection；structured/tool pair 随 G4 tool loop 扩展。
+    /// Plain text projection. It may be empty on an assistant tool-call turn.
     pub content: String,
     /// Tool result 的 call id。
     pub tool_call_id: Option<String>,
     /// Tool result 的 authoritative catalog name；Google functionResponse 必填。
     pub tool_name: Option<String>,
+    /// Assistant tool-call blocks. Non-assistant roles must leave this empty.
+    pub tool_calls: Vec<ProviderToolCall>,
 }
 
 impl core::fmt::Debug for ProviderMessage {
@@ -48,6 +97,7 @@ impl core::fmt::Debug for ProviderMessage {
             .field("content_bytes", &self.content.len())
             .field("has_tool_call_id", &self.tool_call_id.is_some())
             .field("has_tool_name", &self.tool_name.is_some())
+            .field("tool_call_count", &self.tool_calls.len())
             .finish()
     }
 }
@@ -314,7 +364,7 @@ pub enum AgentContextError {
     /// Context exceeds the bounded first slice; compression is not silently faked。
     #[error("agent_context_too_large")]
     TooLarge,
-    /// Existing tool transcript requires the not-yet-connected tool loop。
+    /// Existing tool history ends with an unfinished assistant/tool pair.
     #[error("agent_context_tool_history_unsupported")]
     ToolHistoryUnsupported,
 }

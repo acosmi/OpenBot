@@ -8,8 +8,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId};
+use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId, ToolCallId};
 use openbot_domain::thread::FencingToken;
+use serde_json::Value;
 
 use crate::chunk::{SEMANTIC_CHUNK_MAX_BYTES, SemanticChunkAccumulator};
 
@@ -295,6 +296,106 @@ pub enum RunSemanticChannel {
     Reasoning,
 }
 
+/// A complete, redacted tool pair ready for durable message history.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RunToolExchange {
+    internal_call_id: ToolCallId,
+    provider_call_id: String,
+    name: String,
+    arguments: Value,
+    result: String,
+    error_code: Option<String>,
+}
+
+impl RunToolExchange {
+    /// Construct a closed exchange. Raw execution output must already be redacted by the tool pipe.
+    pub fn new(
+        internal_call_id: ToolCallId,
+        provider_call_id: String,
+        name: String,
+        arguments: Value,
+        result: String,
+        error_code: Option<String>,
+    ) -> Result<Self, RunRuntimeError> {
+        if internal_call_id.as_str().is_empty()
+            || provider_call_id.is_empty()
+            || name.is_empty()
+            || !arguments.is_object()
+            || [
+                provider_call_id.as_bytes(),
+                name.as_bytes(),
+                result.as_bytes(),
+            ]
+            .into_iter()
+            .any(|value| value.contains(&0))
+            || error_code
+                .as_ref()
+                .is_some_and(|value| value.is_empty() || value.as_bytes().contains(&0))
+        {
+            return Err(RunRuntimeError::InvalidInput {
+                field: "tool_exchange",
+            });
+        }
+        Ok(Self {
+            internal_call_id,
+            provider_call_id,
+            name,
+            arguments,
+            result,
+            error_code,
+        })
+    }
+
+    /// Rust-minted control-plane call id.
+    #[must_use]
+    pub const fn internal_call_id(&self) -> &ToolCallId {
+        &self.internal_call_id
+    }
+
+    /// Vendor pairing id. It is never used as authority.
+    #[must_use]
+    pub fn provider_call_id(&self) -> &str {
+        &self.provider_call_id
+    }
+
+    /// Authoritative catalog name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Validated arguments retained for the assistant tool-call message.
+    #[must_use]
+    pub const fn arguments(&self) -> &Value {
+        &self.arguments
+    }
+
+    /// Redacted model-visible result.
+    #[must_use]
+    pub fn result(&self) -> &str {
+        &self.result
+    }
+
+    /// Stable tool error code, if any.
+    #[must_use]
+    pub fn error_code(&self) -> Option<&str> {
+        self.error_code.as_deref()
+    }
+}
+
+impl core::fmt::Debug for RunToolExchange {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RunToolExchange")
+            .field("internal_call_id", &self.internal_call_id)
+            .field("provider_call_id", &self.provider_call_id)
+            .field("name", &self.name)
+            .field("arguments", &"[redacted]")
+            .field("result_bytes", &self.result.len())
+            .field("error_code", &self.error_code)
+            .finish()
+    }
+}
+
 impl RunSemanticChannel {
     /// Journal payload 的稳定字面量。
     #[must_use]
@@ -380,6 +481,16 @@ pub trait RunRuntime: Send + Sync {
         channel: RunSemanticChannel,
         chunk: &str,
     ) -> Result<RunWriteReceipt, RunRuntimeError>;
+
+    /// Persist assistant tool-call + tool-result messages and a checkpoint in one transaction.
+    async fn append_tool_exchange(
+        &self,
+        _lease: &RunExecutionLease,
+        _expected_sequence: u64,
+        _exchange: &RunToolExchange,
+    ) -> Result<RunWriteReceipt, RunRuntimeError> {
+        Err(RunRuntimeError::Unavailable)
+    }
 
     /// 精确 expected-sequence terminal；同事务 materialize assistant text 并 notify。
     async fn finish_run(
@@ -478,6 +589,36 @@ impl DurableTextRun {
         self.drain_pending().await
     }
 
+    /// Flush every pending text byte without terminalizing the run.
+    pub async fn flush(&mut self) -> Result<(), RunRuntimeError> {
+        self.pending_durable.extend(
+            self.accumulator
+                .finish()
+                .map(|chunk| (RunSemanticChannel::Text, chunk)),
+        );
+        self.drain_pending().await
+    }
+
+    /// Flush the current sampling text, then durably append one complete tool pair.
+    pub async fn append_tool_exchange(
+        &mut self,
+        exchange: &RunToolExchange,
+    ) -> Result<RunWriteReceipt, RunRuntimeError> {
+        self.flush().await?;
+        let receipt = self
+            .runtime
+            .append_tool_exchange(&self.lease, self.expected_sequence, exchange)
+            .await?;
+        self.expected_sequence =
+            receipt
+                .run_event_sequence
+                .checked_add(1)
+                .ok_or(RunRuntimeError::Corrupt {
+                    field: "next_event_sequence",
+                })?;
+        Ok(receipt)
+    }
+
     /// Pending 的最迟 flush 时刻；provider loop 应把它放入同一个 `select!`。
     #[must_use]
     pub fn next_deadline(&self) -> Option<Instant> {
@@ -489,12 +630,7 @@ impl DurableTextRun {
         &mut self,
         terminal: RunTerminal,
     ) -> Result<RunWriteReceipt, RunRuntimeError> {
-        self.pending_durable.extend(
-            self.accumulator
-                .finish()
-                .map(|chunk| (RunSemanticChannel::Text, chunk)),
-        );
-        self.drain_pending().await?;
+        self.flush().await?;
         let receipt = self
             .runtime
             .finish_run(&self.lease, self.expected_sequence, terminal)

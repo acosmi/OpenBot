@@ -95,6 +95,7 @@ mod tests {
                 content: "hello".to_owned(),
                 tool_call_id: None,
                 tool_name: None,
+                tool_calls: Vec::new(),
             }],
             tools: Vec::new(),
             max_output_tokens: None,
