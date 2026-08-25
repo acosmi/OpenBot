@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 159
+    expect: 161
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 13
+    expect: 15
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 159
+    expect: 161
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1712,3 +1712,25 @@ entries:
     evidence: "docs/2026-08-25-G4-Durable-Approval生产面-batch14.md"
     done_evidence: "fresh-session + trusted-Origin 在 JSON parse 前；body 闭集只有 grant/deny，actor/binding/expiry 无输入字段。PG transaction 重读 exact actor/run/member/lease/AuthGeneration，state CAS+摘要清除+hash-chain audit 同 commit；跨 replica waiter 最迟 1s durable poll 唤醒。Server framing 1/0/0、PG17 真实 grant/deny 1/0/0。"
     notes: "新增。decision commit unknown 返回 reconciliation；并发/过期不能把 pending 复活。"
+  - id: "api-ui-preferences-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::ui_preferences::get (GET /api/me/preferences)"
+    owner: "openbot-server"
+    test_id: "T-API-0160"
+    migration_rule: "n/a: GUI 第一真源 §7/§8.4 新增跨设备主题与 locale 偏好"
+    status: "done"
+    evidence: "docs/2026-08-25-G6-UI偏好与Tauri协议-batch16-WIP恢复点.md"
+    done_evidence: "authenticated handler 只从 AuthContext 取 deployment/tenant/actor，经唯一 typed ApplicationService port 读取；缺行返回两个 optional field 均空而不覆盖 host 首帧 fallback；Cache-Control=no-store。Server preference framing/cookie 1/0/0，PG17/SCRAM native0021 runtime 1/0/0。"
+    notes: "新增。响应只含 closed theme/locale，不含 actor/scope；同响应镜像 closed HttpOnly SameSite=Lax cookie，Secure 只由既有 public URL 配置决定。"
+  - id: "api-ui-preferences-put"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::ui_preferences::put (PUT /api/me/preferences)"
+    owner: "openbot-server"
+    test_id: "T-API-0161"
+    migration_rule: "n/a: GUI 第一真源 §7/§8.4 新增跨设备主题与 locale 偏好"
+    status: "done"
+    evidence: "docs/2026-08-25-G6-UI偏好与Tauri协议-batch16-WIP恢复点.md"
+    done_evidence: "trusted Origin guard 在 body parse 前；body 只有 independently optional theme/locale，空 update 在 ApplicationService port 前 400，actor/scope/time 无 wire 字段。PG 原子 COALESCE partial merge 并发 theme+locale 不丢更新，commit unknown 不冒充成功；Server 1/0/0、application 1/0/0、PG17/SCRAM runtime 1/0/0。"
+    notes: "新增。闭集 system/light/dark 与 en/zh-CN；响应/镜像 cookie 只返回已提交值，no-store。"

@@ -7,7 +7,7 @@
 # 三类 entry：
 #   1. 上游 28 张表（表名取自 server/src/db/schema/*.ts 的 pgTable 实参，不抄文档）—— label: parity
 #   2. 上游 13 条 migration（server/drizzle/0000–0012）—— label: parity
-#   3. v3 §4.3 的 12 张 native 新表 + audit_checkpoints + tool_approvals —— label: 新增
+#   3. Rust-owned native 新表（当前 15 张，含 audit/tool/approval/UI preference）—— label: 新增
 #
 # status 随实施推进；权威计数是 `cargo xtask parity-check --json`。done 只表示本条 target
 # 与证据已落地，不蕴含 notes 里的 repository 已实现。
@@ -62,15 +62,15 @@ recount:
     expect: 13
   - command: "grep -c '^  - id: ' parity/tables.yaml"
     cwd: repo
-    expect: 55
+    expect: 56
   - command: "grep -c 'label: \"parity\"' parity/tables.yaml"
     cwd: repo
     expect: 41
   - command: "grep -c 'label: \"新增\"' parity/tables.yaml"
     cwd: repo
-    expect: 14
-  # 「上游没有这 14 张 native 表」的负向断言。
-  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(audit_checkpoints|threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|tool_approvals|outbox|memories|memory_events|intelligence_import_cursors)\"'"
+    expect: 15
+  # 「上游没有这 15 张 native 表」的负向断言。
+  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(audit_checkpoints|threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|tool_approvals|outbox|memories|memory_events|intelligence_import_cursors|user_ui_preferences)\"'"
     cwd: upstream
     expect: 0
   # 上一条的正向对照：同一条管线在确实存在的表名上命中，证明它不是恒 0 的坏探测器。
@@ -775,3 +775,14 @@ entries:
     done_evidence: "native 0020 PG17/SCRAM 2/0/0：42表/398列/217约束/85索引 exact fixture；pending/resolved/expiry/effect/class/generation/time/FK 形状负例，actor 删除退役；PG approval runtime 1/0/0 与 acting MCP 1/0/0 证明 request/grant/deny/expire/cancel、summary clear、tool_calls/audit approval_id 同一身份。"
     evidence: "固定上游 schema pgTable 集合对 tool_approvals 命中 0（同管线 users|channels=2）"
     notes: "typed boundary=PostgresToolApprovalCoordinator（不是空 repo） | PK=approval_id；unique=tool_call_id；FK thread/run/actor/Bot，operational row 随 scope 删除；state=pending/granted/denied/expired/cancelled | pending 才保留 bounded redacted arguments/change summary，resolved 同事务清 NULL，Row::Debug 强制脱敏 | binding 固定 actor/auth generation/Bot/run/tool/args hash/target/computer+catalog+document generation/policy/expiry；跨 replica 1s durable poll | API owner=openbot-server typed ApplicationService；完整 Leptos approval UI 仍归 G6，不借本表冒充。"
+  - id: "native-user-ui-preferences"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-infra::db::tables::user_ui_preferences"
+    owner: "openbot-infra"
+    test_id: "T-TBL-0056"
+    migration_rule: "n/a: GUI 第一真源 §7/§8.4 的 actor-scoped theme/locale storage"
+    status: "done"
+    done_evidence: "native 0021 PG17/SCRAM 2/0/0：43表/404列/295 NOT NULL/222约束/86索引 exact fixture；逐旧列证明 0020 是子集；并发 theme/locale partial update 原子合并，deployment/tenant/actor scope 隔离，空行/未知 theme/locale 被具名 CHECK 拒绝，actor 删除 cascade。"
+    evidence: "固定上游 schema pgTable 集合对 user_ui_preferences 命中 0（同管线 users|channels=2）"
+    notes: "typed boundary=PostgresUiPreferenceAdministration（不是第二套业务规则） | PK=(deployment_id,tenant_id,actor_user_id)；actor FK→users ON DELETE CASCADE；theme/locale independently nullable，但二者不能同时 NULL；theme=system/light/dark，locale=en/zh-CN；updated_at 只取 DB clock | retention 随 actor 生命周期 | API owner=openbot-server typed ApplicationService；Desktop Local 用独立 closed local settings port，不写本表。"

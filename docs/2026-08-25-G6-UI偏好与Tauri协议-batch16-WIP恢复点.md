@@ -57,6 +57,8 @@ Tauri API 依据官方 2.11.5 文档：
   dependency/wildcard/duplicate，未把 cargo-deny 的跨 target parent/child 伪组合当发行图；
 - 本轮复跑 Desktop Tauri handler `2/0/0`、local preference `2/0/0`、typed no-codec `1/0/0`，
   Desktop Tauri all-targets Clippy `-D warnings`、fmt、两份 shell guard syntax 全绿；
+- parity-check=`440/1232/1672`，API=`40/121/161`、tables=`56/0/56`、UI=`4/148/152`；
+  fixtures=`15/22/37`，0 violations/warnings；strict recount=`157/157/0`；
 - 临时 PG17 已停止，明文测试口令文件已删除；未运行 `cargo xtask ci`，未派发 Actions。
 
 ## 供应链目标图复核（旧联合口径作废）
@@ -90,8 +92,8 @@ Tauri API 依据官方 2.11.5 文档：
 
 ## 恢复顺序
 
-1. `git status --short --branch`，确认 HEAD 至少为 `17d43eb`；当前安全审计改动尚未正式
-   ledger/R79；
+1. `git status --short --branch`，确认 HEAD 至少为 `9a485315`；Batch16 ledger/R79/正式文档
+   若尚未提交，应作为同一批收口，不拆到下一能力批；
 2. 运行 `./tools/check-tauri-dependencies.sh` 与
    `./tools/check-deny-release-targets.sh`；二者应绿；
 3. 继续不依赖外部发行身份/供应链豁免的 G6 production route、primitive、component、golden/

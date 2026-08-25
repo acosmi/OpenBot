@@ -615,6 +615,26 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
+### 15.1 当前实施勾选（2026-08-25，Batch 15–16）
+
+- [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
+- [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
+- [x] Server 用户偏好 typed PostgreSQL/native 0021 + closed cookie；Desktop Local closed 原子设置；
+  UI startup read/serialized partial write/reload persistence；
+- [x] Tauri 2.11.5 production custom-protocol adapter：window-label authority、typed in-process、
+  本地首帧/CSP/canonical asset；依赖只进入 macOS/Windows Desktop target；
+- [x] 当前 UI ledger 只勾 EmptyState、Badge、ThemeToggle、LocaleSwitch，=`4/148/152`；其余
+  即使有局部源码也保持 todo；
+- [ ] 31 route journey、其余 23 个 primitive ledger 条目、45 个业务组件、compiled gallery、
+  multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
+- [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
+  bundle 摘要尚未闭合；
+- [ ] Tauri 图的 MPL-2.0×5、runtime UNIC unmaintained×5、Cargo Vet macOS 270/Windows 269
+  仍红；不得把 bans/sources 已绿写成供应链整关已绿。
+
+完整证据见 `docs/2026-08-25-G6-UI偏好与Tauri协议-batch16.md` 与
+`docs/2026-08-25-G6-Tauri供应链目标图delta-batch16.md`；G6 整关继续不勾。
+
 ---
 
 ## 16. 一手来源

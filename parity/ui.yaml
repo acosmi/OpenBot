@@ -30,9 +30,9 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15 已有真实 Leptos/Trunk/WASM 实现，但只对机器证据闭合的 EmptyState、Badge 与
-# ThemeToggle 三条打勾；其余即使已有部分源码也保持 todo，不能用一张 Approval 竖切冒充
-# 21 原语、45 业务组件或 27 页 golden 全量完成。
+# Batch 15/16 已有真实 Leptos/Trunk/WASM 实现，但只对机器证据闭合的 EmptyState、Badge、
+# ThemeToggle 与 LocaleSwitch 四条打勾；其余即使已有部分源码也保持 todo，不能用 Approval/
+# preferences 竖切冒充 21 原语、45 业务组件或 27 页 golden 全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）
@@ -136,16 +136,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 15 精确完成 3 条；其余部分实现或完全未实现均保持 todo
+  # Batch 16 精确完成 4 条；其余部分实现或完全未实现均保持 todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 149
+    expect: 148
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 3
+    expect: 4
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 3
+    expect: 4
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -460,7 +460,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0027"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "真实 Chromium/WASM：trigger 的 aria-expanded 显式 false/true，Enter/Space/ArrowDown/ArrowUp 打开并聚焦当前语言；menuitemradio 的 aria-checked 显式 true/false、aria-current 只落当前项；Arrow/Home/End 移动焦点，Enter/Space 选择，Escape 关闭并把焦点还给 trigger。选择 zh-CN/en 即时更新 html lang；Batch16 经 typed partial PUT 持久化，reload immediate+settled 均保持所选 locale，失败有本地化 role=alert。UI 19/0/0、WASM/Clippy 绿。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1；另 i18n 框架 0 命中 / 正向对照 38"
     notes: "键盘 / ARIA：APG menu button；当前语言 `aria-current`。 §8。上游零 i18n 框架命中（grep -rlE 'useTranslation|i18next|react-intl|next-intl|<Trans\\b' … = 0），正向对照同一条命令加 `useQuery` 后命中 38 个文件 ⇒ 作用域确实覆盖到了 app/src。字符串全部硬编码英文，所以整个 i18n 面（含本原语）都是新增，不存在 parity 面。图标 `languages` 属 28 个新增图标。"
 

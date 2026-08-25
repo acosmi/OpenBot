@@ -13,7 +13,7 @@ Phase 0（Evidence Freeze）的 fixture 目录。真源：
 
 | 路径 | 内容 | 状态 |
 | --- | --- | --- |
-| `MANIFEST.yaml` | 本目录的 parity ledger。每条 fixture 一行，`test_id` 前缀 `T-FIX`。 | 26 条：3 done / 23 todo |
+| `MANIFEST.yaml` | 本目录的 parity ledger。每条 fixture 一行，`test_id` 前缀 `T-FIX`。 | 37 条：15 done / 22 todo |
 | `policy/cel-corpus.json` | CEL corpus。69 条表达式 × context，结果类别由 `cel-js@0.8.2` 实跑测出。 | done |
 | `ui/seed.json` | GUI golden 的确定性数据（§10.2）。25 张实体表 95 行 + native 段 + runtime views，覆盖 27 页。 | done |
 | `ui/golden/MANIFEST.toml` | golden 清单：镜像 digest 位、字体、视口、阈值、平台矩阵、mask 规则、bundle 预算。 | done（digest 为 TBD 占位） |
