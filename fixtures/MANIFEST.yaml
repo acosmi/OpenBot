@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 35
+    expect: 36
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 22
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 13
+    expect: 14
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 35 35
+    expect: 36 36
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 25 0
+    expect: 10 26 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -185,6 +185,21 @@ entries:
       mcp_servers 追加 nullable transport，闭集只有 mcp/google_drive_rest；不回填。
       legacy NULL 继续解释为 MCP；Google Drive 目录添加只写固定 GA REST identity，transport
       进入 catalog/grant fingerprint，切换不能静默继承旧 grant。
+
+  - id: db-schema-0020
+    upstream: "-"
+    label: 新增
+    target: fixtures/db/schema-0020.json -> openbot_infra::db::native
+    owner: openbot-infra
+    test_id: T-FIX-0036
+    migration_rule: "n/a: G4 durable human approval 与 tool decision approval identity 的 expand-only post-migration 事实"
+    status: done
+    evidence: "PostgreSQL 17.11 SCRAM 上 baseline_0012.sql → native_0013..0020.sql → schema_facts.sql 由 guarded test 机械生成；42 表 / 398 列 / 291 NOT NULL / 217 约束 / 85 索引 / 4 触发器 / 4 enum / 1 public 函数 / 0 extension"
+    done_evidence: "fixtures/db/schema-0020.json（4694 行，SHA-256 2ccf7193c936d140837dcc9d271e1520fd6924e902920ed97549b81f1a6f3ffe）；native_0020 PG17/SCRAM 2/0/0，逐旧列证明 0019 子集、pending/resolved shape/effect/class/generation/time/FK 负例与 actor cascade"
+    notes: >-
+      新建 tool_approvals，tool_calls 只追加 nullable approval_id 与 partial index；不回填。
+      pending 才保留 bounded redacted summary，任何 resolved 状态同事务清 NULL；grant identity
+      进入 durable decision 与 allowlisted audit，不能只存在于内存 waiter。
 
   - id: db-seed-0012
     upstream: "-"

@@ -802,6 +802,7 @@ fn decision_rows(
             policy_version: "pv-1".to_owned(),
             decided_at: at,
         },
+        approval_id: None,
         attempt: pristine_attempt(call_id, 0, attempt_id, at),
     }
 }

@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 157
+    expect: 159
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 11
+    expect: 13
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 157
+    expect: 159
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1689,3 +1689,25 @@ entries:
     status: "todo"
     evidence: "{ grep -oE 'url\\.pathname === \"[^\"]*\"' agent-computer/src/index.ts | grep -oE '\"/[^\"]*\"'; grep -oE '\"/(human/)?(click|type|key|scroll)\"' agent-computer/src/index.ts; } | sort -u | wc -l  # 27"
     notes: "同上：`process.env.WORKSPACE_DIR ?? \"/workspace\"` 的默认值，被 29 那条词法命令数了进去。它在 index.ts 出现两次（createWorkspace 与 createShell），sort -u 后计 1"
+  - id: "api-tool-approvals-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::approvals::pending_get (GET /api/tool-approvals)"
+    owner: "openbot-server"
+    test_id: "T-API-0158"
+    migration_rule: "n/a: 第一真源 §8.5 durable human proof-of-intent"
+    status: "done"
+    evidence: "docs/2026-08-25-G4-Durable-Approval生产面-batch14.md"
+    done_evidence: "typed ApplicationService 只按 AuthContext actor/deployment/tenant 列出仍 pending、未过期、run/member/lease/AuthGeneration 当前的最多 100 条；DTO 只含 first-party effect/target 与 bounded redacted arguments/change summary，响应 Cache-Control=no-store。Server framing 1/0/0 + PG17 approval runtime 1/0/0。"
+    notes: "新增。普通 authenticated actor 只能看自己的 pending approval；resolved/expired/其它 actor 统一不可见。"
+  - id: "api-tool-approvals-post"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::approvals::decision_post (POST /api/tool-approvals/{approval_id})"
+    owner: "openbot-server"
+    test_id: "T-API-0159"
+    migration_rule: "n/a: 第一真源 §8.5 durable human proof-of-intent"
+    status: "done"
+    evidence: "docs/2026-08-25-G4-Durable-Approval生产面-batch14.md"
+    done_evidence: "fresh-session + trusted-Origin 在 JSON parse 前；body 闭集只有 grant/deny，actor/binding/expiry 无输入字段。PG transaction 重读 exact actor/run/member/lease/AuthGeneration，state CAS+摘要清除+hash-chain audit 同 commit；跨 replica waiter 最迟 1s durable poll 唤醒。Server framing 1/0/0、PG17 真实 grant/deny 1/0/0。"
+    notes: "新增。decision commit unknown 返回 reconciliation；并发/过期不能把 pending 复活。"

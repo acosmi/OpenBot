@@ -8,9 +8,12 @@ use std::sync::{Arc, Mutex};
 
 use openbot_agent::{AgentToolInvoker, AuthorizedAgentToolGateway};
 use openbot_application::{
-    AgentContextSource, ApplicationService, OpenBotApplication, RunExecutionLease, ToolCallSequence,
+    AgentContextSource, ApplicationService, OpenBotApplication, RunExecutionLease,
+    ToolApprovalAdministration, ToolCallSequence,
 };
+use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId};
+use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_domain::policy::{ActionPolicy, PolicyMode};
 use openbot_domain::thread::FencingToken;
 use openbot_infra::agent_tools::{
@@ -25,6 +28,7 @@ use openbot_infra::policy::PolicyStore;
 use openbot_infra::provider::context::PostgresAgentContextSource;
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::tools::PostgresToolJournal;
+use openbot_infra::tool_approval::PostgresToolApprovalCoordinator;
 use rmcp::ErrorData as McpError;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
@@ -105,7 +109,10 @@ impl ServerHandler for RealMcpServer {
                 ))])
             }
             "bare" => CallToolResult::success(Vec::new()),
-            "long_answer" => CallToolResult::success(vec![ContentBlock::text("x".repeat(25_000))]),
+            "long_answer" => {
+                self.received.lock().unwrap().push(arguments.clone());
+                CallToolResult::success(vec![ContentBlock::text("x".repeat(25_000))])
+            }
             "returns_an_image" => {
                 CallToolResult::success(vec![ContentBlock::image("AA==", "image/png")])
             }
@@ -745,6 +752,15 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 )
                 .await
                 .map_err(|error| error.to_string())?;
+            let approvals = Arc::new(
+                PostgresToolApprovalCoordinator::new(
+                    pool.clone(),
+                    DeploymentId::new("deployment-mcp"),
+                    TenantId::new("tenant-mcp"),
+                    vec![0x71; 32],
+                )
+                .map_err(|error| error.to_string())?,
+            );
             let memory = PostgresMemoryAdministration::new(pool.clone());
             let control = PostgresBuiltInToolControlPlane::new(
                 pool.clone(),
@@ -753,7 +769,8 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 policy.clone(),
                 Arc::new(memory.clone()),
             )
-            .with_mcp(catalog.clone(), rmcp);
+            .with_mcp(catalog.clone(), rmcp)
+            .with_tool_approvals(approvals.clone());
             let application: Arc<dyn ApplicationService> = Arc::new(
                 OpenBotApplication::new(ChannelRepo::new(pool.clone()))
                     .with_policy(policy.clone())
@@ -762,9 +779,10 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                         PostgresToolJournal::new(pool.clone(), vec![0x71; 32])
                             .map_err(|error| error.to_string())?,
                     )
-                    .with_memory(memory),
+                    .with_memory(memory)
+                    .with_tool_approvals(approvals.clone()),
             );
-            let gateway = AuthorizedAgentToolGateway::with_sequence(
+            let gateway = Arc::new(AuthorizedAgentToolGateway::with_sequence(
                 application,
                 Arc::new(PostgresAgentAuthorizationSource::new(
                     pool.clone(),
@@ -773,7 +791,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                     false,
                 )),
                 Arc::new(PostgresAgentToolSequence::new(pool.clone())),
-            );
+            ));
             let reply = gateway
                 .invoke(
                     &lease,
@@ -914,40 +932,187 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 .refresh("notes", None)
                 .await
                 .map_err(|error| error.to_string())?;
-            let approval_refused = gateway
-                .invoke(&lease, "mcp__notes__long_answer", json!({}))
+            let acting_waiter = {
+                let gateway = gateway.clone();
+                let lease = lease.clone();
+                tokio::spawn(async move {
+                    gateway
+                        .invoke(&lease, "mcp__notes__long_answer", json!({}))
+                        .await
+                })
+            };
+            let approval_auth = AuthContextBuilder::from_verified_session(
+                DeploymentId::new("deployment-mcp"),
+                TenantId::new("tenant-mcp"),
+                ActorId::new("actor-mcp"),
+                AuthGeneration::new(0),
+                false,
+            )
+            .with_role(Role::User)
+            .build();
+            let pending = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                loop {
+                    let page = approvals
+                        .list_pending(&approval_auth)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    if let Some(pending) = page.approvals.into_iter().next() {
+                        return Ok::<_, String>(pending);
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .map_err(|_| "acting approval did not become pending".to_owned())??;
+            if pending.tool_name != "mcp__notes__long_answer"
+                || pending.target_id != "notes/long_answer"
+                || pending.effect != openbot_contracts::tool::ToolApprovalEffect::Execute
+                || pending.arguments_summary != json!({})
+            {
+                return Err(format!("acting approval presentation drift: {pending:?}"));
+            }
+            approvals
+                .decide(
+                    &approval_auth,
+                    &pending.approval_id,
+                    ToolApprovalDecision::Grant,
+                )
                 .await
                 .map_err(|error| error.to_string())?;
-            if approval_refused.error_code() != Some("policy_refused")
-                || !approval_refused.content().starts_with("Refused.")
+            let approved = acting_waiter
+                .await
+                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?;
+            if approved.error_code().is_some()
+                || !approved.content().contains("[truncated:")
+                || received.lock().unwrap().len() != 2
             {
-                return Err(format!(
-                    "acting MCP without proof-of-intent was not refused: {approval_refused:?}"
-                ));
+                return Err(format!("approved acting MCP call drift: {approved:?}"));
             }
             let pg = pool.get().await.map_err(|error| error.to_string())?;
             let approval_evidence = pg
                 .query_one(
                     "SELECT
                        (SELECT count(*)::bigint FROM public.audit_events
+                         WHERE event_type='tool.approval_requested'
+                           AND target_id=$1),
+                       (SELECT count(*)::bigint FROM public.audit_events
+                         WHERE event_type='tool.approval_granted'
+                           AND target_id=$1),
+                       (SELECT count(*)::bigint FROM public.audit_events
+                         WHERE event_type='mcp.call_succeeded'
+                           AND target_id='notes/long_answer'),
+                       (SELECT count(*)::bigint FROM public.tool_calls
+                         WHERE run_id='run-mcp' AND tool_name='mcp__notes__long_answer'),
+                       (SELECT approval_id FROM public.tool_calls
+                         WHERE run_id='run-mcp' AND tool_name='mcp__notes__long_answer'),
+                       (SELECT payload->>'approval_id' FROM public.audit_events
+                         WHERE event_type='mcp.call_succeeded'
+                           AND target_id='notes/long_answer')",
+                    &[&pending.approval_id],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let requested_audit: i64 = approval_evidence
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            let granted_audit: i64 = approval_evidence
+                .try_get(1)
+                .map_err(|error| error.to_string())?;
+            let succeeded_audit: i64 = approval_evidence
+                .try_get(2)
+                .map_err(|error| error.to_string())?;
+            let acting_decisions: i64 = approval_evidence
+                .try_get(3)
+                .map_err(|error| error.to_string())?;
+            let decision_approval: Option<String> = approval_evidence
+                .try_get(4)
+                .map_err(|error| error.to_string())?;
+            let audit_approval: Option<String> = approval_evidence
+                .try_get(5)
+                .map_err(|error| error.to_string())?;
+            if requested_audit != 1
+                || granted_audit != 1
+                || succeeded_audit != 1
+                || acting_decisions != 1
+                || decision_approval.as_deref() != Some(pending.approval_id.as_str())
+                || audit_approval.as_deref() != Some(pending.approval_id.as_str())
+            {
+                return Err(format!(
+                    "acting approval boundary drift: {requested_audit}/{granted_audit}/{succeeded_audit}/{acting_decisions}/{decision_approval:?}/{audit_approval:?}"
+                ));
+            }
+            drop(pg);
+
+            let denied_waiter = {
+                let gateway = gateway.clone();
+                let lease = lease.clone();
+                tokio::spawn(async move {
+                    gateway
+                        .invoke(&lease, "mcp__notes__long_answer", json!({}))
+                        .await
+                })
+            };
+            let denied_pending = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                loop {
+                    let page = approvals
+                        .list_pending(&approval_auth)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    if let Some(pending) = page.approvals.into_iter().next() {
+                        return Ok::<_, String>(pending);
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .map_err(|_| "denial approval did not become pending".to_owned())??;
+            approvals
+                .decide(
+                    &approval_auth,
+                    &denied_pending.approval_id,
+                    ToolApprovalDecision::Deny,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let denied = denied_waiter
+                .await
+                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?;
+            if denied.error_code() != Some("policy_refused")
+                || !denied.content().starts_with("Refused.")
+                || received.lock().unwrap().len() != 2
+            {
+                return Err(format!("denied acting MCP call drift: {denied:?}"));
+            }
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            let denial_evidence = pg
+                .query_one(
+                    "SELECT
+                       (SELECT count(*)::bigint FROM public.audit_events
+                         WHERE event_type='tool.approval_denied' AND target_id=$1),
+                       (SELECT count(*)::bigint FROM public.audit_events
                          WHERE event_type='mcp.call_rejected'
                            AND target_id='notes/long_answer'
                            AND payload->>'error_code'='approval_denied'),
                        (SELECT count(*)::bigint FROM public.tool_calls
                          WHERE run_id='run-mcp' AND tool_name='mcp__notes__long_answer')",
-                    &[],
+                    &[&denied_pending.approval_id],
                 )
                 .await
                 .map_err(|error| error.to_string())?;
-            let approval_audit: i64 = approval_evidence
+            let denied_audit: i64 = denial_evidence
                 .try_get(0)
                 .map_err(|error| error.to_string())?;
-            let acting_decisions: i64 = approval_evidence
+            let rejected_audit: i64 = denial_evidence
                 .try_get(1)
                 .map_err(|error| error.to_string())?;
-            if approval_audit != 1 || acting_decisions != 0 {
+            let acting_decisions: i64 = denial_evidence
+                .try_get(2)
+                .map_err(|error| error.to_string())?;
+            if denied_audit != 1 || rejected_audit != 1 || acting_decisions != 1 {
                 return Err(format!(
-                    "acting approval boundary drift: {approval_audit}/{acting_decisions}"
+                    "acting denial boundary drift: {denied_audit}/{rejected_audit}/{acting_decisions}"
                 ));
             }
             drop(pg);
@@ -973,7 +1138,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 .map_err(|error| error.to_string())?;
             if refused.error_code() != Some("policy_refused")
                 || !refused.content().starts_with("Refused.")
-                || received.lock().unwrap().len() != 1
+                || received.lock().unwrap().len() != 2
             {
                 return Err(format!("policy refusal projection drift: {refused:?}"));
             }
@@ -1000,7 +1165,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 .map_err(|error| error.to_string())?
                 .try_get(0)
                 .map_err(|error| error.to_string())?;
-            if rejected != 1 || sequence != Some(5) {
+            if rejected != 1 || sequence != Some(6) {
                 return Err(format!(
                     "policy audit/durable sequence drift: {rejected}/{sequence:?}"
                 ));
@@ -1022,7 +1187,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 .next(&sequence_run)
                 .await
                 .map_err(|error| error.to_string())?;
-            if allocated != [5, 6] || after_reconstruction != 7 {
+            if allocated != [6, 7] || after_reconstruction != 8 {
                 return Err(format!(
                     "cross-replica sequence allocation drift: {allocated:?}/{after_reconstruction}"
                 ));

@@ -77,6 +77,7 @@ use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
 use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
 use openbot_infra::thread_id::mint_thread_id;
+use openbot_infra::tool_approval::PostgresToolApprovalCoordinator;
 use openbot_infra::vault::CredentialRecordVault;
 use openbot_server::config::{
     AgentBudgets, DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, ManagedProviderConfig,
@@ -402,6 +403,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )?
         .with_google_drive_oauth(drive_oauth),
     );
+    let tool_approvals = Arc::new(PostgresToolApprovalCoordinator::new(
+        pool.clone(),
+        deployment.clone(),
+        tenant.clone(),
+        audit_key.to_vec(),
+    )?);
     let tool_control = PostgresBuiltInToolControlPlane::new(
         pool.clone(),
         deployment.clone(),
@@ -411,6 +418,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .with_mcp(mcp_catalog.clone(), mcp_client)
     .with_google_drive(drive_transport)
+    .with_tool_approvals(tool_approvals.clone())
     .with_mcp_credentials(mcp_credentials);
     let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.to_vec())?;
     let callback_tokens = PostgresAgentCallbackTokens::new(
@@ -438,7 +446,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_threads(thread_directory)
         .with_memory(memory)
         .with_agent_callback_tokens(callback_tokens);
-    let application = application.with_mcp_connections(mcp_connections.clone());
+    let application = application
+        .with_mcp_connections(mcp_connections.clone())
+        .with_tool_approvals(tool_approvals);
     let mcp_revocation_reconciler = McpRevocationReconciler::start(mcp_connections.clone());
     let application: Arc<dyn ApplicationService> = Arc::new(application);
     let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence(

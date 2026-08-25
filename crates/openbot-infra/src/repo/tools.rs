@@ -31,6 +31,8 @@ use crate::repo::common::{RepoCore, columns_sql, insert_sql};
 pub struct FirstDurableDecision {
     /// call/decision 行。
     pub call: tool_calls::Row,
+    /// Durable approval row linked into the call decision.
+    pub approval_id: Option<String>,
     /// 与它同事务写入的 attempt #0。
     pub attempt: tool_attempts::Row,
 }
@@ -89,6 +91,31 @@ impl ToolCallRepo {
             .query_one(&insert_sql::<tool_calls::Row>(), &call_params)
             .await
             .map_err(|source| InfraError::query("写 durable tool call", source))?;
+        if let Some(approval_id) = &decision.approval_id {
+            let linked = transaction
+                .execute(
+                    "UPDATE public.tool_calls tc SET approval_id=$2
+                      WHERE tc.tool_call_id=$1 AND EXISTS(
+                        SELECT 1 FROM public.tool_approvals a
+                         WHERE a.approval_id=$2 AND a.state='granted'
+                           AND a.expires_at>clock_timestamp()
+                           AND a.actor_id=tc.actor_id AND a.bot_id=tc.bot_id
+                           AND a.run_id=tc.run_id AND a.tool_name=tc.tool_name
+                           AND a.args_hash=tc.args_hash AND a.target_kind=tc.target_kind
+                           AND a.target_id=tc.target_id
+                           AND a.effect=tc.effect AND a.approval_class=tc.approval_class
+                           AND a.catalog_generation=tc.catalog_generation
+                           AND a.policy_version=tc.policy_version)",
+                    &[&decision.call.tool_call_id, &approval_id],
+                )
+                .await
+                .map_err(|source| InfraError::query("绑定 durable tool approval", source))?;
+            if linked != 1 {
+                return Err(InfraError::repository_invariant(
+                    "tool_approval_binding_not_current",
+                ));
+            }
+        }
         let attempt_params = decision.attempt.as_sql_params();
         transaction
             .query_one(&insert_sql::<tool_attempts::Row>(), &attempt_params)
@@ -282,6 +309,11 @@ impl ToolJournal for PostgresToolJournal {
         &self,
         draft: &ToolDecisionDraft,
     ) -> Result<DurableDecisionReceipt, ToolPortError> {
+        if draft.metadata.approval_class.requires_human_approval() != draft.approval_id.is_some() {
+            return Err(ToolPortError::Corrupt {
+                field: "approval_id",
+            });
+        }
         let decision = first_decision_rows(draft).map_err(infra_port_error)?;
         ToolCallRepo::new(self.pool.clone())
             .record_first_decision(&decision)
@@ -380,6 +412,7 @@ fn first_decision_rows(draft: &ToolDecisionDraft) -> Result<FirstDurableDecision
             policy_version: draft.policy_version.as_str().to_owned(),
             decided_at: now,
         },
+        approval_id: draft.approval_id.clone(),
         attempt: tool_attempts::Row {
             tool_call_id: draft.call_id.as_str().to_owned(),
             attempt_seq: 0,

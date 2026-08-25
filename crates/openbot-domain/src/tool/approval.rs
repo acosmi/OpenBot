@@ -31,6 +31,7 @@
 //! "参数变了，请重新确认" 和 "你的权限被撤销了" 是两件必须区分的事，也是两条不同的
 //! 审计记录。
 
+use openbot_contracts::auth::AuthGeneration;
 use openbot_contracts::ids::{ActorId, BotId, ComputerGeneration, DocumentGeneration, RunId};
 use time::OffsetDateTime;
 
@@ -85,6 +86,9 @@ impl PolicyVersionTag {
 pub struct ApprovalBinding {
     /// 批准这次操作的人。
     pub actor: ActorId,
+    /// Actor role/access generation at approval time. Any authoritative role/access mutation bumps
+    /// it, even when the actor still retains some other role.
+    pub auth_generation: AuthGeneration,
     /// 代表哪个 Bot 行动。
     pub bot: BotId,
     /// 属于哪一次 run。
@@ -118,6 +122,8 @@ pub struct ApprovalBinding {
 pub struct ApprovalObservation {
     /// 此刻真正要执行的 actor。
     pub actor: ActorId,
+    /// Current authoritative role/access generation.
+    pub auth_generation: AuthGeneration,
     /// 此刻真正要执行的 bot。
     pub bot: BotId,
     /// 此刻的 run。
@@ -159,6 +165,8 @@ pub enum ApprovalValidity {
 pub enum ApprovalInvalidation {
     /// 换人了。
     ActorChanged,
+    /// Actor role/access generation changed.
+    AuthGenerationChanged,
     /// 换 Bot 了。
     BotChanged,
     /// 换 run 了。
@@ -189,6 +197,7 @@ impl ApprovalInvalidation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ActorChanged => "actor_changed",
+            Self::AuthGenerationChanged => "auth_generation_changed",
             Self::BotChanged => "bot_changed",
             Self::RunChanged => "run_changed",
             Self::ToolChanged => "tool_changed",
@@ -228,6 +237,8 @@ impl ApprovalBinding {
 
         let mismatch = if self.actor != observed.actor {
             Some(Why::ActorChanged)
+        } else if self.auth_generation != observed.auth_generation {
+            Some(Why::AuthGenerationChanged)
         } else if self.bot != observed.bot {
             Some(Why::BotChanged)
         } else if self.run != observed.run {
@@ -267,6 +278,7 @@ mod tests {
     fn binding() -> ApprovalBinding {
         ApprovalBinding {
             actor: ActorId::new("actor-1"),
+            auth_generation: AuthGeneration::new(7),
             bot: BotId::new("bot-1"),
             run: RunId::new("run-1"),
             tool: ToolName::new("browser.click").unwrap(),
@@ -287,6 +299,7 @@ mod tests {
         let binding = binding();
         ApprovalObservation {
             actor: binding.actor,
+            auth_generation: binding.auth_generation,
             bot: binding.bot,
             run: binding.run,
             tool: binding.tool,
@@ -329,6 +342,11 @@ mod tests {
                 "actor",
                 |o| o.actor = ActorId::new("actor-2"),
                 ApprovalInvalidation::ActorChanged,
+            ),
+            (
+                "auth_generation",
+                |o| o.auth_generation = AuthGeneration::new(8),
+                ApprovalInvalidation::AuthGenerationChanged,
             ),
             (
                 "bot",
@@ -487,6 +505,7 @@ mod tests {
     fn invalidation_labels_are_pairwise_distinct() {
         let all = [
             ApprovalInvalidation::ActorChanged,
+            ApprovalInvalidation::AuthGenerationChanged,
             ApprovalInvalidation::BotChanged,
             ApprovalInvalidation::RunChanged,
             ApprovalInvalidation::ToolChanged,
@@ -504,6 +523,6 @@ mod tests {
         let count = labels.len();
         labels.dedup();
         assert_eq!(labels.len(), count, "失效原因的字面量有重复");
-        assert_eq!(count, 12);
+        assert_eq!(count, 13);
     }
 }

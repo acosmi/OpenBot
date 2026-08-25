@@ -66,6 +66,16 @@ impl AuditEventType {
     pub const MEMORY_REMEMBER_SUCCEEDED: Self = Self("memory.remember_succeeded");
     /// Explicit remember tool finished with a definite non-success outcome.
     pub const MEMORY_REMEMBER_FAILED: Self = Self("memory.remember_failed");
+    /// Human proof-of-intent request became durable.
+    pub const TOOL_APPROVAL_REQUESTED: Self = Self("tool.approval_requested");
+    /// Human granted the exact stored binding.
+    pub const TOOL_APPROVAL_GRANTED: Self = Self("tool.approval_granted");
+    /// Human denied the request.
+    pub const TOOL_APPROVAL_DENIED: Self = Self("tool.approval_denied");
+    /// Pending request expired before a decision.
+    pub const TOOL_APPROVAL_EXPIRED: Self = Self("tool.approval_expired");
+    /// Run/scope cancellation retired a pending request.
+    pub const TOOL_APPROVAL_CANCELLED: Self = Self("tool.approval_cancelled");
     /// Bot 在其 computer 上执行的动作被放行。
     pub const COMPUTER_ACTION_ALLOWED: Self = Self("computer.action_allowed");
     /// Bot 在其 computer 上执行的动作被策略拒绝。
@@ -116,7 +126,7 @@ impl fmt::Display for AuditEventType {
     }
 }
 
-/// 事件类型全集：上游 57 项 + 本项目新增 deadline/memory/catalog 5 项。
+/// 事件类型全集：上游 57 项 + 本项目新增 deadline/memory/catalog/approval 10 项。
 ///
 /// 顺序也照抄上游，方便逐行对拍。
 pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
@@ -134,6 +144,11 @@ pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
     AuditEventType("memory.remember_refused"),
     AuditEventType("memory.remember_succeeded"),
     AuditEventType("memory.remember_failed"),
+    AuditEventType("tool.approval_requested"),
+    AuditEventType("tool.approval_granted"),
+    AuditEventType("tool.approval_denied"),
+    AuditEventType("tool.approval_expired"),
+    AuditEventType("tool.approval_cancelled"),
     AuditEventType("mcp.call_succeeded"),
     AuditEventType("mcp.call_rejected"),
     AuditEventType("mcp.call_failed"),
@@ -242,10 +257,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn catalog_is_upstream_fifty_seven_plus_five_new_and_has_no_duplicates() {
-        assert_eq!(AUDIT_EVENT_TYPES.len(), 62);
+    fn catalog_is_upstream_fifty_seven_plus_ten_new_and_has_no_duplicates() {
+        assert_eq!(AUDIT_EVENT_TYPES.len(), 67);
         let unique: BTreeSet<&str> = AUDIT_EVENT_TYPES.iter().map(|t| t.0).collect();
-        assert_eq!(unique.len(), 62, "目录里有重复的事件类型");
+        assert_eq!(unique.len(), 67, "目录里有重复的事件类型");
     }
 
     #[test]

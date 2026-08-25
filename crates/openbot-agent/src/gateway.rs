@@ -226,7 +226,9 @@ impl AgentToolGateway {
                 | AppReply::McpOAuthAuthorization(_)
                 | AppReply::McpConnectionDisconnected(_)
                 | AppReply::McpOAuthClientRegistered(_)
-                | AppReply::McpServerMutation(_),
+                | AppReply::McpServerMutation(_)
+                | AppReply::PendingToolApprovals(_)
+                | AppReply::ToolApprovalResolved(_),
             ) => Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }),

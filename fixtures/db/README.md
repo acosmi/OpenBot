@@ -234,6 +234,28 @@ baseline_0012.sql → native_0013.sql → … → native_0019.sql → schema_fac
 CHECK 只接受 `mcp` / `google_drive_rest`，使 Google Drive GA REST 与 remote MCP 的协议选择
 进入 durable catalog/grant identity，未审查字符串不能成为生产执行器。
 
+## schema-0020.json：durable human tool approval
+
+schema-0020.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0020.sql → schema_facts.sql
+由 native_0020 的显式 regeneration guard 机械生成，SHA-256
+2ccf7193c936d140837dcc9d271e1520fd6924e902920ed97549b81f1a6f3ffe。
+
+| 项 | 0020 数量 | 相对 0019 |
+| --- | ---: | ---: |
+| public 表 | 42 | +1 |
+| 列 | 398 | +29 |
+| NOT NULL 列 | 291 | +23 |
+| 约束 | 217 | +17 |
+| 索引 | 85 | +5 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增 `tool_approvals` 保存完整 authority binding 与 pending presentation；presentation 只在 pending
+期间存在，grant/deny/expire/cancel 同事务清空。`tool_calls` 只追加 nullable `approval_id` 与 partial
+index；历史 call 不回填，生产 requiring-human decision 必须把仍 granted/未过期的 exact binding
+写入该列，approval id 同时进入 allowlisted audit。
+
 ## 复算命令
 
 ```bash
@@ -266,6 +288,9 @@ python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0018.json',en
 
 # post-0019
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0019.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 369 268 200 80 4
+
+# post-0020
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0020.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 42 398 291 217 85 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

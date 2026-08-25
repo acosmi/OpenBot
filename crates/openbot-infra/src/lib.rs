@@ -95,4 +95,5 @@ pub mod store;
 pub mod tenant;
 pub mod thread_directory;
 pub mod thread_id;
+pub mod tool_approval;
 pub mod vault;

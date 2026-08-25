@@ -25,6 +25,10 @@ use crate::agent_admin::{
     AgentCallbackTokenAdministration, NoAgentCallbackTokenAdministration,
     issue_agent_callback_token, revoke_agent_callback_token,
 };
+use crate::approval_admin::{
+    NoToolApprovalAdministration, ToolApprovalAdministration, decide_tool_approval,
+    list_pending_tool_approvals,
+};
 use crate::mcp_connections::{
     McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
     begin_mcp_oauth, disconnect_mcp_connection, list_mcp_connections, refresh_mcp_server,
@@ -71,6 +75,7 @@ pub struct OpenBotApplication<
     memory: M,
     callback_tokens: B,
     mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
+    tool_approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
     heartbeat_period: Duration,
 }
 
@@ -100,6 +105,7 @@ impl<R>
             memory: NoMemoryAdministration,
             callback_tokens: NoAgentCallbackTokenAdministration,
             mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
+            tool_approvals: std::sync::Arc::new(NoToolApprovalAdministration),
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
@@ -120,6 +126,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -138,6 +145,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -156,6 +164,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -178,6 +187,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -196,6 +206,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -214,6 +225,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory,
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -235,6 +247,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens,
             mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -246,6 +259,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
         connections: std::sync::Arc<dyn McpConnectionAdministration>,
     ) -> Self {
         self.mcp_connections = connections;
+        self
+    }
+
+    /// Attach the durable human proof-of-intent administration surface.
+    #[must_use]
+    pub fn with_tool_approvals(
+        mut self,
+        approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
+    ) -> Self {
+        self.tool_approvals = approvals;
         self
     }
 
@@ -410,6 +433,16 @@ where
             )),
             AppCommand::RefreshMcpServer { server_id } => Ok(AppReply::McpServerMutation(
                 refresh_mcp_server(self.mcp_connections.as_ref(), auth, &server_id).await?,
+            )),
+            AppCommand::ListPendingToolApprovals => Ok(AppReply::PendingToolApprovals(
+                list_pending_tool_approvals(self.tool_approvals.as_ref(), auth).await?,
+            )),
+            AppCommand::DecideToolApproval {
+                approval_id,
+                decision,
+            } => Ok(AppReply::ToolApprovalResolved(
+                decide_tool_approval(self.tool_approvals.as_ref(), auth, &approval_id, decision)
+                    .await?,
             )),
         }
     }

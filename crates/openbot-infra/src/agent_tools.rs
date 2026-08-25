@@ -8,12 +8,12 @@ use async_trait::async_trait;
 use openbot_application::{
     AgentAuthorizationError, AgentAuthorizationSource, AuthorizedToolCall, ExecutableToolCall,
     REMEMBER_TOOL_NAME, RememberToolArguments, RememberToolMemory, RememberToolMemoryRequest,
-    ResolvedToolScope, ToolApprovalRequest, ToolCallSequence, ToolCallSequenceError,
-    ToolControlPlane, ToolExecutionReport, ToolPolicyEvaluation, ToolPortError,
-    ToolPreflightRefusal, parse_remember_tool_arguments, remember_tool_metadata,
+    ResolvedToolScope, ToolApprovalPresentation, ToolApprovalRequest, ToolCallSequence,
+    ToolCallSequenceError, ToolControlPlane, ToolExecutionReport, ToolPolicyEvaluation,
+    ToolPortError, ToolPreflightRefusal, parse_remember_tool_arguments, remember_tool_metadata,
 };
 use openbot_contracts::auth::{AuthContext, AuthContextBuilder, AuthGeneration, Role};
-use openbot_contracts::ids::{ActorId, DeploymentId, RunId, TenantId};
+use openbot_contracts::ids::{ActorId, ComputerGeneration, DeploymentId, RunId, TenantId};
 use openbot_contracts::memory::MemoryStatus;
 use openbot_contracts::tool::ToolInvocation;
 use openbot_domain::identity::roles::resolve_effective_role;
@@ -21,14 +21,16 @@ use openbot_domain::policy::context::{
     ActorRef, BotRef, Intent, McpEffect, McpRef, PageRef, PolicyContext, ToolRef,
 };
 use openbot_domain::policy::evaluate;
-use openbot_domain::tool::approval::ApprovalTarget;
+use openbot_domain::tool::approval::{
+    ApprovalBinding, ApprovalObservation, ApprovalTarget, PolicyVersionTag,
+};
 use openbot_domain::tool::args::ToolArguments;
 use openbot_domain::tool::commit::CommitState;
 use openbot_domain::tool::metadata::{
     ApprovalClass, Effect, EffectClassification, Idempotency, ResourceLockKey, SandboxRequirement,
     ToolLimits, ToolMetadata, ToolName,
 };
-use openbot_domain::tool::pipeline::ApprovalOutcome;
+use openbot_domain::tool::pipeline::{ApprovalEvidence, ApprovalOutcome};
 use serde_json::json;
 
 use crate::google_drive::{GoogleDriveError, GoogleDriveRestTransport};
@@ -38,6 +40,7 @@ use crate::mcp_catalog::{
 };
 use crate::mcp_credentials::{McpCredentialError, PostgresMcpCredentialBroker};
 use crate::policy::PolicyStore;
+use crate::tool_approval::{DurableHumanDecision, PostgresToolApprovalCoordinator};
 
 /// PostgreSQL run-local sequence allocator shared by every Server replica and callback path.
 #[derive(Clone)]
@@ -237,6 +240,7 @@ pub struct PostgresBuiltInToolControlPlane<M> {
     memory: Arc<M>,
     mcp: Option<McpToolRuntime>,
     drive: Option<GoogleDriveRestTransport>,
+    approvals: Option<Arc<PostgresToolApprovalCoordinator>>,
 }
 
 #[derive(Clone)]
@@ -269,6 +273,7 @@ impl<M> PostgresBuiltInToolControlPlane<M> {
             memory,
             mcp: None,
             drive: None,
+            approvals: None,
         }
     }
 
@@ -287,6 +292,13 @@ impl<M> PostgresBuiltInToolControlPlane<M> {
     #[must_use]
     pub fn with_google_drive(mut self, drive: GoogleDriveRestTransport) -> Self {
         self.drive = Some(drive);
+        self
+    }
+
+    /// Attach the durable human proof-of-intent coordinator for acting tools.
+    #[must_use]
+    pub fn with_tool_approvals(mut self, approvals: Arc<PostgresToolApprovalCoordinator>) -> Self {
+        self.approvals = Some(approvals);
         self
     }
 
@@ -309,8 +321,109 @@ impl<M> core::fmt::Debug for PostgresBuiltInToolControlPlane<M> {
             .field("memory", &"<remember-tool-store>")
             .field("mcp", &self.mcp.is_some())
             .field("drive", &self.drive.is_some())
+            .field("approvals", &self.approvals.is_some())
             .finish_non_exhaustive()
     }
+}
+
+impl<M> PostgresBuiltInToolControlPlane<M> {
+    async fn current_approval_observation(
+        &self,
+        request: &ToolApprovalRequest,
+    ) -> Result<ApprovalObservation, ToolPortError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|_| ToolPortError::Unavailable {
+                dependency: "tool_approval",
+            })?;
+        let row = client
+            .query_one(
+                "SELECT clock_timestamp() AS now,
+                        (SELECT coalesce(u.auth_generation,0) FROM public.users u
+                          WHERE u.id=$1) AS current_auth_generation,
+                        EXISTS(
+                          SELECT 1 FROM public.runs r
+                          JOIN public.threads t ON t.thread_id=r.thread_id
+                          JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id
+                          JOIN public.thread_leases l ON l.thread_id=t.thread_id
+                          JOIN public.users u ON u.id=r.actor_id
+                          WHERE r.run_id=$2 AND r.thread_id=$3 AND r.bot_id=$4 AND r.actor_id=$1
+                            AND r.status='running' AND t.deployment_id=$5 AND t.tenant_id=$6
+                            AND t.status<>'deleted' AND tm.user_id=$1
+                            AND l.fencing_token=r.fencing_token
+                            AND l.expires_at>clock_timestamp()
+                            AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
+                            AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                            WHERE ra.email=lower(u.email))
+                        ) AS scope_current",
+                &[
+                    &request.actor.as_str(),
+                    &request.run.as_str(),
+                    &request.thread.as_str(),
+                    &request.bot.as_str(),
+                    &self.deployment.as_str(),
+                    &self.tenant.as_str(),
+                ],
+            )
+            .await
+            .map_err(|_| ToolPortError::Unavailable {
+                dependency: "tool_approval",
+            })?;
+        let now: time::OffsetDateTime = row
+            .try_get("now")
+            .map_err(|_| ToolPortError::Corrupt { field: "clock" })?;
+        let current_generation: Option<i64> =
+            row.try_get("current_auth_generation")
+                .map_err(|_| ToolPortError::Corrupt {
+                    field: "auth_generation",
+                })?;
+        let scope_current: bool =
+            row.try_get("scope_current")
+                .map_err(|_| ToolPortError::Corrupt {
+                    field: "approval_scope",
+                })?;
+        drop(client);
+        let auth_generation = current_generation
+            .and_then(|value| u64::try_from(value).ok())
+            .map(AuthGeneration::new)
+            .unwrap_or_else(|| request.auth_generation.next());
+        let catalog_generation = match &self.mcp {
+            Some(runtime) => runtime
+                .catalog
+                .binding(&request.bot, &request.actor, request.tool.as_str())
+                .await
+                .map(|tool| tool.catalog_generation)
+                .unwrap_or_else(|_| different_catalog_generation(request.catalog_generation)),
+            None => different_catalog_generation(request.catalog_generation),
+        };
+        Ok(ApprovalObservation {
+            actor: request.actor.clone(),
+            auth_generation,
+            bot: request.bot.clone(),
+            run: request.run.clone(),
+            tool: request.tool.clone(),
+            args_hash: request.args_hash,
+            target: request.target.clone(),
+            computer_generation: request.computer_generation,
+            catalog_generation,
+            target_document_generation: request.target_document_generation,
+            policy_version: PolicyVersionTag::new(self.policy.compiled().version().to_hex()),
+            actor_role_revoked: !scope_current,
+            now,
+        })
+    }
+}
+
+fn different_catalog_generation(
+    current: openbot_contracts::ids::CatalogGeneration,
+) -> openbot_contracts::ids::CatalogGeneration {
+    openbot_contracts::ids::CatalogGeneration::new(if current.get() == u64::MAX {
+        0
+    } else {
+        current.get() + 1
+    })
 }
 
 #[async_trait]
@@ -417,7 +530,7 @@ where
             .try_get("thread_id")
             .map_err(|_| ToolPortError::Corrupt { field: "thread_id" })?;
         let thread_id = openbot_contracts::ids::ThreadId::new(thread_id);
-        let (target, policy_context, preflight_refusal) = match kind {
+        let (target, policy_context, preflight_refusal, approval_presentation) = match kind {
             ResolvedToolKind::Remember(parsed) => {
                 let target = match parsed.scope() {
                     openbot_application::RememberToolScope::User => ApprovalTarget {
@@ -456,6 +569,7 @@ where
                         mcp: None,
                         command: None,
                     },
+                    None,
                     None,
                 )
             }
@@ -507,6 +621,10 @@ where
                             "content_secret_blocked",
                         )
                     }),
+                    (!read_only).then(|| ToolApprovalPresentation {
+                        arguments_summary: approval_arguments_summary(arguments.as_value()),
+                        change_summary: None,
+                    }),
                 )
             }
         };
@@ -517,6 +635,9 @@ where
             bot_id: invocation.bot_id.clone(),
             call_seq: invocation.call_seq,
             target,
+            computer_generation: ComputerGeneration::new(0),
+            target_document_generation: None,
+            approval_presentation,
             policy_context,
             idempotency_key: None,
             preflight_refusal,
@@ -535,11 +656,39 @@ where
 
     async fn approval(
         &self,
-        _request: &ToolApprovalRequest,
+        request: &ToolApprovalRequest,
     ) -> Result<ApprovalOutcome, ToolPortError> {
-        // No approval store/UI is connected yet. Acting MCP calls therefore receive an explicit
-        // denied outcome and a refusal audit; they are never silently treated as approved.
-        Ok(ApprovalOutcome::Denied)
+        let Some(coordinator) = &self.approvals else {
+            // Production assembly without the durable/UI surface stays fail-closed.
+            return Ok(ApprovalOutcome::Denied);
+        };
+        match coordinator.request_and_wait(request).await? {
+            DurableHumanDecision::Denied => Ok(ApprovalOutcome::Denied),
+            DurableHumanDecision::Granted {
+                approval_id,
+                expires_at,
+            } => {
+                let observed = self.current_approval_observation(request).await?;
+                Ok(ApprovalOutcome::Granted(Box::new(ApprovalEvidence {
+                    approval_id,
+                    binding: ApprovalBinding {
+                        actor: request.actor.clone(),
+                        auth_generation: request.auth_generation,
+                        bot: request.bot.clone(),
+                        run: request.run.clone(),
+                        tool: request.tool.clone(),
+                        args_hash: request.args_hash,
+                        target: request.target.clone(),
+                        computer_generation: request.computer_generation,
+                        catalog_generation: request.catalog_generation,
+                        target_document_generation: request.target_document_generation,
+                        policy_version: request.policy_version.clone(),
+                        expires_at,
+                    },
+                    observed,
+                })))
+            }
+        }
     }
 
     async fn execute(&self, call: AuthorizedToolCall) -> ToolExecutionReport {
@@ -954,6 +1103,82 @@ fn map_catalog_error(error: McpCatalogError) -> ToolPortError {
     }
 }
 
+const MAX_APPROVAL_SUMMARY_BYTES: usize = 16 * 1024;
+const MAX_APPROVAL_SUMMARY_DEPTH: usize = 4;
+const MAX_APPROVAL_SUMMARY_ITEMS: usize = 32;
+const MAX_APPROVAL_SUMMARY_STRING_CHARS: usize = 256;
+
+fn approval_arguments_summary(value: &serde_json::Value) -> serde_json::Value {
+    let summary = redact_approval_value(value, 0);
+    if serde_json::to_vec(&summary).is_ok_and(|encoded| encoded.len() <= MAX_APPROVAL_SUMMARY_BYTES)
+    {
+        summary
+    } else {
+        json!({"summary":"[bounded; inspect the authoritative target and argument hash]"})
+    }
+}
+
+fn redact_approval_value(value: &serde_json::Value, depth: usize) -> serde_json::Value {
+    if depth >= MAX_APPROVAL_SUMMARY_DEPTH {
+        return serde_json::Value::String("[nested value omitted]".to_owned());
+    }
+    match value {
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .iter()
+                .take(MAX_APPROVAL_SUMMARY_ITEMS)
+                .map(|(key, value)| {
+                    let value = if is_secret_field_name(key) {
+                        serde_json::Value::String("[redacted]".to_owned())
+                    } else {
+                        redact_approval_value(value, depth + 1)
+                    };
+                    (key.clone(), value)
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .take(MAX_APPROVAL_SUMMARY_ITEMS)
+                .map(|value| redact_approval_value(value, depth + 1))
+                .collect(),
+        ),
+        serde_json::Value::String(value) => {
+            if is_known_secret_value(value) {
+                return serde_json::Value::String("[redacted]".to_owned());
+            }
+            if let Ok(mut url) = url::Url::parse(value) {
+                let sensitive_url = !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.query().is_some()
+                    || url.fragment().is_some();
+                if sensitive_url {
+                    let _ = url.set_username("");
+                    let _ = url.set_password(None);
+                    if url.query().is_some() {
+                        url.set_query(Some("redacted"));
+                    }
+                    if url.fragment().is_some() {
+                        url.set_fragment(Some("redacted"));
+                    }
+                    return serde_json::Value::String(url.to_string());
+                }
+            }
+            serde_json::Value::String(
+                value
+                    .chars()
+                    .filter(|character| !character.is_control() || *character == '\n')
+                    .take(MAX_APPROVAL_SUMMARY_STRING_CHARS)
+                    .collect(),
+            )
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            value.clone()
+        }
+    }
+}
+
 fn contains_high_confidence_secret(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(object) => object.iter().any(|(key, value)| {
@@ -998,20 +1223,18 @@ fn is_known_secret_value(value: &str) -> bool {
     {
         return true;
     }
-    value.split_ascii_whitespace().any(|word| {
-        let token = word.trim_matches(|character: char| {
-            matches!(
-                character,
-                '"' | '\'' | ',' | ';' | '(' | ')' | '[' | ']' | '{' | '}'
-            )
-        });
-        let known_prefix = [
-            "sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "xoxb-", "xoxp-",
-        ]
-        .iter()
-        .any(|prefix| token.starts_with(prefix) && token.len() >= prefix.len() + 20);
-        known_prefix || is_aws_access_key(token) || is_jwt_shape(token)
-    })
+    value
+        .split(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+        })
+        .any(|token| {
+            let known_prefix = [
+                "sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "xoxb-", "xoxp-",
+            ]
+            .iter()
+            .any(|prefix| token.starts_with(prefix) && token.len() >= prefix.len() + 20);
+            known_prefix || is_aws_access_key(token) || is_jwt_shape(token)
+        })
 }
 
 fn is_aws_access_key(value: &str) -> bool {
@@ -1133,7 +1356,7 @@ async fn mcp_execution_scope_is_current(
 
 #[cfg(test)]
 mod content_governance_tests {
-    use super::contains_high_confidence_secret;
+    use super::{approval_arguments_summary, contains_high_confidence_secret};
     use serde_json::json;
 
     #[test]
@@ -1150,5 +1373,21 @@ mod content_governance_tests {
         assert!(!contains_high_confidence_secret(
             &json!({"query":"find notes about access tokens and password rotation"})
         ));
+    }
+
+    #[test]
+    fn approval_summary_redacts_secret_fields_urls_and_unbounded_content() {
+        let summary = approval_arguments_summary(&json!({
+            "password":"SENTINEL-PASSWORD",
+            "url":"https://example.test/path?token=SENTINEL-QUERY",
+            "nested":{"query":"plain","apiKey":"SENTINEL-KEY"},
+            "long":"x".repeat(1024)
+        }));
+        let encoded = serde_json::to_string(&summary).unwrap();
+        assert!(!encoded.contains("SENTINEL"));
+        assert_eq!(summary["password"], "[redacted]");
+        assert_eq!(summary["nested"]["apiKey"], "[redacted]");
+        assert!(summary["url"].as_str().unwrap().contains("?redacted"));
+        assert_eq!(summary["long"].as_str().unwrap().chars().count(), 256);
     }
 }

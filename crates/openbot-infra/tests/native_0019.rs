@@ -36,7 +36,7 @@ async fn post_0019_is_exact_expand_only_transport_identity() {
             if before != facts(POST_0018) {
                 return Err("0019 prerequisite fixture drift".to_owned());
             }
-            if native::apply(&mut client)
+            if native::apply_through(&mut client, native::NATIVE_0019_VERSION)
                 .await
                 .map_err(|error| error.to_string())?
                 != ApplyOutcome::Applied

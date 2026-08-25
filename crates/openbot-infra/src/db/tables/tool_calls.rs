@@ -27,6 +27,52 @@ crate::db::tables::define_table! {
     decided_at: time::OffsetDateTime = ("decided_at", "timestamp with time zone", true),
 }
 
+/// Native-current projection columns after 0020 adds the durable approval link.
+pub const CURRENT_COLUMNS: &[&str] = &[
+    "tool_call_id",
+    "run_id",
+    "call_seq",
+    "decision_id",
+    "actor_id",
+    "bot_id",
+    "tool_name",
+    "schema_hash",
+    "catalog_generation",
+    "args_hash",
+    "target_kind",
+    "target_id",
+    "effect",
+    "effect_downgraded",
+    "idempotency",
+    "idempotency_key",
+    "approval_class",
+    "policy_version",
+    "decided_at",
+    "approval_id",
+];
+
+/// Current durable tool call with optional proof-of-intent identity.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CurrentRow {
+    /// Native 0013 decision shape.
+    pub call: Row,
+    /// Native 0020 approval row; NULL exactly when human approval was not required.
+    pub approval_id: Option<String>,
+}
+
+impl TryFrom<&tokio_postgres::Row> for CurrentRow {
+    type Error = crate::db::RowDecodeError;
+
+    fn try_from(row: &tokio_postgres::Row) -> Result<Self, Self::Error> {
+        Ok(Self {
+            call: Row::try_from(row)?,
+            approval_id: row.try_get("approval_id").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "approval_id", source)
+            })?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

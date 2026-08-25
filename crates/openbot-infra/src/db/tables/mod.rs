@@ -43,7 +43,8 @@
 //! [`SECRET_COLUMN_NAME_ROOTS`] 却既不在 [`SECRET_COLUMNS`] 也不在 [`SECRET_SCAN_EXEMPTIONS`]
 //! 的，当场判红。将来有人加一列 `refresh_token` 而忘了登记，闸门会拦住。
 //!
-//! 0013 与 0016 的 native 表分别登记在 [`NATIVE_0013_TABLES`] / [`NATIVE_0016_TABLES`]，
+//! 0013、0016 与 0020 的 native 表分别登记在 [`NATIVE_0013_TABLES`] /
+//! [`NATIVE_0016_TABLES`] / [`NATIVE_0020_TABLES`]，
 //! 始终不混进只代表固定上游 0012 的 [`ALL_TABLES`]。
 
 use std::fmt;
@@ -98,6 +99,9 @@ pub const SECRET_COLUMNS: &[(&str, &str)] = &[
     ("sso_providers", "saml_config"),
     ("thread_leases", "fencing_token"),
     ("threads", "title"),
+    ("tool_approvals", "args_hash"),
+    ("tool_approvals", "arguments_summary"),
+    ("tool_approvals", "change_summary"),
     ("tool_attempts", "capability_id"),
     ("tool_calls", "args_hash"),
     ("tool_calls", "idempotency_key"),
@@ -527,6 +531,15 @@ pub const NATIVE_0016_TABLES: &[TableSpec] = &[
     },
 ];
 
+pub mod tool_approvals;
+
+/// Native 0020 durable human approval table.
+pub const NATIVE_0020_TABLES: &[TableSpec] = &[TableSpec {
+    name: tool_approvals::TABLE_NAME,
+    columns: tool_approvals::COLUMNS,
+    column_specs: tool_approvals::COLUMN_SPECS,
+}];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,6 +549,7 @@ mod tests {
             .iter()
             .chain(NATIVE_0013_TABLES.iter())
             .chain(NATIVE_0016_TABLES.iter())
+            .chain(NATIVE_0020_TABLES.iter())
     }
 
     /// 每张表的列数。数值取自参照库（`fixtures/db/schema-0012.json`），合计必须是 204。
@@ -893,7 +907,7 @@ mod tests {
             })
             .count();
         assert_eq!(hits, registered_root_hits + exemption_root_hits);
-        assert_eq!(SECRET_COLUMNS.len(), 26);
+        assert_eq!(SECRET_COLUMNS.len(), 29);
         assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 11);
     }
 

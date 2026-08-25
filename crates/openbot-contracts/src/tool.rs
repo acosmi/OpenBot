@@ -4,6 +4,7 @@ use core::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 use crate::ids::{BotId, RunId, ToolCallId};
 
@@ -84,6 +85,111 @@ impl fmt::Debug for ToolResult {
     }
 }
 
+/// First-party acting effect shown by the approval UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolApprovalEffect {
+    /// Mutates vendor/local state.
+    Write,
+    /// Executes a command/action.
+    Execute,
+    /// Opens an acting network effect.
+    Network,
+    /// Uses or changes a credential boundary.
+    Credential,
+}
+
+/// Approval reuse class copied from authoritative tool metadata.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolApprovalClass {
+    /// Exact binding may be reused within this run.
+    OncePerRun,
+    /// Every distinct call requires a decision.
+    EveryCall,
+}
+
+/// One pending approval visible only to its authoritative actor.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PendingToolApproval {
+    /// Server-minted approval id.
+    pub approval_id: String,
+    /// Rust-minted tool call id.
+    pub call_id: ToolCallId,
+    /// Bound run.
+    pub run_id: RunId,
+    /// Bound Bot.
+    pub bot_id: BotId,
+    /// Human-readable/model catalog tool key.
+    pub tool_name: String,
+    /// First-party target kind.
+    pub target_kind: String,
+    /// First-party target id.
+    pub target_id: String,
+    /// First-party acting effect.
+    pub effect: ToolApprovalEffect,
+    /// Reuse class.
+    pub approval_class: ToolApprovalClass,
+    /// Redacted bounded argument summary. Secret-shaped fields are placeholders.
+    pub arguments_summary: Value,
+    /// Optional first-party change/diff summary.
+    pub change_summary: Option<Value>,
+    /// Database request time.
+    pub requested_at: OffsetDateTime,
+    /// Inclusive expiry boundary.
+    pub expires_at: OffsetDateTime,
+}
+
+impl fmt::Debug for PendingToolApproval {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PendingToolApproval")
+            .field("approval_id", &self.approval_id)
+            .field("call_id", &self.call_id)
+            .field("run_id", &self.run_id)
+            .field("bot_id", &self.bot_id)
+            .field("tool_name", &self.tool_name)
+            .field("target_kind", &self.target_kind)
+            .field("target_id", &self.target_id)
+            .field("effect", &self.effect)
+            .field("approval_class", &self.approval_class)
+            .field("arguments_summary", &"<redacted>")
+            .field("change_summary", &self.change_summary.is_some())
+            .field("requested_at", &self.requested_at)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
+}
+
+/// Pending approval page for the current actor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PendingToolApprovals {
+    /// Oldest first; currently bounded to 100 by the application port.
+    pub approvals: Vec<PendingToolApproval>,
+}
+
+/// Human decision input. There is no caller-supplied binding or role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolApprovalDecision {
+    /// Grant this exact stored binding.
+    Grant,
+    /// Deny it.
+    Deny,
+}
+
+/// Successful durable resolution acknowledgement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ToolApprovalResolved {
+    /// Resolved approval id.
+    pub approval_id: String,
+    /// Exact committed human decision.
+    pub decision: ToolApprovalDecision,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +238,38 @@ mod tests {
         let rendered = format!("{result:?}");
         assert!(!rendered.contains("SENTINEL-MODEL-OUTPUT"));
         assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn pending_approval_wire_is_closed_and_debug_redacts_the_summary() {
+        let pending = PendingToolApproval {
+            approval_id: "approval-1".to_owned(),
+            call_id: ToolCallId::new("call-1"),
+            run_id: RunId::new("run-1"),
+            bot_id: BotId::new("bot-1"),
+            tool_name: "mcp__notes__delete_note".to_owned(),
+            target_kind: "mcp_tool".to_owned(),
+            target_id: "notes/delete_note".to_owned(),
+            effect: ToolApprovalEffect::Write,
+            approval_class: ToolApprovalClass::EveryCall,
+            arguments_summary: serde_json::json!({"title":"SENTINEL-PRIVATE"}),
+            change_summary: None,
+            requested_at: OffsetDateTime::UNIX_EPOCH,
+            expires_at: OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(5),
+        };
+        assert!(!format!("{pending:?}").contains("SENTINEL-PRIVATE"));
+        let wire = serde_json::to_value(&pending).unwrap();
+        assert_eq!(wire["effect"], "write");
+        assert_eq!(wire["approvalClass"], "every_call");
+        assert!(
+            serde_json::from_value::<PendingToolApproval>(serde_json::json!({
+                "approvalId":"a","callId":"c","runId":"r","botId":"b","toolName":"t",
+                "targetKind":"mcp_tool","targetId":"x","effect":"write",
+                "approvalClass":"every_call","argumentsSummary":{},"changeSummary":null,
+                "requestedAt":"1970-01-01T00:00:00Z","expiresAt":"1970-01-01T00:05:00Z",
+                "actor":"admin"
+            }))
+            .is_err()
+        );
     }
 }

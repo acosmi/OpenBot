@@ -44,7 +44,9 @@ use crate::memory::{
 };
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
 use crate::policy::ActionPolicyDocument;
-use crate::tool::{ToolInvocation, ToolResult};
+use crate::tool::{
+    PendingToolApprovals, ToolApprovalDecision, ToolApprovalResolved, ToolInvocation, ToolResult,
+};
 
 /// 单页 channel 的条数上限。
 ///
@@ -259,6 +261,17 @@ pub enum AppCommand {
         /// Stable configured server id.
         server_id: String,
     },
+
+    /// List pending proof-of-intent requests for the authenticated actor.
+    ListPendingToolApprovals,
+
+    /// Resolve one exact stored approval; binding fields cannot be supplied by the caller.
+    DecideToolApproval {
+        /// Server-minted approval id.
+        approval_id: String,
+        /// Grant or deny.
+        decision: ToolApprovalDecision,
+    },
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -314,6 +327,10 @@ pub enum AppReply {
     McpOAuthClientRegistered(McpOAuthClientRegistered),
     /// [`AppCommand::AddCuratedMcpServer`] or [`AppCommand::RefreshMcpServer`] response.
     McpServerMutation(McpServerMutation),
+    /// [`AppCommand::ListPendingToolApprovals`] response.
+    PendingToolApprovals(PendingToolApprovals),
+    /// [`AppCommand::DecideToolApproval`] response.
+    ToolApprovalResolved(ToolApprovalResolved),
 }
 
 /// 探活结果。

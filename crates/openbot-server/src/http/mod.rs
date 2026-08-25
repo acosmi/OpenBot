@@ -43,6 +43,7 @@
 pub mod admin;
 pub mod agent_tools;
 pub mod agents;
+pub mod approvals;
 pub mod auth_oidc;
 pub mod auth_sso;
 pub mod channels;
@@ -459,6 +460,11 @@ pub fn router(state: ServerState) -> Router {
             get(auth_sso::saml_metadata),
         )
         .route("/api/channels", get(channels::list))
+        .route("/api/tool-approvals", get(approvals::pending_get))
+        .route(
+            "/api/tool-approvals/{approval_id}",
+            post(approvals::decision_post),
+        )
         .route("/api/plugins/connections", get(plugins::connections_get))
         .route("/api/plugins/servers", post(plugins::servers_post))
         .route(

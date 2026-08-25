@@ -4,10 +4,11 @@ use core::fmt;
 use core::time::Duration;
 
 use async_trait::async_trait;
-use openbot_contracts::auth::AuthContext;
+use openbot_contracts::auth::{AuthContext, AuthGeneration};
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::{
-    ActorId, BotId, CapabilityId, CatalogGeneration, RunId, TenantId, ThreadId, ToolCallId,
+    ActorId, BotId, CapabilityId, CatalogGeneration, ComputerGeneration, DocumentGeneration, RunId,
+    TenantId, ThreadId, ToolCallId,
 };
 use openbot_contracts::tool::{ToolCommitState, ToolInvocation, ToolResult};
 use openbot_domain::audit::hash::Sha256Digest;
@@ -16,7 +17,7 @@ use openbot_domain::policy::{PolicyContext, PolicyDecision};
 use openbot_domain::tool::approval::{ApprovalTarget, PolicyVersionTag};
 use openbot_domain::tool::args::{ToolArguments, ToolArgumentsError};
 use openbot_domain::tool::commit::{CommitState, IdempotencyKey};
-use openbot_domain::tool::metadata::{ToolMetadata, ToolName};
+use openbot_domain::tool::metadata::{ApprovalClass, Effect, ToolMetadata, ToolName};
 use openbot_domain::tool::pipeline::{
     AbortReason, ApprovalOutcome, ApprovalSettled, AuthoritativeActor, DecisionWriteFailed,
     DurableDecisionReceipt, OutcomeWriteFailed, PolicyRuleId, PolicyVerdict, RedeemedCapability,
@@ -51,6 +52,9 @@ pub enum ToolPortError {
     /// journal CAS 没命中或发生并发冲突。
     #[error("tool_journal_conflict")]
     Conflict,
+    /// Approval/request mutation commit result is unknown; no tool effect may start.
+    #[error("tool_port_commit_unknown")]
+    CommitUnknown,
 }
 
 /// Cross-replica run-local tool-sequence allocation failure.
@@ -80,6 +84,7 @@ impl ToolPortError {
             Self::NotVisible => AppError::NotVisible,
             Self::Unavailable { dependency } => AppError::DependencyUnavailable { dependency },
             Self::InvalidInput { field } => AppError::MalformedPayload { field },
+            Self::CommitUnknown => AppError::ReconciliationRequired { accepted: false },
             Self::Corrupt { .. } | Self::Conflict => AppError::DependencyUnavailable {
                 dependency: "tool_runtime",
             },
@@ -92,7 +97,8 @@ impl ToolPortError {
             Self::NotVisible
             | Self::Corrupt { .. }
             | Self::InvalidInput { .. }
-            | Self::Conflict => "tool_runtime",
+            | Self::Conflict
+            | Self::CommitUnknown => "tool_runtime",
         }
     }
 }
@@ -112,6 +118,13 @@ pub struct ResolvedToolScope {
     pub call_seq: u64,
     /// 权威 target。
     pub target: ApprovalTarget,
+    /// Computer generation bound into approval; non-computer tools use generation zero.
+    pub computer_generation: ComputerGeneration,
+    /// Browser document generation bound into approval; non-browser targets use `None`.
+    pub target_document_generation: Option<DocumentGeneration>,
+    /// Redacted, bounded UI presentation supplied by the first-party resolver. It is required only
+    /// when metadata requires human approval.
+    pub approval_presentation: Option<ToolApprovalPresentation>,
     /// 由快照/ACL 构造、不可反序列化的 policy context。
     pub policy_context: PolicyContext,
     /// keyed 工具实际携带的幂等键。
@@ -119,6 +132,26 @@ pub struct ResolvedToolScope {
     /// Structural/content governance refusal computed from authoritative scope plus validated
     /// arguments. It uses the same durable refusal/audit path as CEL and never reaches execution.
     pub preflight_refusal: Option<ToolPreflightRefusal>,
+}
+
+/// Redacted approval presentation. Raw tool arguments remain in the private execution envelope;
+/// this projection is the only argument-shaped value the approval store/UI may receive.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ToolApprovalPresentation {
+    /// Bounded redacted JSON summary shown to the person deciding.
+    pub arguments_summary: serde_json::Value,
+    /// Optional first-party diff/change projection. Vendor/model prose cannot populate it.
+    pub change_summary: Option<serde_json::Value>,
+}
+
+impl fmt::Debug for ToolApprovalPresentation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ToolApprovalPresentation")
+            .field("arguments_summary", &"<redacted>")
+            .field("change_summary", &self.change_summary.is_some())
+            .finish()
+    }
 }
 
 /// Closed structural/content refusal supplied by a first-party control plane.
@@ -185,22 +218,38 @@ impl ToolPolicyEvaluation {
 /// 审批存储查询所需的、全部来自权威 scope 的字段。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolApprovalRequest {
+    /// Rust-minted call identity.
+    pub call_id: ToolCallId,
     /// actor。
     pub actor: ActorId,
+    /// Auth generation at request time.
+    pub auth_generation: AuthGeneration,
     /// Bot。
     pub bot: BotId,
     /// run。
     pub run: RunId,
+    /// Authoritative thread containing the run.
+    pub thread: ThreadId,
     /// tool。
     pub tool: ToolName,
     /// canonical args hash。
     pub args_hash: Sha256Digest,
     /// target。
     pub target: ApprovalTarget,
+    /// First-party effect shown in the approval UI.
+    pub effect: Effect,
+    /// Catalog approval reuse class.
+    pub approval_class: ApprovalClass,
+    /// Computer generation at request time.
+    pub computer_generation: ComputerGeneration,
+    /// Browser document generation at request time.
+    pub target_document_generation: Option<DocumentGeneration>,
     /// catalog generation。
     pub catalog_generation: CatalogGeneration,
     /// policy version。
     pub policy_version: PolicyVersionTag,
+    /// Redacted bounded arguments/diff presentation.
+    pub presentation: ToolApprovalPresentation,
 }
 
 /// 在执行之前必须同事务持久化的 decision 事实；不含原始参数。
@@ -224,6 +273,8 @@ pub struct ToolDecisionDraft {
     pub target: ApprovalTarget,
     /// policy version。
     pub policy_version: PolicyVersionTag,
+    /// Durable approval row identity for acting tools; absent only when approval is not required.
+    pub approval_id: Option<String>,
     /// 实际幂等键。
     pub idempotency_key: Option<IdempotencyKey>,
 }
@@ -300,7 +351,7 @@ impl ToolOutcomeDraft {
 fn common_audit_facts(
     decision: &ToolDecisionDraft,
 ) -> Result<Vec<AuditFact>, openbot_domain::audit::payload::AuditFieldError> {
-    Ok(vec![
+    let mut facts = vec![
         AuditFact::ToolName(AuditIdentifier::new(decision.metadata.name.as_str())?),
         AuditFact::Bot(AuditIdentifier::new(decision.bot.as_str())?),
         AuditFact::EffectClass(AuditLabel::new(decision.metadata.effect.effect().as_str())),
@@ -315,7 +366,11 @@ fn common_audit_facts(
         AuditFact::ApprovalClass(AuditLabel::new(decision.metadata.approval_class.as_str())),
         AuditFact::SandboxRequirement(AuditLabel::new(decision.metadata.sandbox.as_str())),
         AuditFact::ParallelSafe(decision.metadata.parallel_safe),
-    ])
+    ];
+    if let Some(approval_id) = &decision.approval_id {
+        facts.push(AuditFact::ApprovalId(AuditIdentifier::new(approval_id)?));
+    }
+    Ok(facts)
 }
 
 /// 真正交给 executor 的调用；字段私有，唯一构造点在本模块的管线末端。
@@ -670,6 +725,7 @@ pub async fn invoke_tool<C: ToolControlPlane, J: ToolJournal>(
         args_hash,
         target: scope.target.clone(),
         policy_version: policy.version.clone(),
+        approval_id: None,
         idempotency_key: scope.idempotency_key.clone(),
     };
 
@@ -715,16 +771,31 @@ pub async fn invoke_tool<C: ToolControlPlane, J: ToolJournal>(
     };
 
     let approval = if metadata.approval_class.requires_human_approval() {
+        let presentation =
+            scope
+                .approval_presentation
+                .clone()
+                .ok_or(AppError::DependencyUnavailable {
+                    dependency: "approval_presentation",
+                })?;
         control
             .approval(&ToolApprovalRequest {
+                call_id: invocation.call_id.clone(),
                 actor: auth.actor().clone(),
+                auth_generation,
                 bot: scope.bot_id.clone(),
                 run: scope.run_id.clone(),
+                thread: scope.thread_id.clone(),
                 tool: metadata.name.clone(),
                 args_hash,
                 target: scope.target.clone(),
+                effect: metadata.effect.effect(),
+                approval_class: metadata.approval_class,
+                computer_generation: scope.computer_generation,
+                target_document_generation: scope.target_document_generation,
                 catalog_generation: metadata.catalog_generation,
                 policy_version: policy.version.clone(),
+                presentation,
             })
             .await
             .map_err(ToolPortError::into_app_error)?
@@ -750,6 +821,9 @@ pub async fn invoke_tool<C: ToolControlPlane, J: ToolJournal>(
         }
     };
 
+    let mut decision = base_draft;
+    decision.approval_id = settled.approval_id().map(str::to_owned);
+
     let execution_scope = ToolExecutionScope {
         tenant: scope.tenant_id,
         run: scope.run_id,
@@ -761,7 +835,7 @@ pub async fn invoke_tool<C: ToolControlPlane, J: ToolJournal>(
         control,
         journal,
         settled,
-        base_draft,
+        decision,
         arguments,
         execution_scope,
     )
@@ -1076,7 +1150,7 @@ mod tests {
             auth: &AuthContext,
             invocation: &ToolInvocation,
             _arguments: &ToolArguments,
-            _metadata: &ToolMetadata,
+            metadata: &ToolMetadata,
         ) -> Result<ResolvedToolScope, ToolPortError> {
             self.trace.lock().unwrap().push("scope");
             Ok(ResolvedToolScope {
@@ -1093,6 +1167,14 @@ mod tests {
                     kind: "computer",
                     id: "computer-1".to_owned(),
                 },
+                computer_generation: ComputerGeneration::new(1),
+                target_document_generation: None,
+                approval_presentation: metadata.approval_class.requires_human_approval().then(
+                    || ToolApprovalPresentation {
+                        arguments_summary: serde_json::json!({"ref":"element-1"}),
+                        change_summary: None,
+                    },
+                ),
                 policy_context: context(auth.actor().as_str(), invocation.bot_id.as_str()),
                 idempotency_key: None,
                 preflight_refusal: None,
