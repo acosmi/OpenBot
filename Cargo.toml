@@ -127,7 +127,7 @@ time = { version = "0.3.55", features = ["serde", "formatting", "parsing", "macr
 axum = { version = "0.8.9", features = ["macros", "ws"] }
 # 只给 Server WebSocket 真 socket 测试使用；生产走 axum::extract::ws 的同一 tungstenite 图。
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
-futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "async-await", "std"] }
 tower = { version = "0.5.3", features = ["timeout", "limit"] }
 tower-http = { version = "0.6", features = ["trace", "limit"] }
 http = "1.5.0"
@@ -154,6 +154,15 @@ rustls = { version = "0.23.43", default-features = false, features = ["ring", "s
 ring = "0.17.14"
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
 webpki-roots = "1.0.9"
+
+# G4 MCP runtime（v3 §1.2 / §9.1）：只启 client + generic Streamable HTTP transport。
+# 明确不启 reqwest/stdio/server/resources/prompts/tasks/elicitation；HTTP backend 由唯一 SafeDialer 实现。
+rmcp = { version = "=3.1.4", default-features = false, features = ["client", "transport-streamable-http-client"] }
+sse-stream = "=0.2.4"
+# MCP arguments are validated against the vendor's real schema before policy/decision.  All
+# resolver features stay off: a catalog schema must be self-contained and cannot make the Server
+# fetch arbitrary HTTP/file `$ref` targets while compiling an untrusted schema.
+jsonschema = { version = "=0.51.0", default-features = false }
 
 # W-7b SAML：第一真源 §6.2 精确钉 samael 0.0.22，并要求 xmlsec 签名验证，不允许用
 # `default-features = false` 关闭验证能力冒充对等完成。OpenSSL/libxml2/xmlsec/libclang 的

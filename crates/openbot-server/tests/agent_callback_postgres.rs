@@ -4,33 +4,147 @@ mod harness {
     include!("../../../test-support/postgres_harness.rs");
 }
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::body::{Body, to_bytes};
 use harness::{admin_config, with_temp_database};
 use http::{Method, Request, StatusCode};
-use openbot_application::{ApplicationService, OpenBotApplication};
+use openbot_agent::{AuthorizedAgentToolGateway, RemoteAgentToolInvoker};
+use openbot_application::{
+    AgentContextSource, ApplicationService, OpenBotApplication, ProviderRoute, RunExecutionLease,
+};
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
 use openbot_domain::identity::session::{
     SessionHashKey, SessionToken, SessionTokenHash, TrustedOrigins,
 };
+use openbot_domain::policy::{ActionPolicy, PolicyMode};
 use openbot_domain::remote_callback::{
     RemoteRunAssertionSigner, RemoteRunScope, RemoteToolSet, callback_token_hash,
 };
+use openbot_domain::thread::FencingToken;
 use openbot_infra::agent_callback::{
     PostgresAgentCallbackTokens, PostgresRemoteCallbackAuthenticator,
 };
+use openbot_infra::agent_tools::{
+    PostgresAgentAuthorizationSource, PostgresAgentToolSequence, PostgresBuiltInToolControlPlane,
+};
 use openbot_infra::auth::config::default_session_lifetime;
 use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::mcp::SafeRmcpClient;
+use openbot_infra::mcp_catalog::PostgresMcpCatalog;
+use openbot_infra::memory_admin::PostgresMemoryAdministration;
+use openbot_infra::net::safe_http::{CidrAllowlist, EgressPolicy, SafeDialer, SchemePolicy};
+use openbot_infra::policy::PolicyStore;
+use openbot_infra::provider::context::PostgresAgentContextSource;
 use openbot_infra::repo::ChannelRepo;
+use openbot_infra::repo::tools::PostgresToolJournal;
 use openbot_server::{PostgresSessionAuthResolver, SensitiveWriteSecurity, ServerBuilder, router};
 use time::{Duration, OffsetDateTime};
 use tower::ServiceExt as _;
+
+use rmcp::ErrorData as McpError;
+use rmcp::handler::server::ServerHandler;
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+};
+use rmcp::service::{RequestContext, RoleServer};
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+};
 
 const RAW_SESSION: &str = "callback-http-session-token-with-enough-entropy";
 const SESSION_KEY: &[u8] = b"callback-http-session-hash-key";
 const AUDIT_KEY: &[u8] = b"callback-http-audit-checkpoint-key";
 const ORIGIN: &str = "https://app.example.test";
+
+#[derive(Clone)]
+struct CallbackMcpServer {
+    received: Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+impl ServerHandler for CallbackMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("openbot-callback-test", "3.1.4"))
+            .with_protocol_version(ProtocolVersion::V_2026_07_28)
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        Ok(ListToolsResult::with_all_items(vec![Tool::new(
+            "search_notes",
+            "Search the notes.",
+            serde_json::json!({
+                "type":"object",
+                "properties":{"query":{"type":"string"}},
+                "required":["query"]
+            })
+            .as_object()
+            .cloned()
+            .unwrap(),
+        )]))
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, McpError> {
+        if request.name.as_ref() != "search_notes" {
+            return Err(McpError::invalid_params("unknown tool", None));
+        }
+        let arguments = serde_json::Value::Object(request.arguments.unwrap_or_default());
+        self.received.lock().unwrap().push(arguments.clone());
+        let query = arguments
+            .get("query")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        Ok(CallToolResponse::Complete(CallToolResult::success(vec![
+            ContentBlock::text(format!("Found one note about {query}.")),
+        ])))
+    }
+}
+
+async fn spawn_callback_mcp_server() -> Result<
+    (
+        String,
+        Arc<Mutex<Vec<serde_json::Value>>>,
+        tokio::task::JoinHandle<()>,
+    ),
+    String,
+> {
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let server = CallbackMcpServer {
+        received: received.clone(),
+    };
+    let service = StreamableHttpService::new(
+        move || Ok::<_, std::io::Error>(server.clone()),
+        LocalSessionManager::default().into(),
+        StreamableHttpServerConfig::default(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|error| error.to_string())?;
+    let address = listener.local_addr().map_err(|error| error.to_string())?;
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, axum::Router::new().nest_service("/mcp", service)).await;
+    });
+    Ok((format!("http://{address}/mcp"), received, handle))
+}
+
+fn callback_mcp_client() -> SafeRmcpClient {
+    SafeRmcpClient::new(
+        SafeDialer::new(EgressPolicy::new(
+            CidrAllowlist::parse_exact(["127.0.0.1/32"]).unwrap(),
+        )),
+        SchemePolicy::HttpOrHttps,
+        Some(std::time::Duration::from_secs(2)),
+    )
+}
 
 async fn provision(pool: &deadpool_postgres::Pool) -> Result<(), String> {
     let mut client = pool.get().await.map_err(|error| error.to_string())?;
@@ -350,6 +464,296 @@ async fn production_http_issues_hash_only_token_and_refuses_ungranted_callback()
                     "HTTP callback durable evidence drift: hash_null={hash_null} issued_null={issued_null} issued={issued} revoked={revoked} refused={refused}"
                 ));
             }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL 与 loopback socket：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn production_callback_http_reaches_governed_real_rmcp_with_durable_sequence() {
+    let admin =
+        admin_config("production_callback_http_reaches_governed_real_rmcp_with_durable_sequence");
+    with_temp_database(&admin, "callbackrmcp", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let (mcp_url, received, mcp_server) = spawn_callback_mcp_server().await?;
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "INSERT INTO public.mcp_servers(id,title,vendor,url,provenance)
+                   VALUES('notes','Notes','notes',$1,'custom')",
+                &[&mcp_url],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            pg.execute(
+                "INSERT INTO public.plugin_grants(kind,ref,agent_id,granted_by)
+                   VALUES('mcp','notes/search_notes','remote-owner','owner-a')",
+                &[],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            pg.batch_execute(
+                "INSERT INTO public.deployment_packages(tenant_id,source_path,checksum)
+                   VALUES('tenant-a','/callback-fixture',repeat('b',64));
+                 UPDATE public.agents SET package_id=(
+                   SELECT id FROM public.deployment_packages WHERE tenant_id='tenant-a'
+                 ) WHERE id='remote-owner';
+                 UPDATE public.threads SET next_message_seq=1 WHERE thread_id='thread-callback';
+                 INSERT INTO public.messages(
+                   message_id,thread_id,seq,role,content,search_text,run_id,actor_id,created_at
+                 ) VALUES(
+                   'message-callback','thread-callback',0,'user',
+                   '{\"text\":\"Search invoices.\"}','Search invoices.',
+                   'run-callback','owner-a',clock_timestamp()
+                 );",
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+
+            let rmcp = callback_mcp_client();
+            let catalog = Arc::new(
+                PostgresMcpCatalog::new(pool.clone(), rmcp.clone(), AUDIT_KEY.to_vec())
+                    .map_err(|error| error.to_string())?,
+            );
+            catalog
+                .refresh("notes", None)
+                .await
+                .map_err(|error| error.to_string())?;
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.mcp_tools SET effect='read'
+                   WHERE server_id='notes' AND name='search_notes'",
+                &[],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            catalog
+                .refresh("notes", None)
+                .await
+                .map_err(|error| error.to_string())?;
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.plugin_grants g SET state='active',
+                   catalog_generation=s.catalog_generation,schema_hash=t.schema_hash,
+                   effect=t.effect,transport_fingerprint=s.catalog_transport_fingerprint,
+                   updated_at=clock_timestamp()
+                  FROM public.mcp_tools t JOIN public.mcp_servers s ON s.id=t.server_id
+                 WHERE g.kind='mcp' AND g.ref='notes/search_notes'
+                   AND g.agent_id='remote-owner' AND t.server_id='notes'
+                   AND t.name='search_notes'",
+                &[],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+
+            let deployment = DeploymentId::new("deployment-a");
+            let tenant = TenantId::new("tenant-a");
+            let signer = Arc::new(
+                RemoteRunAssertionSigner::new(b"callback-real-rmcp-master".to_vec())
+                    .map_err(|error| error.to_string())?,
+            );
+            let lease = RunExecutionLease::new(
+                RunId::new("run-callback"),
+                openbot_contracts::ids::ThreadId::new("thread-callback"),
+                BotId::new("remote-owner"),
+                ActorId::new("owner-a"),
+                FencingToken::new(1).map_err(|error| error.to_string())?,
+                0,
+            )
+            .map_err(|error| error.to_string())?;
+            let remote_request = PostgresAgentContextSource::new(
+                pool.clone(),
+                deployment.clone(),
+                tenant.clone(),
+                None,
+            )
+            .map_err(|error| error.to_string())?
+            .with_remote_assertions(signer.clone())
+            .with_mcp_catalog(catalog.clone())
+            .load(&lease)
+            .await
+            .map_err(|error| error.to_string())?;
+            if remote_request.tools.len() != 1
+                || remote_request.tools[0].name != "mcp__notes__search_notes"
+                || remote_request.tools[0].input_schema["required"] != serde_json::json!(["query"])
+            {
+                return Err(format!(
+                    "remote RunAgentInput tool projection drift: {:?}",
+                    remote_request.tools
+                ));
+            }
+            let assertion = match &remote_request.route {
+                ProviderRoute::RemoteAgUi(route) => route
+                    .run_assertion()
+                    .ok_or_else(|| "remote assertion missing".to_owned())?
+                    .to_owned(),
+                ProviderRoute::PackageOpenAi | ProviderRoute::Managed => {
+                    return Err("remote Agent selected a local provider route".to_owned());
+                }
+            };
+            let policy = PolicyStore::postgres(pool.clone(), None);
+            policy.load().await.map_err(|error| error.to_string())?;
+            policy
+                .set(
+                    ActionPolicy {
+                        mode: PolicyMode::Enforce,
+                        deny: Vec::new(),
+                        allow: vec!["true".to_owned()],
+                    },
+                    Some("owner-a"),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let memory = PostgresMemoryAdministration::new(pool.clone());
+            let control = PostgresBuiltInToolControlPlane::new(
+                pool.clone(),
+                deployment.clone(),
+                tenant.clone(),
+                policy.clone(),
+                Arc::new(memory.clone()),
+            )
+            .with_mcp(catalog.clone(), rmcp);
+            let callback_tokens = PostgresAgentCallbackTokens::new(
+                pool.clone(),
+                deployment.clone(),
+                tenant.clone(),
+                AUDIT_KEY.to_vec(),
+            )
+            .map_err(|error| error.to_string())?;
+            let application: Arc<dyn ApplicationService> = Arc::new(
+                OpenBotApplication::new(ChannelRepo::new(pool.clone()))
+                    .with_policy(policy)
+                    .with_tools(
+                        control,
+                        PostgresToolJournal::new(pool.clone(), AUDIT_KEY.to_vec())
+                            .map_err(|error| error.to_string())?,
+                    )
+                    .with_memory(memory)
+                    .with_agent_callback_tokens(callback_tokens),
+            );
+            let resolver = PostgresSessionAuthResolver::new(
+                pool.clone(),
+                SESSION_KEY,
+                default_session_lifetime(),
+                deployment.clone(),
+                tenant.clone(),
+            )
+            .map_err(|error| error.to_string())?;
+            let authenticator = Arc::new(
+                PostgresRemoteCallbackAuthenticator::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    false,
+                    signer.clone(),
+                    AUDIT_KEY.to_vec(),
+                )
+                .map_err(|error| error.to_string())?
+                .with_mcp_catalog(catalog),
+            );
+            let governed = Arc::new(AuthorizedAgentToolGateway::with_sequence(
+                application.clone(),
+                Arc::new(PostgresAgentAuthorizationSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    false,
+                )),
+                Arc::new(PostgresAgentToolSequence::new(pool.clone())),
+            ));
+            let callback_tools: Arc<dyn RemoteAgentToolInvoker> = governed;
+            let app = router(
+                ServerBuilder::new(application, Arc::new(resolver))
+                    .with_sensitive_write_security(SensitiveWriteSecurity::new(
+                        default_session_lifetime(),
+                        TrustedOrigins::from_configured([ORIGIN])
+                            .map_err(|error| error.to_string())?,
+                    ))
+                    .with_remote_callback_authenticator(authenticator)
+                    .with_remote_callback_tools(callback_tools)
+                    .build(),
+            );
+
+            let (status, body) = send(
+                app.clone(),
+                Method::POST,
+                "/api/agents/remote-owner/callback-token",
+                Some(ORIGIN),
+                None,
+                None,
+            )
+            .await?;
+            if status != StatusCode::CREATED {
+                return Err(format!("callback token issue status drift: {status}"));
+            }
+            let body: serde_json::Value =
+                serde_json::from_slice(&body).map_err(|error| error.to_string())?;
+            let token = body["token"]
+                .as_str()
+                .ok_or_else(|| "callback token response missing".to_owned())?;
+            let callback = serde_json::json!({
+                "name":"mcp__notes__search_notes",
+                "args":{"query":"invoices"},
+                "run":assertion,
+            })
+            .to_string();
+            let (status, body) = send(
+                app,
+                Method::POST,
+                "/api/agent-tools/call",
+                None,
+                Some(token),
+                Some(callback),
+            )
+            .await?;
+            let body: serde_json::Value =
+                serde_json::from_slice(&body).map_err(|error| error.to_string())?;
+            if status != StatusCode::OK
+                || body["isError"] != serde_json::json!(false)
+                || !body["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("Found one note about invoices"))
+                || received.lock().unwrap().as_slice() != [serde_json::json!({"query":"invoices"})]
+            {
+                return Err(format!("real callback result drift: {status}/{body}"));
+            }
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            let evidence = pg
+                .query_one(
+                    "SELECT
+                       (SELECT next_tool_call_seq FROM public.runs WHERE run_id='run-callback'),
+                       (SELECT count(*)::bigint FROM public.tool_calls
+                         WHERE run_id='run-callback' AND call_seq=0
+                           AND bot_id='remote-owner' AND actor_id='owner-a'),
+                       (SELECT count(*)::bigint FROM public.audit_events
+                         WHERE event_type='mcp.call_succeeded'
+                           AND target_id='notes/search_notes'
+                           AND payload->>'bot'='remote-owner'
+                           AND actor_user_id='owner-a')",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let sequence: Option<i64> = evidence.try_get(0).map_err(|error| error.to_string())?;
+            let calls: i64 = evidence.try_get(1).map_err(|error| error.to_string())?;
+            let audits: i64 = evidence.try_get(2).map_err(|error| error.to_string())?;
+            if sequence != Some(1) || calls != 1 || audits != 1 {
+                return Err(format!(
+                    "callback durable evidence drift: {sequence:?}/{calls}/{audits}"
+                ));
+            }
+            mcp_server.abort();
             Ok(())
         }
         .await;

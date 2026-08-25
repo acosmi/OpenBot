@@ -67,8 +67,17 @@ pub const NATIVE_0016_NAME: &str = "native_0016_thread_realtime_memory_base";
 /// 0016 SQL 原文。
 pub const NATIVE_0016_SQL: &str = include_str!("../../sql/native_0016.sql");
 
+/// MCP catalog/stale-grant/callback sequence version.
+pub const NATIVE_0017_VERSION: i32 = 17;
+
+/// 0017 stable name.
+pub const NATIVE_0017_NAME: &str = "native_0017_mcp_catalog_callback_sequence";
+
+/// 0017 SQL source.
+pub const NATIVE_0017_SQL: &str = include_str!("../../sql/native_0017.sql");
+
 /// 当前二进制认识的最新 native schema 版本。
-pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0016_VERSION;
+pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0017_VERSION;
 
 /// 当前二进制钉住的 native migration 数量。
 pub const NATIVE_MIGRATION_COUNT: usize = MIGRATIONS.len();
@@ -104,6 +113,11 @@ const MIGRATIONS: &[MigrationSpec] = &[
         version: NATIVE_0016_VERSION,
         name: NATIVE_0016_NAME,
         sql: NATIVE_0016_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0017_VERSION,
+        name: NATIVE_0017_NAME,
+        sql: NATIVE_0017_SQL,
     },
 ];
 
@@ -181,6 +195,12 @@ pub fn native_0015_checksum() -> String {
 #[must_use]
 pub fn native_0016_checksum() -> String {
     Sha256Digest::of(NATIVE_0016_SQL.as_bytes()).to_hex()
+}
+
+/// Current 0017 SQL lowercase SHA-256.
+#[must_use]
+pub fn native_0017_checksum() -> String {
+    Sha256Digest::of(NATIVE_0017_SQL.as_bytes()).to_hex()
 }
 
 /// 在一个已到 0012 的数据库上施加当前二进制认识的全部 Rust-owned migrations。
@@ -342,6 +362,7 @@ mod tests {
             .chain(statement_lines(NATIVE_0014_SQL))
             .chain(statement_lines(NATIVE_0015_SQL))
             .chain(statement_lines(NATIVE_0016_SQL))
+            .chain(statement_lines(NATIVE_0017_SQL))
         {
             let uppercase = line.to_ascii_uppercase();
             assert!(
@@ -374,6 +395,11 @@ mod tests {
         assert_eq!(NATIVE_0016_SQL.matches("CREATE TABLE public.").count(), 10);
         assert!(NATIVE_0016_SQL.contains("ADD CONSTRAINT tool_calls_run_id_fkey"));
         assert!(NATIVE_0016_SQL.contains("NOT VALID"));
+        assert!(NATIVE_0017_SQL.contains("ADD COLUMN next_tool_call_seq bigint"));
+        assert!(NATIVE_0017_SQL.contains("ADD COLUMN catalog_generation bigint"));
+        assert!(NATIVE_0017_SQL.contains("ADD COLUMN catalog_transport_fingerprint text"));
+        assert!(NATIVE_0017_SQL.contains("ADD COLUMN transport_fingerprint text"));
+        assert!(NATIVE_0017_SQL.contains("suspended_missing"));
     }
 
     #[test]
@@ -383,6 +409,7 @@ mod tests {
                 .chain(statement_lines(NATIVE_0014_SQL))
                 .chain(statement_lines(NATIVE_0015_SQL))
                 .chain(statement_lines(NATIVE_0016_SQL))
+                .chain(statement_lines(NATIVE_0017_SQL))
                 .any(|line| line.contains("IF NOT EXISTS"))
         );
         assert!(LEDGER_BOOTSTRAP_SQL.contains("IF NOT EXISTS"));
@@ -409,7 +436,10 @@ mod tests {
         let native_thread = native_0016_checksum();
         assert_eq!(native_thread.len(), 64);
         assert_ne!(latest, native_thread);
-        assert_eq!(MIGRATIONS.len(), 4);
-        assert_eq!(MIGRATIONS[3].version, NATIVE_LATEST_VERSION);
+        let native_mcp = native_0017_checksum();
+        assert_eq!(native_mcp.len(), 64);
+        assert_ne!(native_thread, native_mcp);
+        assert_eq!(MIGRATIONS.len(), 5);
+        assert_eq!(MIGRATIONS[4].version, NATIVE_LATEST_VERSION);
     }
 }

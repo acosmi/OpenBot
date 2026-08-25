@@ -24,3 +24,48 @@ crate::db::tables::define_table! {
     created_at: time::OffsetDateTime = ("created_at", "timestamp with time zone", true),
     updated_at: time::OffsetDateTime = ("updated_at", "timestamp with time zone", true),
 }
+
+/// 0017 current projection columns.
+pub const CURRENT_COLUMNS: &[&str] = &[
+    "id", "title", "vendor", "url", "provenance", "credential_id", "tools_refreshed_at",
+    "last_error", "added_by", "created_at", "updated_at", "catalog_generation", "catalog_hash",
+    "catalog_transport_fingerprint",
+];
+
+/// Current MCP server row with catalog identity.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CurrentRow {
+    /// Baseline 0012 row.
+    pub server: Row,
+    /// Monotonic generation; legacy/unrefreshed is NULL.
+    pub catalog_generation: Option<i64>,
+    /// Canonical catalog hash paired with generation.
+    pub catalog_hash: Option<String>,
+    /// Canonical endpoint/vendor/provenance identity paired with generation.
+    pub catalog_transport_fingerprint: Option<String>,
+}
+
+impl TryFrom<&tokio_postgres::Row> for CurrentRow {
+    type Error = crate::db::RowDecodeError;
+
+    fn try_from(row: &tokio_postgres::Row) -> Result<Self, Self::Error> {
+        Ok(Self {
+            server: Row::try_from(row)?,
+            catalog_generation: row.try_get("catalog_generation").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "catalog_generation", source)
+            })?,
+            catalog_hash: row.try_get("catalog_hash").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "catalog_hash", source)
+            })?,
+            catalog_transport_fingerprint: row
+                .try_get("catalog_transport_fingerprint")
+                .map_err(|source| {
+                    crate::db::RowDecodeError::column(
+                        TABLE_NAME,
+                        "catalog_transport_fingerprint",
+                        source,
+                    )
+                })?,
+        })
+    }
+}

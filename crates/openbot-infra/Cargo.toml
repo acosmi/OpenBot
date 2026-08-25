@@ -55,6 +55,13 @@ async-trait.workspace = true
 # R65 的 LISTEN/replay receiver 直接实现 application 的 `Stream` 边界；只需 core trait，
 # 不为一个 `StreamExt` 拉入 futures-util。package 已在既有锁图内，新 package=0。
 futures-core.workspace = true
+futures-util.workspace = true
+
+# Pinned MCP 2026-07-28 client DTO/handshake/worker；no reqwest，HTTP 由 `SafeRmcpHttpClient`
+# 适配现有唯一 SafeDialer。sse-stream 只解析该 bounded SafeDialer body。
+rmcp.workspace = true
+sse-stream.workspace = true
+jsonschema.workspace = true
 
 # `PortError` 只带静态字段（端口文档：数据库原值是不可信数据，不进错误）。
 # 真正的故障细节由实现侧自己 trace 出去 —— 只依赖 facade，不依赖 subscriber。
@@ -82,3 +89,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 ring.workspace = true
+openbot-agent.workspace = true
+# Real pinned RMCP Streamable HTTP server used only by local protocol E2E.
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
+axum.workspace = true

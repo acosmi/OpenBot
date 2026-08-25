@@ -190,7 +190,7 @@
       "licenseDeclared": "Apache-2.0",
       "copyrightText": "NOASSERTION",
       "comment": "v3 §1.2 固定基线：commit `4a738b9dd99eaca418b614afa433a0cbdaf8d056`，发布版 `3.1.4`。本轮证据：(a) GitHub API commit HTTP 200；(b) crates.io `/api/v1/crates/rmcp/3.1.4` 的 `.version.license` = `Apache-2.0`；(c) 同 commit 的 `LICENSE` **不是**一份许可证全文，原文首段为：『The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 (\"Apache-2.0\")… Contributions made by authors who originally licensed their work under the MIT License and who have not yet granted explicit permission to relicense remain licensed under the MIT License.』；(d) 同 commit 的 `NOTICE` HTTP 404。因此 licenseConcluded = NOASSERTION：这正是 v3 §23.1 条 4『不能给整个仓库套一个猜测』所指的情形，逐文件 license 判定须在实际复用任何文件之前完成。",
-      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "sourceInfo": "Batch 11 已作为 production dependency 锁入 Cargo.lock；crates.io .crate checksum = 1a15bc53261a9dc37e105df006e4656c598379a8f9581f8950debb130f27a7cf，.cargo_vcs_info.json 同时绑定 commit 4a738b9dd99eaca418b614afa433a0cbdaf8d056。",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -201,6 +201,31 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:github/modelcontextprotocol/rust-sdk@4a738b9dd99eaca418b614afa433a0cbdaf8d056"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-jsonschema",
+      "name": "jsonschema",
+      "versionInfo": "0.51.0",
+      "downloadLocation": "https://crates.io/api/v1/crates/jsonschema/0.51.0/download",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "152999731bfbe0bb82d561550be73b0c31a9827d6ebe3fe96ad47563703b5328"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2020-2026 Dmitry Dygalo",
+      "comment": "G4 Batch 11 的 MCP vendor input-schema validator。Cargo.lock 精确版本/摘要如上；crate LICENSE 1,075 B，SHA-256 117829c3ca21efb132d81a44b55363d395ab8eea18526873bc828da4c0e5f038。Production 关闭默认 HTTP/file resolver features，并显式选择线性 regex engine；32 条新增 Cargo Vet exemption 明示不是源码审计。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/jsonschema@0.51.0"
         }
       ],
       "primaryPackagePurpose": "LIBRARY"
@@ -1151,6 +1176,12 @@
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-rmcp",
       "comment": "MCP runtime（v3 §9.1）。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-jsonschema",
+      "comment": "MCP vendor input-schema validation；HTTP/file resolver features disabled。"
     },
     {
       "spdxElementId": "SPDXRef-Package-openbot-rs",

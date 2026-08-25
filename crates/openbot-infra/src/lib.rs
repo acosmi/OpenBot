@@ -77,6 +77,8 @@ pub mod auth;
 pub mod db;
 pub mod intelligence_bundle;
 pub mod intelligence_import;
+pub mod mcp;
+pub mod mcp_catalog;
 pub mod memory_admin;
 pub mod net;
 pub mod policy;

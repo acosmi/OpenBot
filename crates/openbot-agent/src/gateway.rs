@@ -4,7 +4,10 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use openbot_application::{AgentAuthorizationSource, ApplicationService, RunExecutionLease};
+use openbot_application::{
+    AgentAuthorizationSource, ApplicationService, RemoteCallbackAuthorization, RunExecutionLease,
+    ToolCallSequence, ToolCallSequenceError,
+};
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
@@ -98,6 +101,19 @@ pub trait AgentToolInvoker: Send + Sync {
     fn release(&self, _run_id: &RunId) {}
 }
 
+/// Machine callback tool boundary after dual-credential/run/tool authorization.
+#[async_trait]
+pub trait RemoteAgentToolInvoker: Send + Sync {
+    /// Invoke through the same ApplicationService pipeline and durable sequence allocator as the
+    /// built-in Agent; no callback-specific executor exists.
+    async fn invoke_callback(
+        &self,
+        authorization: RemoteCallbackAuthorization,
+        tool_name: &str,
+        arguments: Value,
+    ) -> Result<AgentToolReply, AgentToolInvokeError>;
+}
+
 /// Explicit fail-closed placeholder for tests/runtime configurations without a real tool plane.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoAgentToolInvoker;
@@ -118,16 +134,25 @@ impl AgentToolInvoker for NoAgentToolInvoker {
 /// sequence 由本类型铸造，模型/remote Agent 没有自报三者的参数位。
 pub struct AgentToolGateway {
     application: Arc<dyn ApplicationService>,
-    next_sequence: Mutex<BTreeMap<RunId, u64>>,
+    sequence: Arc<dyn ToolCallSequence>,
 }
 
 impl AgentToolGateway {
     /// 绑定唯一 application 实例。
     #[must_use]
     pub fn new(application: Arc<dyn ApplicationService>) -> Self {
+        Self::with_sequence(application, Arc::new(InMemoryToolCallSequence::default()))
+    }
+
+    /// Bind an authoritative cross-replica sequence allocator for production assembly.
+    #[must_use]
+    pub fn with_sequence(
+        application: Arc<dyn ApplicationService>,
+        sequence: Arc<dyn ToolCallSequence>,
+    ) -> Self {
         Self {
             application,
-            next_sequence: Mutex::new(BTreeMap::new()),
+            sequence,
         }
     }
 
@@ -153,30 +178,16 @@ impl AgentToolGateway {
         tool_name: String,
         arguments: Value,
     ) -> (ToolCallId, Result<ToolResult, AppError>) {
-        let call_seq = {
-            let mut sequences = match self.next_sequence.lock() {
-                Ok(sequences) => sequences,
-                Err(_) => {
-                    return (
-                        ToolCallId::new("unavailable"),
-                        Err(AppError::DependencyUnavailable {
-                            dependency: "agent_tool_sequence",
-                        }),
-                    );
-                }
-            };
-            let next = sequences.entry(run_id.clone()).or_insert(0);
-            let current = *next;
-            let Some(incremented) = next.checked_add(1) else {
+        let call_seq = match self.sequence.next(&run_id).await {
+            Ok(sequence) => sequence,
+            Err(ToolCallSequenceError::Unavailable | ToolCallSequenceError::Exhausted) => {
                 return (
                     ToolCallId::new("unavailable"),
                     Err(AppError::DependencyUnavailable {
                         dependency: "agent_tool_sequence",
                     }),
                 );
-            };
-            *next = incremented;
-            current
+            }
         };
         let call_id = ToolCallId::new(Uuid::now_v7().to_string());
         let invocation = ToolInvocation {
@@ -221,9 +232,7 @@ impl AgentToolGateway {
 
     /// Drop per-run sequence state after the host has committed a terminal.
     pub fn release(&self, run_id: &RunId) {
-        if let Ok(mut sequences) = self.next_sequence.lock() {
-            sequences.remove(run_id);
-        }
+        self.sequence.release(run_id);
     }
 
     /// 借出同一个 application trait object，供组装测试证明没有第二个业务实例。
@@ -246,8 +255,22 @@ impl AuthorizedAgentToolGateway {
         application: Arc<dyn ApplicationService>,
         authorization: Arc<dyn AgentAuthorizationSource>,
     ) -> Self {
+        Self::with_sequence(
+            application,
+            authorization,
+            Arc::new(InMemoryToolCallSequence::default()),
+        )
+    }
+
+    /// Production constructor using one durable allocator for built-in and remote callbacks.
+    #[must_use]
+    pub fn with_sequence(
+        application: Arc<dyn ApplicationService>,
+        authorization: Arc<dyn AgentAuthorizationSource>,
+        sequence: Arc<dyn ToolCallSequence>,
+    ) -> Self {
         Self {
-            gateway: AgentToolGateway::new(application),
+            gateway: AgentToolGateway::with_sequence(application, sequence),
             authorization,
         }
     }
@@ -283,46 +306,77 @@ impl AgentToolInvoker for AuthorizedAgentToolGateway {
                 arguments,
             )
             .await;
-        match result {
-            Ok(result) => Ok(AgentToolReply {
-                call_id,
-                content: result.content,
-                error_code: result.error_code.or_else(|| {
-                    (result.commit_state == openbot_contracts::tool::ToolCommitState::NotCommitted)
-                        .then(|| "tool_not_committed".to_owned())
-                }),
-            }),
-            Err(AppError::PolicyRefused { .. }) => Ok(normalized_error_reply(
-                call_id,
-                "policy_refused",
-                "Tool call was refused by policy.",
-            )),
-            Err(AppError::MalformedPayload { .. }) => Ok(normalized_error_reply(
-                call_id,
-                "invalid_arguments",
-                "Tool arguments were invalid.",
-            )),
-            Err(AppError::NotVisible | AppError::ForbiddenRole { .. }) => Ok(
-                normalized_error_reply(call_id, "tool_not_available", "Tool is not available."),
-            ),
-            Err(AppError::ReconciliationRequired { .. }) => {
-                Err(AgentToolInvokeError::ReconciliationRequired)
-            }
-            Err(
-                AppError::Unauthenticated
-                | AppError::DependencyUnavailable { .. }
-                | AppError::VendorFailure { .. }
-                | AppError::StaleGeneration { .. }
-                | AppError::RequestConflict { .. }
-                | AppError::LeaseConflict { .. }
-                | AppError::IdentityConflict { .. }
-                | AppError::SensitiveWriteRefused { .. },
-            ) => Err(AgentToolInvokeError::Unavailable),
-        }
+        map_application_reply(call_id, result)
     }
 
     fn release(&self, run_id: &RunId) {
         self.gateway.release(run_id);
+    }
+}
+
+#[async_trait]
+impl RemoteAgentToolInvoker for AuthorizedAgentToolGateway {
+    async fn invoke_callback(
+        &self,
+        authorization: RemoteCallbackAuthorization,
+        tool_name: &str,
+        arguments: Value,
+    ) -> Result<AgentToolReply, AgentToolInvokeError> {
+        let (call_id, result) = self
+            .gateway
+            .invoke_captured(
+                authorization.auth().clone(),
+                authorization.run().clone(),
+                authorization.bot().clone(),
+                tool_name.to_owned(),
+                arguments,
+            )
+            .await;
+        map_application_reply(call_id, result)
+    }
+}
+
+fn map_application_reply(
+    call_id: ToolCallId,
+    result: Result<ToolResult, AppError>,
+) -> Result<AgentToolReply, AgentToolInvokeError> {
+    match result {
+        Ok(result) => Ok(AgentToolReply {
+            call_id,
+            content: result.content,
+            error_code: result.error_code.or_else(|| {
+                (result.commit_state == openbot_contracts::tool::ToolCommitState::NotCommitted)
+                    .then(|| "tool_not_committed".to_owned())
+            }),
+        }),
+        Err(AppError::PolicyRefused { .. }) => Ok(normalized_error_reply(
+            call_id,
+            "policy_refused",
+            "Refused. Tool call was refused by policy.",
+        )),
+        Err(AppError::MalformedPayload { .. }) => Ok(normalized_error_reply(
+            call_id,
+            "invalid_arguments",
+            "Tool arguments were invalid.",
+        )),
+        Err(AppError::NotVisible | AppError::ForbiddenRole { .. }) => Ok(normalized_error_reply(
+            call_id,
+            "tool_not_available",
+            "Tool is not available.",
+        )),
+        Err(AppError::ReconciliationRequired { .. }) => {
+            Err(AgentToolInvokeError::ReconciliationRequired)
+        }
+        Err(
+            AppError::Unauthenticated
+            | AppError::DependencyUnavailable { .. }
+            | AppError::VendorFailure { .. }
+            | AppError::StaleGeneration { .. }
+            | AppError::RequestConflict { .. }
+            | AppError::LeaseConflict { .. }
+            | AppError::IdentityConflict { .. }
+            | AppError::SensitiveWriteRefused { .. },
+        ) => Err(AgentToolInvokeError::Unavailable),
     }
 }
 
@@ -335,8 +389,35 @@ impl core::fmt::Debug for AgentToolGateway {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("AgentToolGateway")
             .field("application", &"<dyn ApplicationService>")
-            .field("sequence_state", &"<redacted>")
+            .field("sequence", &"<dyn ToolCallSequence>")
             .finish_non_exhaustive()
+    }
+}
+
+#[derive(Default)]
+struct InMemoryToolCallSequence {
+    next: Mutex<BTreeMap<RunId, u64>>,
+}
+
+#[async_trait]
+impl ToolCallSequence for InMemoryToolCallSequence {
+    async fn next(&self, run: &RunId) -> Result<u64, ToolCallSequenceError> {
+        let mut sequences = self
+            .next
+            .lock()
+            .map_err(|_| ToolCallSequenceError::Unavailable)?;
+        let next = sequences.entry(run.clone()).or_insert(0);
+        let current = *next;
+        *next = next
+            .checked_add(1)
+            .ok_or(ToolCallSequenceError::Exhausted)?;
+        Ok(current)
+    }
+
+    fn release(&self, run: &RunId) {
+        if let Ok(mut sequences) = self.next.lock() {
+            sequences.remove(run);
+        }
     }
 }
 

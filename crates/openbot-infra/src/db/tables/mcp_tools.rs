@@ -18,3 +18,56 @@ crate::db::tables::define_table! {
     input_schema: serde_json::Value = ("input_schema", "jsonb", true),
     created_at: time::OffsetDateTime = ("created_at", "timestamp with time zone", true),
 }
+
+/// 0017 current projection columns.
+pub const CURRENT_COLUMNS: &[&str] = &[
+    "server_id", "name", "description", "input_schema", "created_at", "schema_hash", "effect",
+    "catalog_generation", "first_seen_at", "last_seen_at", "available",
+];
+
+/// Current cached MCP tool row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CurrentRow {
+    /// Baseline 0012 row.
+    pub tool: Row,
+    /// Canonical input schema hash.
+    pub schema_hash: Option<String>,
+    /// First-party classified effect.
+    pub effect: Option<String>,
+    /// Catalog generation last seen.
+    pub catalog_generation: Option<i64>,
+    /// First verified appearance.
+    pub first_seen_at: Option<time::OffsetDateTime>,
+    /// Most recent verified appearance.
+    pub last_seen_at: Option<time::OffsetDateTime>,
+    /// Current listing contains this tool.
+    pub available: Option<bool>,
+}
+
+impl TryFrom<&tokio_postgres::Row> for CurrentRow {
+    type Error = crate::db::RowDecodeError;
+
+    fn try_from(row: &tokio_postgres::Row) -> Result<Self, Self::Error> {
+        Ok(Self {
+            tool: Row::try_from(row)?,
+            schema_hash: row.try_get("schema_hash").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "schema_hash", source)
+            })?,
+            effect: row.try_get("effect").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "effect", source)
+            })?,
+            catalog_generation: row.try_get("catalog_generation").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "catalog_generation", source)
+            })?,
+            first_seen_at: row.try_get("first_seen_at").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "first_seen_at", source)
+            })?,
+            last_seen_at: row.try_get("last_seen_at").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "last_seen_at", source)
+            })?,
+            available: row.try_get("available").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "available", source)
+            })?,
+        })
+    }
+}

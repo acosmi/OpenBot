@@ -53,6 +53,27 @@ pub enum ToolPortError {
     Conflict,
 }
 
+/// Cross-replica run-local tool-sequence allocation failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ToolCallSequenceError {
+    /// Durable allocator or active run is unavailable.
+    #[error("tool_call_sequence_unavailable")]
+    Unavailable,
+    /// The signed 64-bit PostgreSQL sequence space has been exhausted.
+    #[error("tool_call_sequence_exhausted")]
+    Exhausted,
+}
+
+/// Durable allocator for the control identity of Agent-originated tool calls.
+#[async_trait]
+pub trait ToolCallSequence: Send + Sync {
+    /// Atomically allocate the next run-local sequence across all Server replicas.
+    async fn next(&self, run: &RunId) -> Result<u64, ToolCallSequenceError>;
+
+    /// Release implementation-local state after terminal cleanup; durable implementations no-op.
+    fn release(&self, _run: &RunId) {}
+}
+
 impl ToolPortError {
     const fn into_app_error(self) -> AppError {
         match self {
@@ -95,6 +116,27 @@ pub struct ResolvedToolScope {
     pub policy_context: PolicyContext,
     /// keyed 工具实际携带的幂等键。
     pub idempotency_key: Option<IdempotencyKey>,
+    /// Structural/content governance refusal computed from authoritative scope plus validated
+    /// arguments. It uses the same durable refusal/audit path as CEL and never reaches execution.
+    pub preflight_refusal: Option<ToolPreflightRefusal>,
+}
+
+/// Closed structural/content refusal supplied by a first-party control plane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolPreflightRefusal {
+    rule: PolicyRuleId,
+    error_code: &'static str,
+}
+
+impl ToolPreflightRefusal {
+    /// Construct from a stable first-party rule/code pair; neither may contain request content.
+    #[must_use]
+    pub fn new(rule: &'static str, error_code: &'static str) -> Self {
+        Self {
+            rule: PolicyRuleId::new(rule),
+            error_code,
+        }
+    }
 }
 
 /// 由真实 domain policy decision 投影出的窄结论。
@@ -260,6 +302,7 @@ fn common_audit_facts(
 ) -> Result<Vec<AuditFact>, openbot_domain::audit::payload::AuditFieldError> {
     Ok(vec![
         AuditFact::ToolName(AuditIdentifier::new(decision.metadata.name.as_str())?),
+        AuditFact::Bot(AuditIdentifier::new(decision.bot.as_str())?),
         AuditFact::EffectClass(AuditLabel::new(decision.metadata.effect.effect().as_str())),
         AuditFact::EffectDowngraded(decision.metadata.effect.was_downgraded()),
         AuditFact::CanonicalArgsHash(decision.args_hash),
@@ -629,6 +672,21 @@ pub async fn invoke_tool<C: ToolControlPlane, J: ToolJournal>(
         policy_version: policy.version.clone(),
         idempotency_key: scope.idempotency_key.clone(),
     };
+
+    if let Some(refusal) = &scope.preflight_refusal {
+        journal
+            .record_refusal(&ToolRefusalDraft {
+                decision: base_draft.clone(),
+                rule: refusal.rule.clone(),
+                error_code: refusal.error_code,
+            })
+            .await
+            .map_err(ToolPortError::into_app_error)?;
+        return Err(AppError::PolicyRefused {
+            rule: refusal.rule.as_str().to_owned(),
+            decision: None,
+        });
+    }
 
     if let Some(rule) = policy.refused_rule() {
         journal
@@ -1037,6 +1095,7 @@ mod tests {
                 },
                 policy_context: context(auth.actor().as_str(), invocation.bot_id.as_str()),
                 idempotency_key: None,
+                preflight_refusal: None,
             })
         }
 

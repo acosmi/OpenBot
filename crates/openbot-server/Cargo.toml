@@ -97,6 +97,8 @@ tower = { workspace = true, features = ["util"] }
 # 真实 TCP/WebSocket handshake + frame 测试；不进 production dependency 图。
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
+# Official pinned RMCP server used only by the real callback HTTP integration test.
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 aes-gcm.workspace = true
 ed25519-dalek.workspace = true
 base64.workspace = true

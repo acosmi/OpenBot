@@ -20,6 +20,7 @@ use openbot_domain::remote_callback::{
 };
 use openbot_domain::vault::SecretBytes;
 
+use crate::mcp_catalog::{McpCatalogError, PostgresMcpCatalog};
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 use crate::repo::people_admin::lock_people;
 
@@ -285,6 +286,7 @@ pub struct PostgresRemoteCallbackAuthenticator {
     single_user: bool,
     signer: Arc<RemoteRunAssertionSigner>,
     checkpoint_key: Arc<SecretBytes>,
+    mcp_catalog: Option<Arc<PostgresMcpCatalog>>,
 }
 
 impl PostgresRemoteCallbackAuthenticator {
@@ -309,7 +311,15 @@ impl PostgresRemoteCallbackAuthenticator {
             single_user,
             signer,
             checkpoint_key: Arc::new(SecretBytes::new(checkpoint_key)),
+            mcp_catalog: None,
         })
+    }
+
+    /// Attach the same authoritative catalog used to construct remote RunAgentInput.
+    #[must_use]
+    pub fn with_mcp_catalog(mut self, catalog: Arc<PostgresMcpCatalog>) -> Self {
+        self.mcp_catalog = Some(catalog);
+        self
     }
 
     async fn refuse(
@@ -357,6 +367,7 @@ impl core::fmt::Debug for PostgresRemoteCallbackAuthenticator {
             .field("single_user", &self.single_user)
             .field("signer", &"[redacted]")
             .field("checkpoint_key", &"[redacted]")
+            .field("mcp_catalog", &self.mcp_catalog.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -557,7 +568,24 @@ impl RemoteCallbackAuthenticator for PostgresRemoteCallbackAuthenticator {
         {
             return Err(RemoteCallbackAuthError::InvalidInput { field: "name" });
         }
-        let current_tools = RemoteToolSet::empty();
+        let current_tools = match &self.mcp_catalog {
+            Some(catalog) => RemoteToolSet::new(
+                catalog
+                    .granted_tools_in_transaction(
+                        &transaction,
+                        &assertion.scope().bot,
+                        &assertion.scope().actor,
+                    )
+                    .await
+                    .map_err(map_callback_catalog_error)?
+                    .into_iter()
+                    .map(|tool| tool.model_name),
+            )
+            .map_err(|_| RemoteCallbackAuthError::Corrupt {
+                field: "remote_tool_set",
+            })?,
+            None => RemoteToolSet::empty(),
+        };
         if assertion.tool_set_digest() != current_tools.digest()
             || !current_tools.contains(requested_tool)
         {
@@ -593,4 +621,12 @@ fn callback_unavailable(
 ) -> RemoteCallbackAuthError {
     tracing::error!(operation, error = %error, "remote callback PostgreSQL 操作失败");
     RemoteCallbackAuthError::Unavailable
+}
+
+fn map_callback_catalog_error(error: McpCatalogError) -> RemoteCallbackAuthError {
+    match error {
+        McpCatalogError::Unavailable => RemoteCallbackAuthError::Unavailable,
+        McpCatalogError::NotVisible => RemoteCallbackAuthError::ToolNotVisible,
+        McpCatalogError::Corrupt { field } => RemoteCallbackAuthError::Corrupt { field },
+    }
 }

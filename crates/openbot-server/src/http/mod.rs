@@ -61,6 +61,7 @@ use axum::extract::{DefaultBodyLimit, Request};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::{delete, get, post};
+use openbot_agent::RemoteAgentToolInvoker;
 use openbot_application::{ApplicationService, RemoteCallbackAuthenticator};
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_infra::auth::oidc::{OidcLoginCoordinator, PreAuthSurface};
@@ -96,6 +97,7 @@ struct StateInner {
     secure_session_cookie: bool,
     dynamic_sso: Option<Arc<DynamicSsoService>>,
     remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
+    remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
 }
 
 impl ServerState {
@@ -170,6 +172,12 @@ impl ServerState {
         self.inner.remote_callback_auth.as_deref()
     }
 
+    /// Governed callback executor; absent means authenticated calls fail closed with 503.
+    #[must_use]
+    pub fn remote_callback_tools(&self) -> Option<&dyn RemoteAgentToolInvoker> {
+        self.inner.remote_callback_tools.as_deref()
+    }
+
     /// 敏感写 guard；未注入时 fail-closed 503，不给 handler 任何“暂时跳过”路径。
     pub async fn authorize_sensitive_write(
         &self,
@@ -236,6 +244,7 @@ pub struct ServerBuilder {
     secure_session_cookie: bool,
     dynamic_sso: Option<Arc<DynamicSsoService>>,
     remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
+    remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
 }
 
 impl ServerBuilder {
@@ -255,6 +264,7 @@ impl ServerBuilder {
             secure_session_cookie: false,
             dynamic_sso: None,
             remote_callback_auth: None,
+            remote_callback_tools: None,
         }
     }
 
@@ -339,6 +349,13 @@ impl ServerBuilder {
         self
     }
 
+    /// Attach the callback side of the same governed Agent tool gateway used by built-in runs.
+    #[must_use]
+    pub fn with_remote_callback_tools(mut self, tools: Arc<dyn RemoteAgentToolInvoker>) -> Self {
+        self.remote_callback_tools = Some(tools);
+        self
+    }
+
     /// 收口成 [`ServerState`]。
     #[must_use]
     pub fn build(self) -> ServerState {
@@ -356,6 +373,7 @@ impl ServerBuilder {
                 secure_session_cookie: self.secure_session_cookie,
                 dynamic_sso: self.dynamic_sso,
                 remote_callback_auth: self.remote_callback_auth,
+                remote_callback_tools: self.remote_callback_tools,
             }),
         }
     }

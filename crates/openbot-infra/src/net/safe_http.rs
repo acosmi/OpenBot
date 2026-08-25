@@ -286,15 +286,27 @@ enum SafeMethod {
     Get,
     PostForm,
     PostJson,
+    McpGet,
+    McpPost,
+    McpDelete,
 }
 
 impl SafeMethod {
     const fn as_http(self) -> Method {
         match self {
-            Self::Get => Method::GET,
-            Self::PostForm | Self::PostJson => Method::POST,
+            Self::Get | Self::McpGet => Method::GET,
+            Self::PostForm | Self::PostJson | Self::McpPost => Method::POST,
+            Self::McpDelete => Method::DELETE,
         }
     }
+}
+
+/// MCP's closed HTTP method subset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum McpHttpMethod {
+    Get,
+    Post,
+    Delete,
 }
 
 /// 封闭请求计划。没有自由 method/header 名；敏感字段的 Debug 永远只显示长度。
@@ -305,6 +317,7 @@ pub struct SafeHttpRequest {
     body: Bytes,
     authorization: Option<AuthorizationValue>,
     provider_authentication: Option<ProviderAuthentication>,
+    protocol_headers: HeaderMap,
     budget: SafeHttpBudget,
 }
 
@@ -323,6 +336,7 @@ impl SafeHttpRequest {
             body: Bytes::new(),
             authorization: None,
             provider_authentication: None,
+            protocol_headers: HeaderMap::new(),
             budget,
         })
     }
@@ -345,6 +359,7 @@ impl SafeHttpRequest {
             body: Bytes::from(body),
             authorization,
             provider_authentication: None,
+            protocol_headers: HeaderMap::new(),
             budget,
         })
     }
@@ -377,6 +392,52 @@ impl SafeHttpRequest {
             body: Bytes::from(body),
             authorization,
             provider_authentication: None,
+            protocol_headers: HeaderMap::new(),
+            budget,
+        })
+    }
+
+    /// MCP Streamable HTTP request. Only protocol-defined headers are accepted.
+    pub(crate) fn mcp(
+        url: Url,
+        scheme_policy: SchemePolicy,
+        method: McpHttpMethod,
+        body: Vec<u8>,
+        authorization: Option<AuthorizationValue>,
+        mut protocol_headers: HeaderMap,
+        budget: SafeHttpBudget,
+    ) -> Result<Self, SafeHttpError> {
+        validate_url(&url, scheme_policy)?;
+        if protocol_headers.len() > 64
+            || protocol_headers.iter().any(|(name, value)| {
+                !is_allowed_mcp_header(name)
+                    || value.as_bytes().len() > 8 * 1024
+                    || value.as_bytes().contains(&0)
+            })
+        {
+            return Err(SafeHttpError::InvalidHeader);
+        }
+        for value in protocol_headers.values_mut() {
+            value.set_sensitive(true);
+        }
+        let safe_method = match method {
+            McpHttpMethod::Get => SafeMethod::McpGet,
+            McpHttpMethod::Post => SafeMethod::McpPost,
+            McpHttpMethod::Delete => SafeMethod::McpDelete,
+        };
+        if (safe_method == SafeMethod::McpPost && body.len() > MAX_JSON_REQUEST_BODY_BYTES)
+            || (safe_method != SafeMethod::McpPost && !body.is_empty())
+        {
+            return Err(SafeHttpError::InvalidBudget);
+        }
+        Ok(Self {
+            url,
+            scheme_policy,
+            method: safe_method,
+            body: Bytes::from(body),
+            authorization,
+            provider_authentication: None,
+            protocol_headers,
             budget,
         })
     }
@@ -415,6 +476,7 @@ impl fmt::Debug for SafeHttpRequest {
                 "has_provider_authentication",
                 &self.provider_authentication.is_some(),
             )
+            .field("protocol_header_count", &self.protocol_headers.len())
             .field("budget", &self.budget)
             .finish()
     }
@@ -674,10 +736,11 @@ impl SafeDialer {
             if !same_origin {
                 request.authorization = None;
                 request.provider_authentication = None;
+                request.protocol_headers.clear();
             }
 
             match (request.method, raw.status) {
-                (SafeMethod::Get, _) => {}
+                (SafeMethod::Get | SafeMethod::McpGet, _) => {}
                 (SafeMethod::PostForm | SafeMethod::PostJson, StatusCode::SEE_OTHER) => {
                     request.method = SafeMethod::Get;
                     request.body = Bytes::new();
@@ -698,6 +761,29 @@ impl SafeDialer {
                 }
                 (SafeMethod::PostForm | SafeMethod::PostJson, _) => {
                     return Err(SafeHttpError::RedirectInvalid);
+                }
+                (SafeMethod::McpPost, StatusCode::SEE_OTHER) => {
+                    request.method = SafeMethod::McpGet;
+                    request.body = Bytes::new();
+                }
+                (
+                    SafeMethod::McpPost,
+                    StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT,
+                ) => {
+                    if !same_origin {
+                        return Err(SafeHttpError::SensitiveRedirectRejected);
+                    }
+                }
+                (SafeMethod::McpPost, StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND) => {
+                    return Err(SafeHttpError::RedirectMethodRejected);
+                }
+                (SafeMethod::McpPost, _) => return Err(SafeHttpError::RedirectInvalid),
+                (
+                    SafeMethod::McpDelete,
+                    StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT,
+                ) if same_origin => {}
+                (SafeMethod::McpDelete, _) => {
+                    return Err(SafeHttpError::RedirectMethodRejected);
                 }
             }
 
@@ -826,7 +912,10 @@ fn build_http_request(request: &SafeHttpRequest) -> Result<Request<Full<Bytes>>,
         None => request.url.path().to_owned(),
     };
     let authority = &request.url[Position::BeforeHost..Position::AfterPort];
-    let accept = if request.method == SafeMethod::PostJson {
+    let accept = if matches!(
+        request.method,
+        SafeMethod::PostJson | SafeMethod::McpGet | SafeMethod::McpPost | SafeMethod::McpDelete
+    ) {
         STREAM_ACCEPT
     } else {
         JSON_ACCEPT
@@ -840,7 +929,7 @@ fn build_http_request(request: &SafeHttpRequest) -> Result<Request<Full<Bytes>>,
         .header(ACCEPT, accept);
     if request.method == SafeMethod::PostForm {
         builder = builder.header(CONTENT_TYPE, FORM_CONTENT_TYPE);
-    } else if request.method == SafeMethod::PostJson {
+    } else if matches!(request.method, SafeMethod::PostJson | SafeMethod::McpPost) {
         builder = builder.header(CONTENT_TYPE, JSON_CONTENT_TYPE);
     }
     if let Some(authorization) = &request.authorization {
@@ -857,9 +946,19 @@ fn build_http_request(request: &SafeHttpRequest) -> Result<Request<Full<Bytes>>,
         }
         None => {}
     }
+    for (name, value) in &request.protocol_headers {
+        builder = builder.header(name, value.clone());
+    }
     builder
         .body(Full::new(request.body.clone()))
         .map_err(|_| SafeHttpError::ProtocolFailed)
+}
+
+fn is_allowed_mcp_header(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "mcp-session-id" | "mcp-protocol-version" | "last-event-id" | "mcp-method" | "mcp-name"
+    ) || name.as_str().starts_with("mcp-param-")
 }
 
 async fn read_bounded_body(mut body: Incoming, max_bytes: usize) -> Result<Vec<u8>, SafeHttpError> {

@@ -183,6 +183,8 @@ impl TakeoverPhase {
 pub enum AuditFact {
     /// 被调用工具在 catalog 中的稳定名。
     ToolName(AuditIdentifier),
+    /// 该次工具调用的权威 Bot；绝不取自模型或 callback body。
+    Bot(AuditIdentifier),
     /// 该次调用的 effect 分类结果。
     EffectClass(AuditLabel),
     /// 该分类是否由"无法识别的 effect 字符串"降级而来（§8.2）。
@@ -272,6 +274,7 @@ impl AuditFact {
     pub const fn field(&self) -> &'static str {
         match self {
             Self::ToolName(_) => "tool_name",
+            Self::Bot(_) => "bot",
             Self::EffectClass(_) => "effect_class",
             Self::EffectDowngraded(_) => "effect_downgraded",
             Self::CanonicalArgsHash(_) => "canonical_args_hash",
@@ -310,6 +313,7 @@ impl AuditFact {
     fn to_json(&self) -> Value {
         match self {
             Self::ToolName(value)
+            | Self::Bot(value)
             | Self::TargetId(value)
             | Self::DecisionId(value)
             | Self::PolicyVersion(value)
@@ -375,6 +379,7 @@ impl AuditFact {
         writer.str(self.field());
         match self {
             Self::ToolName(value)
+            | Self::Bot(value)
             | Self::TargetId(value)
             | Self::DecisionId(value)
             | Self::PolicyVersion(value)
@@ -428,6 +433,7 @@ impl AuditFact {
 /// `field_ledger_is_disjoint_from_upstream_sensitive_keys`（台账 → 上游敏感键黑名单）。
 pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "tool_name",
+    "bot",
     "effect_class",
     "effect_downgraded",
     "canonical_args_hash",
@@ -571,6 +577,7 @@ mod tests {
     fn every_variant() -> Vec<AuditFact> {
         vec![
             AuditFact::ToolName(identifier("browser.click")),
+            AuditFact::Bot(identifier("bot-1")),
             AuditFact::EffectClass(AuditLabel::new("execute")),
             AuditFact::EffectDowngraded(true),
             AuditFact::CanonicalArgsHash(Sha256Digest::of(b"args")),
