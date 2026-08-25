@@ -36,7 +36,7 @@ use crate::auth::Role;
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::mcp::{
     McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
-    McpOAuthClientRegistration, McpOAuthReturnTo,
+    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
 };
 use crate::memory::{
     CorrectMemory, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, RecallMemories,
@@ -247,6 +247,18 @@ pub enum AppCommand {
         /// Redacted, zeroizing registration input.
         registration: McpOAuthClientRegistration,
     },
+
+    /// Add a server from the compile-time reviewed catalogue; callers provide no URL.
+    AddCuratedMcpServer {
+        /// Exact catalogue key.
+        key: String,
+    },
+
+    /// Refresh one configured server catalogue under admin authority.
+    RefreshMcpServer {
+        /// Stable configured server id.
+        server_id: String,
+    },
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -300,6 +312,8 @@ pub enum AppReply {
     McpConnectionDisconnected(McpConnectionDisconnected),
     /// [`AppCommand::RegisterMcpOAuthClient`] response.
     McpOAuthClientRegistered(McpOAuthClientRegistered),
+    /// [`AppCommand::AddCuratedMcpServer`] or [`AppCommand::RefreshMcpServer`] response.
+    McpServerMutation(McpServerMutation),
 }
 
 /// 探活结果。

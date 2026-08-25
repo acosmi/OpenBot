@@ -155,7 +155,7 @@ impl McpBearerToken {
         Ok(Self(Arc::new(token)))
     }
 
-    fn expose(&self) -> Result<&str, McpClientError> {
+    pub(crate) fn expose_for_vendor(&self) -> Result<&str, McpClientError> {
         core::str::from_utf8(self.0.expose()).map_err(|_| McpClientError::Transport)
     }
 }
@@ -512,7 +512,9 @@ impl SafeRmcpHttpClient {
         let Some(token) = &self.bearer else {
             return Ok(None);
         };
-        let token = token.expose().map_err(|_| SafeRmcpHttpError::Transport)?;
+        let token = token
+            .expose_for_vendor()
+            .map_err(|_| SafeRmcpHttpError::Transport)?;
         let mut value = Zeroizing::new(String::with_capacity(token.len() + 7));
         value.push_str("Bearer ");
         value.push_str(token);

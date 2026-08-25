@@ -213,6 +213,27 @@ baseline_0012.sql → native_0013.sql → … → native_0018.sql → schema_fac
 client 时，事务先把所有既有 MCP grant 固定到旧 generation，再推进 server generation；因此旧
 grant 当场不可见，下一次真实 catalog refresh 只能把它写成 `suspended_missing`，不得自动复活。
 
+## schema-0019.json：封闭 vendor transport identity
+
+schema-0019.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0019.sql → schema_facts.sql
+由 native_0019 的显式 regeneration guard 机械生成，SHA-256
+8e0170ca5893c86d7131c01f62a93ea84caf371bfae2fe6d2e4f4edd8060d4d1。
+
+| 项 | 0019 数量 | 相对 0018 |
+| --- | ---: | ---: |
+| public 表 | 41 | 0 |
+| 列 | 369 | +1 |
+| NOT NULL 列 | 268 | 0 |
+| 约束 | 200 | +1 |
+| 索引 | 80 | 0 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增 `mcp_servers.transport` nullable 且无回填；legacy `NULL` 在读取时等价 `mcp`。具名
+CHECK 只接受 `mcp` / `google_drive_rest`，使 Google Drive GA REST 与 remote MCP 的协议选择
+进入 durable catalog/grant identity，未审查字符串不能成为生产执行器。
+
 ## 复算命令
 
 ```bash
@@ -242,6 +263,9 @@ python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0017.json',en
 
 # post-0018
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0018.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 368 268 199 80 4
+
+# post-0019
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0019.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 369 268 200 80 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

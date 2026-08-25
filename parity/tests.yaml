@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 811
+    expect: 782
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -7461,141 +7461,155 @@ entries:
   - id: "server-tests-google-drive-rest--the-adapter-is-the-transport-the-catalog--the-drive-entry-resolves-to-this-adapter-not-to-mcp"
     upstream: "server/tests/google-drive-rest.test.ts::the adapter is the transport the catalogue asks for"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::the_drive_entry_resolves_to_this_adapter_not_to_mcp"
+    target: "openbot_infra::tests::google_drive_runtime::the_drive_entry_resolves_to_this_adapter_not_to_mcp"
     owner: openbot-agent
     test_id: T-TEST-0705
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch 13 本机 `google_drive_runtime` 30/0/1：native 0019 闭集把固定 Drive entry 解为 `GoogleDriveRest`，并以负对照证明 legacy/custom 缺 entry 仍解为 MCP。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[845]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「the Drive entry resolves to this adapter, not to MCP」。"
   - id: "server-tests-google-drive-rest--the-adapter-is-the-transport-the-catalog--a-server-with-no-catalogue-entry-falls-back-to-mcp"
     upstream: "server/tests/google-drive-rest.test.ts::the adapter is the transport the catalogue asks for"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::a_server_with_no_catalogue_entry_falls_back_to_mcp"
+    target: "openbot_infra::tests::google_drive_runtime::a_server_with_no_catalogue_entry_falls_back_to_mcp"
     owner: openbot-agent
     test_id: T-TEST-0706
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "同一 30/0/1：`mcp` 明确解为 `VendorTransportKind::Mcp`，未审查 transport 值构造性拒绝；不会借 Drive adapter。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[846]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「a server with no catalogue entry falls back to MCP」。"
   - id: "server-tests-google-drive-rest--the-adapter-is-the-transport-the-catalog--every-advertised-tool-is-one-the-dispatcher-handles"
     upstream: "server/tests/google-drive-rest.test.ts::the adapter is the transport the catalogue asks for"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::every_advertised_tool_is_one_the_dispatcher_handles"
+    target: "openbot_infra::tests::google_drive_runtime::every_advertised_tool_is_one_the_dispatcher_handles"
     owner: openbot-agent
     test_id: T-TEST-0707
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "同一真实 Axum/SafeDialer 回环：4 条静态 tool 逐条进入 dispatcher；缺参得到有类型 refusal，recent 真发 1 次网络，未知 tool 不在 advertised 集。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[847]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「every advertised tool is one the dispatcher handles」。"
   - id: "server-tests-google-drive-rest--a-search-becomes-the-right-drive-request--the-query-is-sent-as-a-drive-q-clause-with-the-caller-s"
     upstream: "server/tests/google-drive-rest.test.ts::a search becomes the right Drive request"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::the_query_is_sent_as_a_drive_q_clause_with_the_caller_s"
+    target: "openbot_infra::tests::google_drive_runtime::the_query_is_sent_as_a_drive_q_clause_with_the_callers_token"
     owner: openbot-agent
     test_id: T-TEST-0708
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "真实回环观察 `/drive/v3/files`、逐字 q=`name contains 'roadmap' or fullText contains 'roadmap'` 与 `Authorization: Bearer test-token`。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[849]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「the query is sent as a Drive q clause, with the caller's token」。"
   - id: "server-tests-google-drive-rest--a-search-becomes-the-right-drive-request--an-apostrophe-in-the-query-cannot-break-out-of-the-claus"
     upstream: "server/tests/google-drive-rest.test.ts::a search becomes the right Drive request"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::an_apostrophe_in_the_query_cannot_break_out_of_the_claus"
+    target: "openbot_infra::tests::google_drive_runtime::an_apostrophe_in_the_query_cannot_break_out_of_the_clause"
     owner: openbot-agent
     test_id: T-TEST-0709
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "真实回环 URL decode 后 q 逐字含 `don\\'t ship`，反斜杠先双写、apostrophe 再转义，无法闭合 Drive clause。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[850]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「an apostrophe in the query cannot break out of the clause」。"
   - id: "server-tests-google-drive-rest--a-search-becomes-the-right-drive-request--recent-files-are-ordered-by-drive-rather-than-filtered"
     upstream: "server/tests/google-drive-rest.test.ts::a search becomes the right Drive request"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::recent_files_are_ordered_by_drive_rather_than_filtered"
+    target: "openbot_infra::tests::google_drive_runtime::recent_files_are_ordered_by_drive_rather_than_filtered"
     owner: openbot-agent
     test_id: T-TEST-0710
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "真实回环 query 精确有 `orderBy=modifiedTime desc` 且没有 `q`；pageSize 固定 25。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[851]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「recent files are ordered by Drive rather than filtered」。"
   - id: "server-tests-google-drive-rest--a-search-becomes-the-right-drive-request--a-search-with-nothing-to-search-for-is-refused-before-th"
     upstream: "server/tests/google-drive-rest.test.ts::a search becomes the right Drive request"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::a_search_with_nothing_to_search_for_is_refused_before_th"
+    target: "openbot_infra::tests::google_drive_runtime::a_search_with_nothing_to_search_for_is_refused_before_the_network"
     owner: openbot-agent
     test_id: T-TEST-0711
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "空 query 返回 `is_error=true`，回环 request 记录严格为 0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[852]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「a search with nothing to search for is refused before the network」。"
   - id: "server-tests-google-drive-rest--what-a-model-is-told--a-match-is-named-with-the-id-it-needs-to-read-it"
     upstream: "server/tests/google-drive-rest.test.ts::what a model is told"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::a_match_is_named_with_the_id_it_needs_to_read_it"
+    target: "openbot_infra::tests::google_drive_runtime::a_match_is_named_with_the_id_it_needs_to_read_it"
     owner: openbot-agent
     test_id: T-TEST-0712
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "真实 Drive JSON 回环投影同时包含 Roadmap、abc123 与已验证 HTTPS vendor link；PG 端到端又证明 first-party provenance header 随结果进入 Agent。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[854]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「a match is named, with the id it needs to read it」。"
   - id: "server-tests-google-drive-rest--what-a-model-is-told--nothing-found-says-so-and-is-not-an-error"
     upstream: "server/tests/google-drive-rest.test.ts::what a model is told"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::nothing_found_says_so_and_is_not_an_error"
+    target: "openbot_infra::tests::google_drive_runtime::nothing_found_says_so_and_is_not_an_error"
     owner: openbot-agent
     test_id: T-TEST-0713
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "真实 `{files:[]}` 回环得到非 error 且显式含 `Nothing was found`，不是空字符串。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[855]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「nothing found says so, and is not an error」。"
   - id: "server-tests-google-drive-rest--what-a-model-is-told--google-s-own-refusal-is-passed-through-not-replaced"
     upstream: "server/tests/google-drive-rest.test.ts::what a model is told"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::google_s_own_refusal_is_passed_through_not_replaced"
+    target: "openbot_infra::tests::google_drive_runtime::googles_own_refusal_is_passed_through_not_replaced"
     owner: openbot-agent
     test_id: T-TEST-0714
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "真实 403 回环的 bounded Google error envelope 保留可修复句 `has not been used in project 1` 与 403，同时标为 tool error；body 不进日志/DB。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[856]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「Google's own refusal is passed through, not replaced」。"
   - id: "server-tests-google-drive-rest--reading-a-file-asks-drive-what-it-is-fir--a-google-doc-is-exported-as-text-never-downloaded"
     upstream: "server/tests/google-drive-rest.test.ts::reading a file asks Drive what it is first"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::a_google_doc_is_exported_as_text_never_downloaded"
+    target: "openbot_infra::tests::google_drive_runtime::a_google_doc_is_exported_as_text_never_downloaded"
     owner: openbot-agent
     test_id: T-TEST-0715
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "真实两次请求：先 metadata，再 `/files/doc1/export?mimeType=text/plain`；没有 `alt=media`。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[858]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「a Google Doc is exported as text, never downloaded」。"
   - id: "server-tests-google-drive-rest--reading-a-file-asks-drive-what-it-is-fir--an-ordinary-text-file-is-downloaded"
     upstream: "server/tests/google-drive-rest.test.ts::reading a file asks Drive what it is first"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::an_ordinary_text_file_is_downloaded"
+    target: "openbot_infra::tests::google_drive_runtime::an_ordinary_text_file_is_downloaded"
     owner: openbot-agent
     test_id: T-TEST-0716
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "真实 metadata 判为 `text/plain` 后第二请求精确 `/files/txt1?alt=media`，不走 export。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[859]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「an ordinary text file is downloaded」。"
   - id: "server-tests-google-drive-rest--reading-a-file-asks-drive-what-it-is-fir--a-binary-file-is-declined-instead-of-being-read-as-text"
     upstream: "server/tests/google-drive-rest.test.ts::reading a file asks Drive what it is first"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::a_binary_file_is_declined_instead_of_being_read_as_text"
+    target: "openbot_infra::tests::google_drive_runtime::a_binary_file_is_declined_instead_of_being_read_as_text"
     owner: openbot-agent
     test_id: T-TEST-0717
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "PDF metadata 后返回 `is_error=true` 且含 `application/pdf`；回环 request 总数严格为 1，未下载正文。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[860]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「a binary file is declined instead of being read as text」。"
   - id: "server-tests-google-drive-rest--reading-a-file-asks-drive-what-it-is-fir--a-file-id-is-required-and-no-request-is-made-without-one"
     upstream: "server/tests/google-drive-rest.test.ts::reading a file asks Drive what it is first"
     label: 替代
-    target: "openbot_agent::connectors::google_drive::tests::a_file_id_is_required_and_no_request_is_made_without_one"
+    target: "openbot_infra::tests::google_drive_runtime::a_file_id_is_required_and_no_request_is_made_without_one"
     owner: openbot-agent
     test_id: T-TEST-0718
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "缺 fileId 返回有类型 error，回环 request 记录严格为 0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[861]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。上游用例标题：「a file id is required, and no request is made without one」。"
   # ---------------------------------------------------------------------------
@@ -8231,61 +8245,67 @@ entries:
   - id: "server-tests-plugin-catalogue--which-servers-this-deployment-will-talk--a-pinned-host-matches-only-itself"
     upstream: "server/tests/plugin-catalogue.test.ts::which servers this deployment will talk to"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::a_pinned_host_matches_only_itself"
+    target: "openbot_infra::tests::google_drive_runtime::a_pinned_host_matches_only_itself"
     owner: openbot-agent
     test_id: T-TEST-0778
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch 13 `google_drive_runtime` 30/0/1：唯一 entry 的 GA base 逐字固定；lookalike `www.googleapis.com.evil` 与任意 vendor host 均不相等，POST DTO 又构造性没有 URL 字段。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[937]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「a pinned host matches only itself」。"
   - id: "server-tests-plugin-catalogue--which-servers-this-deployment-will-talk--an-entry-whose-pattern-this-build-never-compiled-is-refu"
     upstream: "server/tests/plugin-catalogue.test.ts::which servers this deployment will talk to"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::an_entry_whose_pattern_this_build_never_compiled_is_refu"
+    target: "openbot_infra::tests::google_drive_runtime::an_entry_whose_pattern_this_build_never_compiled_is_refused"
     owner: openbot-agent
     test_id: T-TEST-0779
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "同一 30/0/1：本 build 没有 per-instance pattern，`tenant.google-drive` 解析为 None；不存在动态 regex/host fallback。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[938]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「an entry whose pattern this build never compiled is refused」。"
   - id: "server-tests-plugin-catalogue--which-servers-this-deployment-will-talk--a-server-not-in-the-catalogue-resolves-to-nothing"
     upstream: "server/tests/plugin-catalogue.test.ts::which servers this deployment will talk to"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::a_server_not_in_the_catalogue_resolves_to_nothing"
+    target: "openbot_infra::tests::google_drive_runtime::a_server_not_in_the_catalogue_resolves_to_nothing"
     owner: openbot-agent
     test_id: T-TEST-0780
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "`not-a-vendor` 对 compile-time resolver 精确为 None；curated add application port 同样只接受 `google-drive`。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[939]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「a server not in the catalogue resolves to nothing」。"
   - id: "server-tests-plugin-catalogue--which-servers-this-deployment-will-talk--the-path-is-the-catalogue-s-never-the-caller-s"
     upstream: "server/tests/plugin-catalogue.test.ts::which servers this deployment will talk to"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::the_path_is_the_catalogue_s_never_the_caller_s"
+    target: "openbot_infra::tests::google_drive_runtime::the_path_is_the_catalogues_never_the_callers"
     owner: openbot-agent
     test_id: T-TEST-0781
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "entry path 逐字 `/drive/v3`；`google-drive/other-path` 不是 key；Server add body 的 unknown `url` 实测 400、typed command 只有 key。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[940]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「the path is the catalogue's, never the caller's」。"
   - id: "server-tests-plugin-catalogue--which-servers-this-deployment-will-talk--every-catalogue-entry-pins-a-host-or-an-anchored-pattern"
     upstream: "server/tests/plugin-catalogue.test.ts::which servers this deployment will talk to"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::every_catalogue_entry_pins_a_host_or_an_anchored_pattern"
+    target: "openbot_infra::tests::google_drive_runtime::every_catalogue_entry_pins_a_host_or_an_anchored_pattern"
     owner: openbot-agent
     test_id: T-TEST-0782
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "唯一 entry URL 解析为 exact `www.googleapis.com`，无 userinfo/password；未知 key 没有 entry。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[941]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「every catalogue entry pins a host or an anchored pattern」。"
   - id: "server-tests-plugin-catalogue--whose-credential-a-server-uses--every-entry-says-which-rather-than-leaving-it-to-be-infe"
     upstream: "server/tests/plugin-catalogue.test.ts::whose credential a server uses"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::every_entry_says_which_rather_than_leaving_it_to_be_infe"
+    target: "openbot_infra::tests::google_drive_runtime::every_entry_says_which_credential_principal_it_uses"
     owner: openbot-agent
     test_id: T-TEST-0783
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "compile-time `GoogleDriveCatalogueEntry.authentication` 是封闭 enum `UserOAuth`；PG 端到端又证明 other actor 工具=0、token call=0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[943]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「every entry says which, rather than leaving it to be inferred」。"
   - id: "server-tests-plugin-catalogue--whose-credential-a-server-uses--a-user-oauth-entry-pins-its-own-endpoints-over-https-and"
@@ -8297,86 +8317,94 @@ entries:
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
     status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[944]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    done_evidence: "Batch 12 本机真实 HTTP：resource server 401 challenge 指向非 fallback PRM；PRM→exact issuer→RFC8414/OIDC discovery 只接受 S256/登记 auth method，Server production 只允许 HTTPS callback/token/metadata，scope 从 PRM 且 RFC8707 resource 同时进入 authorization/token。"
+    done_evidence: "Batch 12 MCP 真实 HTTP：PRM→exact issuer→RFC8414/OIDC discovery 只接受 S256/登记 auth method、HTTPS callback/token/metadata、RFC8707 resource。Batch 13 又以 compile-time Google entry 与真实 code/refresh 回环证明 auth/token/revoke 三 endpoint 固定且 production 为 HTTPS、scope 只有 drive.readonly。"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「a user-oauth entry pins its own endpoints over https and asks for a scope」。"
   - id: "server-tests-plugin-catalogue--whose-credential-a-server-uses--a-vendor-this-build-has-never-heard-of-is-not-an-entry"
     upstream: "server/tests/plugin-catalogue.test.ts::whose credential a server uses"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::a_vendor_this_build_has_never_heard_of_is_not_an_entry"
+    target: "openbot_infra::tests::google_drive_runtime::a_vendor_this_build_has_never_heard_of_is_not_an_entry"
     owner: openbot-agent
     test_id: T-TEST-0785
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "`community-drive-wrapper` 精确为 None；没有把相同 API 的第三方 wrapper 当 Google。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[945]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「a vendor this build has never heard of is not an entry」。"
   - id: "server-tests-plugin-catalogue--google-drive--resolves-to-the-one-address-google-publishes-for-it"
     upstream: "server/tests/plugin-catalogue.test.ts::Google Drive"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::resolves_to_the_one_address_google_publishes_for_it"
+    target: "openbot_infra::tests::google_drive_runtime::resolves_to_the_one_address_google_publishes_for_it"
     owner: openbot-agent
     test_id: T-TEST-0786
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "entry、native row 与 catalog identity 三处共同钉 `https://www.googleapis.com/drive/v3`；PG add+refresh 得 4 tools。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[947]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「resolves to the one address Google publishes for it」。"
   - id: "server-tests-plugin-catalogue--google-drive--is-reached-as-the-person-asking-not-as-the-deployment"
     upstream: "server/tests/plugin-catalogue.test.ts::Google Drive"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::is_reached_as_the_person_asking_not_as_the_deployment"
+    target: "openbot_infra::tests::google_drive_runtime::is_reached_as_the_person_asking_not_as_the_deployment"
     owner: openbot-agent
     test_id: T-TEST-0787
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "compile-time auth=`UserOAuth`；PG17 owner 获得个人 refresh/access，other actor catalog=0 且 token endpoint call=0，没有 deployment bearer fallback。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[948]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「is reached as the person asking, not as the deployment」。"
   - id: "server-tests-plugin-catalogue--google-drive--asks-only-to-read"
     upstream: "server/tests/plugin-catalogue.test.ts::Google Drive"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::asks_only_to_read"
+    target: "openbot_infra::tests::google_drive_runtime::asks_only_to_read"
     owner: openbot-agent
     test_id: T-TEST-0788
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "entry/authorization URL/code response/persisted connection/refresh response五处 scope 逐字等于 `https://www.googleapis.com/auth/drive.readonly`；偏离时 fail-closed。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[949]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「asks only to read」。"
   - id: "server-tests-plugin-catalogue--google-drive--still-calls-its-writes-writes-and-lets-google-be-the-one"
     upstream: "server/tests/plugin-catalogue.test.ts::Google Drive"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::still_calls_its_writes_writes_and_lets_google_be_the_one"
+    target: "openbot_infra::tests::google_drive_runtime::still_calls_its_writes_writes_and_lets_google_be_the_one_to_refuse_them"
     owner: openbot-agent
     test_id: T-TEST-0789
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "`create_file`/`copy_file` 在 first-party classifier 均为 Write；当前四条 advertised/dispatch 工具仍全是 Read，read-only scope 又独立阻断 vendor 写入。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[950]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「still calls its writes writes, and lets Google be the one to refuse them」。"
   - id: "server-tests-plugin-catalogue--what-a-tool-does--a-named-write-is-a-write"
     upstream: "server/tests/plugin-catalogue.test.ts::what a tool does"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::a_named_write_is_a_write"
+    target: "openbot_infra::tests::google_drive_runtime::a_named_write_is_a_write"
     owner: openbot-agent
     test_id: T-TEST-0790
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "`google_drive_effect(copy_file,true)` 实得 `Effect::Write`。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[952]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「a named write is a write」。"
   - id: "server-tests-plugin-catalogue--what-a-tool-does--an-advertised-tool-that-is-not-a-named-write-is-a-read"
     upstream: "server/tests/plugin-catalogue.test.ts::what a tool does"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::an_advertised_tool_that_is_not_a_named_write_is_a_read"
+    target: "openbot_infra::tests::google_drive_runtime::an_advertised_tool_that_is_not_a_named_write_is_a_read"
     owner: openbot-agent
     test_id: T-TEST-0791
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "`google_drive_effect(search_files,true)` 实得 Read；catalog refresh 对新 Drive tool 调同一生产函数。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[953]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「an advertised tool that is not a named write is a read」。"
   - id: "server-tests-plugin-catalogue--what-a-tool-does--a-tool-the-server-never-advertised-is-a-write"
     upstream: "server/tests/plugin-catalogue.test.ts::what a tool does"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::a_tool_the_server_never_advertised_is_a_write"
+    target: "openbot_infra::tests::google_drive_runtime::a_tool_the_server_never_advertised_is_a_write"
     owner: openbot-agent
     test_id: T-TEST-0792
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "`google_drive_effect(unknown,false)` 实得 Write；实际 dispatcher 对未知名进一步返回 ToolMissing，不能执行。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[954]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「a tool the server never advertised is a write」。"
   - id: "server-tests-plugin-catalogue--what-a-tool-does--every-tool-on-a-server-nobody-reviewed-is-a-write"
@@ -8392,11 +8420,12 @@ entries:
   - id: "server-tests-plugin-catalogue--what-a-tool-does--copying-is-a-write-and-reading-a-file-s-content-is-not"
     upstream: "server/tests/plugin-catalogue.test.ts::what a tool does"
     label: 替代
-    target: "openbot_agent::mcp::catalogue::tests::copying_is_a_write_and_reading_a_file_s_content_is_not"
+    target: "openbot_infra::tests::google_drive_runtime::copying_is_a_write_and_reading_a_files_content_is_not"
     owner: openbot-agent
     test_id: T-TEST-0794
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "同一 classifier 实得 copy_file=Write、read_file_content=Read；静态 catalog/PG grant 的 read_file_content effect 同源。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[956]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 5 行（上游 issue #106：withdrawn tool 的 stale grant 可能在 transport 切换后复活）明写不得照译 —— Rust 版 catalog refresh 把 grant 标 suspended_missing 且永不静默复活（§9.3），故目录刷新语义换了一个；服务器名单、凭据归属与工具描述判据逐条移植。上游用例标题：「copying is a write, and reading a file's content is not」。"
   - id: "server-tests-plugin-catalogue--a-url-an-administrator-typed--an-ordinary-vendor-url-is-accepted"

@@ -20,10 +20,11 @@ crate::db::tables::define_table! {
     updated_at: time::OffsetDateTime = ("updated_at", "timestamp with time zone", true),
 }
 
-/// 0017 current projection columns.
+/// Native-current projection columns.
 pub const CURRENT_COLUMNS: &[&str] = &[
     "kind", "ref", "agent_id", "granted_by", "created_at", "updated_at", "state",
     "catalog_generation", "schema_hash", "effect", "transport_fingerprint",
+    "credential_generation",
 ];
 
 /// Current grant with stale-catalog binding.
@@ -41,6 +42,8 @@ pub struct CurrentRow {
     pub effect: Option<String>,
     /// Exact endpoint/vendor/provenance identity bound to the grant.
     pub transport_fingerprint: Option<String>,
+    /// Deployment credential generation reviewed with this grant.
+    pub credential_generation: Option<i64>,
 }
 
 impl TryFrom<&tokio_postgres::Row> for CurrentRow {
@@ -63,6 +66,9 @@ impl TryFrom<&tokio_postgres::Row> for CurrentRow {
             })?,
             transport_fingerprint: row.try_get("transport_fingerprint").map_err(|source| {
                 crate::db::RowDecodeError::column(TABLE_NAME, "transport_fingerprint", source)
+            })?,
+            credential_generation: row.try_get("credential_generation").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "credential_generation", source)
             })?,
         })
     }

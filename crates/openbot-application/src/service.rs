@@ -125,6 +125,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::BeginMcpOAuth { .. } => "begin_mcp_oauth",
         AppCommand::DisconnectMcpConnection { .. } => "disconnect_mcp_connection",
         AppCommand::RegisterMcpOAuthClient { .. } => "register_mcp_oauth_client",
+        AppCommand::AddCuratedMcpServer { .. } => "add_curated_mcp_server",
+        AppCommand::RefreshMcpServer { .. } => "refresh_mcp_server",
     }
 }
 
@@ -358,6 +360,18 @@ mod tests {
                     .unwrap(),
                 },
                 "register_mcp_oauth_client",
+            ),
+            (
+                AppCommand::AddCuratedMcpServer {
+                    key: "google-drive".to_owned(),
+                },
+                "add_curated_mcp_server",
+            ),
+            (
+                AppCommand::RefreshMcpServer {
+                    server_id: "google-drive".to_owned(),
+                },
+                "refresh_mcp_server",
             ),
         ];
         for (command, expected) in commands {

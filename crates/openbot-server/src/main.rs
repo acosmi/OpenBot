@@ -46,6 +46,8 @@ use openbot_infra::auth::single_user::initialize_single_user;
 use openbot_infra::auth::sso::DynamicSsoService;
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{native, pool};
+use openbot_infra::google_drive::GoogleDriveRestTransport;
+use openbot_infra::google_drive_oauth::GoogleDriveOAuthClient;
 use openbot_infra::mcp::SafeRmcpClient;
 use openbot_infra::mcp_catalog::PostgresMcpCatalog;
 use openbot_infra::mcp_connections::{McpRevocationReconciler, PostgresMcpConnections};
@@ -342,13 +344,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         mcp_client.clone(),
         audit_key.to_vec(),
     )?);
+    let drive_oauth = GoogleDriveOAuthClient::new(SafeDialer::new(EgressPolicy::default()))?;
+    let drive_transport = GoogleDriveRestTransport::new(SafeDialer::new(EgressPolicy::default()))?;
     let mcp_credentials = Arc::new(
         PostgresMcpCredentialBroker::new(pool.clone(), model_credential_vault.clone())
             .with_user_oauth(
                 SafeDialer::new(EgressPolicy::default()),
                 SchemePolicy::HttpsOnly,
                 audit_key.to_vec(),
-            )?,
+            )?
+            .with_google_drive_oauth(drive_oauth.clone()),
     );
     match tokio::time::timeout(
         Duration::from_secs(30),
@@ -378,22 +383,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "MCP OAuth Server callback 要求 HTTPS public URL；connect 保持不可用"
         );
     }
-    let mcp_connections = Arc::new(PostgresMcpConnections::new(
-        pool.clone(),
-        model_credential_vault.clone(),
-        McpOAuthClient::new(
-            SafeDialer::new(EgressPolicy::default()),
+    let mcp_connections = Arc::new(
+        PostgresMcpConnections::new(
+            pool.clone(),
+            model_credential_vault.clone(),
+            McpOAuthClient::new(
+                SafeDialer::new(EgressPolicy::default()),
+                SchemePolicy::HttpsOnly,
+            ),
+            mcp_catalog.clone(),
+            deployment.clone(),
+            tenant.clone(),
+            derive_mcp_oauth_state_key(raw_master.as_bytes()).to_vec(),
+            audit_key.to_vec(),
+            oauth_public_url.map(|url| url.as_str()),
+            server.app_url.as_deref(),
             SchemePolicy::HttpsOnly,
-        ),
-        mcp_catalog.clone(),
-        deployment.clone(),
-        tenant.clone(),
-        derive_mcp_oauth_state_key(raw_master.as_bytes()).to_vec(),
-        audit_key.to_vec(),
-        oauth_public_url.map(|url| url.as_str()),
-        server.app_url.as_deref(),
-        SchemePolicy::HttpsOnly,
-    )?);
+        )?
+        .with_google_drive_oauth(drive_oauth),
+    );
     let tool_control = PostgresBuiltInToolControlPlane::new(
         pool.clone(),
         deployment.clone(),
@@ -402,6 +410,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Arc::new(memory.clone()),
     )
     .with_mcp(mcp_catalog.clone(), mcp_client)
+    .with_google_drive(drive_transport)
     .with_mcp_credentials(mcp_credentials);
     let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.to_vec())?;
     let callback_tokens = PostgresAgentCallbackTokens::new(

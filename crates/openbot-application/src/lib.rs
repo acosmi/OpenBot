@@ -111,8 +111,9 @@ pub use intelligence_import::{
 };
 pub use mcp_connections::{
     McpConnectionAdministration, McpConnectionError, McpOAuthCallback, McpOAuthCallbackInput,
-    McpOAuthCallbackOutcome, NoMcpConnectionAdministration, begin_mcp_oauth,
-    disconnect_mcp_connection, list_mcp_connections, register_mcp_oauth_client,
+    McpOAuthCallbackOutcome, NoMcpConnectionAdministration, add_curated_mcp_server,
+    begin_mcp_oauth, disconnect_mcp_connection, list_mcp_connections, refresh_mcp_server,
+    register_mcp_oauth_client,
 };
 pub use ports::{
     AuditPageRequest, AuditReadError, AuditReader, BeginThreadRunRequest, ChannelReader,
