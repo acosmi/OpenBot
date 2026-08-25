@@ -27,8 +27,9 @@
 //!
 //! G6 已开始落真实 Leptos CSR 树。当前闭合的是 token/font/icon/i18n 生成地基与 durable
 //! tool approval 的可点击生产 API 竖切。Batch 16 又接 Server preference API/cookie 与
-//! Desktop-local custom-protocol framing；完整 route、原语、业务组件、golden 与可发布 Tauri
-//! 宿主仍按台账保持未完成，不能由本 crate 存在而推导为 G6 整关通过。
+//! Desktop-local custom-protocol framing；Batch 17 闭合十个基础原语和 compile-only design
+//! gallery。其余 13 原语、完整 route/业务组件/golden 与可发布 Tauri 宿主仍按台账保持未完成，
+//! 不能由本 crate 存在而推导为 G6 整关通过。
 
 #![deny(missing_docs)]
 

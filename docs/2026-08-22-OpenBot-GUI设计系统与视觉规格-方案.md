@@ -623,17 +623,19 @@ G6 重写后的文本（替换 v3 原四条）：
   UI startup read/serialized partial write/reload persistence；
 - [x] Tauri 2.11.5 production custom-protocol adapter：window-label authority、typed in-process、
   本地首帧/CSP/canonical asset；依赖只进入 macOS/Windows Desktop target；
-- [x] 当前 UI ledger 只勾 EmptyState、Badge、ThemeToggle、LocaleSwitch，=`4/148/152`；其余
-  即使有局部源码也保持 todo；
-- [ ] 31 route journey、其余 23 个 primitive ledger 条目、45 个业务组件、compiled gallery、
+- [x] 当前 UI ledger 只勾有机器证据的 14 条：EmptyState、Badge、ThemeToggle、LocaleSwitch
+  与 Batch17 的 Button/Field/InputGroup/Input/Item/Label/Separator/Skeleton/Switch/Textarea，
+  =`14/138/152`；其余即使有局部源码也保持 todo；
+- [x] `design-gallery` compile feature 才有 `/_design`，production bundle WASM `_design` byte=0；
+  当前画廊用于状态/键盘/AX/目视 QA，不冒充正式 golden；
+- [ ] 31 route journey、其余 13 个 primitive ledger 条目、45 个业务组件、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
 - [ ] Tauri 图的 MPL-2.0×5、runtime UNIC unmaintained×5、Cargo Vet macOS 270/Windows 269
   仍红；不得把 bans/sources 已绿写成供应链整关已绿。
 
-完整证据见 `docs/2026-08-25-G6-UI偏好与Tauri协议-batch16.md` 与
-`docs/2026-08-25-G6-Tauri供应链目标图delta-batch16.md`；G6 整关继续不勾。
+完整证据见 Batch16 两份文档与 `docs/2026-08-25-G6-基础原语-batch17.md`；G6 整关继续不勾。
 
 ---
 
