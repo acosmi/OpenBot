@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 878
+    expect: 873
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -10505,52 +10505,57 @@ entries:
   - id: "server-tests-thread-status--reading-whether-intelligence-still-has-a--a-thread-it-can-produce-is-known"
     upstream: "server/tests/thread-status.test.ts::reading whether Intelligence still has a thread"
     label: 替代
-    target: "openbot_application::migration::intelligence_thread::tests::a_thread_it_can_produce_is_known"
+    target: "openbot_application::intelligence_import::tests::owned_bundle_maps_once_and_completed_rerun_only_reverifies"
     owner: openbot-application
     test_id: T-TEST-0994
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1207]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "application intelligence_import 7/0/0 + PG17/SCRAM importer 2/0/0：签名 bundle 中 deployment-owned UUID 经 target mapping 后逐 thread commit，completed rerun 不重写且从 PG 重算 checksum"
     notes: "covered-by-golden —— v3 §4.1 条 3：Intelligence 只用于旧数据导出、迁移核对和一次性导入，最终请求路径不连接它 —— 该文件的被测面整体从运行路径搬进 §20.3 的迁移工具，由迁移 fixture 对照覆盖而非 1:1 移植。上游用例标题：「a thread it can produce is known」。"
   - id: "server-tests-thread-status--reading-whether-intelligence-still-has-a--a-404-means-the-thread-is-unknown-not-a-failure"
     upstream: "server/tests/thread-status.test.ts::reading whether Intelligence still has a thread"
     label: 替代
-    target: "openbot_application::migration::intelligence_thread::tests::a_404_means_the_thread_is_unknown_not_a_failure"
+    target: "openbot_application::intelligence_import::tests::omitted_unknown_thread_is_an_empty_success_not_a_failure"
     owner: openbot-application
     test_id: T-TEST-0995
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1208]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "application 空 export 成功完成且 thread/message count=0；真实 openbot-migrate 独立加密签名空 bundle 子进程 exit 0，并写四行 completed/$none cursor"
     notes: "covered-by-golden —— v3 §4.1 条 3：Intelligence 只用于旧数据导出、迁移核对和一次性导入，最终请求路径不连接它 —— 该文件的被测面整体从运行路径搬进 §20.3 的迁移工具，由迁移 fixture 对照覆盖而非 1:1 移植。上游用例标题：「a 404 means the thread is unknown, not a failure」。"
   - id: "server-tests-thread-status--reading-whether-intelligence-still-has-a--a-500-is-not-swallowed-as-unknown-the-check-itself-faile"
     upstream: "server/tests/thread-status.test.ts::reading whether Intelligence still has a thread"
     label: 替代
-    target: "openbot_application::migration::intelligence_thread::tests::a_500_is_not_swallowed_as_unknown_the_check_itself_faile"
+    target: "openbot_application::intelligence_import::tests::dependency_failure_is_not_swallowed_as_unknown_or_empty"
     owner: openbot-application
     test_id: T-TEST-0996
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1209]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "typed store dependency error 精确透传 IntelligenceImportError::Unavailable；PG 第二 thread trigger 故障返回失败并写 failed cursor，未被降成 absent/empty"
     notes: "covered-by-golden —— v3 §4.1 条 3：Intelligence 只用于旧数据导出、迁移核对和一次性导入，最终请求路径不连接它 —— 该文件的被测面整体从运行路径搬进 §20.3 的迁移工具，由迁移 fixture 对照覆盖而非 1:1 移植。上游用例标题：「a 500 is not swallowed as unknown — the check itself failed」。"
   - id: "server-tests-thread-status--reading-whether-intelligence-still-has-a--a-plain-error-with-no-status-field-to-duck-type-on-is-no"
     upstream: "server/tests/thread-status.test.ts::reading whether Intelligence still has a thread"
     label: 替代
-    target: "openbot_application::migration::intelligence_thread::tests::a_plain_error_with_no_status_field_to_duck_type_on_is_no"
+    target: "openbot_application::intelligence_import::tests::plain_closed_error_without_status_duck_typing_is_propagated"
     owner: openbot-application
     test_id: T-TEST-0997
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1210]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "import error 是无 vendor/status duck-typing 的封闭 enum；plain Unavailable 同样精确返回，crypto/signature/schema 错也全 fail-closed 为 Invalid"
     notes: "covered-by-golden —— v3 §4.1 条 3：Intelligence 只用于旧数据导出、迁移核对和一次性导入，最终请求路径不连接它 —— 该文件的被测面整体从运行路径搬进 §20.3 的迁移工具，由迁移 fixture 对照覆盖而非 1:1 移植。上游用例标题：「a plain Error, with no status field to duck-type on, is not swallowed either」。"
   - id: "server-tests-thread-status--reading-whether-intelligence-still-has-a--asks-intelligence-about-the-exact-thread-and-user-it-was"
     upstream: "server/tests/thread-status.test.ts::reading whether Intelligence still has a thread"
     label: 替代
-    target: "openbot_application::migration::intelligence_thread::tests::asks_intelligence_about_the_exact_thread_and_user_it_was"
+    target: "openbot_application::intelligence_import::tests::exact_thread_and_user_mapping_reaches_the_store"
     owner: openbot-application
     test_id: T-TEST-0998
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1211]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "bundle 不能自报 target authority；独立 mapping 把精确 thread/user/bot 映射后 port 实收 created_by/membership=actor-a。foreign UUID 无显式 claim 时 DB 调用数 0"
     notes: "covered-by-golden —— v3 §4.1 条 3：Intelligence 只用于旧数据导出、迁移核对和一次性导入，最终请求路径不连接它 —— 该文件的被测面整体从运行路径搬进 §20.3 的迁移工具，由迁移 fixture 对照覆盖而非 1:1 移植。上游用例标题：「asks Intelligence about the exact thread and user it was given」。"
   # ---------------------------------------------------------------------------
   # server/tests/turn-watchdog.test.ts —— owner openbot-agent / ported / parity

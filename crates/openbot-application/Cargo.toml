@@ -30,6 +30,7 @@ serde_json.workspace = true
 # Tenant Package 五份 YAML 的纯解析/校验；文件 I/O 留在 infra。版本已由 xtask 台账解析钉住，
 # 本批只增加 application 的直接依赖边，不新增 package/许可面。
 serde_yaml.workspace = true
+sha2.workspace = true
 
 # 排序键 `coalesce(last_message_at, created_at)` 的类型，以及游标里的 RFC 3339 时间戳。
 time.workspace = true

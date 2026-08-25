@@ -62,6 +62,7 @@
 //! - `/api/memories` 六条读写/recall —— R66；owner scope/原子写在 application/infra，Server
 //!   只做 session、trusted Origin、JSON/path/query framing。
 //! - Server main 启动 R67 run relay；G4 consumer 未接时明确写 failed terminal，不伪造回复。
+//! - 独立 `openbot-migrate` binary 承载 R68 Intelligence import/FK finalize；Server main 零调用点。
 //!
 //! # 还没有的东西（不要当成"已经有了"）
 //!

@@ -217,8 +217,10 @@ cel = { version = "0.14.3", default-features = false }
 # 刻意不用 `ring`：它带 C / 汇编构建脚本，会把一整套非 Rust 工具链拉进本项目的可复现构建面（§16.3）。
 sha2 = "0.10.9"
 hmac = "0.12.1"
+hkdf = "0.12.4"
 subtle = "2.6.1"
 aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
 zeroize = { version = "1.9.0", default-features = false, features = ["alloc"] }
 
 # CSPRNG。直接用 `getrandom` 而不是 `rand`：本项目需要的全部随机数都是「给我 N 个密码学随机

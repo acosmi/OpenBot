@@ -43,4 +43,21 @@ fn compatible_and_usage_paths_have_distinct_stable_exit_codes() {
         String::from_utf8(usage.stderr).unwrap().trim(),
         r#"{"code":"migration_preflight_usage"}"#
     );
+
+    let import_usage = run(&["intelligence-import"], None);
+    assert_eq!(import_usage.status.code(), Some(64));
+    assert!(import_usage.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(import_usage.stderr).unwrap().trim(),
+        r#"{"code":"intelligence_import_usage"}"#
+    );
+
+    let finalize_without_database = run(&["intelligence-validate-tool-run-fk"], None);
+    assert_eq!(finalize_without_database.status.code(), Some(69));
+    assert_eq!(
+        String::from_utf8(finalize_without_database.stderr)
+            .unwrap()
+            .trim(),
+        r#"{"code":"database_url_missing"}"#
+    );
 }

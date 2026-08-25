@@ -96,6 +96,9 @@ jobs:
       - name: G3 WebSocket dependency / unsafe delta guard
         run: bash tools/check-websocket-dependencies.sh
 
+      - name: G3/G8 Intelligence importer crypto / runtime-exclusion guard
+        run: bash tools/check-intelligence-import-dependencies.sh
+
       - name: xtask parity-check
         # v3 §19.3："CI 拒绝未归类项和没有证据的 `done`"。
         # parity/ 为空时它打印 "0 ledger" 并通过 —— Phase 0 早期这是正确行为，

@@ -1901,6 +1901,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
  "thiserror 2.0.20",
  "time",
  "tokio",
@@ -1960,13 +1961,16 @@ dependencies = [
 name = "openbot-infra"
 version = "0.0.0"
 dependencies = [
+ "aes-gcm",
  "async-trait",
  "base64 0.22.1",
  "bytes",
  "chrono",
  "deadpool-postgres",
+ "ed25519-dalek",
  "futures-core",
  "getrandom 0.4.3",
+ "hkdf",
  "hmac 0.12.1",
  "http",
  "http-body-util",
@@ -1995,17 +1999,22 @@ dependencies = [
  "url",
  "uuid",
  "webpki-roots",
+ "zeroize",
 ]
 
 [[package]]
 name = "openbot-server"
 version = "0.0.0"
 dependencies = [
+ "aes-gcm",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "deadpool-postgres",
+ "ed25519-dalek",
  "futures-core",
  "futures-util",
+ "hkdf",
  "hmac 0.12.1",
  "http",
  "metrics",

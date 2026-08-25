@@ -37,6 +37,7 @@
 //! | [`use_cases`] | health/channel、people/audit、thread/history、remember/list/correct/forbid/delete/recall | §4.1–§4.3 / R56 / R64–R66 |
 //! | [`chunk`] | 50ms/8KiB UTF-8 semantic chunk accumulator；真实 provider 接线仍待 G4 | §4.3 / R65 |
 //! | [`run_runtime`] | 非 serde dispatch/lease、expected-sequence writer 与 accumulator→durable journal | §4.3 / §7.2 / R67 |
+//! | [`intelligence_import`] | verified neutral bundle、mapping/claim、ordered checksum、cursor resume | §20.3 / R68 |
 //! | [`tool`] | metadata→scope→policy→approval→journal→capability→execute→outcome/audit | §8.1 / R41 |
 //!
 //! 具体实现 [`OpenBotApplication`] 把上面四层接起来，是 transport 唯一需要构造的类型。
@@ -73,6 +74,7 @@
 mod app;
 pub mod chunk;
 pub mod cursor;
+pub mod intelligence_import;
 pub mod ports;
 pub mod run_runtime;
 pub mod service;
@@ -86,6 +88,13 @@ mod fakes;
 pub use app::OpenBotApplication;
 pub use chunk::{SEMANTIC_CHUNK_MAX_BYTES, SEMANTIC_CHUNK_MAX_DELAY, SemanticChunkAccumulator};
 pub use cursor::{ChannelCursor, channel_recency};
+pub use intelligence_import::{
+    INTELLIGENCE_SOURCE_COMMIT, IntelligenceImportCursorStatus, IntelligenceImportError,
+    IntelligenceImportProgress, IntelligenceImportReport, IntelligenceImportReportStatus,
+    IntelligenceImportStore, IntelligenceThreadImportReceipt, IntelligenceThreadImportRequest,
+    IntelligenceToolRunFkReport, VerifiedIntelligenceBundle, compute_intelligence_thread_checksum,
+    import_intelligence_bundle, intelligence_import_kinds, validate_intelligence_tool_run_fk,
+};
 pub use ports::{
     AuditPageRequest, AuditReadError, AuditReader, BeginThreadRunRequest, ChannelReader,
     CorrectMemoryRequest, MemoryAdministration, MemoryAdministrationError, MemoryPageRequest,
