@@ -34,6 +34,10 @@ use crate::agent::{CallbackTokenIssued, CallbackTokenRevoked};
 use crate::audit::AuditPage;
 use crate::auth::Role;
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
+use crate::mcp::{
+    McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
+    McpOAuthClientRegistration, McpOAuthReturnTo,
+};
 use crate::memory::{
     CorrectMemory, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, RecallMemories,
     RememberMemory,
@@ -218,6 +222,31 @@ pub enum AppCommand {
         /// Agent id; visibility/manageability is resolved authoritatively.
         agent_id: BotId,
     },
+
+    /// List only the authenticated actor's per-user MCP connections.
+    ListMcpConnections,
+
+    /// Begin an OAuth authorization-code flow for the authenticated actor.
+    BeginMcpOAuth {
+        /// Stable server id; endpoint and client are resolved authoritatively.
+        server_id: String,
+        /// Closed in-app destination, never a caller-provided URL.
+        return_to: McpOAuthReturnTo,
+    },
+
+    /// Tombstone the actor's local connection before attempting vendor revocation.
+    DisconnectMcpConnection {
+        /// Stable server id owned by the current connection.
+        server_id: String,
+    },
+
+    /// Register/rotate a deployment OAuth client after admin authorization.
+    RegisterMcpOAuthClient {
+        /// Stable server id whose resource metadata is validated before storage.
+        server_id: String,
+        /// Redacted, zeroizing registration input.
+        registration: McpOAuthClientRegistration,
+    },
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -263,6 +292,14 @@ pub enum AppReply {
     AgentCallbackToken(CallbackTokenIssued),
     /// [`AppCommand::RevokeAgentCallbackToken`] 的无 secret acknowledgement。
     AgentCallbackTokenRevoked(CallbackTokenRevoked),
+    /// [`AppCommand::ListMcpConnections`] response.
+    McpConnections(McpConnections),
+    /// [`AppCommand::BeginMcpOAuth`] response.
+    McpOAuthAuthorization(McpOAuthAuthorization),
+    /// [`AppCommand::DisconnectMcpConnection`] response.
+    McpConnectionDisconnected(McpConnectionDisconnected),
+    /// [`AppCommand::RegisterMcpOAuthClient`] response.
+    McpOAuthClientRegistered(McpOAuthClientRegistered),
 }
 
 /// 探活结果。

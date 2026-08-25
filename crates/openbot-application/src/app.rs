@@ -25,6 +25,10 @@ use crate::agent_admin::{
     AgentCallbackTokenAdministration, NoAgentCallbackTokenAdministration,
     issue_agent_callback_token, revoke_agent_callback_token,
 };
+use crate::mcp_connections::{
+    McpConnectionAdministration, NoMcpConnectionAdministration, begin_mcp_oauth,
+    disconnect_mcp_connection, list_mcp_connections, register_mcp_oauth_client,
+};
 use crate::ports::{
     AuditReader, ChannelReader, MemoryAdministration, NoAuditReader, NoMemoryAdministration,
     NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory, PeopleAdministration,
@@ -65,6 +69,7 @@ pub struct OpenBotApplication<
     threads: T,
     memory: M,
     callback_tokens: B,
+    mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
     heartbeat_period: Duration,
 }
 
@@ -93,6 +98,7 @@ impl<R>
             threads: NoThreadDirectory,
             memory: NoMemoryAdministration,
             callback_tokens: NoAgentCallbackTokenAdministration,
+            mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
@@ -112,6 +118,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             threads: self.threads,
             memory: self.memory,
             callback_tokens: self.callback_tokens,
+            mcp_connections: self.mcp_connections,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -129,6 +136,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             threads: self.threads,
             memory: self.memory,
             callback_tokens: self.callback_tokens,
+            mcp_connections: self.mcp_connections,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -146,6 +154,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             threads: self.threads,
             memory: self.memory,
             callback_tokens: self.callback_tokens,
+            mcp_connections: self.mcp_connections,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -167,6 +176,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             threads: self.threads,
             memory: self.memory,
             callback_tokens: self.callback_tokens,
+            mcp_connections: self.mcp_connections,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -184,6 +194,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             threads,
             memory: self.memory,
             callback_tokens: self.callback_tokens,
+            mcp_connections: self.mcp_connections,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -201,6 +212,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             threads: self.threads,
             memory,
             callback_tokens: self.callback_tokens,
+            mcp_connections: self.mcp_connections,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -221,8 +233,19 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             threads: self.threads,
             memory: self.memory,
             callback_tokens,
+            mcp_connections: self.mcp_connections,
             heartbeat_period: self.heartbeat_period,
         }
+    }
+
+    /// Attach the authenticated MCP connection service used by Server and Desktop.
+    #[must_use]
+    pub fn with_mcp_connections(
+        mut self,
+        connections: std::sync::Arc<dyn McpConnectionAdministration>,
+    ) -> Self {
+        self.mcp_connections = connections;
+        self
     }
 
     /// 覆盖心跳间隔。
@@ -354,6 +377,33 @@ where
                     revoke_agent_callback_token(&self.callback_tokens, auth, &agent_id).await?,
                 ))
             }
+            AppCommand::ListMcpConnections => Ok(AppReply::McpConnections(
+                list_mcp_connections(self.mcp_connections.as_ref(), auth).await?,
+            )),
+            AppCommand::BeginMcpOAuth {
+                server_id,
+                return_to,
+            } => Ok(AppReply::McpOAuthAuthorization(
+                begin_mcp_oauth(self.mcp_connections.as_ref(), auth, &server_id, return_to).await?,
+            )),
+            AppCommand::DisconnectMcpConnection { server_id } => {
+                Ok(AppReply::McpConnectionDisconnected(
+                    disconnect_mcp_connection(self.mcp_connections.as_ref(), auth, &server_id)
+                        .await?,
+                ))
+            }
+            AppCommand::RegisterMcpOAuthClient {
+                server_id,
+                registration,
+            } => Ok(AppReply::McpOAuthClientRegistered(
+                register_mcp_oauth_client(
+                    self.mcp_connections.as_ref(),
+                    auth,
+                    &server_id,
+                    &registration,
+                )
+                .await?,
+            )),
         }
     }
 }

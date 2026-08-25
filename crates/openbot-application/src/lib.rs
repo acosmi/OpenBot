@@ -77,6 +77,7 @@ pub mod builtin_tools;
 pub mod chunk;
 pub mod cursor;
 pub mod intelligence_import;
+pub mod mcp_connections;
 pub mod ports;
 pub mod provider;
 pub mod run_runtime;
@@ -107,6 +108,11 @@ pub use intelligence_import::{
     IntelligenceImportStore, IntelligenceThreadImportReceipt, IntelligenceThreadImportRequest,
     IntelligenceToolRunFkReport, VerifiedIntelligenceBundle, compute_intelligence_thread_checksum,
     import_intelligence_bundle, intelligence_import_kinds, validate_intelligence_tool_run_fk,
+};
+pub use mcp_connections::{
+    McpConnectionAdministration, McpConnectionError, McpOAuthCallback, McpOAuthCallbackInput,
+    McpOAuthCallbackOutcome, NoMcpConnectionAdministration, begin_mcp_oauth,
+    disconnect_mcp_connection, list_mcp_connections, register_mcp_oauth_client,
 };
 pub use ports::{
     AuditPageRequest, AuditReadError, AuditReader, BeginThreadRunRequest, ChannelReader,

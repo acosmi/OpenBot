@@ -75,6 +75,7 @@ pub mod command;
 pub mod error;
 pub mod ids;
 pub mod intelligence;
+pub mod mcp;
 pub mod memory;
 pub mod people;
 pub mod policy;

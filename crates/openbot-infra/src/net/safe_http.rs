@@ -348,13 +348,25 @@ impl SafeHttpRequest {
         authorization: Option<AuthorizationValue>,
         budget: SafeHttpBudget,
     ) -> Result<Self, SafeHttpError> {
-        validate_url(&url, SchemePolicy::HttpsOnly)?;
+        Self::post_form_with_scheme(url, SchemePolicy::HttpsOnly, body, authorization, budget)
+    }
+
+    /// Scheme-explicit form POST. Production OAuth always passes `HttpsOnly`; the wider policy is
+    /// reserved for loopback conformance servers reached through an explicit CIDR allowlist.
+    pub(crate) fn post_form_with_scheme(
+        url: Url,
+        scheme_policy: SchemePolicy,
+        body: Vec<u8>,
+        authorization: Option<AuthorizationValue>,
+        budget: SafeHttpBudget,
+    ) -> Result<Self, SafeHttpError> {
+        validate_url(&url, scheme_policy)?;
         if body.len() > MAX_REQUEST_BODY_BYTES {
             return Err(SafeHttpError::InvalidBudget);
         }
         Ok(Self {
             url,
-            scheme_policy: SchemePolicy::HttpsOnly,
+            scheme_policy,
             method: SafeMethod::PostForm,
             body: Bytes::from(body),
             authorization,

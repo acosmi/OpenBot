@@ -9,11 +9,12 @@ use openbot_domain::audit::event::{AuditEvent, AuditEventType};
 use openbot_domain::audit::hash::{CanonicalWriter, Sha256Digest};
 use openbot_domain::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
 use openbot_domain::tool::metadata::{Effect, ToolName};
-use openbot_domain::vault::SecretBytes;
+use openbot_domain::vault::{CredentialGeneration, SecretBytes};
 use serde_json::Value;
 use url::Url;
 
 use crate::mcp::{McpBearerToken, McpClientError, McpListedTool, SafeRmcpClient};
+use crate::mcp_credentials::PostgresMcpCredentialBroker;
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 
 const MAX_COMPILED_SCHEMA_CACHE_ENTRIES: usize = 4_096;
@@ -54,8 +55,23 @@ pub struct GrantedMcpTool {
     pub effect: Effect,
     /// Current monotonic catalog generation.
     pub catalog_generation: CatalogGeneration,
+    /// Deployment credential generation bound into the current grant identity.
+    pub credential_generation: CredentialGeneration,
     /// SafeDialer-validated only when used; Debug never renders it.
     pub endpoint: String,
+    /// Per-operation authentication mode proven by the same catalog query.
+    pub authentication: McpAuthentication,
+}
+
+/// Credential mode currently executable by the production MCP runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum McpAuthentication {
+    /// Server accepts anonymous MCP requests.
+    None,
+    /// Active deployment-owned `credentials.kind=mcp` bearer.
+    DeploymentBearer,
+    /// Actor-owned rotating OAuth credential paired with the deployment's registered client.
+    UserOAuth,
 }
 
 impl core::fmt::Debug for GrantedMcpTool {
@@ -68,6 +84,8 @@ impl core::fmt::Debug for GrantedMcpTool {
             .field("schema_hash", &self.schema_hash)
             .field("effect", &self.effect)
             .field("catalog_generation", &self.catalog_generation)
+            .field("credential_generation", &self.credential_generation)
+            .field("authentication", &self.authentication)
             .field("endpoint", &"[redacted-origin]")
             .finish()
     }
@@ -186,17 +204,19 @@ impl PostgresMcpCatalog {
             .map_err(|_| McpCatalogError::Unavailable)
     }
 
-    /// Refresh every configured unauthenticated server once during production startup. A broken
-    /// connector cannot prevent unrelated Bots from starting; its stable failure is projected to
-    /// `last_error`. Credential-backed servers are not called with a guessed/shared token.
-    pub async fn refresh_unauthenticated_servers(
+    /// Refresh anonymous and deployment-bearer servers once during production startup. User OAuth
+    /// remains actor-scoped and is deliberately deferred.
+    pub async fn refresh_startup_servers(
         &self,
+        credentials: &PostgresMcpCredentialBroker,
     ) -> Result<McpCatalogSweep, McpCatalogError> {
         let client = self.pool.get().await.map_err(unavailable)?;
         let rows = client
             .query(
-                "SELECT id,credential_id IS NOT NULL AS authenticated
-                   FROM public.mcp_servers ORDER BY id",
+                "SELECT s.id,s.credential_id,c.kind,c.revoked_at
+                   FROM public.mcp_servers s
+                   LEFT JOIN public.credentials c ON c.id=s.credential_id
+                  ORDER BY s.id",
                 &[],
             )
             .await
@@ -207,16 +227,41 @@ impl PostgresMcpCatalog {
             let server_id: String = row
                 .try_get("id")
                 .map_err(|_| McpCatalogError::Corrupt { field: "server_id" })?;
-            let authenticated: bool =
-                row.try_get("authenticated")
+            let credential_id: Option<uuid::Uuid> =
+                row.try_get("credential_id")
                     .map_err(|_| McpCatalogError::Corrupt {
                         field: "credential_id",
                     })?;
-            if authenticated {
-                sweep.authenticated_deferred = sweep.authenticated_deferred.saturating_add(1);
-                continue;
-            }
-            match self.refresh(&server_id, None).await {
+            let kind: Option<crate::db::types::CredentialKind> =
+                row.try_get("kind").map_err(|_| McpCatalogError::Corrupt {
+                    field: "credential_kind",
+                })?;
+            let revoked: Option<time::OffsetDateTime> =
+                row.try_get("revoked_at")
+                    .map_err(|_| McpCatalogError::Corrupt {
+                        field: "revoked_at",
+                    })?;
+            let bearer = match (credential_id, kind, revoked) {
+                (None, None, None) => None,
+                (Some(_), Some(crate::db::types::CredentialKind::McpOauthClient), _) => {
+                    sweep.authenticated_deferred = sweep.authenticated_deferred.saturating_add(1);
+                    continue;
+                }
+                (Some(_), Some(crate::db::types::CredentialKind::Mcp), None) => {
+                    match credentials.bearer_for(&server_id, &ActorId::new("")).await {
+                        Ok(Some(bearer)) => Some(bearer),
+                        Ok(None) | Err(_) => {
+                            sweep.failed = sweep.failed.saturating_add(1);
+                            continue;
+                        }
+                    }
+                }
+                _ => {
+                    sweep.failed = sweep.failed.saturating_add(1);
+                    continue;
+                }
+            };
+            match self.refresh(&server_id, bearer).await {
                 Ok(_) => sweep.refreshed = sweep.refreshed.saturating_add(1),
                 Err(error) => {
                     sweep.failed = sweep.failed.saturating_add(1);
@@ -279,7 +324,9 @@ impl PostgresMcpCatalog {
         let transaction = client.transaction().await.map_err(query_unavailable)?;
         let server = transaction
             .query_opt(
-                "SELECT coalesce(catalog_generation,0) AS catalog_generation,url,vendor,provenance \
+                "SELECT coalesce(catalog_generation,0) AS catalog_generation,
+                        coalesce(credential_generation,0) AS credential_generation,
+                        url,vendor,provenance \
                    FROM public.mcp_servers WHERE id=$1 FOR UPDATE",
                 &[&server_id],
             )
@@ -291,6 +338,12 @@ impl PostgresMcpCatalog {
                 .try_get("catalog_generation")
                 .map_err(|_| McpCatalogError::Corrupt {
                     field: "catalog_generation",
+                })?;
+        let credential_generation: i64 =
+            server
+                .try_get("credential_generation")
+                .map_err(|_| McpCatalogError::Corrupt {
+                    field: "credential_generation",
                 })?;
         let locked_endpoint: String = server
             .try_get("url")
@@ -460,7 +513,7 @@ impl PostgresMcpCatalog {
         let grant_rows = transaction
             .query(
                 "SELECT ref,agent_id,state,catalog_generation,schema_hash,effect, \
-                        transport_fingerprint \
+                        transport_fingerprint,credential_generation \
                    FROM public.plugin_grants \
                   WHERE kind='mcp' AND split_part(ref,'/',1)=$1 FOR UPDATE",
                 &[&server_id],
@@ -494,6 +547,18 @@ impl PostgresMcpCatalog {
                     .map_err(|_| McpCatalogError::Corrupt {
                         field: "grant_transport_fingerprint",
                     })?;
+            let old_credential_generation: Option<i64> = row
+                .try_get("credential_generation")
+                .map_err(|_| McpCatalogError::Corrupt {
+                    field: "grant_credential_generation",
+                })?;
+            let grant_credential_generation =
+                old_credential_generation.unwrap_or(credential_generation);
+            if grant_credential_generation < 0 {
+                return Err(McpCatalogError::Corrupt {
+                    field: "grant_credential_generation",
+                });
+            }
             let raw_name = reference
                 .strip_prefix(&format!("{server_id}/"))
                 .filter(|name| !name.is_empty())
@@ -503,9 +568,11 @@ impl PostgresMcpCatalog {
             })?;
             let unchanged = old_hash.as_deref() == Some(tool.schema_hash.to_hex().as_str())
                 && old_effect.as_deref() == Some(tool.effect.as_str())
-                && old_transport.as_deref() == Some(transport_fingerprint_hex.as_str());
+                && old_transport.as_deref() == Some(transport_fingerprint_hex.as_str())
+                && grant_credential_generation == credential_generation;
+            let credential_current = grant_credential_generation == credential_generation;
             let new_state = match old_state.as_deref() {
-                None if tool.available => "active",
+                None if tool.available && credential_current => "active",
                 Some("active") if tool.available && unchanged => "active",
                 Some("suspended_missing") => "suspended_missing",
                 None | Some("active") => "suspended_missing",
@@ -518,7 +585,8 @@ impl PostgresMcpCatalog {
             transaction
                 .execute(
                     "UPDATE public.plugin_grants SET state=$4,catalog_generation=$5,
-                       schema_hash=$6,effect=$7,transport_fingerprint=$8,updated_at=$9
+                       schema_hash=$6,effect=$7,transport_fingerprint=$8,
+                       credential_generation=$9,updated_at=$10
                      WHERE kind='mcp' AND ref=$1 AND agent_id=$2 AND split_part(ref,'/',1)=$3",
                     &[
                         &reference,
@@ -529,6 +597,7 @@ impl PostgresMcpCatalog {
                         &tool.schema_hash.to_hex(),
                         &tool.effect.as_str(),
                         &transport_fingerprint_hex,
+                        &grant_credential_generation,
                         &now,
                     ],
                 )
@@ -593,25 +662,37 @@ impl PostgresMcpCatalog {
         &self,
         client: &tokio_postgres::Client,
         bot: &BotId,
-        _actor: &ActorId,
+        actor: &ActorId,
     ) -> Result<Vec<GrantedMcpTool>, McpCatalogError> {
         let rows = client
             .query(
-                "SELECT s.id AS server_id,s.url,s.vendor,s.provenance,
-                        s.catalog_transport_fingerprint,s.catalog_generation,t.name,t.description,
+                "SELECT s.id AS server_id,s.url,s.vendor,s.provenance,s.credential_id,
+                        c.kind AS credential_kind,s.catalog_transport_fingerprint,
+                        coalesce(s.credential_generation,0) AS credential_generation,
+                        s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.plugin_grants g
                    JOIN public.mcp_tools t ON g.kind='mcp' AND g.ref=t.server_id||'/'||t.name
                    JOIN public.mcp_servers s ON s.id=t.server_id
+                   LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE g.agent_id=$1 AND g.state='active' AND t.available=true
-                    AND s.credential_id IS NULL
+                    AND (s.credential_id IS NULL OR
+                         (c.kind='mcp' AND c.provider=s.id AND c.revoked_at IS NULL) OR
+                         (c.kind='mcp_oauth_client' AND c.provider=s.id
+                          AND c.revoked_at IS NULL AND EXISTS(
+                            SELECT 1 FROM public.mcp_user_credentials uc
+                            JOIN public.credentials u ON u.id=uc.credential_id
+                            WHERE uc.server_id=s.id AND uc.user_id=$2
+                              AND u.kind='mcp_user_token' AND u.provider=s.id
+                              AND u.key_id=$2 AND u.revoked_at IS NULL)))
                     AND s.catalog_generation IS NOT NULL
                     AND g.catalog_generation=s.catalog_generation
                     AND t.catalog_generation=s.catalog_generation
                     AND g.schema_hash=t.schema_hash AND g.effect=t.effect
                     AND g.transport_fingerprint=s.catalog_transport_fingerprint
+                    AND g.credential_generation=coalesce(s.credential_generation,0)
                   ORDER BY s.id,t.name",
-                &[&bot.as_str()],
+                &[&bot.as_str(), &actor.as_str()],
             )
             .await
             .map_err(query_unavailable)?;
@@ -639,12 +720,17 @@ impl PostgresMcpCatalog {
         let client = self.pool.get().await.map_err(unavailable)?;
         let row = client
             .query_opt(
-                "SELECT s.id AS server_id,s.url,s.vendor,s.provenance,
-                        s.catalog_transport_fingerprint,s.catalog_generation,t.name,t.description,
+                "SELECT s.id AS server_id,s.url,s.vendor,s.provenance,s.credential_id,
+                        c.kind AS credential_kind,s.catalog_transport_fingerprint,
+                        coalesce(s.credential_generation,0) AS credential_generation,
+                        s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.mcp_tools t JOIN public.mcp_servers s ON s.id=t.server_id
+                   LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE s.id=$1 AND t.name=$2 AND t.available=true
-                    AND s.credential_id IS NULL
+                    AND (s.credential_id IS NULL OR
+                         (c.kind IN ('mcp','mcp_oauth_client')
+                          AND c.provider=s.id AND c.revoked_at IS NULL))
                     AND s.catalog_generation IS NOT NULL
                     AND s.catalog_transport_fingerprint IS NOT NULL
                     AND t.catalog_generation=s.catalog_generation",
@@ -662,25 +748,37 @@ impl PostgresMcpCatalog {
         &self,
         transaction: &tokio_postgres::Transaction<'_>,
         bot: &BotId,
-        _actor: &ActorId,
+        actor: &ActorId,
     ) -> Result<Vec<GrantedMcpTool>, McpCatalogError> {
         let rows = transaction
             .query(
-                "SELECT s.id AS server_id,s.url,s.vendor,s.provenance,
-                        s.catalog_transport_fingerprint,s.catalog_generation,t.name,t.description,
+                "SELECT s.id AS server_id,s.url,s.vendor,s.provenance,s.credential_id,
+                        c.kind AS credential_kind,s.catalog_transport_fingerprint,
+                        coalesce(s.credential_generation,0) AS credential_generation,
+                        s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.plugin_grants g
                    JOIN public.mcp_tools t ON g.kind='mcp' AND g.ref=t.server_id||'/'||t.name
                    JOIN public.mcp_servers s ON s.id=t.server_id
+                   LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE g.agent_id=$1 AND g.state='active' AND t.available=true
-                    AND s.credential_id IS NULL
+                    AND (s.credential_id IS NULL OR
+                         (c.kind='mcp' AND c.provider=s.id AND c.revoked_at IS NULL) OR
+                         (c.kind='mcp_oauth_client' AND c.provider=s.id
+                          AND c.revoked_at IS NULL AND EXISTS(
+                            SELECT 1 FROM public.mcp_user_credentials uc
+                            JOIN public.credentials u ON u.id=uc.credential_id
+                            WHERE uc.server_id=s.id AND uc.user_id=$2
+                              AND u.kind='mcp_user_token' AND u.provider=s.id
+                              AND u.key_id=$2 AND u.revoked_at IS NULL)))
                     AND s.catalog_generation IS NOT NULL
                     AND g.catalog_generation=s.catalog_generation
                     AND t.catalog_generation=s.catalog_generation
                     AND g.schema_hash=t.schema_hash AND g.effect=t.effect
                     AND g.transport_fingerprint=s.catalog_transport_fingerprint
+                    AND g.credential_generation=coalesce(s.credential_generation,0)
                   ORDER BY s.id,t.name",
-                &[&bot.as_str()],
+                &[&bot.as_str(), &actor.as_str()],
             )
             .await
             .map_err(query_unavailable)?;
@@ -694,11 +792,17 @@ impl PostgresMcpCatalog {
         let client = self.pool.get().await.map_err(unavailable)?;
         let rows = client
             .query(
-                "SELECT DISTINCT s.id AS server_id,s.url,s.vendor,s.provenance,
-                        s.catalog_transport_fingerprint,s.catalog_generation,t.name,t.description,
+                "SELECT DISTINCT s.id AS server_id,s.url,s.vendor,s.provenance,s.credential_id,
+                        c.kind AS credential_kind,s.catalog_transport_fingerprint,
+                        coalesce(s.credential_generation,0) AS credential_generation,
+                        s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.mcp_tools t JOIN public.mcp_servers s ON s.id=t.server_id
+                   LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE s.id=$1 AND t.available=true AND t.catalog_generation=s.catalog_generation
+                    AND (s.credential_id IS NULL OR
+                         (c.kind IN ('mcp','mcp_oauth_client')
+                          AND c.provider=s.id AND c.revoked_at IS NULL))
                   ORDER BY t.name",
                 &[&server_id],
             )
@@ -953,9 +1057,24 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
             .map_err(|_| McpCatalogError::Corrupt {
                 field: "catalog_generation",
             })?;
+    let credential_generation: i64 =
+        row.try_get("credential_generation")
+            .map_err(|_| McpCatalogError::Corrupt {
+                field: "credential_generation",
+            })?;
     let endpoint: String = row
         .try_get("url")
         .map_err(|_| McpCatalogError::Corrupt { field: "url" })?;
+    let credential_id: Option<uuid::Uuid> =
+        row.try_get("credential_id")
+            .map_err(|_| McpCatalogError::Corrupt {
+                field: "credential_id",
+            })?;
+    let credential_kind: Option<crate::db::types::CredentialKind> = row
+        .try_get("credential_kind")
+        .map_err(|_| McpCatalogError::Corrupt {
+            field: "credential_kind",
+        })?;
     let vendor: String = row
         .try_get("vendor")
         .map_err(|_| McpCatalogError::Corrupt { field: "vendor" })?;
@@ -990,6 +1109,24 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
     let generation = u64::try_from(generation).map_err(|_| McpCatalogError::Corrupt {
         field: "catalog_generation",
     })?;
+    let credential_generation =
+        u64::try_from(credential_generation).map_err(|_| McpCatalogError::Corrupt {
+            field: "credential_generation",
+        })?;
+    let authentication = match (credential_id, credential_kind) {
+        (None, None) => McpAuthentication::None,
+        (Some(_), Some(crate::db::types::CredentialKind::Mcp)) => {
+            McpAuthentication::DeploymentBearer
+        }
+        (Some(_), Some(crate::db::types::CredentialKind::McpOauthClient)) => {
+            McpAuthentication::UserOAuth
+        }
+        _ => {
+            return Err(McpCatalogError::Corrupt {
+                field: "credential_kind",
+            });
+        }
+    };
     Ok(GrantedMcpTool {
         model_name: model_name(&server_id, &raw_name)?,
         server_id,
@@ -999,7 +1136,9 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
         schema_hash: schema_digest,
         effect: parse_effect(&effect_text)?,
         catalog_generation: CatalogGeneration::new(generation),
+        credential_generation: CredentialGeneration::new(credential_generation),
         endpoint,
+        authentication,
     })
 }
 

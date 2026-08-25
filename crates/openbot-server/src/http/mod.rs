@@ -50,6 +50,7 @@ pub mod computers;
 pub mod health;
 pub mod memories;
 pub mod metrics;
+pub mod plugins;
 pub mod threads;
 
 use std::sync::Arc;
@@ -62,7 +63,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::{delete, get, post};
 use openbot_agent::RemoteAgentToolInvoker;
-use openbot_application::{ApplicationService, RemoteCallbackAuthenticator};
+use openbot_application::{ApplicationService, McpOAuthCallback, RemoteCallbackAuthenticator};
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_infra::auth::oidc::{OidcLoginCoordinator, PreAuthSurface};
 use openbot_infra::auth::sso::DynamicSsoService;
@@ -98,6 +99,7 @@ struct StateInner {
     dynamic_sso: Option<Arc<DynamicSsoService>>,
     remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
     remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
+    mcp_oauth_callback: Option<Arc<dyn McpOAuthCallback>>,
 }
 
 impl ServerState {
@@ -178,6 +180,12 @@ impl ServerState {
         self.inner.remote_callback_tools.as_deref()
     }
 
+    /// Public MCP OAuth callback authenticator/coordinator.
+    #[must_use]
+    pub fn mcp_oauth_callback(&self) -> Option<&dyn McpOAuthCallback> {
+        self.inner.mcp_oauth_callback.as_deref()
+    }
+
     /// 敏感写 guard；未注入时 fail-closed 503，不给 handler 任何“暂时跳过”路径。
     pub async fn authorize_sensitive_write(
         &self,
@@ -245,6 +253,7 @@ pub struct ServerBuilder {
     dynamic_sso: Option<Arc<DynamicSsoService>>,
     remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
     remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
+    mcp_oauth_callback: Option<Arc<dyn McpOAuthCallback>>,
 }
 
 impl ServerBuilder {
@@ -265,6 +274,7 @@ impl ServerBuilder {
             dynamic_sso: None,
             remote_callback_auth: None,
             remote_callback_tools: None,
+            mcp_oauth_callback: None,
         }
     }
 
@@ -356,6 +366,13 @@ impl ServerBuilder {
         self
     }
 
+    /// Attach the one-time-state MCP OAuth callback coordinator.
+    #[must_use]
+    pub fn with_mcp_oauth_callback(mut self, callback: Arc<dyn McpOAuthCallback>) -> Self {
+        self.mcp_oauth_callback = Some(callback);
+        self
+    }
+
     /// 收口成 [`ServerState`]。
     #[must_use]
     pub fn build(self) -> ServerState {
@@ -374,6 +391,7 @@ impl ServerBuilder {
                 dynamic_sso: self.dynamic_sso,
                 remote_callback_auth: self.remote_callback_auth,
                 remote_callback_tools: self.remote_callback_tools,
+                mcp_oauth_callback: self.mcp_oauth_callback,
             }),
         }
     }
@@ -441,6 +459,23 @@ pub fn router(state: ServerState) -> Router {
             get(auth_sso::saml_metadata),
         )
         .route("/api/channels", get(channels::list))
+        .route("/api/plugins/connections", get(plugins::connections_get))
+        .route(
+            "/api/plugins/connections/{server_id}",
+            delete(plugins::connections_delete),
+        )
+        .route(
+            "/api/plugins/servers/{server_id}/connect",
+            post(plugins::servers_connect_post),
+        )
+        .route(
+            "/api/plugins/servers/{server_id}/oauth-client",
+            post(plugins::servers_oauth_client_post),
+        )
+        .route(
+            "/api/plugins/oauth/callback",
+            get(plugins::oauth_callback_get),
+        )
         .route(
             "/api/memories",
             get(memories::list).post(memories::remember),

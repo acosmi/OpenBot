@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 156
+    expect: 157
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 10
+    expect: 11
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 156
+    expect: 157
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1039,7 +1039,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0083"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "`http::plugins::servers_oauth_client_post` 先执行 fresh-session+trusted-Origin guard、后解析 redacted/zeroizing secret DTO；Application admin gate 在 port 前，infra 经 PRM/exact issuer/S256 验证后 v2 Vault 写入、credential generation+1、旧连接本地 tombstone、stale grant 不自动复活与 `mcp.oauth_client_registered` 同事务。Server 3/0/0 + PG OAuth 2/0/0。"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "admin。错误码：401 未登录 / 403 非 admin（auth/guards.ts::requireAdmin）/ 400 malformed / 503 依赖未配置。§9.4 OAuth client 注册"
   - id: "api-plugins-servers-delete"
@@ -1069,7 +1070,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0086"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "authenticated typed AppCommand 只按 AuthContext actor 查询 active exact mcp_user_token join；返回 scope/DB connected_at 与 configured redirectUri，credential id/secret 均不出 DTO。Server framing + PG connect/list/disconnect 真链绿。"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "session。错误码：401 未登录 / 404 不可见（Bot、channel、component 一律 404 不区分不存在与无权）/ 400 malformed / 403 policy refusal + stable rule id / 502 vendor failure / 503 MCP server 不可达。§9.2 连接生命周期；Google Drive disconnect 在上游未实现，§2.4 定为本地立即 deny + tombstone + vendor revoke，失败进 revocation_pending"
   - id: "api-plugins-servers-connect-post"
@@ -1079,9 +1081,21 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0087"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "same-origin authenticated POST → typed BeginMcpOAuth；OS CSPRNG state/PKCE、401 PRM、exact issuer/S256、RFC8707 resource、exact configured callback 后返回 authorizationUrl。returnTo 只有 admin/settings，任意 URL 值回 settings。"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "session。错误码：401 未登录 / 404 不可见（Bot、channel、component 一律 404 不区分不存在与无权）/ 400 malformed / 403 policy refusal + stable rule id / 502 vendor failure / 503 MCP server 不可达。§9.4 起 OAuth 授权跳转"
+  - id: "api-plugins-connections-delete"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::plugins::connections_delete (DELETE /api/plugins/connections/{server_id})"
+    owner: "openbot-server"
+    test_id: "T-API-0157"
+    migration_rule: "n/a: 第一真源 §2.4/§9.4 修复上游未实现的 disconnect"
+    status: "done"
+    done_evidence: "same-origin typed command；PG transaction 先 revoked_at+tombstone metadata、删 actor join、写 vendor_revoked=false audit，commit 后才 RFC7009 revoke。vendor 503 时 200 receipt 明示 pending 且本地 list/runtime 立即不可见；SKIP LOCKED reconciler 重试后写 vendor_revoked=true。"
+    evidence: "docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md §2.4 / §9.4"
+    notes: "这不是上游 parity 路由；第一真源已把缺失 disconnect 裁决为必须新增的安全修复。"
   - id: "api-plugins-oauth-callback-get"
     upstream: "server/src/plugins/routes.ts::createPluginRoutes"
     label: "parity"
@@ -1089,7 +1103,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0088"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "public callback 不信 session：HMAC identifier DELETE RETURNING 先烧 state，AEAD 恢复 actor/server/generation/PKCE/issuer；成功与所有失败均 bodyless 302 + no-store/no-referrer，失败统一 settings list。PG tamper/wrong key/replay/expiry/mix-up token-call=0。"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "public（无 requireUser）：身份靠加密 state 参数，不靠会话。失败一律 302 回 connected-accounts 页并带 failed=true，不回 4xx，防把 code/state 泄进错误页。错误码：302（成功与失败都跳转）"
   - id: "api-plugins-skills-post"

@@ -13,7 +13,7 @@ use openbot_application::{
     ToolPreflightRefusal, parse_remember_tool_arguments, remember_tool_metadata,
 };
 use openbot_contracts::auth::{AuthContext, AuthContextBuilder, AuthGeneration, Role};
-use openbot_contracts::ids::{DeploymentId, RunId, TenantId};
+use openbot_contracts::ids::{ActorId, DeploymentId, RunId, TenantId};
 use openbot_contracts::memory::MemoryStatus;
 use openbot_contracts::tool::ToolInvocation;
 use openbot_domain::identity::roles::resolve_effective_role;
@@ -33,6 +33,7 @@ use serde_json::json;
 
 use crate::mcp::{MAX_MCP_RESULT_CHARS, MCP_CALL_TIMEOUT, McpClientError, SafeRmcpClient};
 use crate::mcp_catalog::{GrantedMcpTool, McpCatalogError, PostgresMcpCatalog};
+use crate::mcp_credentials::{McpCredentialError, PostgresMcpCredentialBroker};
 use crate::policy::PolicyStore;
 
 /// PostgreSQL run-local sequence allocator shared by every Server replica and callback path.
@@ -238,6 +239,7 @@ pub struct PostgresBuiltInToolControlPlane<M> {
 struct McpToolRuntime {
     catalog: Arc<PostgresMcpCatalog>,
     client: SafeRmcpClient,
+    credentials: Option<Arc<PostgresMcpCredentialBroker>>,
 }
 
 enum ResolvedToolKind {
@@ -268,7 +270,20 @@ impl<M> PostgresBuiltInToolControlPlane<M> {
     /// Attach the production RMCP catalog/executor. Without this, every MCP name is invisible.
     #[must_use]
     pub fn with_mcp(mut self, catalog: Arc<PostgresMcpCatalog>, client: SafeRmcpClient) -> Self {
-        self.mcp = Some(McpToolRuntime { catalog, client });
+        self.mcp = Some(McpToolRuntime {
+            catalog,
+            client,
+            credentials: None,
+        });
+        self
+    }
+
+    /// Attach fresh Vault-backed credential selection after the protocol runtime is present.
+    #[must_use]
+    pub fn with_mcp_credentials(mut self, credentials: Arc<PostgresMcpCredentialBroker>) -> Self {
+        if let Some(runtime) = &mut self.mcp {
+            runtime.credentials = Some(credentials);
+        }
         self
     }
 }
@@ -582,17 +597,70 @@ where
                     Some("mcp_scope_stale"),
                 );
             }
-            return match runtime
+            let bearer = match resolve_mcp_bearer(runtime, &tool, call.actor().actor()).await {
+                Ok(bearer) => bearer,
+                Err(error) => {
+                    let (message, code) = mcp_credential_failure(error);
+                    return ToolExecutionReport::new(
+                        redeemed,
+                        message.to_owned(),
+                        CommitState::NotCommitted,
+                        started.elapsed(),
+                        Some(code),
+                    );
+                }
+            };
+            let user_oauth =
+                tool.authentication == crate::mcp_catalog::McpAuthentication::UserOAuth;
+            let mut outcome = runtime
                 .client
                 .call_tool_bound(
                     &tool.endpoint,
-                    None,
+                    bearer,
                     &tool.raw_name,
                     tool.schema_hash,
-                    arguments,
+                    arguments.clone(),
                 )
-                .await
-            {
+                .await;
+            // §9.4 permits exactly one controlled refresh after a resource-server 401. The broker
+            // rotates again and the original call is retried once; no loop and no retry exists for
+            // insufficient scope, transport errors, or deployment bearer credentials.
+            if user_oauth && outcome == Err(McpClientError::AuthRequired) {
+                let retry_bearer =
+                    match resolve_mcp_bearer(runtime, &tool, call.actor().actor()).await {
+                        Ok(Some(bearer)) => bearer,
+                        Ok(None) => {
+                            return ToolExecutionReport::new(
+                                redeemed,
+                                "This connector requires authentication again.".to_owned(),
+                                CommitState::NotCommitted,
+                                started.elapsed(),
+                                Some("mcp_auth_required"),
+                            );
+                        }
+                        Err(error) => {
+                            let (message, code) = mcp_credential_failure(error);
+                            return ToolExecutionReport::new(
+                                redeemed,
+                                message.to_owned(),
+                                CommitState::NotCommitted,
+                                started.elapsed(),
+                                Some(code),
+                            );
+                        }
+                    };
+                outcome = runtime
+                    .client
+                    .call_tool_bound(
+                        &tool.endpoint,
+                        Some(retry_bearer),
+                        &tool.raw_name,
+                        tool.schema_hash,
+                        arguments,
+                    )
+                    .await;
+            }
+            return match outcome {
                 Ok(outcome) if !outcome.is_error => ToolExecutionReport::new(
                     redeemed,
                     mcp_untrusted_projection(&tool, &outcome.text),
@@ -621,6 +689,20 @@ where
                     CommitState::Unknown,
                     started.elapsed(),
                     Some("mcp_commit_unknown"),
+                ),
+                Err(McpClientError::AuthRequired) => ToolExecutionReport::new(
+                    redeemed,
+                    "This connector requires authentication again.".to_owned(),
+                    CommitState::NotCommitted,
+                    started.elapsed(),
+                    Some("mcp_auth_required"),
+                ),
+                Err(McpClientError::InsufficientScope) => ToolExecutionReport::new(
+                    redeemed,
+                    "This connector needs additional permission.".to_owned(),
+                    CommitState::NotCommitted,
+                    started.elapsed(),
+                    Some("mcp_insufficient_scope"),
                 ),
                 Err(
                     McpClientError::Transport
@@ -711,6 +793,48 @@ where
                 Some("tool_timeout"),
             ),
         }
+    }
+}
+
+async fn resolve_mcp_bearer(
+    runtime: &McpToolRuntime,
+    tool: &GrantedMcpTool,
+    actor: &ActorId,
+) -> Result<Option<crate::mcp::McpBearerToken>, McpCredentialError> {
+    if tool.authentication == crate::mcp_catalog::McpAuthentication::None {
+        return Ok(None);
+    }
+    let credentials = runtime
+        .credentials
+        .as_ref()
+        .ok_or(McpCredentialError::AuthRequired)?;
+    credentials
+        .bearer_for(&tool.server_id, actor)
+        .await?
+        .map(Some)
+        .ok_or(McpCredentialError::Corrupt {
+            field: "credential_mode",
+        })
+}
+
+fn mcp_credential_failure(error: McpCredentialError) -> (&'static str, &'static str) {
+    match error {
+        McpCredentialError::AuthRequired => (
+            "This connector requires authentication again.",
+            "mcp_auth_required",
+        ),
+        McpCredentialError::InsufficientScope => (
+            "This connector needs additional permission.",
+            "mcp_insufficient_scope",
+        ),
+        McpCredentialError::CommitUnknown => (
+            "The connector credential rotation could not be confirmed.",
+            "mcp_credential_commit_unknown",
+        ),
+        McpCredentialError::Unavailable | McpCredentialError::Corrupt { .. } => (
+            "That connector credential could not be loaded.",
+            "mcp_credential_unavailable",
+        ),
     }
 }
 
@@ -888,6 +1012,7 @@ async fn mcp_execution_scope_is_current(
                 JOIN public.plugin_grants g ON g.kind='mcp' AND g.agent_id=r.bot_id
                 JOIN public.mcp_tools mt ON g.ref=mt.server_id||'/'||mt.name
                 JOIN public.mcp_servers ms ON ms.id=mt.server_id
+                LEFT JOIN public.credentials c ON c.id=ms.credential_id
                 WHERE r.run_id=$1 AND r.bot_id=$2 AND r.actor_id=$3 AND r.status='running'
                   AND t.deployment_id=$4 AND t.tenant_id=$5 AND t.status<>'deleted'
                   AND tm.user_id=$3 AND l.fencing_token=r.fencing_token
@@ -898,11 +1023,23 @@ async fn mcp_execution_scope_is_current(
                                  WHERE ra.email=lower(u.email))
                   AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
                   AND g.ref=$7 AND g.state='active' AND mt.available=true
-                  AND ms.credential_id IS NULL
+                  AND (ms.credential_id IS NULL OR
+                       (c.kind='mcp' AND c.provider=ms.id AND c.revoked_at IS NULL) OR
+                       (c.kind='mcp_oauth_client' AND c.provider=ms.id
+                        AND c.revoked_at IS NULL AND EXISTS(
+                          SELECT 1 FROM public.mcp_user_credentials uc
+                          JOIN public.credentials user_credential
+                            ON user_credential.id=uc.credential_id
+                          WHERE uc.server_id=ms.id AND uc.user_id=r.actor_id
+                            AND user_credential.kind='mcp_user_token'
+                            AND user_credential.provider=ms.id
+                            AND user_credential.key_id=r.actor_id
+                            AND user_credential.revoked_at IS NULL)))
                   AND ms.catalog_generation=$8 AND mt.catalog_generation=$8
                   AND g.catalog_generation=$8 AND mt.schema_hash=$9 AND g.schema_hash=$9
                   AND mt.effect=$10 AND g.effect=$10
                   AND g.transport_fingerprint=ms.catalog_transport_fingerprint
+                  AND g.credential_generation=coalesce(ms.credential_generation,0)
             )",
             &[
                 &call.run().as_str(),
