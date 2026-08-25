@@ -1882,6 +1882,8 @@ name = "openbot-agent"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "getrandom 0.4.3",
+ "metrics",
  "openbot-application",
  "openbot-contracts",
  "openbot-domain",
@@ -1976,6 +1978,7 @@ dependencies = [
  "hmac 0.12.1",
  "http",
  "http-body-util",
+ "httpdate",
  "hyper",
  "hyper-util",
  "ipnet",

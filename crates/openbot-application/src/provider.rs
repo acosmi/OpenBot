@@ -1,9 +1,19 @@
 //! Provider-neutral streaming port；vendor DTO 不穿过此模块（v3 §7.3）。
 
 use async_trait::async_trait;
+use core::time::Duration;
 use serde_json::Value;
 
 use crate::RunExecutionLease;
+
+/// Authoritative provider routing class loaded with the Bot row；不是 model 自报字段。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderRoute {
+    /// Package `model.yaml` 固定 OpenAI。
+    PackageOpenAi,
+    /// Managed slot 读取 deployment `BOT_PROVIDER/BOT_MODEL` config。
+    Managed,
+}
 
 /// Provider input message role。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +37,8 @@ pub struct ProviderMessage {
     pub content: String,
     /// Tool result 的 call id。
     pub tool_call_id: Option<String>,
+    /// Tool result 的 authoritative catalog name；Google functionResponse 必填。
+    pub tool_name: Option<String>,
 }
 
 impl core::fmt::Debug for ProviderMessage {
@@ -35,6 +47,7 @@ impl core::fmt::Debug for ProviderMessage {
             .field("role", &self.role)
             .field("content_bytes", &self.content.len())
             .field("has_tool_call_id", &self.tool_call_id.is_some())
+            .field("has_tool_name", &self.tool_name.is_some())
             .finish()
     }
 }
@@ -63,6 +76,8 @@ impl core::fmt::Debug for ProviderToolDefinition {
 /// 一次 sampling request；actor/run/API key 不在 model request 自报面。
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderRequest {
+    /// Provider route from authoritative Agent configuration。
+    pub route: ProviderRoute,
     /// Ordered conversation/context。
     pub messages: Vec<ProviderMessage>,
     /// Granted tools；空即 text-only。
@@ -100,10 +115,16 @@ pub struct ProviderUsage {
 pub enum ProviderFailure {
     /// API key/auth rejected。
     Authentication,
-    /// 429。
-    RateLimited,
+    /// 429；Retry-After 只保留规范化 duration，不保留 header/body。
+    RateLimited {
+        /// HTTP delta-seconds/date normalized against receive time。
+        retry_after: Option<Duration>,
+    },
     /// Explicit retryable 5xx。
-    ServerUnavailable,
+    ServerUnavailable {
+        /// Optional Retry-After。
+        retry_after: Option<Duration>,
+    },
     /// Schema/sequence/UTF-8/SSE invalid。
     InvalidResponse,
     /// Real body read gap exceeded AGENT_STALL_TIMEOUT_MS。
@@ -253,6 +274,9 @@ pub enum ProviderPortError {
     /// Transport/status unavailable；细分类由 returned Failed event 表达时可用。
     #[error("provider_unavailable")]
     Unavailable,
+    /// Request may have left the process before headers became knowable；不得自动重试。
+    #[error("provider_commit_unknown")]
+    CommitUnknown,
 }
 
 /// 一条已打开的 provider stream。
@@ -300,4 +324,49 @@ pub enum AgentContextError {
 pub trait AgentContextSource: Send + Sync {
     /// Load provider-neutral request；scope must be revalidated in the query。
     async fn load(&self, lease: &RunExecutionLease) -> Result<ProviderRequest, AgentContextError>;
+}
+
+/// Built-in Agent lifecycle audit facts；不携带 prompt/delta/key/vendor body。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentAuditKind {
+    /// Dispatch 已 durable activate、即将读取 context。
+    Invoked,
+    /// Provider real body read gap exceeded the configured watchdog。
+    StreamStalled,
+    /// Absolute run deadline fired after child cancellation。
+    RunDeadlineExceeded,
+}
+
+/// Audit chain append failure；底层错误不跨 Agent boundary。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum AgentAuditError {
+    /// PostgreSQL/hash-chain unavailable or commit unknown。
+    #[error("agent_audit_unavailable")]
+    Unavailable,
+}
+
+/// Agent lifecycle audit port；production 必须注入 hash-chain implementation。
+#[async_trait]
+pub trait AgentAudit: Send + Sync {
+    /// Append one allowlisted lifecycle fact for the authoritative lease。
+    async fn record(
+        &self,
+        lease: &RunExecutionLease,
+        kind: AgentAuditKind,
+    ) -> Result<(), AgentAuditError>;
+}
+
+/// Explicit no-op used by narrow unit/integration harnesses；production main never constructs it。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoAgentAudit;
+
+#[async_trait]
+impl AgentAudit for NoAgentAudit {
+    async fn record(
+        &self,
+        _lease: &RunExecutionLease,
+        _kind: AgentAuditKind,
+    ) -> Result<(), AgentAuditError> {
+        Ok(())
+    }
 }

@@ -26,8 +26,8 @@ fn includes_the_complete_fintech_deployment_package_example() {
     assert_eq!(package.product_name, "Ledgerline");
     assert_eq!(
         package.agents.len(),
-        2,
-        "空 remote endpoint 必须省略 risk Agent"
+        3,
+        "managed slot 必须有 Rust built-in fallback"
     );
     assert_eq!(package.channels.len(), 3);
     assert!(

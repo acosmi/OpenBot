@@ -6,18 +6,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hmac::{Hmac, Mac};
-use openbot_agent::{BuiltInAgentConfig, BuiltInAgentRuntime};
+use openbot_agent::{
+    BuiltInAgentConfig, BuiltInAgentRuntime, ProviderRouter, RetryingProvider,
+    RetryingProviderConfig,
+};
 use openbot_application::tenant::package::{
-    TenantAgentType, TenantPackageAudienceContext, TenantPackageEnvironment,
-    synchronize_tenant_package,
+    BuiltInProviderSource, TenantAgentConfiguration, TenantAgentType, TenantPackageAudienceContext,
+    TenantPackageEnvironment, synchronize_tenant_package,
 };
 use openbot_application::{
-    ApplicationService, NoRunDispatchConsumer, OpenBotApplication, RunDispatchConsumer, RunRuntime,
+    AgentAudit, ApplicationService, NoRunDispatchConsumer, OpenBotApplication, ProviderAdapter,
+    RunDispatchConsumer, RunRuntime,
 };
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_domain::vault::{KeyVersion, WrappingKey};
+use openbot_infra::agent_audit::PostgresAgentAudit;
 use openbot_infra::auth::config::{
     AuthConfig, BindingExposure, ExampleKeyPolicy, KeyEncryptionKey, SingleUserAdmission,
     auth_config_with_dynamic_provider, default_session_lifetime, single_user_binding_verdict,
@@ -38,8 +43,12 @@ use openbot_infra::net::safe_http::{
     CidrAllowlist, EgressPolicy, SafeDialer, SafeHttpBudget, SchemePolicy,
 };
 use openbot_infra::policy::{PolicyListener, PolicyStore};
+use openbot_infra::provider::anthropic::{
+    AnthropicApiKey, AnthropicProvider, AnthropicProviderConfig,
+};
 use openbot_infra::provider::context::PostgresAgentContextSource;
 use openbot_infra::provider::credential::PostgresOpenAiCredentialSource;
+use openbot_infra::provider::google::{GoogleApiKey, GoogleProvider, GoogleProviderConfig};
 use openbot_infra::provider::openai::{
     OpenAiApiKey, OpenAiProtocol, OpenAiProvider, OpenAiProviderConfig,
 };
@@ -53,8 +62,8 @@ use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThr
 use openbot_infra::thread_id::mint_thread_id;
 use openbot_infra::vault::CredentialRecordVault;
 use openbot_server::config::{
-    AgentBudgets, DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, PackageOpenAiProviderConfig,
-    ServerConfig, env_map_from_process,
+    AgentBudgets, DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, ManagedProviderConfig,
+    ManagedProviderKind, PackageOpenAiProviderConfig, ServerConfig, env_map_from_process,
 };
 use openbot_server::readiness::ReadinessVerdict;
 use openbot_server::telemetry::{self, LogFormat};
@@ -82,16 +91,19 @@ type AuthAssembly = (
 );
 type AgentAssembly = (Arc<dyn RunDispatchConsumer>, Option<BuiltInAgentRuntime>);
 
-struct PackageAgentAssemblyInput {
+struct BuiltInAgentAssemblyInput {
     pool: deadpool_postgres::Pool,
     deployment: DeploymentId,
     tenant: TenantId,
     runtime: Arc<dyn RunRuntime>,
     required: bool,
+    requires_managed: bool,
     model: String,
     credential_key_id: String,
     provider: PackageOpenAiProviderConfig,
+    managed_provider: Option<ManagedProviderConfig>,
     credential_vault: CredentialRecordVault,
+    audit: Arc<dyn AgentAudit>,
     budgets: AgentBudgets,
 }
 
@@ -112,6 +124,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .agents
         .iter()
         .any(|agent| agent.agent_type == TenantAgentType::BuiltIn);
+    let requires_managed_agent = tenant_package.package.agents.iter().any(|agent| {
+        matches!(
+            &agent.configuration,
+            TenantAgentConfiguration::BuiltIn {
+                provider_source: BuiltInProviderSource::Managed,
+                ..
+            }
+        )
+    });
 
     let database_url = openbot_server::config::env::optional(&env, "DATABASE_URL")
         .ok_or_else(|| startup_error("database_url_missing"))?;
@@ -278,16 +299,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         DEFAULT_THREAD_LEASE_DURATION,
         DEFAULT_DISPATCH_CLAIM_DURATION,
     )?);
-    let (run_consumer, built_in_agent) = build_package_agent(PackageAgentAssemblyInput {
+    let managed_provider = managed_provider_for_slot(&server);
+    let agent_audit: Arc<dyn AgentAudit> =
+        Arc::new(PostgresAgentAudit::new(pool.clone(), audit_key.to_vec())?);
+    let (run_consumer, built_in_agent) = build_built_in_agent(BuiltInAgentAssemblyInput {
         pool: pool.clone(),
         deployment: deployment.clone(),
         tenant: tenant.clone(),
         runtime: run_runtime.clone(),
         required: requires_built_in_agent,
+        requires_managed: requires_managed_agent,
         model: tenant_package.package.model.default_model.clone(),
         credential_key_id: tenant_package.package.model.credential_secret_ref.clone(),
         provider: server.package_openai_provider.clone(),
+        managed_provider,
         credential_vault: model_credential_vault,
+        audit: agent_audit,
         budgets: server.agent_budgets,
     })?;
     let built_in_agent_ready = built_in_agent.is_some() || !requires_built_in_agent;
@@ -378,17 +405,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn build_package_agent(input: PackageAgentAssemblyInput) -> Result<AgentAssembly, Box<dyn Error>> {
-    let PackageAgentAssemblyInput {
+fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembly, Box<dyn Error>> {
+    let BuiltInAgentAssemblyInput {
         pool,
         deployment,
         tenant,
         runtime,
         required,
+        requires_managed,
         model,
         credential_key_id,
         provider,
+        managed_provider,
         credential_vault,
+        audit,
         budgets,
     } = input;
     if !required {
@@ -412,31 +442,47 @@ fn build_package_agent(input: PackageAgentAssemblyInput) -> Result<AgentAssembly
         credential_key_id,
         environment_fallback,
     )?);
-    let provider = Arc::new(OpenAiProvider::new_with_credential_source(
-        OpenAiProviderConfig::new_with_transport_policy(
-            endpoint,
-            model,
-            protocol,
-            SafeHttpBudget::new(64 * 1024 * 1024, Duration::from_secs(30))?,
-            budgets.stall_timeout,
-            if allow_http {
-                SchemePolicy::HttpOrHttps
-            } else {
-                SchemePolicy::HttpsOnly
-            },
-        )?,
-        credentials,
-        SafeDialer::new(EgressPolicy::new(CidrAllowlist::parse_exact(
-            egress_allow_cidrs.iter().map(String::as_str),
-        )?)),
-    ));
+    let egress = CidrAllowlist::parse_exact(egress_allow_cidrs.iter().map(String::as_str))?;
+    let package_provider: Arc<dyn ProviderAdapter> =
+        Arc::new(OpenAiProvider::new_with_credential_source(
+            OpenAiProviderConfig::new_with_transport_policy(
+                endpoint,
+                model,
+                protocol,
+                SafeHttpBudget::new(64 * 1024 * 1024, Duration::from_secs(30))?,
+                budgets.stall_timeout,
+                if allow_http {
+                    SchemePolicy::HttpOrHttps
+                } else {
+                    SchemePolicy::HttpsOnly
+                },
+            )?,
+            credentials,
+            SafeDialer::new(EgressPolicy::new(egress)),
+        ));
+    let managed = if requires_managed {
+        Some(build_managed_provider(
+            managed_provider.ok_or_else(|| startup_error("managed_provider_key_missing"))?,
+            budgets,
+        )?)
+    } else {
+        None
+    };
+    let provider = Arc::new(RetryingProvider::new(
+        Arc::new(ProviderRouter::new(package_provider, managed)),
+        RetryingProviderConfig::default(),
+    )?);
     let context = Arc::new(PostgresAgentContextSource::new(
-        pool, deployment, tenant, None,
+        pool,
+        deployment,
+        tenant,
+        Some(budgets.max_output_tokens),
     )?);
     let agent = BuiltInAgentRuntime::start(
         runtime,
         context,
         provider,
+        audit,
         BuiltInAgentConfig {
             run_deadline: budgets.run_deadline,
             ..BuiltInAgentConfig::default()
@@ -445,6 +491,91 @@ fn build_package_agent(input: PackageAgentAssemblyInput) -> Result<AgentAssembly
     .map_err(|_| startup_error("agent_runtime_config_invalid"))?;
     let consumer = agent.consumer();
     Ok((consumer, Some(agent)))
+}
+
+fn managed_provider_for_slot(server: &ServerConfig) -> Option<ManagedProviderConfig> {
+    server.managed_provider.clone().or_else(|| {
+        let package = &server.package_openai_provider;
+        package
+            .environment_api_key
+            .clone()
+            .map(|api_key| ManagedProviderConfig {
+                provider: ManagedProviderKind::OpenAi,
+                model: "gpt-5.5".to_owned(),
+                api_key,
+                base_url: package.base_url.clone(),
+                use_responses_api: false,
+                egress_allow_cidrs: package.egress_allow_cidrs.clone(),
+                allow_http: package.allow_http,
+            })
+    })
+}
+
+fn build_managed_provider(
+    config: ManagedProviderConfig,
+    budgets: AgentBudgets,
+) -> Result<Arc<dyn ProviderAdapter>, Box<dyn Error>> {
+    let ManagedProviderConfig {
+        provider,
+        model,
+        api_key,
+        base_url,
+        use_responses_api,
+        egress_allow_cidrs,
+        allow_http,
+    } = config;
+    let scheme = if allow_http {
+        SchemePolicy::HttpOrHttps
+    } else {
+        SchemePolicy::HttpsOnly
+    };
+    let dialer = SafeDialer::new(EgressPolicy::new(CidrAllowlist::parse_exact(
+        egress_allow_cidrs.iter().map(String::as_str),
+    )?));
+    let connect_budget = SafeHttpBudget::new(64 * 1024 * 1024, Duration::from_secs(30))?;
+    match provider {
+        ManagedProviderKind::OpenAi => {
+            let protocol = if use_responses_api {
+                OpenAiProtocol::Responses
+            } else {
+                OpenAiProtocol::ChatCompletions
+            };
+            Ok(Arc::new(OpenAiProvider::new(
+                OpenAiProviderConfig::new_with_transport_policy(
+                    openai_endpoint(base_url.as_str(), protocol)?,
+                    model,
+                    protocol,
+                    connect_budget,
+                    budgets.stall_timeout,
+                    scheme,
+                )?,
+                OpenAiApiKey::from_bytes(api_key.expose().as_bytes().to_vec())?,
+                dialer,
+            )))
+        }
+        ManagedProviderKind::Anthropic => Ok(Arc::new(AnthropicProvider::new(
+            AnthropicProviderConfig::new_with_transport_policy(
+                anthropic_endpoint(base_url.as_str())?,
+                model,
+                AnthropicApiKey::from_bytes(api_key.expose().as_bytes().to_vec())?,
+                connect_budget,
+                budgets.stall_timeout,
+                scheme,
+            )?,
+            dialer,
+        ))),
+        ManagedProviderKind::Google => Ok(Arc::new(GoogleProvider::new(
+            GoogleProviderConfig::new_with_transport_policy(
+                google_endpoint(base_url.as_str(), &model)?,
+                model,
+                GoogleApiKey::from_bytes(api_key.expose().as_bytes().to_vec())?,
+                connect_budget,
+                budgets.stall_timeout,
+                scheme,
+            )?,
+            dialer,
+        ))),
+    }
 }
 
 fn openai_endpoint(base: &str, protocol: OpenAiProtocol) -> Result<Url, std::io::Error> {
@@ -465,6 +596,56 @@ fn openai_endpoint(base: &str, protocol: OpenAiProtocol) -> Result<Url, std::io:
         OpenAiProtocol::ChatCompletions => "chat/completions",
     })
     .map_err(|_| startup_error("openai_base_url_invalid"))
+}
+
+fn anthropic_endpoint(base: &str) -> Result<Url, std::io::Error> {
+    provider_base(base, "anthropic_base_url_invalid")?
+        .join("v1/messages")
+        .map_err(|_| startup_error("anthropic_base_url_invalid"))
+}
+
+fn google_endpoint(base: &str, model: &str) -> Result<Url, std::io::Error> {
+    let model = model.strip_prefix("models/").unwrap_or(model);
+    if model.is_empty()
+        || model.starts_with('/')
+        || model.ends_with('/')
+        || model.split('/').any(|segment| {
+            segment.is_empty()
+                || segment == "."
+                || segment == ".."
+                || !segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
+    {
+        return Err(startup_error("google_model_invalid"));
+    }
+    let model_path = if model.contains('/') {
+        model.to_owned()
+    } else {
+        format!("models/{model}")
+    };
+    provider_base(base, "google_base_url_invalid")?
+        .join(&format!(
+            "v1beta/{model_path}:streamGenerateContent?alt=sse"
+        ))
+        .map_err(|_| startup_error("google_base_url_invalid"))
+}
+
+fn provider_base(base: &str, code: &'static str) -> Result<Url, std::io::Error> {
+    let mut base = Url::parse(base).map_err(|_| startup_error(code))?;
+    if !base.username().is_empty()
+        || base.password().is_some()
+        || base.query().is_some()
+        || base.fragment().is_some()
+    {
+        return Err(startup_error(code));
+    }
+    if !base.path().ends_with('/') {
+        let path = format!("{}/", base.path());
+        base.set_path(&path);
+    }
+    Ok(base)
 }
 
 async fn build_oidc_login(
@@ -599,6 +780,8 @@ fn startup_error(code: &'static str) -> std::io::Error {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
@@ -665,5 +848,96 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn managed_provider_defaults_from_openai_environment_only_when_the_slot_needs_it() {
+        let server = ServerConfig::from_env_map(&BTreeMap::from([(
+            "OPENAI_API_KEY".to_owned(),
+            " managed-key ".to_owned(),
+        )]))
+        .unwrap();
+        assert!(server.managed_provider.is_none());
+        let managed = managed_provider_for_slot(&server).unwrap();
+        assert_eq!(managed.provider, ManagedProviderKind::OpenAi);
+        assert_eq!(managed.model, "gpt-5.5");
+        assert_eq!(managed.api_key.expose(), "managed-key");
+        assert!(!managed.use_responses_api);
+
+        let no_key = ServerConfig::from_env_map(&BTreeMap::new()).unwrap();
+        assert!(managed_provider_for_slot(&no_key).is_none());
+    }
+
+    #[test]
+    fn anthropic_and_google_base_urls_map_to_locked_sdk_endpoints_without_model_injection() {
+        assert_eq!(
+            anthropic_endpoint("https://api.anthropic.com")
+                .unwrap()
+                .as_str(),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            google_endpoint(
+                "https://generativelanguage.googleapis.com",
+                "gemini-2.5-flash"
+            )
+            .unwrap()
+            .as_str(),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+        assert_eq!(
+            google_endpoint("https://gateway.example/google/", "models/gemini-custom")
+                .unwrap()
+                .as_str(),
+            "https://gateway.example/google/v1beta/models/gemini-custom:streamGenerateContent?alt=sse"
+        );
+        assert!(google_endpoint("https://gateway.example", "../admin?key=secret").is_err());
+    }
+
+    #[test]
+    fn production_managed_factory_constructs_all_three_provider_families() {
+        let cases = [
+            (
+                ManagedProviderKind::OpenAi,
+                "gpt-5.5",
+                "https://api.openai.com/v1",
+                false,
+            ),
+            (
+                ManagedProviderKind::Anthropic,
+                "claude-sonnet-4-5",
+                "https://api.anthropic.com",
+                false,
+            ),
+            (
+                ManagedProviderKind::Google,
+                "gemini-2.5-flash",
+                "https://generativelanguage.googleapis.com",
+                false,
+            ),
+        ];
+        let mut constructed = 0;
+        for (provider, model, base, use_responses_api) in cases {
+            let adapter = build_managed_provider(
+                ManagedProviderConfig {
+                    provider,
+                    model: model.to_owned(),
+                    api_key: openbot_server::config::Secret::new("test-key"),
+                    base_url: openbot_server::config::DeploymentAddress::parse(base).unwrap(),
+                    use_responses_api,
+                    egress_allow_cidrs: Vec::new(),
+                    allow_http: false,
+                },
+                AgentBudgets {
+                    stall_timeout: None,
+                    run_deadline: Some(Duration::from_secs(1800)),
+                    max_output_tokens: 16_384,
+                },
+            )
+            .unwrap();
+            constructed += 1;
+            drop(adapter);
+        }
+        assert_eq!(constructed, 3);
     }
 }

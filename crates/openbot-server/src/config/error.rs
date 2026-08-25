@@ -57,6 +57,8 @@ pub enum Expectation {
     ProviderName,
     /// Whole milliseconds ≥0；0 disables。
     WholeMillisecondsOrZero,
+    /// Provider output token cap in `1..=1_000_000`。
+    WholeTokensOneToMillion,
     /// Selected provider key must be nonempty after trim。
     NonEmptySecret,
 }
@@ -77,6 +79,7 @@ impl Expectation {
             Self::ActionPolicyAllowList => "action_policy_allow_list",
             Self::ProviderName => "provider_name",
             Self::WholeMillisecondsOrZero => "whole_milliseconds_or_zero",
+            Self::WholeTokensOneToMillion => "whole_tokens_one_to_million",
             Self::NonEmptySecret => "non_empty_secret",
         }
     }

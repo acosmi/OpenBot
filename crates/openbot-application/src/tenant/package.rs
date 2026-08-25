@@ -24,6 +24,9 @@ pub const TENANT_PACKAGE_FILENAMES: [&str; 5] = [
     "knowledge.yaml",
 ];
 
+/// Example/legacy managed endpoint 的内部 in-process sentinel；绝不作为 URL 发出网络请求。
+pub const MANAGED_AGENT_IN_PROCESS_ENDPOINT: &str = "openbot-internal://managed-agent";
+
 /// 会出现在稳定错误里的文件标识。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TenantPackageFile {
@@ -308,12 +311,34 @@ pub enum TenantAgentConfiguration {
     BuiltIn {
         /// 系统提示。
         system_prompt: String,
+        /// Package model 或 deployment managed provider。
+        provider_source: BuiltInProviderSource,
     },
     /// remote AG-UI endpoint。
     RemoteAgUi {
         /// 展开后的 endpoint。
         endpoint: String,
     },
+}
+
+/// Built-in Agent 的权威 provider 选择层（v3 §7.3）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltInProviderSource {
+    /// `model.yaml` 固定 OpenAI。
+    Package,
+    /// Deployment `BOT_PROVIDER/BOT_MODEL` managed slot。
+    Managed,
+}
+
+impl BuiltInProviderSource {
+    /// PostgreSQL Agent configuration 的稳定字面量。
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Package => "package",
+            Self::Managed => "managed",
+        }
+    }
 }
 
 /// 包声明的一个 Agent。
@@ -420,7 +445,7 @@ pub fn validate_tenant_package(
     let mut agent_ids = BTreeSet::new();
     let mut agents = Vec::new();
     for raw in agents_file.agents {
-        let agent_type = match raw.agent_type.as_deref() {
+        let mut agent_type = match raw.agent_type.as_deref() {
             Some("built-in") => TenantAgentType::BuiltIn,
             Some("remote-ag-ui") => TenantAgentType::RemoteAgUi,
             _ => return Err(TenantPackageError::AgentTypeInvalid),
@@ -441,23 +466,37 @@ pub fn validate_tenant_package(
         if !agent_ids.insert(id.clone()) {
             return Err(TenantPackageError::AgentIdDuplicate);
         }
+        let name = required(raw.name, "agent.name")?;
+        let title = required(raw.title, "agent.title")?;
+        let role_description = required(raw.role_description, "agent.role_description")?;
         let avatar_seed = raw
             .avatar_seed
             .map(|value| required(Some(value), "agent.avatar_seed"))
             .transpose()?;
-        let configuration = match agent_type {
-            TenantAgentType::BuiltIn => TenantAgentConfiguration::BuiltIn {
+        let managed_in_process = agent_type == TenantAgentType::RemoteAgUi
+            && raw.endpoint.as_deref() == Some(MANAGED_AGENT_IN_PROCESS_ENDPOINT);
+        let configuration = match (agent_type, managed_in_process) {
+            (TenantAgentType::BuiltIn, false) => TenantAgentConfiguration::BuiltIn {
                 system_prompt: required(raw.system_prompt, "agent.system_prompt")?,
+                provider_source: BuiltInProviderSource::Package,
             },
-            TenantAgentType::RemoteAgUi => TenantAgentConfiguration::RemoteAgUi {
+            (TenantAgentType::RemoteAgUi, true) => {
+                agent_type = TenantAgentType::BuiltIn;
+                TenantAgentConfiguration::BuiltIn {
+                    system_prompt: managed_standing_prompt(&name, &title, &role_description),
+                    provider_source: BuiltInProviderSource::Managed,
+                }
+            }
+            (TenantAgentType::RemoteAgUi, false) => TenantAgentConfiguration::RemoteAgUi {
                 endpoint: required(raw.endpoint, "agent.endpoint")?,
             },
+            (TenantAgentType::BuiltIn, true) => unreachable!("managed sentinel starts remote"),
         };
         agents.push(TenantAgent {
             id,
-            name: required(raw.name, "agent.name")?,
-            title: required(raw.title, "agent.title")?,
-            role_description: required(raw.role_description, "agent.role_description")?,
+            name,
+            title,
+            role_description,
             avatar_seed,
             agent_type,
             configuration,
@@ -533,6 +572,13 @@ pub fn validate_tenant_package(
         model,
         knowledge_sources,
     })
+}
+
+fn managed_standing_prompt(name: &str, title: &str, role_description: &str) -> String {
+    format!(
+        "You are {name}, {title}.\n\n{role_description}\n\n\
+         This standing role applies in every channel. Treat channel messages as task-specific instructions within it."
+    )
 }
 
 fn parse_yaml<T: for<'de> Deserialize<'de>>(
@@ -1151,6 +1197,24 @@ mod tests {
         let package = validate_tenant_package(files).unwrap();
         assert_eq!(package.agents.len(), 1);
         assert_eq!(package.channels[0].permitted_agents, ["knowledge"]);
+    }
+
+    #[test]
+    fn managed_endpoint_sentinel_becomes_the_in_process_managed_provider_slot() {
+        let mut files = valid_files();
+        files.agents = format!(
+            "agents:\n  - {{ id: risk, name: Risk, title: Compliance, role_description: Investigate controls., type: remote-ag-ui, endpoint: {MANAGED_AGENT_IN_PROCESS_ENDPOINT} }}"
+        );
+        files.channels = "channels: [{ id: risk, name: Risk, description: Test., permitted_agents: [risk], allowed_groups: [all] }]".to_owned();
+        let package = validate_tenant_package(files).unwrap();
+        assert_eq!(package.agents[0].agent_type, TenantAgentType::BuiltIn);
+        assert!(matches!(
+            &package.agents[0].configuration,
+            TenantAgentConfiguration::BuiltIn {
+                system_prompt,
+                provider_source: BuiltInProviderSource::Managed,
+            } if system_prompt.starts_with("You are Risk, Compliance.")
+        ));
     }
 
     fn environment(entries: &[(&str, &str)]) -> TenantPackageEnvironment {

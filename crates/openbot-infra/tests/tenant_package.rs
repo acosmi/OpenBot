@@ -7,8 +7,9 @@ use std::path::PathBuf;
 
 use harness::{admin_config, with_temp_database};
 use openbot_application::tenant::package::{
-    LoadedTenantPackage, TenantPackageApplyError, TenantPackageAudienceContext,
-    TenantPackageCollision, TenantPackageEnvironment, TenantPackageFiles, TenantPackageStoreError,
+    BuiltInProviderSource, LoadedTenantPackage, TenantAgentConfiguration, TenantAgentType,
+    TenantPackageApplyError, TenantPackageAudienceContext, TenantPackageCollision,
+    TenantPackageEnvironment, TenantPackageFiles, TenantPackageStoreError,
     synchronize_tenant_package, validate_tenant_package,
 };
 use openbot_contracts::ids::ActorId;
@@ -38,14 +39,20 @@ fn loads_the_mounted_fintech_package_without_a_theme_file() {
             .iter()
             .any(|agent| agent.id == "general-assistant")
     );
-    assert!(
-        loaded
-            .package
-            .agents
-            .iter()
-            .all(|agent| agent.id != "risk-analyst"),
-        "空 MANAGED_AGENT_AG_UI_URL 必须省略 remote Agent"
-    );
+    let risk = loaded
+        .package
+        .agents
+        .iter()
+        .find(|agent| agent.id == "risk-analyst")
+        .expect("未配置外部覆盖时 managed slot 应由 Rust built-in Agent 承接");
+    assert_eq!(risk.agent_type, TenantAgentType::BuiltIn);
+    assert!(matches!(
+        &risk.configuration,
+        TenantAgentConfiguration::BuiltIn {
+            provider_source: BuiltInProviderSource::Managed,
+            ..
+        }
+    ));
     assert!(
         loaded
             .package

@@ -107,8 +107,9 @@ pub use ports::{
     ThreadHistoryRequest,
 };
 pub use provider::{
-    AgentContextError, AgentContextSource, ProviderAdapter, ProviderEvent, ProviderFailure,
-    ProviderMessage, ProviderMessageRole, ProviderOutputKind, ProviderPortError, ProviderRequest,
+    AgentAudit, AgentAuditError, AgentAuditKind, AgentContextError, AgentContextSource,
+    NoAgentAudit, ProviderAdapter, ProviderEvent, ProviderFailure, ProviderMessage,
+    ProviderMessageRole, ProviderOutputKind, ProviderPortError, ProviderRequest, ProviderRoute,
     ProviderSession, ProviderToolDefinition, ProviderUsage,
 };
 pub use run_runtime::{

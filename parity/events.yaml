@@ -14,7 +14,7 @@
 #       identity_provider.registered / knowledge.searched）在 server/src 无任何发出点。
 #       owner 判据（机械）：发出点是进程启动顶层代码或传输层看门狗（无 use case）=> openbot-infra，
 #       其余 => openbot-application（铸造）；落库一律 openbot-infra，见 §8.6 的 DB role 分离。
-#   (c) 新增语义事件 5 条，label=新增，upstream=-。
+#   (c) 新增语义事件 6 条，label=新增，upstream=-。
 #
 # target 统一写事件名的 Rust 符号落点；audit 的名字是契约层封闭枚举（§5.1 openbot-contracts
 # 的职责原文 = "native/wasm-safe ID、DTO、event、error、schema"），owner 写的是谁负责铸造它。
@@ -43,17 +43,22 @@ recount:
   - command: |-
       grep -c '^  - id: ' parity/events.yaml
     cwd: repo
-    expect: 73
-  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，5 新增）
+    expect: 74
+  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，6 新增）
   - command: |-
       printf 'parity=%s 新增=%s 替代=%s\n' "$(grep -c "^    label: 'parity'$" parity/events.yaml)" "$(grep -c "^    label: '新增'$" parity/events.yaml)" "$(grep -c "^    label: '替代'$" parity/events.yaml)"
     cwd: repo
-    expect: 'parity=68 新增=5 替代=0'
-  # owner 分布（openbot-agent 11 = AG-UI 11；openbot-infra 3 = 启动顶层 2 + 传输层看门狗 1；其余 openbot-application 59 = audit 54 + 新增 5）
+    expect: 'parity=68 新增=6 替代=0'
+  # owner 分布（openbot-agent 11 = AG-UI 11；openbot-infra 3 = 启动顶层 2 + 传输层看门狗 1；其余 openbot-application 60 = audit 54 + 新增 6）
   - command: |-
       grep -oE "^    owner: 'openbot-[a-z]+'" parity/events.yaml | tr -d "'" | sort | uniq -c | awk '{print $3"="$1}' | paste -sd' ' -
     cwd: repo
-    expect: 'openbot-agent=11 openbot-application=59 openbot-infra=3'
+    expect: 'openbot-agent=11 openbot-application=60 openbot-infra=3'
+  # 新增 absolute deadline audit 在固定上游零命中；同形命令对既有 stall audit 命中 5 个文件。
+  - command: |-
+      printf 'deadline=%s stalled=%s\n' "$(git grep -l 'agent.run_deadline_exceeded' | wc -l | tr -d ' ')" "$(git grep -l 'agent.stream_stalled' | wc -l | tr -d ' ')"
+    cwd: upstream
+    expect: 'deadline=0 stalled=5'
 
 entries:
   - id: 'agui-lifecycle'
@@ -173,7 +178,8 @@ entries:
     owner: 'openbot-application'
     test_id: 'T-EVT-0012'
     migration_rule: 'preserve: 事件名字符串原样保留；发出点缺失需 delta audit'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'Rust host 在 durable activate 后、读取 context 或接触 provider 前经 `AgentAudit::record(Invoked)`；写失败直接 `JournalCommitUnknown`，不会继续 sampling。`PostgresAgentAudit` 用权威 actor/run 与既有 hash-chain writer 追加 allowlisted 空 payload。PG17.11 Agent suite 4/0/0：package、OpenAI、managed Anthropic/Google 均实得行，managed 两 run 精确 count=2。'
     evidence: 'rg -n --no-heading -g ''!*.test.ts'' ''"agent.invoked"'' server/src'
     notes: '**上游零发出点**：全仓只出现在 audit.ts 的声明与 server/tests/audit.test.ts 的清单断言里，server/src 无任何 recordAuditEvent 调用写它。Rust 侧要么补上真实发出点，要么在 delta audit 里显式移除；不得静默保留一个永远不产行的名字。 铸造在 openbot-application、落库在 openbot-infra（§8.6 业务 DB role 对 audit 只有 INSERT/SELECT）；owner 取实际所有者。'
   - id: 'audit-agent-stream-stalled'
@@ -183,9 +189,21 @@ entries:
     owner: 'openbot-infra'
     test_id: 'T-EVT-0013'
     migration_rule: 'preserve: 事件名字符串原样保留'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'SafeDialer 以远端 body 的真实 read gap 判定 `StreamStalled`；host drop session 后先追加 `agent.stream_stalled`（payload 仅稳定 error_code），audit 写失败转 reconciliation，成功后才提交 failed terminal。SafeDialer=14/0/0、Agent host=16/0/0；PG17.11 真 stalling SSE 实得 invoked→stream_stalled hash chain，再得 `agent_stream_stalled` terminal。'
     evidence: 'rg -n --no-heading -g ''!*.test.ts'' ''"agent.stream_stalled"'' server/src'
     notes: 'owner 取 openbot-infra：发出点是包住 HttpAgent fetch 的传输层看门狗，没有 use case 参与；v3 §5.1 把 HTTP safe dialer 划归 openbot-infra。判据见 §7.5 stall watchdog 段。 铸造在 openbot-application、落库在 openbot-infra（§8.6 业务 DB role 对 audit 只有 INSERT/SELECT）；owner 取实际所有者。'
+  - id: 'audit-agent-run-deadline-exceeded'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::AuditEventType::AGENT_RUN_DEADLINE_EXCEEDED + openbot-infra::agent_audit::PostgresAgentAudit'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0074'
+    migration_rule: 'n/a: 固定上游没有 run 级 absolute deadline'
+    status: 'done'
+    done_evidence: 'absolute deadline 从 activation 前起算并覆盖 context/connect/retry/stream；到点先 drop child/session，随后追加 `agent.run_deadline_exceeded`，最后才提交 Cancelling→Cancelled。audit 写失败转 reconciliation。Agent host=16/0/0；PG17.11 真 HoldingContext 实得 invoked→run_deadline_exceeded 两行 hash chain、allowlisted `run_deadline_exceeded` payload 与 cancelled terminal。'
+    evidence: 'git grep -l ''agent.run_deadline_exceeded'' | wc -l => 0；正向对照同形命令对 agent.stream_stalled 命中 5 个文件'
+    notes: '§7.2/R1 明确 absolute run deadline 是新增，不得冒充 parity。事件只证明 deadline 到点且子任务已停止；它不记录 prompt、provider body、secret 或任意错误文本。'
   - id: 'audit-bot-callback-token-issued'
     upstream: 'server/src/agents/routes.ts::createAgentRoutes'
     label: 'parity'
