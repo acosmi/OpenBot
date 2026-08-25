@@ -1,13 +1,18 @@
-//! Pure approval-card projection shared by the future Leptos/Web/Desktop component.
+//! Durable approval projection and the interactive Leptos page.
 //!
-//! This is not the interactive G6 component yet. It fixes the rendering inputs so that component
-//! code cannot substitute model prose for the authoritative effect, target or redacted arguments.
+//! The component consumes only the closed current-actor DTO and posts only a decision plus the
+//! Server-minted id. It cannot mint or modify actor, Bot, run, target, effect, arguments, policy,
+//! catalog generation or expiry bindings.
 
 use core::fmt;
 
 use openbot_contracts::tool::{PendingToolApproval, ToolApprovalClass, ToolApprovalEffect};
 
 use crate::features::threads::tool_name::read_tool_name;
+
+mod component;
+
+pub use component::ApprovalPage;
 
 /// Authority-only view model for one approval card.
 #[derive(Clone, PartialEq, Eq)]

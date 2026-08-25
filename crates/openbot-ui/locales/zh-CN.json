@@ -32,7 +32,7 @@
     "required": "必填",
     "optional": "选填",
     "learn_more": "了解更多",
-    "showing_count": "显示 {count} / {total}",
+    "showing_count": "显示 {{ count }} / {{ total }}",
     "reset_to_default": "恢复默认值"
   },
   "shell": {
@@ -96,13 +96,13 @@
     "composer_mention_coworker": "提及一位同事",
     "composer_run_skill": "运行技能",
     "composer_hint_send": "Enter 发送，Shift+Enter 换行",
-    "composer_queued_count": "已排队 {count} 条",
+    "composer_queued_count": "已排队 {{ count }} 条",
     "transcript_back_to_bottom": "回到最新",
     "transcript_new_messages": "有新消息",
     "transcript_copy_message": "复制这条消息",
     "transcript_copy_code": "复制代码",
-    "transcript_link_domain": "将打开 {domain}",
-    "transcript_remote_image": "未加载来自 {domain} 的远程图片。",
+    "transcript_link_domain": "将打开 {{ domain }}",
+    "transcript_remote_image": "未加载来自 {{ domain }} 的远程图片。",
     "tool_running": "运行中",
     "tool_succeeded": "已完成",
     "tool_failed": "失败",
@@ -130,7 +130,7 @@
     "profile": "资料",
     "callback_token": "回调令牌",
     "callback_token_regenerate": "重新生成令牌",
-    "avatar_alt": "{name} 的头像",
+    "avatar_alt": "{{ name }} 的头像",
     "presence_idle": "空闲",
     "presence_thinking": "思考中",
     "presence_speaking": "回复中",
@@ -167,7 +167,7 @@
     "connected_accounts_empty": "还没有连接任何账户",
     "connect": "连接",
     "disconnect": "断开连接",
-    "connected_at": "{when} 连接"
+    "connected_at": "{{ when }} 连接"
   },
   "admin": {
     "title": "管理",
@@ -192,9 +192,29 @@
     "components_title": "组件",
     "component": "组件",
     "approvals_title": "审批",
+    "approvals_intro": "决定前请核对权威操作类型、目标和已脱敏参数。",
     "approval_pending": "待审批",
     "approval_approve": "批准",
     "approval_reject": "拒绝",
+    "approval_empty_title": "没有待审批操作",
+    "approval_empty_body": "需要你决定的执行类工具会显示在这里。",
+    "approval_effect": "操作类型",
+    "approval_effect_write": "写入",
+    "approval_effect_execute": "执行",
+    "approval_effect_network": "网络操作",
+    "approval_effect_credential": "凭据操作",
+    "approval_target": "目标",
+    "approval_arguments": "已脱敏参数",
+    "approval_change": "变更摘要",
+    "approval_reuse": "批准范围",
+    "approval_once_per_run": "本次运行一次",
+    "approval_every_call": "仅本次调用",
+    "approval_expires": "{{ seconds }} 秒后过期",
+    "approval_expired": "已过期",
+    "approval_load_error": "无法加载审批列表。",
+    "approval_decision_error": "你的决定未提交，请重试。",
+    "approval_granted": "已提交批准。",
+    "approval_denied": "已提交拒绝。",
     "audit_title": "审计",
     "audit_empty": "这个范围内没有审计记录",
     "tenant_package": "租户包",
@@ -210,11 +230,11 @@
     "waiting_body": "同事开始工作后这里会出现画面。",
     "enter_fullscreen": "进入全屏",
     "exit_fullscreen": "退出全屏",
-    "command_running": "正在运行 {command}",
-    "command_exited": "退出码 {code}",
-    "file_read": "读取 {path}",
-    "file_write": "写入 {path}",
-    "directory_listed": "列出 {path}"
+    "command_running": "正在运行 {{ command }}",
+    "command_exited": "退出码 {{ code }}",
+    "file_read": "读取 {{ path }}",
+    "file_write": "写入 {{ path }}",
+    "directory_listed": "列出 {{ path }}"
   },
   "gallery": {
     "title": "组件库",
@@ -236,7 +256,7 @@
     "empty_title": "还没有记忆",
     "empty_body": "同事学到的东西会出现在这里。",
     "search_placeholder": "搜索记忆",
-    "created_at": "{when} 创建",
+    "created_at": "{{ when }} 创建",
     "source": "来源",
     "delete_entry": "删除这条记忆"
   },
@@ -259,6 +279,6 @@
     "upstream_unavailable": "模型当前不可用",
     "validation_required": "这一项必填。",
     "validation_invalid": "这个值不合法。",
-    "validation_too_long": "最多 {max} 个字符。"
+    "validation_too_long": "最多 {{ max }} 个字符。"
   }
 }

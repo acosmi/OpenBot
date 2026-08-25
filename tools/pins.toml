@@ -6,9 +6,8 @@
 # 消费者：
 #   `cargo xtask tools fetch`   按 [tools.<id>.artifacts] 下载到 `target/tools/bin`
 #   `cargo xtask tools verify`  校验 sha256 与 [tools.<id>.verify]，任一不符即红
-# 两个子命令在本轮**尚未实现**（本仓当前只有 `cargo xtask parity-check` / `ci`，见
-# `crates/openbot-testkit/src/bin/xtask.rs` 的 `cmd_parity_check` / `cmd_ci`），
-# 所以本文件此刻是契约声明，不是"已在跑的闸门"。
+# 两个子命令由 `crates/openbot-testkit/src/xtask/tools.rs` 实现；下载件先校本平台
+# sha256 再安装，cargo-install 件按本表/lock 精确版本安装，`verify` 再核版本输出。
 #
 # 这些工具**不进发行物**（GUI §12.1 末段）：v3 §0.1 的"第一方非 Rust 源码只有 Electron
 # shim"说的是发行物，构建期二进制按 v3 §16.3 的供应链条目管理。
@@ -99,6 +98,7 @@ stdout 是 98,986 字节的编译产物 CSS，首行 `/*! tailwindcss v4.3.3 | M
   url = "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-macos-arm64"
   sha256 = "cdf646702987a743464dff4d9c60fd4480d1c1e73dd819a9a67f1078815dce9d"
   sha256_source = "upstream-sha256sums"
+  size_bytes = 79826018
   url_http_status = 200
 
   [[tools.tailwindcss.artifacts]]
@@ -236,30 +236,23 @@ trunk 侧对应 `[tools] wasm_opt = "version_132"`。
 # wasm-bindgen CLI
 # ===========================================================================
 [tools.wasm-bindgen-cli]
-version = "TBD"
+version = "0.2.127"
 version_source = "Cargo.lock 里 `wasm-bindgen` crate 的版本（GUI §12.1：以 lock 为准）"
 license = "NOASSERTION"
 install = "cargo-install"
 crate = "wasm-bindgen-cli"
 install_command = "cargo install --locked wasm-bindgen-cli --version <从 Cargo.lock 读出的版本>"
-status = "todo"
-blocked_by = """
-本仓 `Cargo.lock` 当前**没有** `wasm-bindgen` 这个包（本轮实测：整个 lock 只有 37 个
-`[[package]]`，`grep -c 'name = "wasm-bindgen"' Cargo.lock` = 0），因为 Phase 0 的十个业务
-crate 尚未引入 Leptos。GUI §12.1 提到"当前最新 0.2.127"，那是文档写作时的观察值，
-不是本仓 lock 的事实，因此**不**抄进 version 字段——抄进去就是把一个没有落点的数字
-伪造成"当前行为"。
-解除条件 = openbot-ui 引入 leptos/wasm-bindgen 依赖、lock 里出现该包之后，
-由 `xtask tools verify` 从 lock 读出版本回填本表并把 status 改 done。
-"""
+status = "in_progress"
+evidence = "Cargo.lock 当前唯一 wasm-bindgen package = 0.2.127；安装/版本实证完成后才改 done"
 notes = "trunk 自身也按 lock 校验 wasm-bindgen 版本（GUI §12.1），所以这里版本漂移会被两处同时照出。"
 
   [tools.wasm-bindgen-cli.verify]
   args = ["--version"]
   stream = "stdout"
-  expect_regex = ""
-  status_verify = "todo"
-  blocked_by = "版本未定，期望串无从写起"
+  expect_regex = "^wasm-bindgen 0\\.2\\.127\\r?\\n?$"
+  expect_exit_code = 0
+  status_verify = "in_progress"
+  blocked_by = "等待本机首次 cargo xtask tools fetch/verify 的真实 stdout 复核"
 
 # ===========================================================================
 # 复算命令

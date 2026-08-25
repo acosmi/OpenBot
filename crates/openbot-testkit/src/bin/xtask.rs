@@ -10,6 +10,11 @@
 //! - `parity-check` —— 校验 `parity/*.yaml` **与** `fixtures/MANIFEST.yaml`，强制统一
 //!   schema v1 的 8 条规则。
 //! - `recount`      —— 真跑每份台账 `recount` 数组里的复算命令，把 `expect` 与实得 stdout 逐条对账。
+//! - `i18n-check`   —— 中英文键与插值占位符集合逐字相等。
+//! - `design-lint`  —— GUI 反向视觉约束与图标 allowlist。
+//! - `css-check`    —— Rust class 字面量必须存在于实际编译 CSS。
+//! - `bundle-budget`—— WASM gzip、CSS 与字体体积预算。
+//! - `tools`        —— 获取并校验 GUI 构建期钉版二进制。
 //! - `ci`           —— 按 v3 §16.3 的固定顺序跑本机可执行的那一段闸门。
 //!
 //! 用法（`.cargo/config.toml` 已配 alias）：
@@ -37,6 +42,12 @@ use serde::Serialize;
 // 挂在 lib 上会把五个 oxc crate 拖进不开 feature 的 `cargo build --workspace`。
 #[path = "../xtask/test_inventory.rs"]
 mod test_inventory;
+
+#[path = "../xtask/ui_gates.rs"]
+mod ui_gates;
+
+#[path = "../xtask/tools.rs"]
+mod tools;
 
 // ---------------------------------------------------------------------------
 // 契约常量
@@ -177,6 +188,15 @@ fn main() -> ExitCode {
         Some("parity-check") => cmd_parity_check(&args[1..]),
         Some("recount") => cmd_recount(&args[1..]),
         Some("test-inventory") => cmd_test_inventory(&args[1..]),
+        Some("i18n-check") => workspace_root().and_then(|root| ui_gates::i18n_check(&root)),
+        Some("design-lint") => workspace_root().and_then(|root| ui_gates::design_lint(&root)),
+        Some("css-check") => {
+            workspace_root().and_then(|root| ui_gates::css_check(&root, &args[1..]))
+        }
+        Some("bundle-budget") => {
+            workspace_root().and_then(|root| ui_gates::bundle_budget(&root, &args[1..]))
+        }
+        Some("tools") => workspace_root().and_then(|root| tools::run(&root, &args[1..])),
         Some("ci") => cmd_ci(),
         Some("help") | Some("--help") | Some("-h") | None => {
             print_usage();
@@ -214,6 +234,15 @@ xtask —— OpenBot 仓库闸门驱动器
   cargo xtask test-inventory --upstream <上游干净克隆路径> [--dry-run]
                                       用 oxc_parser 做 AST 级 test inventory（v3 §24 G0 / G8），
                                       产出 parity/tests.yaml 与 fixtures/tests/upstream-ast-inventory.json
+  cargo xtask i18n-check             中英文叶子键与每键插值占位符集合逐字相等
+  cargo xtask design-lint            执行 GUI §12.6 反向约束与图标 allowlist 两向检查
+  cargo xtask css-check [--css <实际编译 CSS>]
+                                      断言每个 Rust class 字面量都出现在编译 CSS
+  cargo xtask bundle-budget [--dist <Trunk dist 目录>]
+                                      检查 app.wasm gzip、CSS 与随包字体预算
+  cargo xtask tools fetch            获取当前平台的钉版 Tailwind/wasm-opt，并按 lock 安装
+                                      trunk/wasm-bindgen CLI 到 target/tools/bin
+  cargo xtask tools verify           校验四个工具的 sha256（下载件）、版本输出与退出码
   cargo xtask ci                      按 v3 §16.3 顺序跑本机可执行的闸门段
   cargo xtask help                    打印本帮助
 "

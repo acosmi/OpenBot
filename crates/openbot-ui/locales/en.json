@@ -32,7 +32,7 @@
     "required": "Required",
     "optional": "Optional",
     "learn_more": "Learn more",
-    "showing_count": "Showing {count} of {total}",
+    "showing_count": "Showing {{ count }} of {{ total }}",
     "reset_to_default": "Reset to default"
   },
   "shell": {
@@ -96,13 +96,13 @@
     "composer_mention_coworker": "Mention a coworker",
     "composer_run_skill": "Run a skill",
     "composer_hint_send": "Enter to send, Shift+Enter for a new line",
-    "composer_queued_count": "{count} queued",
+    "composer_queued_count": "{{ count }} queued",
     "transcript_back_to_bottom": "Back to latest",
     "transcript_new_messages": "New messages",
     "transcript_copy_message": "Copy message",
     "transcript_copy_code": "Copy code",
-    "transcript_link_domain": "Opens {domain}",
-    "transcript_remote_image": "Remote image from {domain} was not loaded.",
+    "transcript_link_domain": "Opens {{ domain }}",
+    "transcript_remote_image": "Remote image from {{ domain }} was not loaded.",
     "tool_running": "Running",
     "tool_succeeded": "Done",
     "tool_failed": "Failed",
@@ -130,7 +130,7 @@
     "profile": "Profile",
     "callback_token": "Callback token",
     "callback_token_regenerate": "Regenerate token",
-    "avatar_alt": "Avatar for {name}",
+    "avatar_alt": "Avatar for {{ name }}",
     "presence_idle": "Idle",
     "presence_thinking": "Thinking",
     "presence_speaking": "Replying",
@@ -167,7 +167,7 @@
     "connected_accounts_empty": "No accounts connected yet",
     "connect": "Connect",
     "disconnect": "Disconnect",
-    "connected_at": "Connected {when}"
+    "connected_at": "Connected {{ when }}"
   },
   "admin": {
     "title": "Admin",
@@ -192,9 +192,29 @@
     "components_title": "Components",
     "component": "Component",
     "approvals_title": "Approvals",
+    "approvals_intro": "Review the authoritative effect, target and redacted arguments before deciding.",
     "approval_pending": "Pending approval",
     "approval_approve": "Approve",
     "approval_reject": "Reject",
+    "approval_empty_title": "No approvals waiting",
+    "approval_empty_body": "Acting tools that need your decision will appear here.",
+    "approval_effect": "Effect",
+    "approval_effect_write": "Write",
+    "approval_effect_execute": "Execute",
+    "approval_effect_network": "Network action",
+    "approval_effect_credential": "Credential action",
+    "approval_target": "Target",
+    "approval_arguments": "Redacted arguments",
+    "approval_change": "Change summary",
+    "approval_reuse": "Approval scope",
+    "approval_once_per_run": "Once for this run",
+    "approval_every_call": "This call only",
+    "approval_expires": "Expires in {{ seconds }} seconds",
+    "approval_expired": "Expired",
+    "approval_load_error": "Approvals could not be loaded.",
+    "approval_decision_error": "Your decision was not committed. Try again.",
+    "approval_granted": "Approval committed.",
+    "approval_denied": "Rejection committed.",
     "audit_title": "Audit",
     "audit_empty": "No audit records in this range",
     "tenant_package": "Tenant package",
@@ -210,11 +230,11 @@
     "waiting_body": "The screen appears once a coworker starts working.",
     "enter_fullscreen": "Enter full screen",
     "exit_fullscreen": "Exit full screen",
-    "command_running": "Running {command}",
-    "command_exited": "Exited with code {code}",
-    "file_read": "Read {path}",
-    "file_write": "Wrote {path}",
-    "directory_listed": "Listed {path}"
+    "command_running": "Running {{ command }}",
+    "command_exited": "Exited with code {{ code }}",
+    "file_read": "Read {{ path }}",
+    "file_write": "Wrote {{ path }}",
+    "directory_listed": "Listed {{ path }}"
   },
   "gallery": {
     "title": "Gallery",
@@ -236,7 +256,7 @@
     "empty_title": "No memory yet",
     "empty_body": "What a coworker learns shows up here.",
     "search_placeholder": "Search memory",
-    "created_at": "Created {when}",
+    "created_at": "Created {{ when }}",
     "source": "Source",
     "delete_entry": "Delete entry"
   },
@@ -259,6 +279,6 @@
     "upstream_unavailable": "The model is unavailable right now",
     "validation_required": "This field is required.",
     "validation_invalid": "This value is not valid.",
-    "validation_too_long": "Use at most {max} characters."
+    "validation_too_long": "Use at most {{ max }} characters."
   }
 }

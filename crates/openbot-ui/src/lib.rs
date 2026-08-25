@@ -10,7 +10,7 @@
 //! - **同一份 bundle 两个宿主**：Server 由 Axum 静态提供，Desktop 由 Tauri custom protocol
 //!   提供（v3 §13.1）。不维护 React 第二 GUI。
 //! - 视觉契约：token 只从 `design/tokens.toml` 生成（CLAUDE.md §4a）；组件只用 token utility，
-//!   禁止字面颜色 / 任意值 / `dark:` 变体；class 必须是源码里的**完整字面量**，禁止
+//!   禁止字面颜色 / 任意值 / 主题前缀变体；class 必须是源码里的**完整字面量**，禁止
 //!   `format!("bg-{}", x)` 这类运行时拼接（设计系统文档 §12.5）。
 //!
 //! 明确**不**负责（设计系统文档 §13 逐字）：
@@ -25,12 +25,41 @@
 //!
 //! # 当前状态
 //!
-//! G2 只先落了不需要组件树的纯 Rust tool transcript projection；
-//! **Cargo.toml 里仍刻意没有 leptos 依赖**，不冒充 G6 GUI 已开工。
-//! 钉版表以注释形式备查在 `crates/openbot-ui/Cargo.toml`（真源 = 设计系统文档 §12.4）。
-//! GUI 是 G6 的产物；Phase 0 只产出 `parity/ui.yaml`、`fixtures/ui/**` 与 `tools/pins.toml`
-//! （设计系统文档 §11，已并入 v3 §19.3）。
+//! G6 已开始落真实 Leptos CSR 树。当前闭合的是 token/font/icon/i18n 生成地基与 durable
+//! tool approval 的可点击生产 API 竖切；其余 route、原语、业务组件、golden 与 Desktop
+//! 宿主仍按台账保持未完成，不能由本 crate 存在而推导为 G6 整关通过。
 
 #![deny(missing_docs)]
 
+pub mod api;
+pub mod app;
 pub mod features;
+pub mod primitives;
+
+/// Generated, strongly typed icon allowlist. The source is `design/icons.toml` plus bundled SVGs.
+#[allow(missing_docs)]
+pub mod icons {
+    include!(concat!(env!("OUT_DIR"), "/icons.rs"));
+}
+
+/// Generated Rust token constants. The only value source is `design/tokens.toml`.
+#[allow(missing_docs)]
+pub mod tokens {
+    include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
+}
+
+#[allow(missing_docs)]
+mod generated_i18n {
+    include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
+}
+
+pub use generated_i18n::i18n;
+
+#[cfg(test)]
+mod design_tests;
+
+/// Mount the single CSR application bundle into `<body>`.
+#[cfg(target_arch = "wasm32")]
+pub fn mount() {
+    leptos::mount::mount_to_body(app::App);
+}

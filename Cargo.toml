@@ -74,6 +74,8 @@ serde_json = "1.0.151"
 # 只在开发期 xtask 里编译，不进发行物）。
 serde_yaml = "0.9.34"
 walkdir = "2.5.0"
+flate2 = "=1.1.9"
+tar = "=0.4.46"
 # `xtask test-inventory`（v3 §24 G0 / G8 点名的 AST 级 test inventory）的 TS/TSX 解析器。
 #
 # **版本 `0.146.0`（2026-08-22 实测最新）。五个 crate 同版本 —— oxc 全家桶同步发版。**
@@ -122,6 +124,19 @@ tokio-postgres = { version = "0.7.18", features = ["with-serde_json-1", "with-ti
 deadpool-postgres = "0.14.1"
 postgres-types = { version = "0.2", features = ["derive", "with-serde_json-1", "with-time-0_3", "with-uuid-1"] }
 time = { version = "0.3.55", features = ["serde", "formatting", "parsing", "macros"] }
+
+# G6 single Rust GUI (frontend first source §12.4). Exact pins are deliberate: router 0.8.14+
+# requires Leptos 0.8.20, while this release is audited against Leptos 0.8.19.
+leptos = { version = "=0.8.19", features = ["csr"] }
+leptos_router = "=0.8.13"
+leptos_meta = "=0.8.6"
+leptos_i18n = { version = "=0.6.2", features = ["csr", "plurals", "format_datetime", "format_nums", "icu_compiled_data"] }
+leptos_i18n_build = "=0.6.2"
+toml = "=0.9.8"
+gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json"] }
+js-sys = "=0.3.104"
+wasm-bindgen-futures = "=0.4.77"
+web-sys = { version = "=0.3.104", features = ["Document", "DomTokenList", "Element", "HtmlElement", "Window"] }
 
 # Axum transport（v3 §5.2：transport 只做认证 / framing / 大小限制 / 错误映射）
 axum = { version = "0.8.9", features = ["macros", "ws"] }
