@@ -32,13 +32,141 @@ pub trait AgentAuthorizationSource: Send + Sync {
     -> Result<AuthContext, AgentAuthorizationError>;
 }
 
+/// Authoritative remote AG-UI route loaded from the Bot row and active run lease.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RemoteAguiRoute {
+    endpoint: String,
+    thread_id: String,
+    run_id: String,
+    bot_id: String,
+    run_assertion: Option<String>,
+}
+
+impl RemoteAguiRoute {
+    /// Construct from trusted PostgreSQL/configuration data.
+    pub fn new(
+        endpoint: String,
+        thread_id: String,
+        run_id: String,
+        bot_id: String,
+        run_assertion: Option<String>,
+    ) -> Result<Self, AgentContextError> {
+        if [&endpoint, &thread_id, &run_id, &bot_id]
+            .into_iter()
+            .any(|value| value.is_empty() || value.as_bytes().contains(&0))
+            || run_assertion
+                .as_ref()
+                .is_some_and(|value| value.is_empty() || value.as_bytes().contains(&0))
+        {
+            return Err(AgentContextError::Corrupt {
+                field: "remote_agui_route",
+            });
+        }
+        Ok(Self {
+            endpoint,
+            thread_id,
+            run_id,
+            bot_id,
+            run_assertion,
+        })
+    }
+
+    /// Endpoint. Debug never renders it.
+    #[must_use]
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// Authoritative thread id.
+    #[must_use]
+    pub fn thread_id(&self) -> &str {
+        &self.thread_id
+    }
+
+    /// Authoritative run id.
+    #[must_use]
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    /// Authoritative Bot id.
+    #[must_use]
+    pub fn bot_id(&self) -> &str {
+        &self.bot_id
+    }
+
+    /// Optional short-lived assertion. Absence means no deployment tool may be offered.
+    #[must_use]
+    pub fn run_assertion(&self) -> Option<&str> {
+        self.run_assertion.as_deref()
+    }
+}
+
+impl core::fmt::Debug for RemoteAguiRoute {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RemoteAguiRoute")
+            .field("endpoint", &"<redacted-origin>")
+            .field("thread_id", &self.thread_id)
+            .field("run_id", &self.run_id)
+            .field("bot_id", &self.bot_id)
+            .field("has_run_assertion", &self.run_assertion.is_some())
+            .finish()
+    }
+}
+
 /// Authoritative provider routing class loaded with the Bot row；不是 model 自报字段。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderRoute {
     /// Package `model.yaml` 固定 OpenAI。
     PackageOpenAi,
     /// Managed slot 读取 deployment `BOT_PROVIDER/BOT_MODEL` config。
     Managed,
+    /// Customer-owned remote AG-UI endpoint.
+    RemoteAgUi(RemoteAguiRoute),
+}
+
+/// SafeDialer/SSE transport failure without remote body text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum RemoteAguiTransportError {
+    /// DNS/connect/TLS failed before the request became commit-unknown.
+    #[error("remote_agui_unavailable")]
+    Unavailable,
+    /// Request may have reached the endpoint; replay is unsafe.
+    #[error("remote_agui_commit_unknown")]
+    CommitUnknown,
+    /// Endpoint authentication rejected.
+    #[error("remote_agui_authentication")]
+    Authentication,
+    /// Explicit 429.
+    #[error("remote_agui_rate_limited")]
+    RateLimited,
+    /// Explicit retryable 5xx.
+    #[error("remote_agui_server_unavailable")]
+    ServerUnavailable,
+    /// Status/content-type/SSE framing is invalid.
+    #[error("remote_agui_invalid_response")]
+    InvalidResponse,
+    /// Real response-body read gap exceeded the watchdog.
+    #[error("remote_agui_stream_stalled")]
+    StreamStalled,
+}
+
+/// Complete SSE `data:` values from the unique safe transport.
+#[async_trait]
+pub trait RemoteAguiEventStream: Send {
+    /// Read the next complete event payload.
+    async fn next_data(&mut self) -> Result<Option<String>, RemoteAguiTransportError>;
+}
+
+/// Raw HTTP/SSE port. Semantic decoding remains in `openbot-agent`.
+#[async_trait]
+pub trait RemoteAguiTransport: Send + Sync {
+    /// POST one encoded RunAgentInput to a trusted endpoint.
+    async fn start(
+        &self,
+        endpoint: &str,
+        body: Vec<u8>,
+    ) -> Result<Box<dyn RemoteAguiEventStream>, RemoteAguiTransportError>;
 }
 
 /// Provider input message role。

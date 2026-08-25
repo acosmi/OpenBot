@@ -13,7 +13,8 @@ use async_trait::async_trait;
 use harness::{admin_config, with_temp_database};
 use openbot_agent::{
     AgentToolInvoker, AuthorizedAgentToolGateway, BuiltInAgentConfig, BuiltInAgentRuntime,
-    NoAgentToolInvoker, ProviderRouter, RetryingProvider, RetryingProviderConfig,
+    NoAgentToolInvoker, ProviderRouter, RemoteAguiProvider, RetryingProvider,
+    RetryingProviderConfig,
 };
 use openbot_application::{
     ApplicationService, BeginThreadRunRequest, MemoryAdministrationError, OpenBotApplication,
@@ -49,6 +50,7 @@ use openbot_infra::provider::openai::{
     OpenAiApiKey, OpenAiCredentialError, OpenAiCredentialSource, OpenAiProtocol, OpenAiProvider,
     OpenAiProviderConfig,
 };
+use openbot_infra::remote_agui::SafeRemoteAguiTransport;
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::tools::PostgresToolJournal;
 use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
@@ -810,6 +812,244 @@ async fn remember_tool_runs_through_policy_capability_memory_audit_and_second_sa
             {
                 return Err(format!(
                     "remember durable projection 漂移：audits={memory_audits:?} checkpoint={checkpoint_count} roles={roles:?} generation={auth_generation}"
+                ));
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL 与 loopback socket：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and_terminal() {
+    let admin = batch6_admin_config(
+        "remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and_terminal",
+    );
+    with_temp_database(&admin, "agentremote", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .map_err(|error| error.to_string())?;
+            let address = listener.local_addr().map_err(|error| error.to_string())?;
+            let endpoint = format!("http://{address}/ag-ui");
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "INSERT INTO public.agents(id,name,type,configuration,package_id) \
+                       SELECT 'bot-remote','Remote Risk','remote_ag_ui', \
+                              jsonb_build_object('endpoint',$1::text),id \
+                       FROM public.deployment_packages WHERE tenant_id='tenant-a'",
+                    &[&endpoint],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "INSERT INTO public.agent_profiles( \
+                       agent_id,owner_user_id,title,role_description,avatar_seed,visibility,deleted_at \
+                     ) VALUES('bot-remote',NULL,'Risk Analyst','Investigate controls.','remote-seed','public',NULL)",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            drop(client);
+
+            let remote_server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.map_err(|error| error.to_string())?;
+                let request = read_http_request(&mut stream).await?;
+                if !request.starts_with("POST /ag-ui ") {
+                    return Err("remote AG-UI path 漂移".to_owned());
+                }
+                let body: serde_json::Value = serde_json::from_str(
+                    request
+                        .split("\r\n\r\n")
+                        .nth(1)
+                        .ok_or_else(|| "remote request body missing".to_owned())?,
+                )
+                .map_err(|error| error.to_string())?;
+                if body["runId"] != "run-remote"
+                    || body["forwardedProps"]["openbotBotId"] != "bot-remote"
+                    || body["tools"] != serde_json::json!([])
+                    || body["messages"][0]["role"] != "system"
+                    || !body["messages"][0]["content"]
+                        .as_str()
+                        .is_some_and(|value| value.starts_with("You are Remote Risk, Risk Analyst."))
+                {
+                    return Err(format!("remote RunAgentInput 漂移：{body:?}"));
+                }
+                let thread_id = body["threadId"]
+                    .as_str()
+                    .ok_or_else(|| "threadId missing".to_owned())?;
+                let events = [
+                    serde_json::json!({"type":"RUN_STARTED","threadId":thread_id,"runId":"run-remote"}),
+                    serde_json::json!({"type":"STEP_STARTED","stepName":"investigate"}),
+                    serde_json::json!({"type":"STATE_SNAPSHOT","snapshot":{"phase":"start"}}),
+                    serde_json::json!({"type":"STATE_DELTA","delta":[{"op":"replace","path":"/phase","value":"done"}]}),
+                    serde_json::json!({"type":"MESSAGES_SNAPSHOT","messages":[{"id":"u","role":"user","content":"hello"}]}),
+                    serde_json::json!({"type":"ACTIVITY_SNAPSHOT","messageId":"a","activityType":"PLAN","content":{"done":false}}),
+                    serde_json::json!({"type":"ACTIVITY_DELTA","messageId":"a","activityType":"PLAN","patch":[{"op":"replace","path":"/done","value":true}]}),
+                    serde_json::json!({"type":"RAW","event":{"untrusted":true},"source":"remote"}),
+                    serde_json::json!({"type":"CUSTOM","name":"future","value":{"permission":"none"}}),
+                    serde_json::json!({"type":"REASONING_START","messageId":"reason"}),
+                    serde_json::json!({"type":"REASONING_MESSAGE_START","messageId":"reason-message","role":"reasoning"}),
+                    serde_json::json!({"type":"REASONING_MESSAGE_CONTENT","messageId":"reason-message","delta":"checked evidence"}),
+                    serde_json::json!({"type":"REASONING_MESSAGE_END","messageId":"reason-message"}),
+                    serde_json::json!({"type":"REASONING_END","messageId":"reason"}),
+                    serde_json::json!({"type":"TEXT_MESSAGE_START","messageId":"answer","role":"assistant"}),
+                    serde_json::json!({"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"remote answer"}),
+                    serde_json::json!({"type":"TEXT_MESSAGE_END","messageId":"answer"}),
+                    serde_json::json!({"type":"STEP_FINISHED","stepName":"investigate"}),
+                    serde_json::json!({"type":"RUN_FINISHED","threadId":thread_id,"runId":"run-remote"}),
+                ];
+                let body = events
+                    .into_iter()
+                    .map(|event| format!("data: {event}\n\n"))
+                    .collect::<String>();
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream
+                    .write_all(header.as_bytes())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                for chunk in body.as_bytes().chunks(5) {
+                    stream
+                        .write_all(chunk)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok::<_, String>(())
+            });
+
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let owner = "runtime-remote".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner,
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let package = Arc::new(RejectingPackageProvider::default());
+            let remote_transport = Arc::new(
+                SafeRemoteAguiTransport::new(
+                    SafeDialer::new(EgressPolicy::new(
+                        CidrAllowlist::parse_exact(["127.0.0.1/32"])
+                            .map_err(|error| error.to_string())?,
+                    )),
+                    SafeHttpBudget::new(1024 * 1024, Duration::from_secs(3))
+                        .map_err(|error| error.to_string())?,
+                    Some(Duration::from_secs(1)),
+                    SchemePolicy::HttpOrHttps,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let router: Arc<dyn ProviderAdapter> = Arc::new(
+                ProviderRouter::new(package.clone(), None)
+                    .with_remote_agui(Arc::new(RemoteAguiProvider::new(remote_transport))),
+            );
+            let provider = Arc::new(
+                RetryingProvider::new(router, RetryingProviderConfig::default())
+                    .map_err(|error| error.to_string())?,
+            );
+            let context = Arc::new(
+                PostgresAgentContextSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    Some(64),
+                )
+                .map_err(|error| error.to_string())?
+                .with_tools(vec![remember_provider_tool()]),
+            );
+            let agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                context,
+                provider,
+                Arc::new(NoAgentToolInvoker),
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 1,
+                    lease_renew_interval: Duration::from_secs(1),
+                    run_deadline: Some(Duration::from_secs(5)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let relay = RunRelay::start(runtime, agent.consumer());
+            let mut entropy = [0_u8; 16];
+            entropy[15] = 10;
+            let thread = ThreadIdentity::new(&deployment).mint_from_entropy(entropy);
+            directory
+                .begin_thread_run(BeginThreadRunRequest {
+                    deployment,
+                    tenant,
+                    actor: ActorId::new("actor-a"),
+                    command: BeginThreadRun {
+                        thread_id: thread,
+                        run_id: RunId::new("run-remote"),
+                        bot_id: BotId::new("bot-remote"),
+                        anchor: ThreadRunAnchor::DirectBot,
+                        message: "Investigate".to_owned(),
+                    },
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            wait_for_terminal(&pool, "run-remote", "remote answer").await?;
+            relay.stop().await;
+            agent.stop().await;
+            remote_server.await.map_err(|error| error.to_string())??;
+            if package.calls.load(Ordering::SeqCst) != 0 {
+                return Err("remote route touched package provider".to_owned());
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let reasoning: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM public.run_events \
+                     WHERE run_id='run-remote' AND event_type='semantic_chunk' \
+                       AND payload->>'channel'='reasoning' \
+                       AND payload->>'delta'='checked evidence'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            let invoked: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM public.audit_events \
+                     WHERE event_type='agent.invoked' AND target_id='run-remote'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if reasoning != 1 || invoked != 1 {
+                return Err(format!(
+                    "remote durable projection 漂移：reasoning={reasoning} invoked={invoked}"
                 ));
             }
             Ok(())

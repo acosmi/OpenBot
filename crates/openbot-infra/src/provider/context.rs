@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use openbot_application::{
     AgentContextError, AgentContextSource, ProviderMessage, ProviderMessageRole, ProviderRequest,
-    ProviderRoute, ProviderToolCall, ProviderToolDefinition, RunExecutionLease,
+    ProviderRoute, ProviderToolCall, ProviderToolDefinition, RemoteAguiRoute, RunExecutionLease,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use serde_json::Value;
@@ -85,7 +85,8 @@ impl AgentContextSource for PostgresAgentContextSource {
             .map_err(|_| AgentContextError::Unavailable)?;
         let visible = client
             .query_opt(
-                "SELECT a.configuration FROM public.runs r \
+                "SELECT a.type::text AS agent_type,a.name,a.configuration,p.title,p.role_description \
+                   FROM public.runs r \
                    JOIN public.threads t ON t.thread_id=r.thread_id \
                    JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id \
                    JOIN public.agents a ON a.id=r.bot_id \
@@ -95,7 +96,8 @@ impl AgentContextSource for PostgresAgentContextSource {
                      AND r.fencing_token=$5 AND r.status='running' \
                      AND t.deployment_id=$6 AND t.tenant_id=$7 \
                      AND dp.tenant_id=$7 \
-                     AND t.status='active' AND tm.user_id=$4 AND a.type='built_in' \
+                     AND t.status='active' AND tm.user_id=$4 \
+                     AND a.type IN ('built_in','remote_ag_ui') \
                      AND p.deleted_at IS NULL",
                 &[
                     &lease.run_id().as_str(),
@@ -116,8 +118,67 @@ impl AgentContextSource for PostgresAgentContextSource {
                 .map_err(|_| AgentContextError::Corrupt {
                     field: "agent_configuration",
                 })?;
-        let standing_prompt = standing_prompt(&configuration)?;
-        let route = provider_route(&configuration)?;
+        let agent_type: String =
+            visible
+                .try_get("agent_type")
+                .map_err(|_| AgentContextError::Corrupt {
+                    field: "agent_type",
+                })?;
+        let (route, standing_prompt, tools, max_output_tokens) = match agent_type.as_str() {
+            "built_in" => (
+                provider_route(&configuration)?,
+                standing_prompt(&configuration)?,
+                self.tools.clone(),
+                self.max_output_tokens,
+            ),
+            "remote_ag_ui" => {
+                let endpoint = configuration
+                    .as_object()
+                    .and_then(|value| value.get("endpoint"))
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or(AgentContextError::Corrupt {
+                        field: "remote_endpoint",
+                    })?
+                    .trim()
+                    .to_owned();
+                let name: String =
+                    visible
+                        .try_get("name")
+                        .map_err(|_| AgentContextError::Corrupt {
+                            field: "agent_name",
+                        })?;
+                let title: String =
+                    visible
+                        .try_get("title")
+                        .map_err(|_| AgentContextError::Corrupt {
+                            field: "agent_title",
+                        })?;
+                let role_description: String =
+                    visible.try_get("role_description").map_err(|_| {
+                        AgentContextError::Corrupt {
+                            field: "role_description",
+                        }
+                    })?;
+                (
+                    ProviderRoute::RemoteAgUi(RemoteAguiRoute::new(
+                        endpoint,
+                        lease.thread_id().as_str().to_owned(),
+                        lease.run_id().as_str().to_owned(),
+                        lease.bot_id().as_str().to_owned(),
+                        None,
+                    )?),
+                    remote_standing_prompt(&name, &title, &role_description)?,
+                    Vec::new(),
+                    None,
+                )
+            }
+            _ => {
+                return Err(AgentContextError::Corrupt {
+                    field: "agent_type",
+                });
+            }
+        };
         let count: i64 = client
             .query_one(
                 "SELECT count(*)::bigint FROM public.messages WHERE thread_id=$1",
@@ -152,7 +213,7 @@ impl AgentContextSource for PostgresAgentContextSource {
         }
         messages.push(ProviderMessage {
             role: ProviderMessageRole::System,
-            content: standing_prompt,
+            content: standing_prompt.clone(),
             tool_call_id: None,
             tool_name: None,
             tool_calls: Vec::new(),
@@ -168,6 +229,9 @@ impl AgentContextSource for PostgresAgentContextSource {
             let text = text_content(&content).ok_or(AgentContextError::Corrupt {
                 field: "message_content",
             })?;
+            if role == "system" && text == standing_prompt {
+                continue;
+            }
             let tool_calls = if role == "assistant" {
                 if !pending_tool_calls.is_empty() {
                     return Err(AgentContextError::Corrupt {
@@ -267,8 +331,8 @@ impl AgentContextSource for PostgresAgentContextSource {
         Ok(ProviderRequest {
             route,
             messages,
-            tools: self.tools.clone(),
-            max_output_tokens: self.max_output_tokens,
+            tools,
+            max_output_tokens,
         })
     }
 }
@@ -372,6 +436,30 @@ fn standing_prompt(configuration: &Value) -> Result<String, AgentContextError> {
         });
     }
     Ok(format!("{prompt}\n\n{PROVENANCE_GUIDANCE}"))
+}
+
+fn remote_standing_prompt(
+    name: &str,
+    title: &str,
+    role_description: &str,
+) -> Result<String, AgentContextError> {
+    let name = name.trim();
+    let title = title.trim();
+    let role_description = role_description.trim();
+    if name.is_empty() || title.is_empty() || role_description.is_empty() {
+        return Err(AgentContextError::Corrupt {
+            field: "remote_standing_role",
+        });
+    }
+    let prompt = format!(
+        "You are {name}, {title}.\n\n{role_description}\n\n\
+         This standing role applies in every channel. Treat channel messages as task-specific instructions within it.\n\n\
+         {PROVENANCE_GUIDANCE}"
+    );
+    if prompt.len() > MAX_AGENT_CONTEXT_BYTES {
+        return Err(AgentContextError::TooLarge);
+    }
+    Ok(prompt)
 }
 
 fn text_content(value: &Value) -> Option<String> {

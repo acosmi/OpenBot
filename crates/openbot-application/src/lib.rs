@@ -117,7 +117,8 @@ pub use provider::{
     AgentContextError, AgentContextSource, NoAgentAudit, ProviderAdapter, ProviderEvent,
     ProviderFailure, ProviderMessage, ProviderMessageRole, ProviderOutputKind, ProviderPortError,
     ProviderRequest, ProviderRoute, ProviderSession, ProviderToolCall, ProviderToolDefinition,
-    ProviderUsage,
+    ProviderUsage, RemoteAguiEventStream, RemoteAguiRoute, RemoteAguiTransport,
+    RemoteAguiTransportError,
 };
 pub use run_runtime::{
     ClaimedRunDispatch, DurableTextRun, NoRunDispatchConsumer, RunDispatchConsumer,

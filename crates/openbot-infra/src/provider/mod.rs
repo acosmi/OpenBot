@@ -7,4 +7,4 @@ pub mod google;
 pub mod openai;
 
 mod common;
-mod sse;
+pub(crate) mod sse;
