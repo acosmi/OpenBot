@@ -102,7 +102,10 @@ pub mod session;
 pub mod transport;
 pub mod window;
 
-#[cfg(feature = "tauri-host")]
+#[cfg(all(
+    feature = "tauri-host",
+    any(target_os = "macos", target_os = "windows")
+))]
 pub mod tauri_host;
 
 #[cfg(any(test, feature = "testkit"))]
@@ -128,7 +131,10 @@ pub use window::{
     EventScope, FilterReason, ScopeTarget, ThreadSubscriptions, WindowIdentity, WindowLabel,
 };
 
-#[cfg(feature = "tauri-host")]
+#[cfg(all(
+    feature = "tauri-host",
+    any(target_os = "macos", target_os = "windows")
+))]
 pub use tauri_host::{
     DesktopTauriProtocol, TauriHostError, detect_os_locale, register_tauri_protocol,
 };

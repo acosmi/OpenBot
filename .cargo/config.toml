@@ -22,3 +22,10 @@ rustflags = ["-L", "native=/opt/homebrew/opt/libxml2/lib"]
 
 [target.x86_64-apple-darwin]
 rustflags = ["-L", "native=/usr/local/opt/libxml2/lib"]
+
+# swift-rs 1.0.8's registered build target is normally a 21-line no-op, but the dependency enables
+# its `build` feature and a caller-controlled TEST_SWIFT_RS=true would enter a separate 574-line
+# Swift/xcrun/clang/nm/llvm-objcopy toolchain. OpenBot never builds swift-rs' own test package, so
+# make the unreachable premise constructive and immune to ambient shell/CI environment variables.
+[env]
+TEST_SWIFT_RS = { value = "false", force = true }

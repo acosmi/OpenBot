@@ -20,7 +20,7 @@
 # 并 `rustc-link-lib=static`。为一个我们根本不构建的平台放行一份随包二进制，是把供应链
 # 面白扩一块；正确做法是把扫描面收敛到真实发行面。
 targets = [
-    "x86_64-unknown-linux-gnu",     # Server OCI image + Linux x64 desktop（§16.1 / §16.2）
+    "x86_64-unknown-linux-gnu",     # Server OCI + Web golden runner；GUI §10.1 不发行 Linux Desktop
     "aarch64-unknown-linux-gnu",    # Server OCI arm64。§16.1 未点名架构，保守多列一个（只会更严）
     "x86_64-apple-darwin",          # macOS x64（§16.2 signed + notarized）
     "aarch64-apple-darwin",         # macOS arm64（同上）
@@ -347,6 +347,38 @@ allow-build-scripts = [
     "windows_x86_64_gnu",
     "windows_x86_64_msvc",
     "zip",
+    # 2026-08-25 G6 Batch 16 Tauri 2.11.5/Wry delta, filtered by the actual release targets from
+    # GUI first source §10.1: macOS arm64 and Windows x64. A Cargo.lock-wide/all-target union also
+    # reports Linux GTK scripts, but Linux Desktop is not a product target and the dependency is now
+    # target-scoped; tools/check-tauri-dependencies.sh proves tauri/wry/GTK absent from Linux.
+    #
+    # Exact versions, paths, line counts and SHA-256 are locked by that guard. Behaviour by class:
+    # - indexmap/objc2/schemars/tauri-runtime/tauri-runtime-wry: cfg/version/target emission only;
+    # - selectors/web_atoms: generate fixed Rust tables into OUT_DIR from packaged source tables;
+    # - objc2-exception-helper: compiles its packaged try_catch.m through cc on Apple targets;
+    # - vswhom-sys: compiles packaged Windows COM discovery C++ and links Ole;
+    # - webview2-com-sys: copies nine packaged Microsoft loader DLL/import/static libraries into
+    #   OUT_DIR by target; their bytes and the narrow cargo-deny bypass below are individually locked;
+    # - wry: desktop targets only emit link cfg; Android Kotlin generation is target-unreachable;
+    # - tauri: emits desktop cfg, generates deterministic permission material in OUT_DIR and upstream
+    #   registry-source documentation; its Android and in-Tauri-workspace branches are unreachable;
+    # - swift-rs: the actual Cargo build target is a 21-line no-op unless TEST_SWIFT_RS=true. OpenBot
+    #   force-sets that variable false in .cargo/config.toml; the dormant 574-line toolchain module is
+    #   hash-locked too, so Swift/xcrun/clang/nm/llvm-objcopy cannot be enabled by ambient state.
+    # None of the 13 scripts performs network access or downloads.
+    "indexmap",
+    "objc2",
+    "objc2-exception-helper",
+    "schemars",
+    "selectors",
+    "swift-rs",
+    "tauri",
+    "tauri-runtime",
+    "tauri-runtime-wry",
+    "vswhom-sys",
+    "web_atoms",
+    "webview2-com-sys",
+    "wry",
 ]
 # 依赖里夹带的可执行文件 / 解释型脚本一律拒绝：供应链攻击最常见的载荷形态。
 executables = "deny"
@@ -449,6 +481,24 @@ crate = "leptos-use@0.18.3"
 # 上游贡献者手动运行的 ffizer scaffold；README 明示手跑，build.rs/src 零引用，且本仓
 # 不安装/调用 ffizer。只放这一个入口，template 里新增其它可执行文件仍会判红。
 allow-globs = ["template/createfn.sh"]
+
+[[bans.build.bypass]]
+crate = "webview2-com-sys@0.38.2"
+# Windows Tauri links Microsoft's packaged WebView2 loader. build.rs copies exactly one target
+# directory to OUT_DIR; all three architectures remain in the crates.io archive, so every shipped
+# DLL/import/static library is byte-locked by tools/check-tauri-dependencies.sh. The released OpenBot
+# Desktop target is x64; keeping all nine explicit here means a new architecture/file still fails.
+allow-globs = [
+    "arm64/WebView2Loader.dll",
+    "arm64/WebView2Loader.dll.lib",
+    "arm64/WebView2LoaderStatic.lib",
+    "x64/WebView2Loader.dll",
+    "x64/WebView2Loader.dll.lib",
+    "x64/WebView2LoaderStatic.lib",
+    "x86/WebView2Loader.dll",
+    "x86/WebView2Loader.dll.lib",
+    "x86/WebView2LoaderStatic.lib",
+]
 
 [bans.workspace-dependencies]
 # 同一个依赖在多个 crate 里写不同版本 = 版本真源分裂。workspace 根的
