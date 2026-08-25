@@ -298,7 +298,16 @@
     "sheet_trigger": "Open sheet",
     "sheet_title": "Details",
     "sheet_description": "The same modal kernel, aligned to an edge.",
-    "done": "Done"
+    "done": "Done",
+    "menu": "Menu",
+    "menu_trigger": "Open actions",
+    "menu_new": "New channel",
+    "menu_disabled": "Unavailable action",
+    "menu_more": "More actions",
+    "menu_copy": "Copy link",
+    "menu_delete": "Delete item",
+    "menu_settings": "Settings",
+    "menu_after": "After menu"
   },
   "keyboard": {
     "command": "Command",

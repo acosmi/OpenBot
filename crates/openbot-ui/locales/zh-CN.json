@@ -298,7 +298,16 @@
     "sheet_trigger": "打开侧滑面板",
     "sheet_title": "详情",
     "sheet_description": "使用同一套模态内核，只是贴边显示。",
-    "done": "完成"
+    "done": "完成",
+    "menu": "菜单",
+    "menu_trigger": "打开操作菜单",
+    "menu_new": "新建频道",
+    "menu_disabled": "不可用操作",
+    "menu_more": "更多操作",
+    "menu_copy": "复制链接",
+    "menu_delete": "删除条目",
+    "menu_settings": "设置",
+    "menu_after": "菜单之后"
   },
   "keyboard": {
     "command": "Command",

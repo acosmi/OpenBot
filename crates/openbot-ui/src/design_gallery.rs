@@ -10,7 +10,8 @@ use crate::primitives::{
     Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogTrigger, Field, IconSize,
     IconView, Input, InputGroup, InputGroupAffix, InputGroupAffixPosition, InputPreviewState,
     InputType, Item, ItemAction, ItemActions, ItemDescription, ItemMedia, ItemTitle, Kbd, KbdKey,
-    KbdModifier, Message, MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageGroup,
+    KbdModifier, Menu, MenuContent, MenuItem, MenuSeparator, MenuSub, MenuSubTrigger, MenuTrigger,
+    Message, MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageGroup,
     MessageHeader, Separator, SeparatorOrientation, Sheet, SheetSide, Skeleton, SkeletonShape,
     Switch, Textarea, TextareaPreviewState, Toast, ToastPreviewState, Tooltip, TooltipTrigger,
     TooltipTriggerAction,
@@ -35,6 +36,9 @@ pub fn DesignGallery() -> impl IntoView {
     let dialog_close_count = RwSignal::new(0_u32);
     let sheet_open = RwSignal::new(false);
     let sheet_close_count = RwSignal::new(0_u32);
+    let menu_open = RwSignal::new(false);
+    let menu_select_count = RwSignal::new(0_u32);
+    let menu_close_count = RwSignal::new(0_u32);
 
     view! {
         <section class="ob-page ob-design-gallery" aria-labelledby="design-gallery-title">
@@ -376,6 +380,65 @@ pub fn DesignGallery() -> impl IntoView {
                         <output id="design-sheet-close-count" aria-live="polite">
                             {sheet_close_count}
                         </output>
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-menu-title">
+                    <h2 id="design-menu-title">{move || t!(i18n, design_gallery.menu)}</h2>
+                    <div class="ob-design-row" id="design-menu-example">
+                        <Menu
+                            id="design-menu"
+                            open=menu_open
+                            on_close=UnsyncCallback::new(move |_| menu_close_count.update(|count| *count += 1))
+                        >
+                            <MenuTrigger>{move || t!(i18n, design_gallery.menu_trigger)}</MenuTrigger>
+                            <MenuContent>
+                                <MenuItem
+                                    id="design-menu-new"
+                                    on_select=move |_| menu_select_count.update(|count| *count += 1)
+                                >
+                                    {move || t!(i18n, design_gallery.menu_new)}
+                                </MenuItem>
+                                <MenuItem
+                                    id="design-menu-disabled"
+                                    disabled=true
+                                    on_select=move |_| menu_select_count.update(|count| *count += 100)
+                                >
+                                    {move || t!(i18n, design_gallery.menu_disabled)}
+                                </MenuItem>
+                                <MenuSeparator />
+                                <MenuSub id="design-menu-more">
+                                    <MenuSubTrigger>
+                                        {move || t!(i18n, design_gallery.menu_more)}
+                                    </MenuSubTrigger>
+                                    <MenuContent>
+                                        <MenuItem
+                                            id="design-menu-copy"
+                                            on_select=move |_| menu_select_count.update(|count| *count += 1)
+                                        >
+                                            {move || t!(i18n, design_gallery.menu_copy)}
+                                        </MenuItem>
+                                        <MenuItem
+                                            id="design-menu-delete"
+                                            on_select=move |_| menu_select_count.update(|count| *count += 1)
+                                        >
+                                            {move || t!(i18n, design_gallery.menu_delete)}
+                                        </MenuItem>
+                                    </MenuContent>
+                                </MenuSub>
+                                <MenuItem
+                                    id="design-menu-settings"
+                                    on_select=move |_| menu_select_count.update(|count| *count += 1)
+                                >
+                                    {move || t!(i18n, design_gallery.menu_settings)}
+                                </MenuItem>
+                            </MenuContent>
+                        </Menu>
+                        <button id="design-menu-after" type="button" class="ob-button" data-variant="chip" data-size="md">
+                            {move || t!(i18n, design_gallery.menu_after)}
+                        </button>
+                        <output id="design-menu-select-count" aria-live="polite">{menu_select_count}</output>
+                        <output id="design-menu-close-count" aria-live="polite">{menu_close_count}</output>
                     </div>
                 </section>
             </div>

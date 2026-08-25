@@ -276,6 +276,7 @@ kbd = 22
 toast_viewport_gutter = 32
 modal_gutter = 32
 modal_max = 512
+menu_min = 180
 table_row = 36
 sidebar_item = 32
 topbar = 44
