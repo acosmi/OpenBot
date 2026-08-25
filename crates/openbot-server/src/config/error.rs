@@ -53,6 +53,12 @@ pub enum Expectation {
     ActionPolicyDenyList,
     /// `allow` 是字符串数组（缺省空表）。
     ActionPolicyAllowList,
+    /// `openai` / `anthropic` / `google`。
+    ProviderName,
+    /// Whole milliseconds ≥0；0 disables。
+    WholeMillisecondsOrZero,
+    /// Selected provider key must be nonempty after trim。
+    NonEmptySecret,
 }
 
 impl Expectation {
@@ -69,6 +75,9 @@ impl Expectation {
             Self::ActionPolicyMode => "action_policy_mode",
             Self::ActionPolicyDenyList => "action_policy_deny_list",
             Self::ActionPolicyAllowList => "action_policy_allow_list",
+            Self::ProviderName => "provider_name",
+            Self::WholeMillisecondsOrZero => "whole_milliseconds_or_zero",
+            Self::NonEmptySecret => "non_empty_secret",
         }
     }
 }

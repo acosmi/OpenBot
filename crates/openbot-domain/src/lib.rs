@@ -50,6 +50,7 @@
 // 领域层的每个公开条目都必须有中文文档：不变量写在类型上，而不变量的**理由**只能写在文档里。
 #![deny(missing_docs)]
 
+pub mod agent;
 pub mod audit;
 pub mod identity;
 pub mod memory;

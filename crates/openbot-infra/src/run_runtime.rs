@@ -6,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use openbot_application::{
     ClaimedRunDispatch, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease,
-    RunFailureCode, RunRuntime, RunRuntimeError, RunTerminal, RunWriteReceipt,
+    RunFailureCode, RunRuntime, RunRuntimeError, RunSemanticChannel, RunTerminal, RunWriteReceipt,
     SEMANTIC_CHUNK_MAX_BYTES,
 };
 use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId};
@@ -201,6 +201,7 @@ impl RunRuntime for PostgresRunRuntime {
         &self,
         lease: &RunExecutionLease,
         expected_sequence: u64,
+        channel: RunSemanticChannel,
         chunk: &str,
     ) -> Result<RunWriteReceipt, RunRuntimeError> {
         validate_chunk(chunk)?;
@@ -214,6 +215,7 @@ impl RunRuntime for PostgresRunRuntime {
             &self.owner_id,
             lease,
             expected_sequence,
+            channel,
             chunk,
         )
         .await;
@@ -306,7 +308,20 @@ async fn handle_dispatch(
 ) {
     match consumer.dispatch(claim.lease().clone()).await {
         RunDispatchDecision::Accepted => match runtime.acknowledge_dispatch(&claim).await {
-            Ok(lease) => consumer.activate(&lease).await,
+            Ok(lease) => {
+                if let Err(code) = consumer.activate(&lease).await
+                    && let Err(error) = runtime
+                        .finish_run(
+                            &lease,
+                            lease.next_event_sequence(),
+                            RunTerminal::Failed(code),
+                        )
+                        .await
+                {
+                    tracing::error!(code = %error,
+                        "durable dispatch ack 后 activation/terminal 均失败；等待 lease recovery");
+                }
+            }
             Err(error) => {
                 consumer.revoke(claim.lease()).await;
                 tracing::error!(code = %error,
@@ -635,10 +650,11 @@ async fn append_chunk_in_transaction(
     owner: &str,
     lease: &RunExecutionLease,
     expected_sequence: u64,
+    channel: RunSemanticChannel,
     chunk: &str,
 ) -> Result<RunWriteReceipt, RunRuntimeError> {
     let expected = sequence_i64(expected_sequence)?;
-    let payload = json!({"channel":"text","delta":chunk});
+    let payload = json!({"channel":channel.as_str(),"delta":chunk});
     let Some(locked) = lock_run(transaction, lease.run_id().as_str()).await? else {
         return Err(RunRuntimeError::StaleLease);
     };

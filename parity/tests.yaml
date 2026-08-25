@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 873
+    expect: 863
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -6864,12 +6864,13 @@ entries:
   - id: "server-tests-copilot--registered-copilot-agents--configures-an-openai-built-in-agent"
     upstream: "server/tests/copilot.test.ts::registered Copilot agents"
     label: 替代
-    target: "openbot_agent::compat::copilotkit_facade::tests::configures_an_openai_built_in_agent"
+    target: "openbot_testkit::agent_runtime_postgres::real_openai_http_stream_uses_fresh_vault_credential_and_durable_reasoning_channel"
     owner: openbot-agent
     test_id: T-TEST-0652
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[780]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "真实 loopback OpenAI Responses HTTP 请求逐字段实收 model=`package-model`、system standing prompt、Bearer stored key；normalized text 经 built-in host/PG journal 物化 assistant 并 completed。PG17 trust 本批竖切=2/0/0，OpenAI adapter=6/0/0。"
     notes: "covered-by-golden —— v3 §15.2：最终 Leptos GUI 不依赖 @copilotkit/react-core 或 /api/copilotkit，迁移期只保留一个 Rust compatibility facade，其输入输出由固定 trace 验证、React 客户端退役后从发行物删除 —— 故转 golden trace 对照而非 1:1 移植。上游用例标题：「configures an OpenAI built-in agent」。"
   - id: "server-tests-copilot--registered-copilot-agents--fails-an-unavailable-built-in-agent-through-the-ag-ui-li"
     upstream: "server/tests/copilot.test.ts::registered Copilot agents"
@@ -6914,12 +6915,13 @@ entries:
   - id: "server-tests-copilot--registered-copilot-agents--resolves-fresh-built-in-agents-and-credentials-for-every"
     upstream: "server/tests/copilot.test.ts::registered Copilot agents"
     label: 替代
-    target: "openbot_agent::compat::copilotkit_facade::tests::resolves_fresh_built_in_agents_and_credentials_for_every"
+    target: "openbot_testkit::agent_runtime_postgres::real_openai_http_stream_uses_fresh_vault_credential_and_durable_reasoning_channel"
     owner: openbot-agent
     test_id: T-TEST-0657
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[785]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 runtime 连跑三次：第 1 run 取 active stored credential；撤销并修改 Agent configuration 后，第 2 run 立即取 environment fallback + 新 system prompt；第 3 run 遇 active corrupt stored row 明确失败且没有发第三个 HTTP 请求，证明每 run fresh resolve 且不缓存/静默 fallback。"
     notes: "covered-by-golden —— v3 §15.2：最终 Leptos GUI 不依赖 @copilotkit/react-core 或 /api/copilotkit，迁移期只保留一个 Rust compatibility facade，其输入输出由固定 trace 验证、React 客户端退役后从发行物删除 —— 故转 golden trace 对照而非 1:1 移植。上游用例标题：「resolves fresh built-in agents and credentials for every request」。"
   - id: "server-tests-copilot--registered-copilot-agents--does-not-resolve-model-credentials-for-remote-only-agent"
     upstream: "server/tests/copilot.test.ts::registered Copilot agents"
@@ -6944,12 +6946,13 @@ entries:
   - id: "server-tests-copilot--standing-agent-roles--sends-one-standing-role-message-ahead-of-the-conversatio"
     upstream: "server/tests/copilot.test.ts::standing agent roles"
     label: 替代
-    target: "openbot_agent::compat::copilotkit_facade::tests::sends_one_standing_role_message_ahead_of_the_conversatio"
+    target: "openbot_infra::provider::context::PostgresAgentContextSource + openbot_testkit::agent_runtime_postgres"
     owner: openbot-agent
     test_id: T-TEST-0660
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[789]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG context request 机械断言 messages 恰为 2 条：index 0 唯一 System（package systemPrompt + provenance），index 1 为原 User；真实 OpenAI request body 同样实收 `input[0].role=system`。"
     notes: "covered-by-golden —— v3 §15.2：最终 Leptos GUI 不依赖 @copilotkit/react-core 或 /api/copilotkit，迁移期只保留一个 Rust compatibility facade，其输入输出由固定 trace 验证、React 客户端退役后从发行物删除 —— 故转 golden trace 对照而非 1:1 移植。上游用例标题：「sends one standing role message ahead of the conversation」。"
   - id: "server-tests-copilot--standing-agent-roles--keeps-the-standing-role-out-of-forwarded-props-and-agent"
     upstream: "server/tests/copilot.test.ts::standing agent roles"
@@ -6984,12 +6987,13 @@ entries:
   - id: "server-tests-copilot--standing-agent-roles--rebuilds-each-agent-from-the-loader-so-an-edited-role-ap"
     upstream: "server/tests/copilot.test.ts::standing agent roles"
     label: 替代
-    target: "openbot_agent::compat::copilotkit_facade::tests::rebuilds_each_agent_from_the_loader_so_an_edited_role_ap"
+    target: "openbot_infra::provider::context::PostgresAgentContextSource + openbot_testkit::agent_runtime_postgres"
     owner: openbot-agent
     test_id: T-TEST-0664
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[793]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "第 1 run provider request 以 `Test system role.` 开头；真库原地改 agents.configuration 后，第 2 run 实收 `Updated system role.`，证明 context 每 run 从 scope-validated Agent row 重读，未缓存旧 role。"
     notes: "covered-by-golden —— v3 §15.2：最终 Leptos GUI 不依赖 @copilotkit/react-core 或 /api/copilotkit，迁移期只保留一个 Rust compatibility facade，其输入输出由固定 trace 验证、React 客户端退役后从发行物删除 —— 故转 golden trace 对照而非 1:1 移植。上游用例标题：「rebuilds each agent from the loader so an edited role applies to the next run」。"
   - id: "server-tests-copilot--what-a-bot-is-told-it-holds--names-the-system-and-its-tools"
     upstream: "server/tests/copilot.test.ts::what a Bot is told it holds"
@@ -7044,12 +7048,13 @@ entries:
   - id: "server-tests-copilot--where-a-bot-says-its-answer-came-from--a-built-in-bot-carries-the-rule-even-holding-nothing-at"
     upstream: "server/tests/copilot.test.ts::where a Bot says its answer came from"
     label: 替代
-    target: "openbot_agent::compat::copilotkit_facade::tests::a_built_in_bot_carries_the_rule_even_holding_nothing_at"
+    target: "openbot_infra::provider::context::tests::built_in_standing_prompt_is_trimmed_and_always_carries_provenance_guidance"
     owner: openbot-agent
     test_id: T-TEST-0670
     migration_rule: "preserve: covered-by-golden"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[801]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "MIT-attributed `PROVENANCE_GUIDANCE` 逐段进入每个 package built-in System message；纯测试验证首尾与 trim，真实 HTTP request 在 tools=[] 时仍实收该 System prompt。"
     notes: "covered-by-golden —— v3 §15.2：最终 Leptos GUI 不依赖 @copilotkit/react-core 或 /api/copilotkit，迁移期只保留一个 Rust compatibility facade，其输入输出由固定 trace 验证、React 客户端退役后从发行物删除 —— 故转 golden trace 对照而非 1:1 移植。上游用例标题：「a built-in Bot carries the rule even holding nothing at all」。"
   - id: "server-tests-copilot--where-a-bot-says-its-answer-came-from--a-remote-bot-carries-it-in-the-only-instruction-it-ever"
     upstream: "server/tests/copilot.test.ts::where a Bot says its answer came from"
@@ -7127,52 +7132,57 @@ entries:
   - id: "server-tests-credentials--model-credential-resolution--prefers-a-stored-model-credential-over-the-environment"
     upstream: "server/tests/credentials.test.ts::model credential resolution"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::prefers_a_stored_model_credential_over_the_environment"
+    target: "openbot_infra::provider::credential::PostgresOpenAiCredentialSource + openbot_testkit::agent_runtime_postgres"
     owner: openbot-infra
     test_id: T-TEST-0678
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[811]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "同一 source 同时配置 stored + environment；真实 HTTP 第一条 Authorization 精确为 stored-provider-key，环境 key 未被发送。stored v2 通过 tenant/secret/kind/deployment/deployment/key-version AAD 解封。"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「prefers a stored model credential over the environment」。"
   - id: "server-tests-credentials--model-credential-resolution--uses-openai-api-key-when-no-stored-credential-exists"
     upstream: "server/tests/credentials.test.ts::model credential resolution"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::uses_openai_api_key_when_no_stored_credential_exists"
+    target: "openbot_infra::provider::credential::PostgresOpenAiCredentialSource + openbot_testkit::agent_runtime_postgres"
     owner: openbot-infra
     test_id: T-TEST-0679
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[812]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "撤销全部 active matching stored rows 后下一 run 的真实 HTTP Authorization 精确变为 environment-provider-key；没有重建 Agent/provider object。"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「uses OPENAI_API_KEY when no stored credential exists」。"
   - id: "server-tests-credentials--model-credential-resolution--returns-null-when-neither-credential-source-is-configure"
     upstream: "server/tests/credentials.test.ts::model credential resolution"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::returns_null_when_neither_credential_source_is_configure"
+    target: "openbot_infra::provider::credential::PostgresOpenAiCredentialSource + openbot_testkit::agent_runtime_postgres"
     owner: openbot-infra
     test_id: T-TEST-0680
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[813]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "全部 matching row revoked 且 source 无 environment fallback 时实得封闭 `OpenAiCredentialError::Missing`；Rust 用具名 Missing 取代 nullable string，provider 映射为 authentication terminal，不发网络请求。"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「returns null when neither credential source is configured」。"
   - id: "server-tests-credentials--model-credential-resolution--rejects-corrupt-stored-ciphertext-instead-of-falling-bac"
     upstream: "server/tests/credentials.test.ts::model credential resolution"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::rejects_corrupt_stored_ciphertext_instead_of_falling_bac"
+    target: "openbot_infra::provider::credential::PostgresOpenAiCredentialSource + openbot_testkit::agent_runtime_postgres"
     owner: openbot-infra
     test_id: T-TEST-0681
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[814]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "有 environment fallback 时插入 active matching `encrypted_value='corrupt'`；第 3 run 精确 failed/provider_authentication，provider 本地服务器只收到前两次请求，证明 corrupt stored 不降级到环境 key。"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「rejects corrupt stored ciphertext instead of falling back to the environment」。"
   - id: "server-tests-credentials--model-credential-store-lookup--selects-the-newest-active-matching-model-credential-with"
     upstream: "server/tests/credentials.test.ts::model credential store lookup"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::selects_the_newest_active_matching_model_credential_with"
+    target: "openbot_infra::provider::credential::PostgresOpenAiCredentialSource + openbot_testkit::agent_runtime_postgres"
     owner: openbot-infra
     test_id: T-TEST-0682
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[816]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG fixture 同时放 older matching、同 timestamp 的 lower/higher UUID、wrong kind/provider/key-id 与更新但 revoked 行；真实 HTTP 只收到 higher UUID 对应 stored-provider-key，逐项证明 active exact match + created_at DESC/id DESC tie-breaker。"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「selects the newest active matching model credential with id as the timestamp tie-breaker」。"
   - id: "server-tests-credentials--admin-credential-api--returns-only-credential-status-and-metadata"
     upstream: "server/tests/credentials.test.ts::admin credential API"

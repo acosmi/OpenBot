@@ -7,7 +7,7 @@ use std::sync::Arc;
 use harness::{admin_config, with_temp_database};
 use openbot_application::{
     BeginThreadRunRequest, NoRunDispatchConsumer, RunExecutionLease, RunFailureCode, RunRuntime,
-    RunRuntimeError, RunTerminal, ThreadDirectory,
+    RunRuntimeError, RunSemanticChannel, RunTerminal, ThreadDirectory,
 };
 use openbot_contracts::command::{BeginThreadRun, ThreadRunAnchor};
 use openbot_contracts::ids::thread::ThreadIdentity;
@@ -122,17 +122,19 @@ async fn claim_chunk_terminal_are_exact_and_materialize_one_assistant_message() 
             }
 
             let one = runtime
-                .append_semantic_chunk(&lease, 1, "hello ")
+                .append_semantic_chunk(&lease, 1, RunSemanticChannel::Text, "hello ")
                 .await
                 .map_err(|error| error.to_string())?;
             let one_replay = runtime
-                .append_semantic_chunk(&lease, 1, "hello ")
+                .append_semantic_chunk(&lease, 1, RunSemanticChannel::Text, "hello ")
                 .await
                 .map_err(|error| error.to_string())?;
             if one.replayed || !one_replay.replayed || one.thread_event_sequence != 1 {
                 return Err(format!("chunk exact replay 漂移：{one:?}/{one_replay:?}"));
             }
-            if runtime.append_semantic_chunk(&lease, 1, "tampered").await
+            if runtime
+                .append_semantic_chunk(&lease, 1, RunSemanticChannel::Text, "tampered")
+                .await
                 != Err(RunRuntimeError::Conflict)
             {
                 return Err("相同 sequence 不同 chunk 必须 conflict".to_owned());
@@ -142,7 +144,7 @@ async fn claim_chunk_terminal_are_exact_and_materialize_one_assistant_message() 
                 .await
                 .map_err(|error| error.to_string())?;
             runtime
-                .append_semantic_chunk(&lease, 2, "world")
+                .append_semantic_chunk(&lease, 2, RunSemanticChannel::Text, "world")
                 .await
                 .map_err(|error| error.to_string())?;
             let terminal = runtime
@@ -229,7 +231,9 @@ async fn claim_chunk_terminal_are_exact_and_materialize_one_assistant_message() 
             {
                 return Err(format!("run terminal durable shape 漂移：{actual:?}"));
             }
-            if runtime.append_semantic_chunk(&lease, 4, "late").await
+            if runtime
+                .append_semantic_chunk(&lease, 4, RunSemanticChannel::Text, "late")
+                .await
                 != Err(RunRuntimeError::Conflict)
             {
                 return Err("terminal 后旧 writer 不得追加".to_owned());
@@ -305,7 +309,7 @@ async fn expired_unaccepted_dispatch_rebinds_but_delivered_stale_run_reconciles(
             }
             let runtime_a = runtime(&pool, "runtime-a")?;
             if runtime_a
-                .append_semantic_chunk(&old_lease, 1, "stale")
+                .append_semantic_chunk(&old_lease, 1, RunSemanticChannel::Text, "stale")
                 .await
                 != Err(RunRuntimeError::StaleLease)
             {
@@ -325,7 +329,9 @@ async fn expired_unaccepted_dispatch_rebinds_but_delivered_stale_run_reconciles(
             if recovered.run_event_sequence != 1 || recovered.thread_event_sequence != 1 {
                 return Err(format!("recovery sequence 漂移：{recovered:?}"));
             }
-            if runtime_b.append_semantic_chunk(&lease_b, 1, "late").await
+            if runtime_b
+                .append_semantic_chunk(&lease_b, 1, RunSemanticChannel::Text, "late")
+                .await
                 != Err(RunRuntimeError::StaleLease)
             {
                 return Err("recovery 后旧 runtime 必须 fencing 失效".to_owned());

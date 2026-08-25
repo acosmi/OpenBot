@@ -51,9 +51,13 @@ pub const MAX_REDIRECTS: usize = 3;
 ///
 /// OIDC token form 远小于此值；先固定上限可防止未来消费者把本 dialer 当无界上传客户端。
 pub const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
+/// Provider JSON prompt/tool schema request 上限；与 OIDC form 的 64KiB 分开。
+pub const MAX_JSON_REQUEST_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 const JSON_ACCEPT: &str = "application/json";
 const FORM_CONTENT_TYPE: &str = "application/x-www-form-urlencoded";
+const JSON_CONTENT_TYPE: &str = "application/json";
+const STREAM_ACCEPT: &str = "text/event-stream, application/json";
 
 /// safe dialer 的稳定、无载荷失败分类。
 ///
@@ -87,6 +91,8 @@ pub enum SafeHttpError {
     DeadlineExceeded,
     #[error("safe_http_response_too_large")]
     ResponseTooLarge,
+    #[error("safe_http_stream_stalled")]
+    StreamStalled,
     #[error("safe_http_redirect_invalid")]
     RedirectInvalid,
     #[error("safe_http_redirect_limit")]
@@ -107,7 +113,7 @@ pub enum SchemePolicy {
 }
 
 impl SchemePolicy {
-    fn accepts(self, scheme: &str) -> bool {
+    pub(crate) fn accepts(self, scheme: &str) -> bool {
         match self {
             Self::HttpsOnly => scheme == "https",
             Self::HttpOrHttps => matches!(scheme, "http" | "https"),
@@ -256,13 +262,14 @@ impl fmt::Debug for AuthorizationValue {
 enum SafeMethod {
     Get,
     PostForm,
+    PostJson,
 }
 
 impl SafeMethod {
     const fn as_http(self) -> Method {
         match self {
             Self::Get => Method::GET,
-            Self::PostForm => Method::POST,
+            Self::PostForm | Self::PostJson => Method::POST,
         }
     }
 }
@@ -310,6 +317,37 @@ impl SafeHttpRequest {
             url,
             scheme_policy: SchemePolicy::HttpsOnly,
             method: SafeMethod::PostForm,
+            body: Bytes::from(body),
+            authorization,
+            budget,
+        })
+    }
+
+    /// HTTPS JSON POST；provider stream 与 remote protocol request 使用。
+    pub fn post_json(
+        url: Url,
+        body: Vec<u8>,
+        authorization: Option<AuthorizationValue>,
+        budget: SafeHttpBudget,
+    ) -> Result<Self, SafeHttpError> {
+        Self::post_json_with_scheme(url, SchemePolicy::HttpsOnly, body, authorization, budget)
+    }
+
+    pub(crate) fn post_json_with_scheme(
+        url: Url,
+        scheme_policy: SchemePolicy,
+        body: Vec<u8>,
+        authorization: Option<AuthorizationValue>,
+        budget: SafeHttpBudget,
+    ) -> Result<Self, SafeHttpError> {
+        validate_url(&url, scheme_policy)?;
+        if body.len() > MAX_JSON_REQUEST_BODY_BYTES {
+            return Err(SafeHttpError::InvalidBudget);
+        }
+        Ok(Self {
+            url,
+            scheme_policy,
+            method: SafeMethod::PostJson,
             body: Bytes::from(body),
             authorization,
             budget,
@@ -377,6 +415,75 @@ impl fmt::Debug for SafeHttpResponse {
     }
 }
 
+/// 最终 streaming response；body 只能经 bounded/stall-aware `next_chunk` 读取。
+pub struct SafeHttpStreamResponse {
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Incoming,
+    _driver: AbortOnDrop,
+    read_bytes: usize,
+    max_bytes: usize,
+}
+
+impl SafeHttpStreamResponse {
+    /// HTTP status。
+    #[must_use]
+    pub const fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    /// 受控读取 response header。
+    #[must_use]
+    pub fn header(&self, name: &HeaderName) -> Option<&HeaderValue> {
+        self.headers.get(name)
+    }
+
+    /// 下一 data frame；每次等待按真实 body read 间隔执行 stall timeout。
+    pub async fn next_chunk(
+        &mut self,
+        stall_timeout: Option<Duration>,
+    ) -> Result<Option<Bytes>, SafeHttpError> {
+        if stall_timeout.is_some_and(|value| value.is_zero()) {
+            return Err(SafeHttpError::InvalidBudget);
+        }
+        loop {
+            let frame = match stall_timeout {
+                Some(timeout) => tokio::time::timeout(timeout, self.body.frame())
+                    .await
+                    .map_err(|_| SafeHttpError::StreamStalled)?,
+                None => self.body.frame().await,
+            };
+            let Some(frame) = frame else {
+                return Ok(None);
+            };
+            let frame = frame.map_err(|_| SafeHttpError::ProtocolFailed)?;
+            let Ok(chunk) = frame.into_data() else {
+                continue;
+            };
+            self.read_bytes = self
+                .read_bytes
+                .checked_add(chunk.len())
+                .ok_or(SafeHttpError::ResponseTooLarge)?;
+            if self.read_bytes > self.max_bytes {
+                return Err(SafeHttpError::ResponseTooLarge);
+            }
+            return Ok(Some(chunk));
+        }
+    }
+}
+
+impl fmt::Debug for SafeHttpStreamResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SafeHttpStreamResponse")
+            .field("status", &self.status)
+            .field("header_count", &self.headers.len())
+            .field("read_bytes", &self.read_bytes)
+            .field("max_bytes", &self.max_bytes)
+            .finish()
+    }
+}
+
 /// 唯一网络实现。
 #[derive(Clone)]
 pub struct SafeDialer {
@@ -440,10 +547,57 @@ impl SafeDialer {
         }
     }
 
+    /// 打开 streaming body；budget timeout 只包 DNS/connect/TLS/redirect/headers，之后每个
+    /// body read 由 `SafeHttpStreamResponse::next_chunk` 的真实 read 间隔 watchdog 负责。
+    pub async fn execute_stream(
+        &self,
+        request: SafeHttpRequest,
+    ) -> Result<SafeHttpStreamResponse, SafeHttpError> {
+        match tokio::time::timeout(request.budget.timeout(), self.execute_stream_inner(request))
+            .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(SafeHttpError::DeadlineExceeded),
+        }
+    }
+
     async fn execute_inner(
         &self,
-        mut request: SafeHttpRequest,
+        request: SafeHttpRequest,
     ) -> Result<SafeHttpResponse, SafeHttpError> {
+        let (raw, budget) = self.follow_redirects(request).await?;
+        let body = read_bounded_body(raw.body, budget.max_response_bytes()).await?;
+        Ok(SafeHttpResponse {
+            status: raw.status,
+            headers: raw.headers,
+            body,
+        })
+    }
+
+    async fn execute_stream_inner(
+        &self,
+        request: SafeHttpRequest,
+    ) -> Result<SafeHttpStreamResponse, SafeHttpError> {
+        let (raw, budget) = self.follow_redirects(request).await?;
+        if let Some(upper) = raw.body.size_hint().upper()
+            && upper > budget.max_response_bytes() as u64
+        {
+            return Err(SafeHttpError::ResponseTooLarge);
+        }
+        Ok(SafeHttpStreamResponse {
+            status: raw.status,
+            headers: raw.headers,
+            body: raw.body,
+            _driver: raw._driver,
+            read_bytes: 0,
+            max_bytes: budget.max_response_bytes(),
+        })
+    }
+
+    async fn follow_redirects(
+        &self,
+        mut request: SafeHttpRequest,
+    ) -> Result<(RawResponse, SafeHttpBudget), SafeHttpError> {
         let mut redirects = 0usize;
 
         loop {
@@ -452,12 +606,7 @@ impl SafeDialer {
             let raw = self.send_one(&request, &resolved).await?;
 
             if !is_redirect(raw.status) {
-                let body = read_bounded_body(raw.body, request.budget.max_response_bytes()).await?;
-                return Ok(SafeHttpResponse {
-                    status: raw.status,
-                    headers: raw.headers,
-                    body,
-                });
+                return Ok((raw, request.budget));
             }
 
             if redirects >= MAX_REDIRECTS {
@@ -483,22 +632,27 @@ impl SafeDialer {
 
             match (request.method, raw.status) {
                 (SafeMethod::Get, _) => {}
-                (SafeMethod::PostForm, StatusCode::SEE_OTHER) => {
+                (SafeMethod::PostForm | SafeMethod::PostJson, StatusCode::SEE_OTHER) => {
                     request.method = SafeMethod::Get;
                     request.body = Bytes::new();
                 }
                 (
-                    SafeMethod::PostForm,
+                    SafeMethod::PostForm | SafeMethod::PostJson,
                     StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT,
                 ) => {
                     if !same_origin {
                         return Err(SafeHttpError::SensitiveRedirectRejected);
                     }
                 }
-                (SafeMethod::PostForm, StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND) => {
+                (
+                    SafeMethod::PostForm | SafeMethod::PostJson,
+                    StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND,
+                ) => {
                     return Err(SafeHttpError::RedirectMethodRejected);
                 }
-                (SafeMethod::PostForm, _) => return Err(SafeHttpError::RedirectInvalid),
+                (SafeMethod::PostForm | SafeMethod::PostJson, _) => {
+                    return Err(SafeHttpError::RedirectInvalid);
+                }
             }
 
             request.url = next;
@@ -626,15 +780,22 @@ fn build_http_request(request: &SafeHttpRequest) -> Result<Request<Full<Bytes>>,
         None => request.url.path().to_owned(),
     };
     let authority = &request.url[Position::BeforeHost..Position::AfterPort];
+    let accept = if request.method == SafeMethod::PostJson {
+        STREAM_ACCEPT
+    } else {
+        JSON_ACCEPT
+    };
 
     let mut builder = Request::builder()
         .method(request.method.as_http())
         .uri(path)
         .header(HOST, authority)
         .header(CONNECTION, "close")
-        .header(ACCEPT, JSON_ACCEPT);
+        .header(ACCEPT, accept);
     if request.method == SafeMethod::PostForm {
         builder = builder.header(CONTENT_TYPE, FORM_CONTENT_TYPE);
+    } else if request.method == SafeMethod::PostJson {
+        builder = builder.header(CONTENT_TYPE, JSON_CONTENT_TYPE);
     }
     if let Some(authorization) = &request.authorization {
         builder = builder.header(AUTHORIZATION, authorization.0.clone());
@@ -1207,6 +1368,130 @@ mod tests {
         let result = SafeDialer::new(loopback_policy()).execute(request).await;
         assert_eq!(result.unwrap_err(), SafeHttpError::RedirectLimit);
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn streaming_json_post_preserves_headers_and_reads_real_body_chunks() {
+        let (url, server) = chunked_stream_server(vec![
+            (Duration::ZERO, b"data: one\n\n".as_slice()),
+            (Duration::from_millis(20), b"data: two\n\n".as_slice()),
+        ])
+        .await;
+        let request = SafeHttpRequest::post_json_with_scheme(
+            url,
+            SchemePolicy::HttpOrHttps,
+            br#"{"stream":true}"#.to_vec(),
+            Some(AuthorizationValue::parse("Bearer provider-secret").unwrap()),
+            budget(1024),
+        )
+        .unwrap();
+        let mut response = SafeDialer::new(loopback_policy())
+            .execute_stream(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut output = Vec::new();
+        while let Some(chunk) = response
+            .next_chunk(Some(Duration::from_millis(100)))
+            .await
+            .unwrap()
+        {
+            output.extend(chunk);
+        }
+        assert_eq!(output, b"data: one\n\ndata: two\n\n");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn streaming_body_stall_and_total_size_are_distinct_fail_closed_errors() {
+        let (stall_url, stall_server) = chunked_stream_server(vec![(
+            Duration::from_millis(100),
+            b"data: late\n\n".as_slice(),
+        )])
+        .await;
+        let request = SafeHttpRequest::post_json_with_scheme(
+            stall_url,
+            SchemePolicy::HttpOrHttps,
+            b"{}".to_vec(),
+            None,
+            budget(1024),
+        )
+        .unwrap();
+        let mut response = SafeDialer::new(loopback_policy())
+            .execute_stream(request)
+            .await
+            .unwrap();
+        assert_eq!(
+            response.next_chunk(Some(Duration::from_millis(20))).await,
+            Err(SafeHttpError::StreamStalled)
+        );
+        drop(response);
+        stall_server.await.unwrap();
+
+        let (large_url, large_server) =
+            chunked_stream_server(vec![(Duration::ZERO, b"12345".as_slice())]).await;
+        let request = SafeHttpRequest::post_json_with_scheme(
+            large_url,
+            SchemePolicy::HttpOrHttps,
+            b"{}".to_vec(),
+            None,
+            budget(4),
+        )
+        .unwrap();
+        let mut response = SafeDialer::new(loopback_policy())
+            .execute_stream(request)
+            .await
+            .unwrap();
+        assert_eq!(
+            response.next_chunk(Some(Duration::from_secs(1))).await,
+            Err(SafeHttpError::ResponseTooLarge)
+        );
+        large_server.await.unwrap();
+    }
+
+    async fn chunked_stream_server(
+        chunks: Vec<(Duration, &'static [u8])>,
+    ) -> (Url, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut stream).await.to_ascii_lowercase();
+            assert!(request.starts_with("post "));
+            assert!(request.contains("content-type: application/json"));
+            assert!(request.contains("accept: text/event-stream, application/json"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            for (delay, chunk) in chunks {
+                tokio::time::sleep(delay).await;
+                let header = format!("{:x}\r\n", chunk.len());
+                if let Err(error) = stream.write_all(header.as_bytes()).await {
+                    assert_peer_closed_after_client_outcome(error);
+                    return;
+                }
+                if let Err(error) = stream.write_all(chunk).await {
+                    assert_peer_closed_after_client_outcome(error);
+                    return;
+                }
+                if let Err(error) = stream.write_all(b"\r\n").await {
+                    assert_peer_closed_after_client_outcome(error);
+                    return;
+                }
+                if let Err(error) = stream.flush().await {
+                    assert_peer_closed_after_client_outcome(error);
+                    return;
+                }
+            }
+            let _ = stream.write_all(b"0\r\n\r\n").await;
+        });
+        (
+            Url::parse(&format!("http://127.0.0.1:{}/v1/responses", address.port())).unwrap(),
+            server,
+        )
     }
 
     async fn one_response_server(

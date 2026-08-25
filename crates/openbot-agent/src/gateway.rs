@@ -73,7 +73,14 @@ impl AgentToolGateway {
             | AppReply::People(_)
             | AppReply::Person(_)
             | AppReply::AuditEvents(_)
-            | AppReply::ActionPolicy { .. } => Err(AppError::DependencyUnavailable {
+            | AppReply::ActionPolicy { .. }
+            | AppReply::ThreadMinted(_)
+            | AppReply::ThreadStatus(_)
+            | AppReply::ThreadRunStarted(_)
+            | AppReply::ThreadHistory(_)
+            | AppReply::Memory(_)
+            | AppReply::Memories(_)
+            | AppReply::MemoryRecall(_) => Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }),
         }
