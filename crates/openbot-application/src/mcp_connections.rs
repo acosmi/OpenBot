@@ -5,7 +5,7 @@ use openbot_contracts::auth::{AuthContext, Role};
 use openbot_contracts::error::AppError;
 use openbot_contracts::mcp::{
     McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
-    McpOAuthClientRegistration, McpOAuthReturnTo,
+    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
 };
 use openbot_domain::vault::SecretBytes;
 
@@ -94,6 +94,24 @@ pub trait McpConnectionAdministration: Send + Sync {
         server_id: &str,
         registration: &McpOAuthClientRegistration,
     ) -> Result<McpOAuthClientRegistered, McpConnectionError>;
+
+    /// Add one compile-time reviewed catalogue entry. The port, not the caller, owns its endpoint.
+    async fn add_curated_server(
+        &self,
+        _auth: &AuthContext,
+        _key: &str,
+    ) -> Result<McpServerMutation, McpConnectionError> {
+        Err(McpConnectionError::Unavailable)
+    }
+
+    /// Refresh a configured catalog and atomically suspend stale grants.
+    async fn refresh_server(
+        &self,
+        _auth: &AuthContext,
+        _server_id: &str,
+    ) -> Result<McpServerMutation, McpConnectionError> {
+        Err(McpConnectionError::Unavailable)
+    }
 }
 
 /// Fail-closed default when production assembly has no MCP connection service.
@@ -248,6 +266,38 @@ pub async fn register_mcp_oauth_client(
         .map_err(McpConnectionError::into_app_error)
 }
 
+/// Application use case: admin-only add from the reviewed connector catalogue.
+pub async fn add_curated_mcp_server(
+    port: &dyn McpConnectionAdministration,
+    auth: &AuthContext,
+    key: &str,
+) -> Result<McpServerMutation, AppError> {
+    if !auth.has_role(Role::Admin) {
+        return Err(AppError::ForbiddenRole {
+            required: Role::Admin,
+        });
+    }
+    port.add_curated_server(auth, key)
+        .await
+        .map_err(McpConnectionError::into_app_error)
+}
+
+/// Application use case: admin-only server catalog refresh.
+pub async fn refresh_mcp_server(
+    port: &dyn McpConnectionAdministration,
+    auth: &AuthContext,
+    server_id: &str,
+) -> Result<McpServerMutation, AppError> {
+    if !auth.has_role(Role::Admin) {
+        return Err(AppError::ForbiddenRole {
+            required: Role::Admin,
+        });
+    }
+    port.refresh_server(auth, server_id)
+        .await
+        .map_err(McpConnectionError::into_app_error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +309,8 @@ mod tests {
     #[derive(Default)]
     struct FakePort {
         registrations: AtomicUsize,
+        additions: AtomicUsize,
+        refreshes: AtomicUsize,
     }
 
     #[async_trait]
@@ -295,6 +347,34 @@ mod tests {
         ) -> Result<McpOAuthClientRegistered, McpConnectionError> {
             self.registrations.fetch_add(1, Ordering::SeqCst);
             Ok(McpOAuthClientRegistered::success())
+        }
+
+        async fn add_curated_server(
+            &self,
+            _auth: &AuthContext,
+            key: &str,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            self.additions.fetch_add(1, Ordering::SeqCst);
+            Ok(McpServerMutation {
+                server_id: key.to_owned(),
+                catalog_generation: 1,
+                tool_count: 4,
+                suspended_grants: 0,
+            })
+        }
+
+        async fn refresh_server(
+            &self,
+            _auth: &AuthContext,
+            server_id: &str,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            Ok(McpServerMutation {
+                server_id: server_id.to_owned(),
+                catalog_generation: 2,
+                tool_count: 4,
+                suspended_grants: 0,
+            })
         }
     }
 
@@ -335,5 +415,40 @@ mod tests {
             Ok(McpOAuthClientRegistered::success())
         );
         assert_eq!(port.registrations.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn curated_add_and_refresh_are_admin_gated_before_the_port() {
+        let port = FakePort::default();
+        assert!(matches!(
+            add_curated_mcp_server(&port, &auth(Role::User), "google-drive").await,
+            Err(AppError::ForbiddenRole {
+                required: Role::Admin
+            })
+        ));
+        assert!(matches!(
+            refresh_mcp_server(&port, &auth(Role::User), "google-drive").await,
+            Err(AppError::ForbiddenRole {
+                required: Role::Admin
+            })
+        ));
+        assert_eq!(port.additions.load(Ordering::SeqCst), 0);
+        assert_eq!(port.refreshes.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            add_curated_mcp_server(&port, &auth(Role::Admin), "google-drive")
+                .await
+                .unwrap()
+                .tool_count,
+            4
+        );
+        assert_eq!(
+            refresh_mcp_server(&port, &auth(Role::Admin), "google-drive")
+                .await
+                .unwrap()
+                .catalog_generation,
+            2
+        );
+        assert_eq!(port.additions.load(Ordering::SeqCst), 1);
+        assert_eq!(port.refreshes.load(Ordering::SeqCst), 1);
     }
 }

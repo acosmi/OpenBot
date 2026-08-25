@@ -9,12 +9,14 @@ use openbot_domain::vault::{SecretKind, SecretPrincipal, ServiceId};
 use uuid::Uuid;
 
 use crate::db::types::CredentialKind;
+use crate::google_drive_oauth::GoogleDriveOAuthClient;
 use crate::mcp::McpBearerToken;
+use crate::mcp_catalog::VendorTransportKind;
 use crate::mcp_oauth::McpOAuthClient;
 use crate::net::safe_http::{SafeDialer, SchemePolicy};
 use crate::store::plugin_user_credential::{
-    OAuthTokenExchangeError, PluginUserCredentialStore, UserCredentialSelectionError,
-    UserOAuthAccessError,
+    OAuthTokenExchangeError, PluginUserCredentialStore, RotatingOAuthTokenExchanger,
+    UserCredentialSelectionError, UserOAuthAccessError,
 };
 use crate::vault::CredentialRecordVault;
 
@@ -47,6 +49,7 @@ pub struct PostgresMcpCredentialBroker {
     pool: deadpool_postgres::Pool,
     vault: CredentialRecordVault,
     user_oauth: Option<UserOAuthRuntime>,
+    drive_oauth: Option<GoogleDriveOAuthClient>,
 }
 
 #[derive(Clone)]
@@ -63,6 +66,7 @@ impl PostgresMcpCredentialBroker {
             pool,
             vault,
             user_oauth: None,
+            drive_oauth: None,
         }
     }
 
@@ -85,8 +89,17 @@ impl PostgresMcpCredentialBroker {
         Ok(self)
     }
 
-    /// Resolve anonymous or deployment-bearer authentication immediately before one MCP operation.
-    /// User OAuth is deliberately refused until the full §9.4 flow lands.
+    /// Attach the curated Drive refresh adapter to the same actor credential store. Google may
+    /// retain the existing refresh token, so its exchanger uses the store's explicit non-rotation
+    /// contract while MCP continues to require rotation.
+    #[must_use]
+    pub fn with_google_drive_oauth(mut self, exchanger: GoogleDriveOAuthClient) -> Self {
+        self.drive_oauth = Some(exchanger);
+        self
+    }
+
+    /// Resolve anonymous, deployment-bearer, MCP actor-OAuth or Drive actor-OAuth authentication
+    /// immediately before one vendor operation. No cleartext/access token is cached.
     pub async fn bearer_for(
         &self,
         server_id: &str,
@@ -101,7 +114,8 @@ impl PostgresMcpCredentialBroker {
         })?;
         let row = client
             .query_opt(
-                "SELECT s.credential_id,c.kind,c.provider,c.encrypted_value,c.revoked_at
+                "SELECT coalesce(s.transport,'mcp') AS transport,
+                        s.credential_id,c.kind,c.provider,c.encrypted_value,c.revoked_at
                    FROM public.mcp_servers s
                    LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE s.id=$1",
@@ -113,13 +127,21 @@ impl PostgresMcpCredentialBroker {
                 McpCredentialError::Unavailable
             })?
             .ok_or(McpCredentialError::Unavailable)?;
+        let transport = VendorTransportKind::parse(
+            &row.try_get::<_, String>("transport")
+                .map_err(|_| McpCredentialError::Corrupt { field: "transport" })?,
+        )
+        .map_err(|_| McpCredentialError::Corrupt { field: "transport" })?;
         let pointer: Option<Uuid> =
             row.try_get("credential_id")
                 .map_err(|_| McpCredentialError::Corrupt {
                     field: "credential_id",
                 })?;
         let Some(pointer) = pointer else {
-            return Ok(None);
+            return match transport {
+                VendorTransportKind::Mcp => Ok(None),
+                VendorTransportKind::GoogleDriveRest => Err(McpCredentialError::AuthRequired),
+            };
         };
         let kind: Option<CredentialKind> =
             row.try_get("kind")
@@ -151,6 +173,9 @@ impl PostgresMcpCredentialBroker {
         drop(client);
         match kind {
             CredentialKind::Mcp => {
+                if transport != VendorTransportKind::Mcp {
+                    return Err(McpCredentialError::Corrupt { field: "transport" });
+                }
                 let secret = self
                     .vault
                     .open(
@@ -175,9 +200,10 @@ impl PostgresMcpCredentialBroker {
                     }
                 })
             }
-            CredentialKind::McpOauthClient => {
-                self.user_oauth_bearer(server_id, actor).await.map(Some)
-            }
+            CredentialKind::McpOauthClient => self
+                .user_oauth_bearer(server_id, actor, transport)
+                .await
+                .map(Some),
             CredentialKind::McpUserToken => Err(McpCredentialError::Corrupt {
                 field: "credential_kind",
             }),
@@ -193,36 +219,56 @@ impl PostgresMcpCredentialBroker {
         &self,
         server_id: &str,
         actor: &ActorId,
+        transport: VendorTransportKind,
     ) -> Result<McpBearerToken, McpCredentialError> {
         let runtime = self
             .user_oauth
             .as_ref()
             .ok_or(McpCredentialError::AuthRequired)?;
-        // A concurrent replica may rotate first. Re-read its winning ciphertext and retry once;
-        // every other failure remains fail-closed and no access token leaves the broker.
-        for attempt in 0..2 {
-            match runtime
-                .store
-                .fresh_user_access_token(server_id, actor, &runtime.exchanger)
-                .await
-            {
-                Ok(token) => {
-                    return McpBearerToken::from_secret(token.into_secret()).map_err(|_| {
-                        McpCredentialError::Corrupt {
-                            field: "access_token",
-                        }
-                    });
-                }
-                Err(UserOAuthAccessError::Selection(UserCredentialSelectionError::Conflict))
-                    if attempt == 0 =>
-                {
-                    continue;
-                }
-                Err(error) => return Err(map_user_oauth_error(error)),
+        match transport {
+            VendorTransportKind::Mcp => {
+                refresh_actor_bearer(&runtime.store, &runtime.exchanger, server_id, actor).await
+            }
+            VendorTransportKind::GoogleDriveRest => {
+                let exchanger = self
+                    .drive_oauth
+                    .as_ref()
+                    .ok_or(McpCredentialError::AuthRequired)?;
+                refresh_actor_bearer(&runtime.store, exchanger, server_id, actor).await
             }
         }
-        Err(McpCredentialError::Unavailable)
     }
+}
+
+async fn refresh_actor_bearer<E: RotatingOAuthTokenExchanger + ?Sized>(
+    store: &PluginUserCredentialStore,
+    exchanger: &E,
+    server_id: &str,
+    actor: &ActorId,
+) -> Result<McpBearerToken, McpCredentialError> {
+    // A concurrent replica may rotate first. Re-read its winning ciphertext and retry once;
+    // every other failure remains fail-closed and no access token leaves the broker.
+    for attempt in 0..2 {
+        match store
+            .fresh_user_access_token(server_id, actor, exchanger)
+            .await
+        {
+            Ok(token) => {
+                return McpBearerToken::from_secret(token.into_secret()).map_err(|_| {
+                    McpCredentialError::Corrupt {
+                        field: "access_token",
+                    }
+                });
+            }
+            Err(UserOAuthAccessError::Selection(UserCredentialSelectionError::Conflict))
+                if attempt == 0 =>
+            {
+                continue;
+            }
+            Err(error) => return Err(map_user_oauth_error(error)),
+        }
+    }
+    Err(McpCredentialError::Unavailable)
 }
 
 impl core::fmt::Debug for PostgresMcpCredentialBroker {
@@ -230,6 +276,7 @@ impl core::fmt::Debug for PostgresMcpCredentialBroker {
         f.debug_struct("PostgresMcpCredentialBroker")
             .field("vault", &self.vault)
             .field("user_oauth", &self.user_oauth.is_some())
+            .field("drive_oauth", &self.drive_oauth.is_some())
             .finish_non_exhaustive()
     }
 }

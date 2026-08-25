@@ -11,7 +11,7 @@ use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
 use openbot_contracts::mcp::{
     McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
-    McpOAuthClientRegistration, McpOAuthReturnTo,
+    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
 };
 use serde::Deserialize;
 
@@ -116,6 +116,63 @@ pub async fn servers_oauth_client_post(
         .await?
     {
         AppReply::McpOAuthClientRegistered(registered) => Ok(Json(registered)),
+        _ => Err(application_contract_error()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+/// Closed curated-server request; endpoint/vendor/transport are not caller-controlled.
+pub struct AddCuratedServerBody {
+    key: String,
+}
+
+/// `POST /api/plugins/servers`; the request selects a reviewed key and can never supply a URL.
+pub async fn servers_post(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    body: Result<Json<AddCuratedServerBody>, JsonRejection>,
+) -> Result<Json<McpServerMutation>, HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    let Json(body) = body.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "curated plugin server body 解析失败");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(
+            resolved.into_context(),
+            AppCommand::AddCuratedMcpServer { key: body.key },
+        )
+        .await?
+    {
+        AppReply::McpServerMutation(receipt) => Ok(Json(receipt)),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/plugins/servers/{id}/refresh`; Drive is static and needs no personal token.
+pub async fn servers_refresh_post(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+) -> Result<Json<McpServerMutation>, HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    match state
+        .application()
+        .execute(
+            resolved.into_context(),
+            AppCommand::RefreshMcpServer { server_id },
+        )
+        .await?
+    {
+        AppReply::McpServerMutation(receipt) => Ok(Json(receipt)),
         _ => Err(application_contract_error()),
     }
 }
@@ -238,6 +295,8 @@ mod tests {
         Begin(ActorId, String, McpOAuthReturnTo),
         Disconnect(ActorId, String),
         Register(ActorId, String),
+        Add(ActorId, String),
+        Refresh(ActorId, String),
     }
 
     #[derive(Clone, Default)]
@@ -309,6 +368,40 @@ mod tests {
                 .unwrap()
                 .push(Call::Register(auth.actor().clone(), server_id.to_owned()));
             Ok(McpOAuthClientRegistered::success())
+        }
+
+        async fn add_curated_server(
+            &self,
+            auth: &AuthContext,
+            key: &str,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(Call::Add(auth.actor().clone(), key.to_owned()));
+            Ok(McpServerMutation {
+                server_id: key.to_owned(),
+                catalog_generation: 1,
+                tool_count: 4,
+                suspended_grants: 0,
+            })
+        }
+
+        async fn refresh_server(
+            &self,
+            auth: &AuthContext,
+            server_id: &str,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(Call::Refresh(auth.actor().clone(), server_id.to_owned()));
+            Ok(McpServerMutation {
+                server_id: server_id.to_owned(),
+                catalog_generation: 2,
+                tool_count: 4,
+                suspended_grants: 0,
+            })
         }
     }
 
@@ -561,6 +654,63 @@ mod tests {
         assert_eq!(
             connections.calls.lock().unwrap().as_slice(),
             [Call::Register(ActorId::new("actor"), "notes".to_owned())]
+        );
+    }
+
+    #[tokio::test]
+    async fn curated_add_and_refresh_are_fresh_admin_typed_commands_without_a_url_input() {
+        let connections = FakeConnections::default();
+        let rejected = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/servers",
+            None,
+            "{",
+        )
+        .await;
+        assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+        assert!(connections.calls.lock().unwrap().is_empty());
+
+        let unknown_field = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/servers",
+            Some("https://app.example.test"),
+            r#"{"key":"google-drive","url":"https://evil.example"}"#,
+        )
+        .await;
+        assert_eq!(unknown_field.status(), StatusCode::BAD_REQUEST);
+        assert!(connections.calls.lock().unwrap().is_empty());
+
+        let added = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/servers",
+            Some("https://app.example.test"),
+            r#"{"key":"google-drive"}"#,
+        )
+        .await;
+        assert_eq!(added.status(), StatusCode::OK);
+        let body = to_bytes(added.into_body(), 1024).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "serverId":"google-drive","catalogGeneration":1,
+                "toolCount":4,"suspendedGrants":0
+            })
+        );
+
+        let refreshed = send(
+            registration_app(connections.clone()),
+            Method::POST,
+            "/api/plugins/servers/google-drive/refresh",
+            Some("https://app.example.test"),
+        )
+        .await;
+        assert_eq!(refreshed.status(), StatusCode::OK);
+        assert_eq!(
+            connections.calls.lock().unwrap().as_slice(),
+            [
+                Call::Add(ActorId::new("actor"), "google-drive".to_owned()),
+                Call::Refresh(ActorId::new("actor"), "google-drive".to_owned())
+            ]
         );
     }
 }

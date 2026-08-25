@@ -188,6 +188,20 @@ pub struct McpOAuthClientRegistered {
     pub ok: bool,
 }
 
+/// Result of adding or refreshing one reviewed server catalogue entry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpServerMutation {
+    /// Stable curated/server id.
+    pub server_id: String,
+    /// Monotonic catalog generation committed by PostgreSQL.
+    pub catalog_generation: u64,
+    /// Number of tools currently present in the refreshed server catalogue.
+    pub tool_count: u32,
+    /// Existing grants suspended because identity/schema/effect no longer matched.
+    pub suspended_grants: u32,
+}
+
 impl McpOAuthClientRegistered {
     /// Construct the only successful acknowledgement.
     #[must_use]

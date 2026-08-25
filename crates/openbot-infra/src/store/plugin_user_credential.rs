@@ -212,6 +212,12 @@ impl core::fmt::Debug for RotatingOAuthGrant {
 /// Rotation-aware token endpoint port used by the production MCP broker.
 #[async_trait]
 pub trait RotatingOAuthTokenExchanger: Send + Sync {
+    /// Whether a successful token response without a replacement refresh token is invalid.
+    /// MCP OAuth requires rotation; Google web-server OAuth normally reuses the stored refresh.
+    fn requires_refresh_rotation(&self) -> bool {
+        true
+    }
+
     /// Exchange one refresh token. Returned secrets are never serializable/debuggable.
     async fn exchange_rotating(
         &self,
@@ -541,8 +547,9 @@ impl PluginUserCredentialStore {
         })
     }
 
-    /// Exchange and durably rotate one actor's refresh credential before releasing an access token.
-    /// A provider that does not rotate the refresh token is rejected by the production path.
+    /// Exchange one actor's refresh credential before releasing an access token. Providers whose
+    /// adapter requires rotation must durably commit the replacement first; a reviewed adapter may
+    /// explicitly retain the existing refresh token when the vendor omits a replacement.
     pub async fn fresh_user_access_token<E: RotatingOAuthTokenExchanger + ?Sized>(
         &self,
         server_id: &str,
@@ -557,15 +564,18 @@ impl PluginUserCredentialStore {
             .exchange_rotating(exchanger)
             .await
             .map_err(UserOAuthAccessError::Exchange)?;
-        let refresh = grant
-            .refresh_token
-            .take()
-            .ok_or(UserOAuthAccessError::Exchange(
-                OAuthTokenExchangeError::InvalidResponse,
-            ))?;
-        self.persist_refresh_rotation(&prepared, refresh, grant.scope.take())
-            .await
-            .map_err(UserOAuthAccessError::Selection)?;
+        match grant.refresh_token.take() {
+            Some(refresh) => self
+                .persist_refresh_rotation(&prepared, refresh, grant.scope.take())
+                .await
+                .map_err(UserOAuthAccessError::Selection)?,
+            None if exchanger.requires_refresh_rotation() => {
+                return Err(UserOAuthAccessError::Exchange(
+                    OAuthTokenExchangeError::InvalidResponse,
+                ));
+            }
+            None => {}
+        }
         Ok(VendorAccessToken(grant.access_token))
     }
 

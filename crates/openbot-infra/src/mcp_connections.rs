@@ -20,7 +20,7 @@ use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_contracts::mcp::{
     McpConnection, McpConnectionDisconnected, McpConnections, McpOAuthAuthorization,
     McpOAuthClientAuthMethod, McpOAuthClientRegistered, McpOAuthClientRegistration,
-    McpOAuthReturnTo, McpVendorRevocationStatus,
+    McpOAuthReturnTo, McpServerMutation, McpVendorRevocationStatus,
 };
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
 use openbot_domain::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
@@ -34,8 +34,15 @@ use url::Url;
 use uuid::Uuid;
 use zeroize::{Zeroize as _, Zeroizing};
 
+use crate::google_drive::{
+    GOOGLE_DRIVE_API_BASE, GOOGLE_DRIVE_PROVENANCE, GOOGLE_DRIVE_READONLY_SCOPE,
+    GOOGLE_DRIVE_SERVER_ID, GOOGLE_DRIVE_TRANSPORT, GOOGLE_DRIVE_VENDOR,
+};
+use crate::google_drive_oauth::{GoogleDriveOAuthClient, GoogleDriveOAuthError};
 use crate::mcp::McpBearerToken;
-use crate::mcp_catalog::PostgresMcpCatalog;
+use crate::mcp_catalog::{
+    McpCatalogError, McpCatalogRefresh, PostgresMcpCatalog, VendorTransportKind,
+};
 use crate::mcp_oauth::{McpOAuthClient, McpOAuthError};
 use crate::net::safe_http::SchemePolicy;
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
@@ -46,7 +53,9 @@ type HmacSha256 = Hmac<Sha256>;
 const CALLBACK_PATH: &str = "/api/plugins/oauth/callback";
 const ATTEMPT_TTL: Duration = Duration::minutes(10);
 const ATTEMPT_LOCK_KEY: i64 = 0x4f50_4d43_504f_4131; // `OPMCPOA1`
-const ATTEMPT_VERSION: u8 = 1;
+// v2 binds the reviewed vendor transport into the sealed one-time attempt. Pre-v2 attempts fail
+// closed after an upgrade instead of being reinterpreted under a different protocol adapter.
+const ATTEMPT_VERSION: u8 = 2;
 const MAX_ATTEMPT_VALUE_BYTES: usize = 32 * 1024;
 const DEFAULT_ATTEMPT_CAPACITY: usize = 4096;
 const REVOCATION_BATCH: i64 = 32;
@@ -58,6 +67,7 @@ pub struct PostgresMcpConnections {
     pool: Pool,
     vault: CredentialRecordVault,
     oauth: McpOAuthClient,
+    drive_oauth: Option<GoogleDriveOAuthClient>,
     catalog: Arc<PostgresMcpCatalog>,
     deployment: DeploymentId,
     tenant: TenantId,
@@ -149,6 +159,7 @@ impl PostgresMcpConnections {
             pool,
             vault,
             oauth,
+            drive_oauth: None,
             catalog,
             deployment,
             tenant,
@@ -161,6 +172,14 @@ impl PostgresMcpConnections {
         })
     }
 
+    /// Attach the curated Google Drive web-server OAuth adapter. Without it, Drive connect,
+    /// callback and vendor-revocation operations fail closed while remote MCP remains available.
+    #[must_use]
+    pub fn with_google_drive_oauth(mut self, oauth: GoogleDriveOAuthClient) -> Self {
+        self.drive_oauth = Some(oauth);
+        self
+    }
+
     async fn load_server_client(
         &self,
         server_id: &str,
@@ -169,7 +188,8 @@ impl PostgresMcpConnections {
         let client = self.pool.get().await.map_err(unavailable)?;
         let row = client
             .query_opt(
-                "SELECT s.url,s.credential_id,c.kind,c.provider,c.encrypted_value,c.revoked_at
+                "SELECT s.url,s.vendor,s.provenance,coalesce(s.transport,'mcp') AS transport,
+                        s.credential_id,c.kind,c.provider,c.encrypted_value,c.revoked_at
                    FROM public.mcp_servers s
                    LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE s.id=$1",
@@ -179,6 +199,23 @@ impl PostgresMcpConnections {
             .map_err(query_unavailable)?
             .ok_or(McpConnectionError::NotVisible)?;
         let endpoint: String = row.try_get("url").map_err(|_| corrupt("server_endpoint"))?;
+        let vendor: String = row.try_get("vendor").map_err(|_| corrupt("vendor"))?;
+        let provenance: String = row
+            .try_get("provenance")
+            .map_err(|_| corrupt("provenance"))?;
+        let transport = VendorTransportKind::parse(
+            &row.try_get::<_, String>("transport")
+                .map_err(|_| corrupt("transport"))?,
+        )
+        .map_err(|_| corrupt("transport"))?;
+        if transport == VendorTransportKind::GoogleDriveRest
+            && (server_id != GOOGLE_DRIVE_SERVER_ID
+                || endpoint != GOOGLE_DRIVE_API_BASE
+                || vendor != GOOGLE_DRIVE_VENDOR
+                || provenance != GOOGLE_DRIVE_PROVENANCE)
+        {
+            return Err(corrupt("transport_identity"));
+        }
         let credential_id: Option<Uuid> = row
             .try_get("credential_id")
             .map_err(|_| corrupt("oauth_client_id"))?;
@@ -225,6 +262,7 @@ impl PostgresMcpConnections {
             credential_id,
             endpoint,
             client: secret,
+            transport,
         })
     }
 
@@ -306,6 +344,7 @@ impl PostgresMcpConnections {
                     JOIN public.mcp_servers s ON s.id=$3
                      WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
                        AND s.url=$4 AND s.credential_id=$5
+                       AND coalesce(s.transport,'mcp')=$6
                        AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
                        AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
                                        WHERE ra.email=lower(u.email)))",
@@ -315,6 +354,7 @@ impl PostgresMcpConnections {
                     &attempt.server_id,
                     &attempt.resource,
                     &attempt.client_credential_id,
+                    &attempt.transport,
                 ],
             )
             .await
@@ -483,30 +523,52 @@ impl PostgresMcpConnections {
         let material = self.load_server_client(&attempt.server_id).await?;
         if material.credential_id != attempt.client_credential_id
             || material.endpoint != attempt.resource
+            || material.transport.as_str() != attempt.transport
         {
             return Err(McpConnectionError::NotVisible);
         }
-        let grant = self
-            .oauth
-            .exchange_authorization_code(
-                &material.endpoint,
-                material.client.expose(),
-                input.code(),
-                &attempt.redirect_uri,
-                attempt.code_verifier.as_bytes(),
-                &attempt.requested_scope,
-            )
-            .await
-            .map_err(map_oauth_vendor)?;
-        let (access, refresh, scope) = grant.into_parts();
+        let (access, refresh, scope) = match material.transport {
+            VendorTransportKind::Mcp => self
+                .oauth
+                .exchange_authorization_code(
+                    &material.endpoint,
+                    material.client.expose(),
+                    input.code(),
+                    &attempt.redirect_uri,
+                    attempt.code_verifier.as_bytes(),
+                    &attempt.requested_scope,
+                )
+                .await
+                .map_err(map_oauth_vendor)?
+                .into_parts(),
+            VendorTransportKind::GoogleDriveRest => self
+                .drive_oauth
+                .as_ref()
+                .ok_or(McpConnectionError::Conflict {
+                    resource: "google_drive_oauth_runtime",
+                })?
+                .exchange_authorization_code(
+                    material.client.expose(),
+                    input.code(),
+                    &attempt.redirect_uri,
+                    attempt.code_verifier.as_bytes(),
+                )
+                .await
+                .map_err(map_drive_oauth_vendor)?
+                .into_parts(),
+        };
         let old = self
             .persist_connection(&attempt, &material, &refresh, &scope)
             .await?;
 
         // Catalog failure does not roll back a valid connection; it remains invisible until a later
         // refresh rather than lying that consent failed after the credential transaction committed.
-        if let Ok(bearer) = McpBearerToken::from_secret(access)
-            && let Err(error) = self.catalog.refresh(&attempt.server_id, Some(bearer)).await
+        let catalog_bearer = match material.transport {
+            VendorTransportKind::Mcp => McpBearerToken::from_secret(access).map(Some).ok(),
+            VendorTransportKind::GoogleDriveRest => Some(None),
+        };
+        if let Some(bearer) = catalog_bearer
+            && let Err(error) = self.catalog.refresh(&attempt.server_id, bearer).await
         {
             tracing::warn!(code = %error, "MCP OAuth callback 后 catalog refresh 失败");
         }
@@ -553,6 +615,11 @@ impl PostgresMcpConnections {
         if scope.len() > 16 * 1024 || scope.as_bytes().contains(&0) {
             return Err(corrupt("scope"));
         }
+        if material.transport == VendorTransportKind::GoogleDriveRest
+            && scope != GOOGLE_DRIVE_READONLY_SCOPE
+        {
+            return Err(corrupt("scope"));
+        }
         let credential_id = Uuid::now_v7();
         let actor = ActorId::new(&attempt.actor_id);
         let encrypted = self
@@ -579,6 +646,7 @@ impl PostgresMcpConnections {
                     SELECT 1 FROM public.users u JOIN public.mcp_servers s ON s.id=$3
                      WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
                        AND s.url=$4 AND s.credential_id=$5
+                       AND coalesce(s.transport,'mcp')=$6
                        AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
                        AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
                                        WHERE ra.email=lower(u.email)))",
@@ -588,6 +656,7 @@ impl PostgresMcpConnections {
                     &attempt.server_id,
                     &attempt.resource,
                     &attempt.client_credential_id,
+                    &attempt.transport,
                 ],
             )
             .await
@@ -657,6 +726,7 @@ impl PostgresMcpConnections {
             "scope":scope,
             "resource":attempt.resource,
             "issuer":attempt.issuer,
+            "transport":attempt.transport,
             "credential_generation":1,
             "revocation_status":"active"
         });
@@ -719,7 +789,6 @@ impl PostgresMcpConnections {
             tracing::error!(error = %error, "MCP OAuth connection commit 结果未知");
             McpConnectionError::CommitUnknown
         })?;
-        let _ = material;
         Ok(old)
     }
 
@@ -764,16 +833,25 @@ impl PostgresMcpConnections {
         material: &ServerClientMaterial,
         old: OldRefresh,
     ) -> bool {
-        if self
-            .oauth
-            .revoke_refresh_token(
-                &material.endpoint,
-                material.client.expose(),
-                old.refresh.expose(),
-            )
-            .await
-            .is_err()
-        {
+        let revoked = match material.transport {
+            VendorTransportKind::Mcp => self
+                .oauth
+                .revoke_refresh_token(
+                    &material.endpoint,
+                    material.client.expose(),
+                    old.refresh.expose(),
+                )
+                .await
+                .is_ok(),
+            VendorTransportKind::GoogleDriveRest => match &self.drive_oauth {
+                Some(oauth) => oauth
+                    .revoke_refresh_token(old.refresh.expose())
+                    .await
+                    .is_ok(),
+                None => false,
+            },
+        };
+        if !revoked {
             return false;
         }
         self.mark_vendor_revoked(actor_id, server_id, old.credential_id)
@@ -1019,17 +1097,44 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         let state = random_base64::<32>()?;
         let verifier = random_base64::<48>()?;
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        let plan = self
-            .oauth
-            .authorization_plan(
-                &material.endpoint,
-                material.client.expose(),
-                callback_uri,
-                &state,
-                &challenge,
-            )
-            .await
-            .map_err(map_oauth_vendor)?;
+        let (authorization_url, issuer, issuer_required, requested_scope) = match material.transport
+        {
+            VendorTransportKind::Mcp => {
+                let plan = self
+                    .oauth
+                    .authorization_plan(
+                        &material.endpoint,
+                        material.client.expose(),
+                        callback_uri,
+                        &state,
+                        &challenge,
+                    )
+                    .await
+                    .map_err(map_oauth_vendor)?;
+                (
+                    plan.authorization_url().to_string(),
+                    plan.issuer().to_owned(),
+                    plan.requires_callback_issuer(),
+                    plan.requested_scope().to_owned(),
+                )
+            }
+            VendorTransportKind::GoogleDriveRest => {
+                let plan = self
+                    .drive_oauth
+                    .as_ref()
+                    .ok_or(McpConnectionError::Conflict {
+                        resource: "google_drive_oauth_runtime",
+                    })?
+                    .authorization_plan(material.client.expose(), callback_uri, &state, &challenge)
+                    .map_err(map_drive_oauth_vendor)?;
+                (
+                    plan.authorization_url().to_string(),
+                    plan.issuer().to_owned(),
+                    false,
+                    GOOGLE_DRIVE_READONLY_SCOPE.to_owned(),
+                )
+            }
+        };
         let now = database_now(&self.pool).await?;
         let auth_generation =
             i64::try_from(auth.auth_generation().get()).map_err(|_| corrupt("auth_generation"))?;
@@ -1042,15 +1147,15 @@ impl McpConnectionAdministration for PostgresMcpConnections {
             server_id: server_id.to_owned(),
             client_credential_id: material.credential_id,
             resource: material.endpoint,
+            transport: material.transport.as_str().to_owned(),
             code_verifier: verifier,
             redirect_uri: callback_uri.to_owned(),
-            issuer: plan.issuer().to_owned(),
-            issuer_required: plan.requires_callback_issuer(),
-            requested_scope: plan.requested_scope().to_owned(),
+            issuer,
+            issuer_required,
+            requested_scope,
             return_to,
             expires_at_unix_seconds: (now + ATTEMPT_TTL).unix_timestamp(),
         };
-        let authorization_url = plan.authorization_url().to_string();
         self.insert_attempt(&state, &attempt).await?;
         Ok(McpOAuthAuthorization { authorization_url })
     }
@@ -1071,6 +1176,7 @@ impl McpConnectionAdministration for PostgresMcpConnections {
                     credential_id: candidate.client_credential_id.unwrap_or(Uuid::nil()),
                     endpoint: candidate.endpoint,
                     client,
+                    transport: candidate.transport,
                 };
                 if self
                     .try_vendor_revoke(
@@ -1109,22 +1215,54 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         }
         validate_server_id(server_id)?;
         let client = self.pool.get().await.map_err(unavailable)?;
-        let endpoint: String = client
+        let server = client
             .query_opt(
-                "SELECT url FROM public.mcp_servers WHERE id=$1",
+                "SELECT url,vendor,provenance,coalesce(transport,'mcp') AS transport
+                   FROM public.mcp_servers WHERE id=$1",
                 &[&server_id],
             )
             .await
             .map_err(query_unavailable)?
-            .ok_or(McpConnectionError::NotVisible)?
-            .try_get(0)
+            .ok_or(McpConnectionError::NotVisible)?;
+        let endpoint: String = server
+            .try_get("url")
             .map_err(|_| corrupt("server_endpoint"))?;
+        let vendor: String = server.try_get("vendor").map_err(|_| corrupt("vendor"))?;
+        let provenance: String = server
+            .try_get("provenance")
+            .map_err(|_| corrupt("provenance"))?;
+        let transport = VendorTransportKind::parse(
+            &server
+                .try_get::<_, String>("transport")
+                .map_err(|_| corrupt("transport"))?,
+        )
+        .map_err(|_| corrupt("transport"))?;
         drop(client);
         let encoded = encoded_registration(registration)?;
-        self.oauth
-            .discover(&endpoint, &encoded)
-            .await
-            .map_err(map_oauth_vendor)?;
+        match transport {
+            VendorTransportKind::Mcp => {
+                self.oauth
+                    .discover(&endpoint, &encoded)
+                    .await
+                    .map_err(map_oauth_vendor)?;
+            }
+            VendorTransportKind::GoogleDriveRest => {
+                if server_id != GOOGLE_DRIVE_SERVER_ID
+                    || endpoint != GOOGLE_DRIVE_API_BASE
+                    || vendor != GOOGLE_DRIVE_VENDOR
+                    || provenance != GOOGLE_DRIVE_PROVENANCE
+                {
+                    return Err(corrupt("transport_identity"));
+                }
+                self.drive_oauth
+                    .as_ref()
+                    .ok_or(McpConnectionError::Conflict {
+                        resource: "google_drive_oauth_runtime",
+                    })?
+                    .validate_registration(registration)
+                    .map_err(map_drive_oauth_vendor)?;
+            }
+        }
         let credential_id = Uuid::now_v7();
         let secret = SecretBytes::new(encoded.to_vec());
         let encrypted = self
@@ -1161,7 +1299,8 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         }
         let server = transaction
             .query_opt(
-                "SELECT s.url,s.credential_id,coalesce(s.credential_generation,0)
+                "SELECT s.url,s.vendor,s.provenance,coalesce(s.transport,'mcp') AS transport,
+                        s.credential_id,coalesce(s.credential_generation,0)
                         AS credential_generation,s.catalog_generation,
                         c.kind AS old_client_kind,c.provider AS old_client_provider,
                         c.revoked_at AS old_client_revoked_at
@@ -1177,6 +1316,24 @@ impl McpConnectionAdministration for PostgresMcpConnections {
             .try_get("url")
             .map_err(|_| corrupt("server_endpoint"))?;
         if locked_endpoint != endpoint {
+            return Err(McpConnectionError::Conflict {
+                resource: "mcp_server",
+            });
+        }
+        let locked_transport = VendorTransportKind::parse(
+            &server
+                .try_get::<_, String>("transport")
+                .map_err(|_| corrupt("transport"))?,
+        )
+        .map_err(|_| corrupt("transport"))?;
+        let locked_vendor: String = server.try_get("vendor").map_err(|_| corrupt("vendor"))?;
+        let locked_provenance: String = server
+            .try_get("provenance")
+            .map_err(|_| corrupt("provenance"))?;
+        if locked_transport != transport
+            || locked_vendor != vendor
+            || locked_provenance != provenance
+        {
             return Err(McpConnectionError::Conflict {
                 resource: "mcp_server",
             });
@@ -1352,6 +1509,171 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         })?;
         Ok(McpOAuthClientRegistered::success())
     }
+
+    async fn add_curated_server(
+        &self,
+        auth: &AuthContext,
+        key: &str,
+    ) -> Result<McpServerMutation, McpConnectionError> {
+        self.ensure_auth_current(auth).await?;
+        if !auth.has_role(Role::Admin) {
+            return Err(McpConnectionError::NotVisible);
+        }
+        if key != GOOGLE_DRIVE_SERVER_ID {
+            return Err(McpConnectionError::InvalidInput {
+                field: "catalogue_key",
+            });
+        }
+        let generation =
+            i64::try_from(auth.auth_generation().get()).map_err(|_| corrupt("auth_generation"))?;
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client.transaction().await.map_err(query_unavailable)?;
+        let current: bool = transaction
+            .query_one(
+                "SELECT EXISTS(
+                    SELECT 1 FROM public.users u
+                     WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
+                       AND EXISTS(SELECT 1 FROM public.user_roles ur
+                                   WHERE ur.user_id=u.id AND ur.role='admin')
+                       AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                       WHERE ra.email=lower(u.email)))",
+                &[&auth.actor().as_str(), &generation],
+            )
+            .await
+            .map_err(query_unavailable)?
+            .try_get(0)
+            .map_err(|_| corrupt("admin_scope"))?;
+        if !current {
+            return Err(McpConnectionError::NotVisible);
+        }
+        let existing = transaction
+            .query_opt(
+                "SELECT url,vendor,provenance,transport
+                   FROM public.mcp_servers WHERE id=$1 FOR UPDATE",
+                &[&key],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        if let Some(row) = existing {
+            let endpoint: String = row.try_get("url").map_err(|_| corrupt("server_endpoint"))?;
+            let vendor: String = row.try_get("vendor").map_err(|_| corrupt("vendor"))?;
+            let provenance: String = row
+                .try_get("provenance")
+                .map_err(|_| corrupt("provenance"))?;
+            let transport: Option<String> =
+                row.try_get("transport").map_err(|_| corrupt("transport"))?;
+            if endpoint != GOOGLE_DRIVE_API_BASE
+                || vendor != GOOGLE_DRIVE_VENDOR
+                || provenance != GOOGLE_DRIVE_PROVENANCE
+                || transport
+                    .as_deref()
+                    .is_some_and(|value| value != GOOGLE_DRIVE_TRANSPORT)
+            {
+                return Err(McpConnectionError::Conflict {
+                    resource: "mcp_server_identity",
+                });
+            }
+            transaction
+                .execute(
+                    "UPDATE public.mcp_servers SET title='Google Drive',vendor='Google',
+                       url=$2,provenance='first-party',transport='google_drive_rest',
+                       added_by=$3,updated_at=clock_timestamp() WHERE id=$1",
+                    &[&key, &GOOGLE_DRIVE_API_BASE, &auth.actor().as_str()],
+                )
+                .await
+                .map_err(query_unavailable)?;
+        } else {
+            transaction
+                .execute(
+                    "INSERT INTO public.mcp_servers(
+                       id,title,vendor,url,provenance,credential_id,tools_refreshed_at,last_error,
+                       added_by,created_at,updated_at,catalog_generation,catalog_hash,
+                       catalog_transport_fingerprint,credential_generation,transport
+                     ) VALUES($1,'Google Drive','Google',$2,'first-party',NULL,NULL,NULL,$3,
+                              clock_timestamp(),clock_timestamp(),NULL,NULL,NULL,0,
+                              'google_drive_rest')",
+                    &[&key, &GOOGLE_DRIVE_API_BASE, &auth.actor().as_str()],
+                )
+                .await
+                .map_err(query_unavailable)?;
+        }
+        let (id, created_at) = next_event_coordinates(&transaction)
+            .await
+            .map_err(query_unavailable)?;
+        let event = AuditEvent {
+            id,
+            actor: Some(auth.actor().clone()),
+            event_type: AuditEventType::parse("configuration.changed")
+                .ok_or_else(|| corrupt("audit_event"))?,
+            target_kind: AuditLabel::new("mcp_server"),
+            target_id: Some(AuditIdentifier::new(key).map_err(|_| corrupt("server_id"))?),
+            payload: AuditPayload::empty(),
+            created_at,
+        };
+        append_event_in_transaction(&transaction, &event, self.checkpoint_key.expose())
+            .await
+            .map_err(query_unavailable)?;
+        transaction.commit().await.map_err(|error| {
+            tracing::error!(error = %error, "curated MCP server commit 结果未知");
+            McpConnectionError::CommitUnknown
+        })?;
+        drop(client);
+        let refresh = self
+            .catalog
+            .refresh(GOOGLE_DRIVE_SERVER_ID, None)
+            .await
+            .map_err(map_catalog_failure)?;
+        mutation_receipt(GOOGLE_DRIVE_SERVER_ID, &refresh)
+    }
+
+    async fn refresh_server(
+        &self,
+        auth: &AuthContext,
+        server_id: &str,
+    ) -> Result<McpServerMutation, McpConnectionError> {
+        self.ensure_auth_current(auth).await?;
+        if !auth.has_role(Role::Admin) {
+            return Err(McpConnectionError::NotVisible);
+        }
+        validate_server_id(server_id)?;
+        let client = self.pool.get().await.map_err(unavailable)?;
+        let row = client
+            .query_opt(
+                "SELECT url,vendor,provenance,coalesce(transport,'mcp') AS transport
+                   FROM public.mcp_servers WHERE id=$1",
+                &[&server_id],
+            )
+            .await
+            .map_err(query_unavailable)?
+            .ok_or(McpConnectionError::NotVisible)?;
+        let transport = VendorTransportKind::parse(
+            &row.try_get::<_, String>("transport")
+                .map_err(|_| corrupt("transport"))?,
+        )
+        .map_err(|_| corrupt("transport"))?;
+        let endpoint: String = row.try_get("url").map_err(|_| corrupt("server_endpoint"))?;
+        let vendor: String = row.try_get("vendor").map_err(|_| corrupt("vendor"))?;
+        let provenance: String = row
+            .try_get("provenance")
+            .map_err(|_| corrupt("provenance"))?;
+        if transport != VendorTransportKind::GoogleDriveRest
+            || server_id != GOOGLE_DRIVE_SERVER_ID
+            || endpoint != GOOGLE_DRIVE_API_BASE
+            || vendor != GOOGLE_DRIVE_VENDOR
+            || provenance != GOOGLE_DRIVE_PROVENANCE
+        {
+            return Err(McpConnectionError::Conflict {
+                resource: "actor_catalog_credential",
+            });
+        }
+        drop(client);
+        let refresh = self
+            .catalog
+            .refresh(server_id, None)
+            .await
+            .map_err(map_catalog_failure)?;
+        mutation_receipt(server_id, &refresh)
+    }
 }
 
 #[async_trait]
@@ -1377,7 +1699,8 @@ impl PostgresMcpConnections {
         let client = self.pool.get().await.map_err(unavailable)?;
         let row = client
             .query_opt(
-                "SELECT s.url,s.credential_id AS client_credential_id,
+                "SELECT s.url,s.vendor,s.provenance,coalesce(s.transport,'mcp') AS transport,
+                        s.credential_id AS client_credential_id,
                         dc.kind AS client_kind,dc.provider AS client_provider,
                         dc.encrypted_value AS client_value,dc.revoked_at AS client_revoked_at,
                         uc.credential_id,c.kind,c.provider,c.key_id,c.encrypted_value,c.revoked_at
@@ -1417,6 +1740,23 @@ impl PostgresMcpConnections {
             return Err(McpConnectionError::NotVisible);
         }
         let endpoint: String = row.try_get("url").map_err(|_| corrupt("server_endpoint"))?;
+        let vendor: String = row.try_get("vendor").map_err(|_| corrupt("vendor"))?;
+        let provenance: String = row
+            .try_get("provenance")
+            .map_err(|_| corrupt("provenance"))?;
+        let transport = VendorTransportKind::parse(
+            &row.try_get::<_, String>("transport")
+                .map_err(|_| corrupt("transport"))?,
+        )
+        .map_err(|_| corrupt("transport"))?;
+        if transport == VendorTransportKind::GoogleDriveRest
+            && (server_id != GOOGLE_DRIVE_SERVER_ID
+                || endpoint != GOOGLE_DRIVE_API_BASE
+                || vendor != GOOGLE_DRIVE_VENDOR
+                || provenance != GOOGLE_DRIVE_PROVENANCE)
+        {
+            return Err(corrupt("transport_identity"));
+        }
         let refresh = self
             .vault
             .open(
@@ -1474,6 +1814,7 @@ impl PostgresMcpConnections {
             client_credential_id,
             client: client_secret,
             refresh,
+            transport,
         })
     }
 
@@ -1562,6 +1903,7 @@ struct ServerClientMaterial {
     credential_id: Uuid,
     endpoint: String,
     client: SecretBytes,
+    transport: VendorTransportKind,
 }
 
 struct OldRefresh {
@@ -1575,6 +1917,7 @@ struct DisconnectCandidate {
     client_credential_id: Option<Uuid>,
     client: Option<SecretBytes>,
     refresh: Option<SecretBytes>,
+    transport: VendorTransportKind,
 }
 
 struct PendingRevocation {
@@ -1595,6 +1938,7 @@ struct StoredAttempt {
     server_id: String,
     client_credential_id: Uuid,
     resource: String,
+    transport: String,
     code_verifier: String,
     redirect_uri: String,
     issuer: String,
@@ -1746,6 +2090,36 @@ fn map_oauth_vendor(error: McpOAuthError) -> McpConnectionError {
         | McpOAuthError::InvalidTokenResponse => McpConnectionError::VendorFailure,
         McpOAuthError::InvalidClient => corrupt("oauth_client"),
     }
+}
+
+fn map_drive_oauth_vendor(error: GoogleDriveOAuthError) -> McpConnectionError {
+    match error {
+        GoogleDriveOAuthError::Unavailable
+        | GoogleDriveOAuthError::AuthRequired
+        | GoogleDriveOAuthError::InvalidResponse => McpConnectionError::VendorFailure,
+        GoogleDriveOAuthError::InvalidClient => corrupt("oauth_client"),
+    }
+}
+
+fn map_catalog_failure(error: McpCatalogError) -> McpConnectionError {
+    match error {
+        McpCatalogError::NotVisible => McpConnectionError::NotVisible,
+        McpCatalogError::Unavailable => McpConnectionError::Unavailable,
+        McpCatalogError::Corrupt { field } => McpConnectionError::Corrupt { field },
+    }
+}
+
+fn mutation_receipt(
+    server_id: &str,
+    refresh: &McpCatalogRefresh,
+) -> Result<McpServerMutation, McpConnectionError> {
+    Ok(McpServerMutation {
+        server_id: server_id.to_owned(),
+        catalog_generation: refresh.generation.get(),
+        tool_count: u32::try_from(refresh.tools.len()).map_err(|_| corrupt("tool_count"))?,
+        suspended_grants: u32::try_from(refresh.suspended_grants)
+            .map_err(|_| corrupt("suspended_grants"))?,
+    })
 }
 
 fn unavailable(error: deadpool_postgres::PoolError) -> McpConnectionError {

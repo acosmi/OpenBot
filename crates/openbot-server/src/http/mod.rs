@@ -460,6 +460,7 @@ pub fn router(state: ServerState) -> Router {
         )
         .route("/api/channels", get(channels::list))
         .route("/api/plugins/connections", get(plugins::connections_get))
+        .route("/api/plugins/servers", post(plugins::servers_post))
         .route(
             "/api/plugins/connections/{server_id}",
             delete(plugins::connections_delete),
@@ -471,6 +472,10 @@ pub fn router(state: ServerState) -> Router {
         .route(
             "/api/plugins/servers/{server_id}/oauth-client",
             post(plugins::servers_oauth_client_post),
+        )
+        .route(
+            "/api/plugins/servers/{server_id}/refresh",
+            post(plugins::servers_refresh_post),
         )
         .route(
             "/api/plugins/oauth/callback",

@@ -26,8 +26,9 @@ use crate::agent_admin::{
     issue_agent_callback_token, revoke_agent_callback_token,
 };
 use crate::mcp_connections::{
-    McpConnectionAdministration, NoMcpConnectionAdministration, begin_mcp_oauth,
-    disconnect_mcp_connection, list_mcp_connections, register_mcp_oauth_client,
+    McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
+    begin_mcp_oauth, disconnect_mcp_connection, list_mcp_connections, refresh_mcp_server,
+    register_mcp_oauth_client,
 };
 use crate::ports::{
     AuditReader, ChannelReader, MemoryAdministration, NoAuditReader, NoMemoryAdministration,
@@ -403,6 +404,12 @@ where
                     &registration,
                 )
                 .await?,
+            )),
+            AppCommand::AddCuratedMcpServer { key } => Ok(AppReply::McpServerMutation(
+                add_curated_mcp_server(self.mcp_connections.as_ref(), auth, &key).await?,
+            )),
+            AppCommand::RefreshMcpServer { server_id } => Ok(AppReply::McpServerMutation(
+                refresh_mcp_server(self.mcp_connections.as_ref(), auth, &server_id).await?,
             )),
         }
     }

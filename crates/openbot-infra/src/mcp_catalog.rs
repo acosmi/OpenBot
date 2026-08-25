@@ -13,6 +13,10 @@ use openbot_domain::vault::{CredentialGeneration, SecretBytes};
 use serde_json::Value;
 use url::Url;
 
+use crate::google_drive::{
+    GOOGLE_DRIVE_API_BASE, GOOGLE_DRIVE_PROVENANCE, GOOGLE_DRIVE_SERVER_ID, GOOGLE_DRIVE_TRANSPORT,
+    GOOGLE_DRIVE_VENDOR, google_drive_effect, google_drive_tools,
+};
 use crate::mcp::{McpBearerToken, McpClientError, McpListedTool, SafeRmcpClient};
 use crate::mcp_credentials::PostgresMcpCredentialBroker;
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
@@ -61,6 +65,33 @@ pub struct GrantedMcpTool {
     pub endpoint: String,
     /// Per-operation authentication mode proven by the same catalog query.
     pub authentication: McpAuthentication,
+    /// Protocol adapter selected by the reviewed server row.
+    pub transport: VendorTransportKind,
+}
+
+/// Closed production vendor transport set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VendorTransportKind {
+    /// Remote MCP Streamable HTTP.
+    Mcp,
+    /// Google Drive v3 GA REST adapter.
+    GoogleDriveRest,
+}
+
+impl VendorTransportKind {
+    /// Stable PostgreSQL value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mcp => "mcp",
+            Self::GoogleDriveRest => GOOGLE_DRIVE_TRANSPORT,
+        }
+    }
+
+    /// Decode PostgreSQL value; legacy callers pass the already-coalesced `mcp` string.
+    pub fn parse(value: &str) -> Result<Self, McpCatalogError> {
+        parse_transport(value)
+    }
 }
 
 /// Credential mode currently executable by the production MCP runtime.
@@ -86,6 +117,7 @@ impl core::fmt::Debug for GrantedMcpTool {
             .field("catalog_generation", &self.catalog_generation)
             .field("credential_generation", &self.credential_generation)
             .field("authentication", &self.authentication)
+            .field("transport", &self.transport)
             .field("endpoint", &"[redacted-origin]")
             .finish()
     }
@@ -204,8 +236,8 @@ impl PostgresMcpCatalog {
             .map_err(|_| McpCatalogError::Unavailable)
     }
 
-    /// Refresh anonymous and deployment-bearer servers once during production startup. User OAuth
-    /// remains actor-scoped and is deliberately deferred.
+    /// Refresh anonymous/deployment-bearer MCP plus static Drive REST catalogs at startup. Remote
+    /// user-OAuth MCP remains actor-scoped and is deliberately deferred.
     pub async fn refresh_startup_servers(
         &self,
         credentials: &PostgresMcpCredentialBroker,
@@ -213,7 +245,8 @@ impl PostgresMcpCatalog {
         let client = self.pool.get().await.map_err(unavailable)?;
         let rows = client
             .query(
-                "SELECT s.id,s.credential_id,c.kind,c.revoked_at
+                "SELECT s.id,s.credential_id,c.kind,c.revoked_at,
+                        coalesce(s.transport,'mcp') AS transport
                    FROM public.mcp_servers s
                    LEFT JOIN public.credentials c ON c.id=s.credential_id
                   ORDER BY s.id",
@@ -241,6 +274,21 @@ impl PostgresMcpCatalog {
                     .map_err(|_| McpCatalogError::Corrupt {
                         field: "revoked_at",
                     })?;
+            let transport = parse_transport(
+                &row.try_get::<_, String>("transport")
+                    .map_err(|_| McpCatalogError::Corrupt { field: "transport" })?,
+            )?;
+            if transport == VendorTransportKind::GoogleDriveRest {
+                match self.refresh(&server_id, None).await {
+                    Ok(_) => sweep.refreshed = sweep.refreshed.saturating_add(1),
+                    Err(error) => {
+                        sweep.failed = sweep.failed.saturating_add(1);
+                        tracing::warn!(server_id, code = %error,
+                            "Drive REST startup static catalog refresh 失败");
+                    }
+                }
+                continue;
+            }
             let bearer = match (credential_id, kind, revoked) {
                 (None, None, None) => None,
                 (Some(_), Some(crate::db::types::CredentialKind::McpOauthClient), _) => {
@@ -291,7 +339,8 @@ impl PostgresMcpCatalog {
         let client = self.pool.get().await.map_err(unavailable)?;
         let server = client
             .query_opt(
-                "SELECT url,vendor,provenance FROM public.mcp_servers WHERE id=$1",
+                "SELECT url,vendor,provenance,coalesce(transport,'mcp') AS transport
+                   FROM public.mcp_servers WHERE id=$1",
                 &[&server_id],
             )
             .await
@@ -306,14 +355,33 @@ impl PostgresMcpCatalog {
         let provenance: String = server.try_get(2).map_err(|_| McpCatalogError::Corrupt {
             field: "provenance",
         })?;
-        let transport_digest = transport_fingerprint(&endpoint, &vendor, &provenance)?;
+        let transport = parse_transport(
+            &server
+                .try_get::<_, String>("transport")
+                .map_err(|_| McpCatalogError::Corrupt { field: "transport" })?,
+        )?;
+        let transport_digest = transport_fingerprint(&endpoint, &vendor, &provenance, transport)?;
         let transport_fingerprint_hex = transport_digest.to_hex();
         drop(client);
-        let listed = self
-            .rmcp
-            .list_tools(&endpoint, bearer)
-            .await
-            .map_err(|_| McpCatalogError::Unavailable)?;
+        let listed = match transport {
+            VendorTransportKind::Mcp => self
+                .rmcp
+                .list_tools(&endpoint, bearer)
+                .await
+                .map_err(|_| McpCatalogError::Unavailable)?,
+            VendorTransportKind::GoogleDriveRest => {
+                if server_id != GOOGLE_DRIVE_SERVER_ID
+                    || endpoint != GOOGLE_DRIVE_API_BASE
+                    || vendor != GOOGLE_DRIVE_VENDOR
+                    || provenance != GOOGLE_DRIVE_PROVENANCE
+                {
+                    return Err(McpCatalogError::Corrupt {
+                        field: "transport_identity",
+                    });
+                }
+                google_drive_tools()
+            }
+        };
         let prepared_server_id = server_id.to_owned();
         let incoming =
             tokio::task::spawn_blocking(move || prepare_listed(&prepared_server_id, listed))
@@ -326,7 +394,7 @@ impl PostgresMcpCatalog {
             .query_opt(
                 "SELECT coalesce(catalog_generation,0) AS catalog_generation,
                         coalesce(credential_generation,0) AS credential_generation,
-                        url,vendor,provenance \
+                        url,vendor,provenance,coalesce(transport,'mcp') AS transport \
                    FROM public.mcp_servers WHERE id=$1 FOR UPDATE",
                 &[&server_id],
             )
@@ -357,8 +425,18 @@ impl PostgresMcpCatalog {
                 .map_err(|_| McpCatalogError::Corrupt {
                     field: "provenance",
                 })?;
-        if transport_fingerprint(&locked_endpoint, &locked_vendor, &locked_provenance)?
-            != transport_digest
+        let locked_transport = parse_transport(
+            &server
+                .try_get::<_, String>("transport")
+                .map_err(|_| McpCatalogError::Corrupt { field: "transport" })?,
+        )?;
+        if locked_transport != transport
+            || transport_fingerprint(
+                &locked_endpoint,
+                &locked_vendor,
+                &locked_provenance,
+                locked_transport,
+            )? != transport_digest
         {
             return Err(McpCatalogError::Unavailable);
         }
@@ -441,7 +519,13 @@ impl PostgresMcpCatalog {
         let mut projected = BTreeMap::new();
         for (name, listed) in &incoming {
             let previous = existing.get(name);
-            let effect = previous.map_or(Effect::Execute, |row| row.effect);
+            let effect = previous.map_or_else(
+                || match transport {
+                    VendorTransportKind::Mcp => Effect::Execute,
+                    VendorTransportKind::GoogleDriveRest => google_drive_effect(name, true),
+                },
+                |row| row.effect,
+            );
             let first_seen = previous.map_or(now, |row| row.first_seen_at);
             transaction
                 .execute(
@@ -636,6 +720,7 @@ impl PostgresMcpCatalog {
             .await
             .map_err(query_unavailable)?;
         transaction.commit().await.map_err(query_unavailable)?;
+        drop(client);
 
         let tools = self.granted_tools_any(server_id).await?;
         Ok(McpCatalogRefresh {
@@ -669,6 +754,7 @@ impl PostgresMcpCatalog {
                 "SELECT s.id AS server_id,s.url,s.vendor,s.provenance,s.credential_id,
                         c.kind AS credential_kind,s.catalog_transport_fingerprint,
                         coalesce(s.credential_generation,0) AS credential_generation,
+                        coalesce(s.transport,'mcp') AS transport,
                         s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.plugin_grants g
@@ -676,9 +762,18 @@ impl PostgresMcpCatalog {
                    JOIN public.mcp_servers s ON s.id=t.server_id
                    LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE g.agent_id=$1 AND g.state='active' AND t.available=true
-                    AND (s.credential_id IS NULL OR
-                         (c.kind='mcp' AND c.provider=s.id AND c.revoked_at IS NULL) OR
-                         (c.kind='mcp_oauth_client' AND c.provider=s.id
+                    AND ((coalesce(s.transport,'mcp')='mcp' AND
+                          (s.credential_id IS NULL OR
+                           (c.kind='mcp' AND c.provider=s.id AND c.revoked_at IS NULL) OR
+                           (c.kind='mcp_oauth_client' AND c.provider=s.id
+                            AND c.revoked_at IS NULL AND EXISTS(
+                              SELECT 1 FROM public.mcp_user_credentials uc
+                              JOIN public.credentials u ON u.id=uc.credential_id
+                              WHERE uc.server_id=s.id AND uc.user_id=$2
+                                AND u.kind='mcp_user_token' AND u.provider=s.id
+                                AND u.key_id=$2 AND u.revoked_at IS NULL)))) OR
+                         (s.transport='google_drive_rest' AND
+                          c.kind='mcp_oauth_client' AND c.provider=s.id
                           AND c.revoked_at IS NULL AND EXISTS(
                             SELECT 1 FROM public.mcp_user_credentials uc
                             JOIN public.credentials u ON u.id=uc.credential_id
@@ -723,14 +818,19 @@ impl PostgresMcpCatalog {
                 "SELECT s.id AS server_id,s.url,s.vendor,s.provenance,s.credential_id,
                         c.kind AS credential_kind,s.catalog_transport_fingerprint,
                         coalesce(s.credential_generation,0) AS credential_generation,
+                        coalesce(s.transport,'mcp') AS transport,
                         s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.mcp_tools t JOIN public.mcp_servers s ON s.id=t.server_id
                    LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE s.id=$1 AND t.name=$2 AND t.available=true
-                    AND (s.credential_id IS NULL OR
-                         (c.kind IN ('mcp','mcp_oauth_client')
-                          AND c.provider=s.id AND c.revoked_at IS NULL))
+                    AND ((coalesce(s.transport,'mcp')='mcp' AND
+                          (s.credential_id IS NULL OR
+                           (c.kind IN ('mcp','mcp_oauth_client')
+                            AND c.provider=s.id AND c.revoked_at IS NULL))) OR
+                         (s.transport='google_drive_rest' AND
+                          c.kind='mcp_oauth_client' AND c.provider=s.id
+                          AND c.revoked_at IS NULL))
                     AND s.catalog_generation IS NOT NULL
                     AND s.catalog_transport_fingerprint IS NOT NULL
                     AND t.catalog_generation=s.catalog_generation",
@@ -755,6 +855,7 @@ impl PostgresMcpCatalog {
                 "SELECT s.id AS server_id,s.url,s.vendor,s.provenance,s.credential_id,
                         c.kind AS credential_kind,s.catalog_transport_fingerprint,
                         coalesce(s.credential_generation,0) AS credential_generation,
+                        coalesce(s.transport,'mcp') AS transport,
                         s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.plugin_grants g
@@ -762,9 +863,18 @@ impl PostgresMcpCatalog {
                    JOIN public.mcp_servers s ON s.id=t.server_id
                    LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE g.agent_id=$1 AND g.state='active' AND t.available=true
-                    AND (s.credential_id IS NULL OR
-                         (c.kind='mcp' AND c.provider=s.id AND c.revoked_at IS NULL) OR
-                         (c.kind='mcp_oauth_client' AND c.provider=s.id
+                    AND ((coalesce(s.transport,'mcp')='mcp' AND
+                          (s.credential_id IS NULL OR
+                           (c.kind='mcp' AND c.provider=s.id AND c.revoked_at IS NULL) OR
+                           (c.kind='mcp_oauth_client' AND c.provider=s.id
+                            AND c.revoked_at IS NULL AND EXISTS(
+                              SELECT 1 FROM public.mcp_user_credentials uc
+                              JOIN public.credentials u ON u.id=uc.credential_id
+                              WHERE uc.server_id=s.id AND uc.user_id=$2
+                                AND u.kind='mcp_user_token' AND u.provider=s.id
+                                AND u.key_id=$2 AND u.revoked_at IS NULL)))) OR
+                         (s.transport='google_drive_rest' AND
+                          c.kind='mcp_oauth_client' AND c.provider=s.id
                           AND c.revoked_at IS NULL AND EXISTS(
                             SELECT 1 FROM public.mcp_user_credentials uc
                             JOIN public.credentials u ON u.id=uc.credential_id
@@ -795,14 +905,20 @@ impl PostgresMcpCatalog {
                 "SELECT DISTINCT s.id AS server_id,s.url,s.vendor,s.provenance,s.credential_id,
                         c.kind AS credential_kind,s.catalog_transport_fingerprint,
                         coalesce(s.credential_generation,0) AS credential_generation,
+                        coalesce(s.transport,'mcp') AS transport,
                         s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.mcp_tools t JOIN public.mcp_servers s ON s.id=t.server_id
                    LEFT JOIN public.credentials c ON c.id=s.credential_id
                   WHERE s.id=$1 AND t.available=true AND t.catalog_generation=s.catalog_generation
-                    AND (s.credential_id IS NULL OR
-                         (c.kind IN ('mcp','mcp_oauth_client')
-                          AND c.provider=s.id AND c.revoked_at IS NULL))
+                    AND ((coalesce(s.transport,'mcp')='mcp' AND
+                          (s.credential_id IS NULL OR
+                           (c.kind IN ('mcp','mcp_oauth_client')
+                            AND c.provider=s.id AND c.revoked_at IS NULL))) OR
+                         (s.transport='google_drive_rest' AND
+                          (s.credential_id IS NULL OR
+                           (c.kind='mcp_oauth_client' AND c.provider=s.id
+                            AND c.revoked_at IS NULL))))
                   ORDER BY t.name",
                 &[&server_id],
             )
@@ -985,6 +1101,7 @@ fn transport_fingerprint(
     endpoint: &str,
     vendor: &str,
     provenance: &str,
+    transport: VendorTransportKind,
 ) -> Result<Sha256Digest, McpCatalogError> {
     if vendor.is_empty()
         || vendor.len() > 256
@@ -1012,7 +1129,11 @@ fn transport_fingerprint(
     writer.str(parsed.as_str());
     writer.str(vendor);
     writer.str(provenance);
-    writer.str("2026-07-28");
+    writer.str(transport.as_str());
+    writer.str(match transport {
+        VendorTransportKind::Mcp => "2026-07-28",
+        VendorTransportKind::GoogleDriveRest => "drive-v3",
+    });
     Ok(writer.digest_of_written())
 }
 
@@ -1062,6 +1183,10 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
             .map_err(|_| McpCatalogError::Corrupt {
                 field: "credential_generation",
             })?;
+    let transport = parse_transport(
+        &row.try_get::<_, String>("transport")
+            .map_err(|_| McpCatalogError::Corrupt { field: "transport" })?,
+    )?;
     let endpoint: String = row
         .try_get("url")
         .map_err(|_| McpCatalogError::Corrupt { field: "url" })?;
@@ -1100,7 +1225,12 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
         });
     }
     if Sha256Digest::parse_hex(&stored_transport).ok()
-        != Some(transport_fingerprint(&endpoint, &vendor, &provenance)?)
+        != Some(transport_fingerprint(
+            &endpoint,
+            &vendor,
+            &provenance,
+            transport,
+        )?)
     {
         return Err(McpCatalogError::Corrupt {
             field: "catalog_transport_fingerprint",
@@ -1113,14 +1243,17 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
         u64::try_from(credential_generation).map_err(|_| McpCatalogError::Corrupt {
             field: "credential_generation",
         })?;
-    let authentication = match (credential_id, credential_kind) {
-        (None, None) => McpAuthentication::None,
-        (Some(_), Some(crate::db::types::CredentialKind::Mcp)) => {
+    let authentication = match (transport, credential_id, credential_kind) {
+        (VendorTransportKind::Mcp, None, None) => McpAuthentication::None,
+        (VendorTransportKind::Mcp, Some(_), Some(crate::db::types::CredentialKind::Mcp)) => {
             McpAuthentication::DeploymentBearer
         }
-        (Some(_), Some(crate::db::types::CredentialKind::McpOauthClient)) => {
-            McpAuthentication::UserOAuth
-        }
+        (
+            VendorTransportKind::Mcp | VendorTransportKind::GoogleDriveRest,
+            Some(_),
+            Some(crate::db::types::CredentialKind::McpOauthClient),
+        )
+        | (VendorTransportKind::GoogleDriveRest, None, None) => McpAuthentication::UserOAuth,
         _ => {
             return Err(McpCatalogError::Corrupt {
                 field: "credential_kind",
@@ -1139,7 +1272,16 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
         credential_generation: CredentialGeneration::new(credential_generation),
         endpoint,
         authentication,
+        transport,
     })
+}
+
+fn parse_transport(value: &str) -> Result<VendorTransportKind, McpCatalogError> {
+    match value {
+        "mcp" => Ok(VendorTransportKind::Mcp),
+        GOOGLE_DRIVE_TRANSPORT => Ok(VendorTransportKind::GoogleDriveRest),
+        _ => Err(McpCatalogError::Corrupt { field: "transport" }),
+    }
 }
 
 fn unavailable(error: deadpool_postgres::PoolError) -> McpCatalogError {

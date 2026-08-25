@@ -25,11 +25,11 @@ crate::db::tables::define_table! {
     updated_at: time::OffsetDateTime = ("updated_at", "timestamp with time zone", true),
 }
 
-/// 0017 current projection columns.
+/// Native-current projection columns.
 pub const CURRENT_COLUMNS: &[&str] = &[
     "id", "title", "vendor", "url", "provenance", "credential_id", "tools_refreshed_at",
     "last_error", "added_by", "created_at", "updated_at", "catalog_generation", "catalog_hash",
-    "catalog_transport_fingerprint",
+    "catalog_transport_fingerprint", "credential_generation", "transport",
 ];
 
 /// Current MCP server row with catalog identity.
@@ -43,6 +43,10 @@ pub struct CurrentRow {
     pub catalog_hash: Option<String>,
     /// Canonical endpoint/vendor/provenance identity paired with generation.
     pub catalog_transport_fingerprint: Option<String>,
+    /// Deployment credential generation; legacy NULL reads as zero at runtime.
+    pub credential_generation: Option<i64>,
+    /// `mcp` or `google_drive_rest`; legacy NULL reads as MCP.
+    pub transport: Option<String>,
 }
 
 impl TryFrom<&tokio_postgres::Row> for CurrentRow {
@@ -66,6 +70,12 @@ impl TryFrom<&tokio_postgres::Row> for CurrentRow {
                         source,
                     )
                 })?,
+            credential_generation: row.try_get("credential_generation").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "credential_generation", source)
+            })?,
+            transport: row.try_get("transport").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "transport", source)
+            })?,
         })
     }
 }

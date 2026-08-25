@@ -75,6 +75,8 @@ pub mod agent_callback;
 pub mod agent_tools;
 pub mod auth;
 pub mod db;
+pub mod google_drive;
+pub mod google_drive_oauth;
 pub mod intelligence_bundle;
 pub mod intelligence_import;
 pub mod mcp;
