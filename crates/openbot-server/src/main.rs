@@ -3,13 +3,16 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use hmac::{Hmac, Mac};
+use openbot_agent::{BuiltInAgentConfig, BuiltInAgentRuntime};
 use openbot_application::tenant::package::{
-    TenantPackageAudienceContext, TenantPackageEnvironment, synchronize_tenant_package,
+    TenantAgentType, TenantPackageAudienceContext, TenantPackageEnvironment,
+    synchronize_tenant_package,
 };
 use openbot_application::{
-    ApplicationService, NoRunDispatchConsumer, OpenBotApplication, RunRuntime,
+    ApplicationService, NoRunDispatchConsumer, OpenBotApplication, RunDispatchConsumer, RunRuntime,
 };
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
@@ -31,8 +34,15 @@ use openbot_infra::auth::sso::DynamicSsoService;
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{native, pool};
 use openbot_infra::memory_admin::PostgresMemoryAdministration;
-use openbot_infra::net::safe_http::{EgressPolicy, SafeDialer};
+use openbot_infra::net::safe_http::{
+    CidrAllowlist, EgressPolicy, SafeDialer, SafeHttpBudget, SchemePolicy,
+};
 use openbot_infra::policy::{PolicyListener, PolicyStore};
+use openbot_infra::provider::context::PostgresAgentContextSource;
+use openbot_infra::provider::credential::PostgresOpenAiCredentialSource;
+use openbot_infra::provider::openai::{
+    OpenAiApiKey, OpenAiProtocol, OpenAiProvider, OpenAiProviderConfig,
+};
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
@@ -41,8 +51,10 @@ use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
 use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
 use openbot_infra::thread_id::mint_thread_id;
+use openbot_infra::vault::CredentialRecordVault;
 use openbot_server::config::{
-    DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, ServerConfig, env_map_from_process,
+    AgentBudgets, DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, PackageOpenAiProviderConfig,
+    ServerConfig, env_map_from_process,
 };
 use openbot_server::readiness::ReadinessVerdict;
 use openbot_server::telemetry::{self, LogFormat};
@@ -51,8 +63,10 @@ use openbot_server::{
     SensitiveWriteSecurity, ServerBuilder, SingleUserAuthResolver, install_recorder,
 };
 use sha2::Sha256;
+use url::Url;
 
 type HmacSha256 = Hmac<Sha256>;
+const PACKAGE_OPENAI_PROTOCOL: OpenAiProtocol = OpenAiProtocol::Responses;
 type OidcLoginAssembly = (
     Arc<OidcLoginCoordinator>,
     Arc<DynamicSsoService>,
@@ -66,6 +80,20 @@ type AuthAssembly = (
     Option<openbot_domain::identity::roles::AdminFloor>,
     Option<OidcLoginAssembly>,
 );
+type AgentAssembly = (Arc<dyn RunDispatchConsumer>, Option<BuiltInAgentRuntime>);
+
+struct PackageAgentAssemblyInput {
+    pool: deadpool_postgres::Pool,
+    deployment: DeploymentId,
+    tenant: TenantId,
+    runtime: Arc<dyn RunRuntime>,
+    required: bool,
+    model: String,
+    credential_key_id: String,
+    provider: PackageOpenAiProviderConfig,
+    credential_vault: CredentialRecordVault,
+    budgets: AgentBudgets,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -79,6 +107,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         TenantPackageEnvironment::from_allowlist(&env, &["MANAGED_AGENT_AG_UI_URL"]);
     let package_directory = tenant_package_directory_for_startup(&server.tenant_package_directory);
     let tenant_package = load_tenant_package(&package_directory, &package_environment)?;
+    let requires_built_in_agent = tenant_package
+        .package
+        .agents
+        .iter()
+        .any(|agent| agent.agent_type == TenantAgentType::BuiltIn);
 
     let database_url = openbot_server::config::env::optional(&env, "DATABASE_URL")
         .ok_or_else(|| startup_error("database_url_missing"))?;
@@ -147,6 +180,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         &tenant_package.package.tenant_id,
     );
     let tenant = TenantId::new(&tenant_package.package.tenant_id);
+    let model_credential_vault = CredentialRecordVault::single_key(
+        tenant.clone(),
+        KeyVersion::new(1),
+        KeyEncryptionKey::from_env_map(&env, key_policy)?.into_wrapping_key(),
+    );
 
     initialize_single_user(&pool, single_user).await?;
 
@@ -240,9 +278,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         DEFAULT_THREAD_LEASE_DURATION,
         DEFAULT_DISPATCH_CLAIM_DURATION,
     )?);
-    // G4 consumer 尚未接线时明确 terminal fail-closed；不让 outbox/run 永久伪装 running，
-    // 也绝不生成假回复。G4 只需替换这一 consumer，journal/fencing 路径保持唯一。
-    let run_relay = RunRelay::start(run_runtime, Arc::new(NoRunDispatchConsumer));
+    let (run_consumer, built_in_agent) = build_package_agent(PackageAgentAssemblyInput {
+        pool: pool.clone(),
+        deployment: deployment.clone(),
+        tenant: tenant.clone(),
+        runtime: run_runtime.clone(),
+        required: requires_built_in_agent,
+        model: tenant_package.package.model.default_model.clone(),
+        credential_key_id: tenant_package.package.model.credential_secret_ref.clone(),
+        provider: server.package_openai_provider.clone(),
+        credential_vault: model_credential_vault,
+        budgets: server.agent_budgets,
+    })?;
+    let built_in_agent_ready = built_in_agent.is_some() || !requires_built_in_agent;
+    let run_relay = RunRelay::start(run_runtime, run_consumer);
     let thread_directory = PostgresThreadDirectory::with_runtime(
         pool.clone(),
         database
@@ -297,6 +346,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             || async { ReadinessVerdict::NotReady },
         )));
     }
+    if !built_in_agent_ready {
+        builder = builder.with_readiness_probe(Arc::new(FnReadinessProbe::new(
+            "built_in_agent_provider",
+            || async { ReadinessVerdict::NotReady },
+        )));
+    }
 
     let address = if single_user {
         format!("127.0.0.1:{}", server.port)
@@ -314,10 +369,102 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .with_graceful_shutdown(shutdown_signal())
     .await;
     run_relay.stop().await;
+    if let Some(agent) = built_in_agent {
+        agent.stop().await;
+    }
     policy_listener.stop().await;
     serve_result?;
     pool.close();
     Ok(())
+}
+
+fn build_package_agent(input: PackageAgentAssemblyInput) -> Result<AgentAssembly, Box<dyn Error>> {
+    let PackageAgentAssemblyInput {
+        pool,
+        deployment,
+        tenant,
+        runtime,
+        required,
+        model,
+        credential_key_id,
+        provider,
+        credential_vault,
+        budgets,
+    } = input;
+    if !required {
+        return Ok((Arc::new(NoRunDispatchConsumer), None));
+    }
+    let PackageOpenAiProviderConfig {
+        base_url,
+        environment_api_key,
+        egress_allow_cidrs,
+        allow_http,
+    } = provider;
+    // Fixed upstream @ai-sdk/openai 3.0.99 `createLanguageModel` delegates to Responses.
+    let protocol = PACKAGE_OPENAI_PROTOCOL;
+    let endpoint = openai_endpoint(base_url.as_str(), protocol)?;
+    let environment_fallback = environment_api_key
+        .map(|key| OpenAiApiKey::from_bytes(key.expose().as_bytes().to_vec()))
+        .transpose()?;
+    let credentials = Arc::new(PostgresOpenAiCredentialSource::new(
+        pool.clone(),
+        credential_vault,
+        credential_key_id,
+        environment_fallback,
+    )?);
+    let provider = Arc::new(OpenAiProvider::new_with_credential_source(
+        OpenAiProviderConfig::new_with_transport_policy(
+            endpoint,
+            model,
+            protocol,
+            SafeHttpBudget::new(64 * 1024 * 1024, Duration::from_secs(30))?,
+            budgets.stall_timeout,
+            if allow_http {
+                SchemePolicy::HttpOrHttps
+            } else {
+                SchemePolicy::HttpsOnly
+            },
+        )?,
+        credentials,
+        SafeDialer::new(EgressPolicy::new(CidrAllowlist::parse_exact(
+            egress_allow_cidrs.iter().map(String::as_str),
+        )?)),
+    ));
+    let context = Arc::new(PostgresAgentContextSource::new(
+        pool, deployment, tenant, None,
+    )?);
+    let agent = BuiltInAgentRuntime::start(
+        runtime,
+        context,
+        provider,
+        BuiltInAgentConfig {
+            run_deadline: budgets.run_deadline,
+            ..BuiltInAgentConfig::default()
+        },
+    )
+    .map_err(|_| startup_error("agent_runtime_config_invalid"))?;
+    let consumer = agent.consumer();
+    Ok((consumer, Some(agent)))
+}
+
+fn openai_endpoint(base: &str, protocol: OpenAiProtocol) -> Result<Url, std::io::Error> {
+    let mut base = Url::parse(base).map_err(|_| startup_error("openai_base_url_invalid"))?;
+    if !base.username().is_empty()
+        || base.password().is_some()
+        || base.query().is_some()
+        || base.fragment().is_some()
+    {
+        return Err(startup_error("openai_base_url_invalid"));
+    }
+    if !base.path().ends_with('/') {
+        let path = format!("{}/", base.path());
+        base.set_path(&path);
+    }
+    base.join(match protocol {
+        OpenAiProtocol::Responses => "responses",
+        OpenAiProtocol::ChatCompletions => "chat/completions",
+    })
+    .map_err(|_| startup_error("openai_base_url_invalid"))
 }
 
 async fn build_oidc_login(
@@ -487,6 +634,36 @@ mod tests {
         assert_eq!(
             tenant_package_directory_for_startup("/mounted/customer-package"),
             PathBuf::from("/mounted/customer-package")
+        );
+    }
+
+    #[test]
+    fn openai_base_url_is_sdk_style_base_and_protocol_selects_exact_endpoint() {
+        assert_eq!(PACKAGE_OPENAI_PROTOCOL, OpenAiProtocol::Responses);
+        assert_eq!(
+            openai_endpoint("https://api.openai.com/v1", OpenAiProtocol::Responses)
+                .unwrap()
+                .as_str(),
+            "https://api.openai.com/v1/responses"
+        );
+        assert_eq!(
+            openai_endpoint(
+                "https://gateway.example/openai/v1/",
+                OpenAiProtocol::ChatCompletions,
+            )
+            .unwrap()
+            .as_str(),
+            "https://gateway.example/openai/v1/chat/completions"
+        );
+        assert!(
+            openai_endpoint("https://user@gateway.example/v1", OpenAiProtocol::Responses).is_err()
+        );
+        assert!(
+            openai_endpoint(
+                "https://gateway.example/v1?tenant=x",
+                OpenAiProtocol::Responses
+            )
+            .is_err()
         );
     }
 }

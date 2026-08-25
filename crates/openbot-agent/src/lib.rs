@@ -30,5 +30,11 @@
 #![deny(missing_docs)]
 
 mod gateway;
+mod runtime;
 
 pub use gateway::AgentToolGateway;
+pub use runtime::{
+    AGENT_SHUTDOWN_DEADLINE, BuiltInAgentConfig, BuiltInAgentRuntime, DEFAULT_AGENT_CONCURRENCY,
+    DEFAULT_AGENT_QUEUE_CAPACITY, DEFAULT_LEASE_RENEW_INTERVAL, DEFAULT_RUN_DEADLINE,
+    TOOL_STEP_CAP,
+};

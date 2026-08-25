@@ -25,13 +25,13 @@ use core::fmt;
 /// 类型等于没有类型。需要真值的地方必须显式调 [`Secret::expose`]，那一行在 review 里
 /// 是显眼的。
 #[derive(Clone, PartialEq, Eq)]
-pub struct Secret(String);
+pub struct Secret(zeroize::Zeroizing<String>);
 
 impl Secret {
     /// 由已经 `trim` 过的非空值构造。
     #[must_use]
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(zeroize::Zeroizing::new(value.into()))
     }
 
     /// 取出真值。**调用点即是泄漏面**，只在真正要把它交给对端时使用。

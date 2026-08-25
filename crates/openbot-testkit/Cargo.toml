@@ -70,6 +70,9 @@ openbot-desktop.workspace = true
 # Axum 腿。`testkit` 打开 `auth::FixedAuthResolver` —— 一个"恒定放行成某个身份"的
 # `AuthResolver` 就是后门，所以它默认不在生产 feature 图里。
 openbot-server = { workspace = true, features = ["testkit"] }
+openbot-agent.workspace = true
+openbot-infra.workspace = true
+deadpool-postgres.workspace = true
 
 # 在测试里实现 `ChannelReader`（`#[async_trait]` 的 trait）。
 async-trait.workspace = true
@@ -83,6 +86,8 @@ serde_json.workspace = true
 time.workspace = true
 # `#[tokio::test]`。
 tokio.workspace = true
+url.workspace = true
+uuid.workspace = true
 # `ServiceExt::oneshot` —— 内存里打 router，不监听端口。它在 `util` feature 下，
 # 而 workspace 根给 `tower` 开的是 `timeout` / `limit`。feature 是可加的：这里追加
 # `util` 不改根 `Cargo.toml`，也不影响任何生产依赖图。

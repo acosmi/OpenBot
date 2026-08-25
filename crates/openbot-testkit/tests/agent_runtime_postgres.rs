@@ -1,0 +1,779 @@
+//! Production RunRelay + built-in host + PostgreSQL context/journal 的 text provider 竖切。
+
+mod harness {
+    include!("../../../test-support/postgres_harness.rs");
+}
+
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use harness::{admin_config, with_temp_database};
+use openbot_agent::{BuiltInAgentConfig, BuiltInAgentRuntime};
+use openbot_application::{
+    BeginThreadRunRequest, ProviderAdapter, ProviderEvent, ProviderMessage, ProviderPortError,
+    ProviderRequest, ProviderSession, ProviderUsage, RunRuntime, ThreadDirectory,
+};
+use openbot_contracts::command::{BeginThreadRun, ThreadRunAnchor};
+use openbot_contracts::ids::thread::ThreadIdentity;
+use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
+use openbot_domain::vault::{KeyVersion, SecretBytes, SecretKind, SecretPrincipal, WrappingKey};
+use openbot_infra::db::pool::DatabaseConfig;
+use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::net::safe_http::{
+    CidrAllowlist, EgressPolicy, SafeDialer, SafeHttpBudget, SchemePolicy,
+};
+use openbot_infra::provider::context::PostgresAgentContextSource;
+use openbot_infra::provider::credential::PostgresOpenAiCredentialSource;
+use openbot_infra::provider::openai::{
+    OpenAiApiKey, OpenAiCredentialError, OpenAiCredentialSource, OpenAiProtocol, OpenAiProvider,
+    OpenAiProviderConfig,
+};
+use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
+use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
+use openbot_infra::vault::CredentialRecordVault;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::net::{TcpListener, TcpStream};
+use url::Url;
+use uuid::Uuid;
+
+async fn provision(pool: &deadpool_postgres::Pool) -> Result<(), String> {
+    let mut client = pool.get().await.map_err(|error| error.to_string())?;
+    baseline::apply(&client)
+        .await
+        .map_err(|error| error.to_string())?;
+    native::apply(&mut client)
+        .await
+        .map_err(|error| error.to_string())?;
+    client
+        .batch_execute(
+            "INSERT INTO public.users(id,email) VALUES('actor-a','a@example.test');
+             INSERT INTO public.deployment_packages(tenant_id,source_path,checksum)
+               VALUES('tenant-a','/fixture',repeat('a',64));
+             INSERT INTO public.agents(id,name,type,configuration,package_id)
+               SELECT 'bot-1','Bot 1','built_in',
+                      jsonb_build_object('systemPrompt','Test system role.'),id
+               FROM public.deployment_packages WHERE tenant_id='tenant-a';
+             INSERT INTO public.agent_profiles(
+               agent_id,owner_user_id,title,role_description,avatar_seed,visibility,deleted_at
+             ) VALUES('bot-1',NULL,'Bot 1','test role','seed','public',NULL);",
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[derive(Default)]
+struct RecordedProvider {
+    requests: Mutex<Vec<ProviderRequest>>,
+}
+
+#[async_trait]
+impl ProviderAdapter for RecordedProvider {
+    async fn start(
+        &self,
+        request: ProviderRequest,
+    ) -> Result<Box<dyn ProviderSession>, ProviderPortError> {
+        self.requests.lock().expect("provider lock").push(request);
+        Ok(Box::new(RecordedSession {
+            events: vec![
+                ProviderEvent::ResponseStarted {
+                    response_id: "response-local".to_owned(),
+                },
+                ProviderEvent::TextDelta {
+                    index: 0,
+                    delta: "provider says hi".to_owned(),
+                },
+                ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 2,
+                    output_tokens: 3,
+                    total_tokens: 5,
+                }),
+                ProviderEvent::Completed,
+            ]
+            .into(),
+        }))
+    }
+}
+
+struct RecordedSession {
+    events: VecDeque<ProviderEvent>,
+}
+
+#[async_trait]
+impl ProviderSession for RecordedSession {
+    async fn next_event(&mut self) -> Result<Option<ProviderEvent>, ProviderPortError> {
+        Ok(self.events.pop_front())
+    }
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn provider_delta_flows_through_agent_host_into_replay_history_and_terminal() {
+    let admin = batch6_admin_config(
+        "provider_delta_flows_through_agent_host_into_replay_history_and_terminal",
+    );
+    with_temp_database(&admin, "agentruntime", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let owner = "runtime-agent-a".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner,
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let context = Arc::new(
+                PostgresAgentContextSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    Some(32),
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let provider = Arc::new(RecordedProvider::default());
+            let agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                context,
+                provider.clone(),
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 2,
+                    lease_renew_interval: Duration::from_secs(1),
+                    run_deadline: Some(Duration::from_secs(5)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let relay = RunRelay::start(runtime, agent.consumer());
+            let mut entropy = [0_u8; 16];
+            entropy[15] = 1;
+            let thread = ThreadIdentity::new(&deployment).mint_from_entropy(entropy);
+            directory
+                .begin_thread_run(BeginThreadRunRequest {
+                    deployment: deployment.clone(),
+                    tenant,
+                    actor: ActorId::new("actor-a"),
+                    command: BeginThreadRun {
+                        thread_id: thread.clone(),
+                        run_id: RunId::new("run-agent-1"),
+                        bot_id: BotId::new("bot-1"),
+                        anchor: ThreadRunAnchor::DirectBot,
+                        message: "hello provider".to_owned(),
+                    },
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let mut final_shape = None;
+            for _ in 0..100 {
+                let client = pool.get().await.map_err(|error| error.to_string())?;
+                let row = client
+                    .query_one(
+                        "SELECT r.status,r.error_code,o.status,
+                                (SELECT count(*)::bigint FROM public.run_events e
+                                 WHERE e.run_id=r.run_id),
+                                (SELECT content->>'text' FROM public.messages m
+                                 WHERE m.run_id=r.run_id AND m.role='assistant')
+                         FROM public.runs r JOIN public.outbox o
+                           ON o.outbox_id=r.run_id || ':agent_run_dispatch'
+                         WHERE r.run_id='run-agent-1'",
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let shape: (String, Option<String>, String, i64, Option<String>) = (
+                    row.try_get(0).map_err(|error| error.to_string())?,
+                    row.try_get(1).map_err(|error| error.to_string())?,
+                    row.try_get(2).map_err(|error| error.to_string())?,
+                    row.try_get(3).map_err(|error| error.to_string())?,
+                    row.try_get(4).map_err(|error| error.to_string())?,
+                );
+                if shape.0 != "running" {
+                    final_shape = Some(shape);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            relay.stop().await;
+            agent.stop().await;
+            if final_shape
+                != Some((
+                    "completed".to_owned(),
+                    None,
+                    "delivered".to_owned(),
+                    3,
+                    Some("provider says hi".to_owned()),
+                ))
+            {
+                return Err(format!("agent PG terminal shape 漂移：{final_shape:?}"));
+            }
+            let requests = provider.requests.lock().expect("provider lock");
+            if requests.len() != 1
+                || requests[0].messages.len() != 2
+                || requests[0].messages[0].role != openbot_application::ProviderMessageRole::System
+                || requests[0].messages[0].tool_call_id.is_some()
+                || !requests[0].messages[0]
+                    .content
+                    .starts_with("Test system role.\n\nSay where an answer came from.")
+                || requests[0].messages[1]
+                    != (ProviderMessage {
+                        role: openbot_application::ProviderMessageRole::User,
+                        content: "hello provider".to_owned(),
+                        tool_call_id: None,
+                    })
+            {
+                return Err(format!("provider context projection 漂移：{requests:?}"));
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL 与 loopback socket：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn real_openai_http_stream_uses_fresh_vault_credential_and_durable_reasoning_channel() {
+    let admin = batch6_admin_config(
+        "real_openai_http_stream_uses_fresh_vault_credential_and_durable_reasoning_channel",
+    );
+    with_temp_database(&admin, "agentopenai", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .map_err(|error| error.to_string())?;
+            let address = listener.local_addr().map_err(|error| error.to_string())?;
+            let provider_server = tokio::spawn(recording_openai_server(listener));
+
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let vault = CredentialRecordVault::single_key(
+                tenant.clone(),
+                KeyVersion::new(1),
+                WrappingKey::from_bytes(vec![0x42; 32]).map_err(|error| error.to_string())?,
+            );
+            let missing_vault = vault.clone();
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let old = time::OffsetDateTime::UNIX_EPOCH + time::Duration::days(20_000);
+            let tied = old + time::Duration::days(1);
+            let future = tied + time::Duration::days(1);
+            let cases = [
+                (
+                    "00000000-0000-4000-8000-000000000009",
+                    SecretKind::Model,
+                    "openai",
+                    "openai-key",
+                    b"older-key".as_slice(),
+                    old,
+                    None,
+                ),
+                (
+                    "00000000-0000-4000-8000-000000000001",
+                    SecretKind::Model,
+                    "openai",
+                    "openai-key",
+                    b"lower-tie-key".as_slice(),
+                    tied,
+                    None,
+                ),
+                (
+                    "00000000-0000-4000-8000-000000000002",
+                    SecretKind::Model,
+                    "openai",
+                    "openai-key",
+                    b"stored-provider-key".as_slice(),
+                    tied,
+                    None,
+                ),
+                (
+                    "00000000-0000-4000-8000-000000000003",
+                    SecretKind::Connector,
+                    "openai",
+                    "openai-key",
+                    b"wrong-kind-key".as_slice(),
+                    future,
+                    None,
+                ),
+                (
+                    "00000000-0000-4000-8000-000000000004",
+                    SecretKind::Model,
+                    "other",
+                    "openai-key",
+                    b"wrong-provider-key".as_slice(),
+                    future,
+                    None,
+                ),
+                (
+                    "00000000-0000-4000-8000-000000000005",
+                    SecretKind::Model,
+                    "openai",
+                    "other-key",
+                    b"wrong-key-id".as_slice(),
+                    future,
+                    None,
+                ),
+                (
+                    "00000000-0000-4000-8000-000000000006",
+                    SecretKind::Model,
+                    "openai",
+                    "openai-key",
+                    b"revoked-newer-key".as_slice(),
+                    future,
+                    Some(future),
+                ),
+            ];
+            for (id, kind, provider_name, key_id, plaintext, created_at, revoked_at) in cases {
+                let id = Uuid::parse_str(id).map_err(|error| error.to_string())?;
+                let plaintext = SecretBytes::new(plaintext.to_vec());
+                let encrypted = vault
+                    .seal(
+                        &id,
+                        kind,
+                        SecretPrincipal::Deployment,
+                        SecretPrincipal::Deployment,
+                        &plaintext,
+                    )
+                    .map_err(|error| error.to_string())?;
+                client
+                    .execute(
+                        "INSERT INTO public.credentials( \
+                           id,kind,provider,encrypted_value,key_id,metadata,revoked_at,created_at,updated_at \
+                         ) VALUES($1,$2::text::public.credential_kind,$3,$4,$5,'{}'::jsonb,$6,$7,$7)",
+                        &[
+                            &id,
+                            &kind.as_str(),
+                            &provider_name,
+                            &encrypted,
+                            &key_id,
+                            &revoked_at,
+                            &created_at,
+                        ],
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+            }
+            drop(client);
+
+            let credentials = Arc::new(
+                PostgresOpenAiCredentialSource::new(
+                    pool.clone(),
+                    vault,
+                    "openai-key".to_owned(),
+                    Some(
+                        OpenAiApiKey::from_bytes(b"environment-provider-key".to_vec())
+                            .map_err(|error| error.to_string())?,
+                    ),
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let provider = Arc::new(OpenAiProvider::new_with_credential_source(
+                OpenAiProviderConfig::new_with_transport_policy(
+                    Url::parse(&format!("http://{address}/v1/responses"))
+                        .map_err(|error| error.to_string())?,
+                    "package-model".to_owned(),
+                    OpenAiProtocol::Responses,
+                    SafeHttpBudget::new(64 * 1024, Duration::from_secs(2))
+                        .map_err(|error| error.to_string())?,
+                    Some(Duration::from_secs(1)),
+                    SchemePolicy::HttpOrHttps,
+                )
+                .map_err(|error| error.to_string())?,
+                credentials,
+                SafeDialer::new(EgressPolicy::new(
+                    CidrAllowlist::parse_exact(["127.0.0.1/32"])
+                        .map_err(|error| error.to_string())?,
+                )),
+            ));
+            let owner = "runtime-openai-http".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner,
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let context = Arc::new(
+                PostgresAgentContextSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    Some(32),
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                context,
+                provider,
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 2,
+                    lease_renew_interval: Duration::from_secs(1),
+                    run_deadline: Some(Duration::from_secs(5)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let relay = RunRelay::start(runtime, agent.consumer());
+
+            begin_test_run(
+                &directory,
+                &deployment,
+                &tenant,
+                2,
+                "run-openai-http-1",
+                "first request",
+            )
+            .await?;
+            wait_for_terminal(&pool, "run-openai-http-1", "provider answer 1").await?;
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "UPDATE public.credentials SET revoked_at=clock_timestamp(), \
+                     updated_at=clock_timestamp() WHERE kind='model' AND provider='openai' \
+                     AND key_id='openai-key' AND revoked_at IS NULL",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "UPDATE public.agents SET configuration= \
+                     jsonb_build_object('systemPrompt','Updated system role.') WHERE id='bot-1'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            drop(client);
+            begin_test_run(
+                &directory,
+                &deployment,
+                &tenant,
+                3,
+                "run-openai-http-2",
+                "second request",
+            )
+            .await?;
+            wait_for_terminal(&pool, "run-openai-http-2", "provider answer 2").await?;
+
+            let corrupt_id = Uuid::now_v7();
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "INSERT INTO public.credentials( \
+                       id,kind,provider,encrypted_value,key_id,metadata \
+                     ) VALUES($1,'model','openai','corrupt','openai-key','{}'::jsonb)",
+                    &[&corrupt_id],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            drop(client);
+            begin_test_run(
+                &directory,
+                &deployment,
+                &tenant,
+                4,
+                "run-openai-http-3",
+                "corrupt credential must not fall back",
+            )
+            .await?;
+            wait_for_failure(&pool, "run-openai-http-3", "provider_authentication").await?;
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "UPDATE public.credentials SET revoked_at=clock_timestamp(), \
+                     updated_at=clock_timestamp() WHERE id=$1",
+                    &[&corrupt_id],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            drop(client);
+            let no_fallback = PostgresOpenAiCredentialSource::new(
+                pool.clone(),
+                missing_vault,
+                "openai-key".to_owned(),
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+            if !matches!(
+                no_fallback.resolve().await,
+                Err(OpenAiCredentialError::Missing)
+            ) {
+                return Err("missing model credential 未保持明确 Missing".to_owned());
+            }
+
+            relay.stop().await;
+            agent.stop().await;
+            let requests = provider_server.await.map_err(|error| error.to_string())??;
+            if requests.len() != 2
+                || header_value(&requests[0], "authorization") != Some("Bearer stored-provider-key")
+                || header_value(&requests[1], "authorization")
+                    != Some("Bearer environment-provider-key")
+            {
+                return Err("stored-first/fresh-revocation credential order 漂移".to_owned());
+            }
+            for (index, request) in requests.iter().enumerate() {
+                let body: serde_json::Value = serde_json::from_str(
+                    request
+                        .split("\r\n\r\n")
+                        .nth(1)
+                        .ok_or("provider request body missing")?,
+                )
+                .map_err(|error| error.to_string())?;
+                let expected_role = if index == 0 {
+                    "Test system role."
+                } else {
+                    "Updated system role."
+                };
+                if body["model"] != "package-model"
+                    || body["input"][0]["role"] != "system"
+                    || !body["input"][0]["content"]
+                        .as_str()
+                        .is_some_and(|value| value.starts_with(expected_role))
+                {
+                    return Err(format!("package model/standing prompt 漂移：{body:?}"));
+                }
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let reasoning_count: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM public.run_events \
+                     WHERE run_id='run-openai-http-1' \
+                       AND event_type='semantic_chunk' AND payload->>'channel'='reasoning'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if reasoning_count != 1 {
+                return Err(format!("reasoning durable channel 漂移：{reasoning_count}"));
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+fn batch6_admin_config(test_name: &str) -> DatabaseConfig {
+    let Ok(socket) = std::env::var("OPENBOT_TEST_DATABASE_SOCKET") else {
+        return admin_config(test_name);
+    };
+    let port = std::env::var("OPENBOT_TEST_DATABASE_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(5432);
+    let user =
+        std::env::var("OPENBOT_TEST_DATABASE_USER").unwrap_or_else(|_| "postgres".to_owned());
+    DatabaseConfig::new(socket, port, user, "postgres")
+        .with_application_name("openbot-postgres-integration-test")
+        .with_max_pool_size(2)
+}
+
+async fn begin_test_run(
+    directory: &PostgresThreadDirectory,
+    deployment: &DeploymentId,
+    tenant: &TenantId,
+    entropy_tail: u8,
+    run_id: &str,
+    message: &str,
+) -> Result<(), String> {
+    let mut entropy = [0_u8; 16];
+    entropy[15] = entropy_tail;
+    let thread = ThreadIdentity::new(deployment).mint_from_entropy(entropy);
+    directory
+        .begin_thread_run(BeginThreadRunRequest {
+            deployment: deployment.clone(),
+            tenant: tenant.clone(),
+            actor: ActorId::new("actor-a"),
+            command: BeginThreadRun {
+                thread_id: thread,
+                run_id: RunId::new(run_id),
+                bot_id: BotId::new("bot-1"),
+                anchor: ThreadRunAnchor::DirectBot,
+                message: message.to_owned(),
+            },
+        })
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+async fn wait_for_terminal(
+    pool: &deadpool_postgres::Pool,
+    run_id: &str,
+    expected_text: &str,
+) -> Result<(), String> {
+    for _ in 0..200 {
+        let client = pool.get().await.map_err(|error| error.to_string())?;
+        let row = client
+            .query_one(
+                "SELECT status,error_code,(SELECT content->>'text' FROM public.messages \
+                 WHERE run_id=$1 AND role='assistant') FROM public.runs WHERE run_id=$1",
+                &[&run_id],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let status: String = row.try_get(0).map_err(|error| error.to_string())?;
+        if status != "running" {
+            let error: Option<String> = row.try_get(1).map_err(|error| error.to_string())?;
+            let text: Option<String> = row.try_get(2).map_err(|error| error.to_string())?;
+            return if status == "completed"
+                && error.is_none()
+                && text.as_deref() == Some(expected_text)
+            {
+                Ok(())
+            } else {
+                Err(format!(
+                    "run {run_id} terminal 漂移：{status}/{error:?}/{text:?}"
+                ))
+            };
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    Err(format!("run {run_id} 未在本地期限内 terminal"))
+}
+
+async fn wait_for_failure(
+    pool: &deadpool_postgres::Pool,
+    run_id: &str,
+    expected_code: &str,
+) -> Result<(), String> {
+    for _ in 0..200 {
+        let client = pool.get().await.map_err(|error| error.to_string())?;
+        let row = client
+            .query_one(
+                "SELECT status,error_code FROM public.runs WHERE run_id=$1",
+                &[&run_id],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let status: String = row.try_get(0).map_err(|error| error.to_string())?;
+        if status != "running" {
+            let code: Option<String> = row.try_get(1).map_err(|error| error.to_string())?;
+            return if status == "failed" && code.as_deref() == Some(expected_code) {
+                Ok(())
+            } else {
+                Err(format!("run {run_id} failure 漂移：{status}/{code:?}"))
+            };
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    Err(format!("run {run_id} 未在本地期限内 failed"))
+}
+
+async fn recording_openai_server(listener: TcpListener) -> Result<Vec<String>, String> {
+    let mut requests = Vec::new();
+    for index in 1..=2 {
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .map_err(|_| "provider local accept timeout".to_owned())?
+            .map_err(|error| error.to_string())?;
+        requests.push(read_http_request(&mut stream).await?);
+        let reasoning = if index == 1 {
+            concat!(
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"reasoning\"},\"sequence_number\":1}\n\n",
+                "data: {\"type\":\"response.reasoning_text.delta\",\"output_index\":0,\"delta\":\"private thought\",\"sequence_number\":2}\n\n"
+            )
+        } else {
+            ""
+        };
+        let text_sequence = if index == 1 { 3 } else { 1 };
+        let complete_sequence = text_sequence + 1;
+        let body = format!(
+            "data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"resp_{index}\"}},\"sequence_number\":0}}\n\n{reasoning}data: {{\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"provider answer {index}\",\"sequence_number\":{text_sequence}}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":2,\"output_tokens\":3,\"total_tokens\":5}}}},\"sequence_number\":{complete_sequence}}}\n\n"
+        );
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream
+            .write_all(headers.as_bytes())
+            .await
+            .map_err(|error| error.to_string())?;
+        stream
+            .write_all(body.as_bytes())
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(requests)
+}
+
+async fn read_http_request(stream: &mut TcpStream) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    let header_end = loop {
+        let count = stream
+            .read(&mut buffer)
+            .await
+            .map_err(|error| error.to_string())?;
+        if count == 0 {
+            return Err("provider request ended before headers".to_owned());
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        if let Some(position) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position + 4;
+        }
+    };
+    let headers = core::str::from_utf8(&bytes[..header_end]).map_err(|error| error.to_string())?;
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            line.to_ascii_lowercase()
+                .strip_prefix("content-length: ")
+                .and_then(|value| value.parse::<usize>().ok())
+        })
+        .ok_or("provider request content-length missing")?;
+    while bytes.len() < header_end + content_length {
+        let count = stream
+            .read(&mut buffer)
+            .await
+            .map_err(|error| error.to_string())?;
+        if count == 0 {
+            return Err("provider request ended before body".to_owned());
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+    }
+    String::from_utf8(bytes).map_err(|error| error.to_string())
+}
+
+fn header_value<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    request.lines().find_map(|line| {
+        let (candidate, value) = line.split_once(':')?;
+        candidate.eq_ignore_ascii_case(name).then(|| value.trim())
+    })
+}

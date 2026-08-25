@@ -44,6 +44,7 @@
 //! 因为那是启动期唯一一次看得见整张环境表的地方。
 
 pub mod address;
+pub mod agent;
 pub mod env;
 pub mod error;
 pub mod migration;
@@ -54,6 +55,10 @@ pub mod server;
 pub mod transport;
 
 pub use address::{AddressParseError, DeploymentAddress, Scheme, is_loopback_host};
+pub use agent::{
+    AgentBudgets, ManagedProviderConfig, ManagedProviderKind, PackageOpenAiProviderConfig,
+    parse_agent_config,
+};
 pub use env::{EnvMap, env_map_from_process};
 pub use error::{ConfigError, ConfigProblem, Expectation};
 pub use migration::{
@@ -94,8 +99,9 @@ mod tests {
         // 因为断言本身而被自己判红。
         let needle = concat!("std::", "env");
 
-        let parsers: [(&str, &str); 8] = [
+        let parsers: [(&str, &str); 9] = [
             ("address.rs", include_str!("address.rs")),
+            ("agent.rs", include_str!("agent.rs")),
             ("error.rs", include_str!("error.rs")),
             ("migration.rs", include_str!("migration.rs")),
             ("policy.rs", include_str!("policy.rs")),

@@ -1884,8 +1884,10 @@ dependencies = [
  "async-trait",
  "openbot-application",
  "openbot-contracts",
+ "openbot-domain",
  "serde_json",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2019,6 +2021,7 @@ dependencies = [
  "http",
  "metrics",
  "metrics-exporter-prometheus",
+ "openbot-agent",
  "openbot-application",
  "openbot-contracts",
  "openbot-domain",
@@ -2036,6 +2039,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -2045,10 +2049,13 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "deadpool-postgres",
+ "openbot-agent",
  "openbot-application",
  "openbot-contracts",
  "openbot-desktop",
  "openbot-domain",
+ "openbot-infra",
  "openbot-server",
  "oxc_allocator",
  "oxc_ast",
@@ -2062,6 +2069,8 @@ dependencies = [
  "time",
  "tokio",
  "tower",
+ "url",
+ "uuid",
  "walkdir",
 ]
 

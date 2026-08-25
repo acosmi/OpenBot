@@ -47,6 +47,9 @@ use openbot_domain::audit::retention::{RetentionPolicy, parse_retention_days};
 use openbot_domain::policy::ActionPolicy;
 
 use crate::config::address::DeploymentAddress;
+use crate::config::agent::{
+    AgentBudgets, ManagedProviderConfig, PackageOpenAiProviderConfig, parse_agent_config,
+};
 use crate::config::env::{self, EnvMap};
 use crate::config::error::{ConfigError, ConfigProblem, Expectation};
 use crate::config::migration::check_migrated_env_vars;
@@ -241,6 +244,12 @@ pub struct ServerConfig {
     pub audit_retention: AuditRetention,
     /// Bot computer 接入。`None` = 该能力未挂载。
     pub computer: Option<ComputerConfig>,
+    /// Agent stall/absolute budgets；即使 provider 未配置也有权威默认。
+    pub agent_budgets: AgentBudgets,
+    /// Package built-in Bot 的 OpenAI transport 与 environment fallback；model/key id 来自包。
+    pub package_openai_provider: PackageOpenAiProviderConfig,
+    /// Environment-managed provider；None 时 Server 保留明确 fail-closed consumer。
+    pub managed_provider: Option<ManagedProviderConfig>,
 }
 
 impl ServerConfig {
@@ -284,6 +293,8 @@ impl ServerConfig {
         let public_url = parse_optional_address(env_map, "OPENBOT_PUBLIC_URL", &mut problems);
         let audit_retention = parse_audit_retention(env_map, &mut problems);
         let computer = parse_computer(env_map, &mut problems);
+        let (agent_budgets, package_openai_provider, managed_provider) =
+            parse_agent_config(env_map, &mut problems);
 
         // 回落链在 `public_url` 之后算：它的最后一节就是公共地址的原串。
         let app_url = env::optional(env_map, "OPENBOT_APP_URL")
@@ -316,6 +327,9 @@ impl ServerConfig {
                 .to_owned(),
             audit_retention,
             computer,
+            agent_budgets,
+            package_openai_provider,
+            managed_provider,
         })
     }
 

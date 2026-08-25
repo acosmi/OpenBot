@@ -76,6 +76,7 @@ pub mod chunk;
 pub mod cursor;
 pub mod intelligence_import;
 pub mod ports;
+pub mod provider;
 pub mod run_runtime;
 pub mod service;
 pub mod tenant;
@@ -105,10 +106,15 @@ pub use ports::{
     RememberMemoryRequest, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
     ThreadHistoryRequest,
 };
+pub use provider::{
+    AgentContextError, AgentContextSource, ProviderAdapter, ProviderEvent, ProviderFailure,
+    ProviderMessage, ProviderMessageRole, ProviderOutputKind, ProviderPortError, ProviderRequest,
+    ProviderSession, ProviderToolDefinition, ProviderUsage,
+};
 pub use run_runtime::{
     ClaimedRunDispatch, DurableTextRun, NoRunDispatchConsumer, RunDispatchConsumer,
     RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError,
-    RunTerminal, RunWriteReceipt,
+    RunSemanticChannel, RunTerminal, RunWriteReceipt,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,

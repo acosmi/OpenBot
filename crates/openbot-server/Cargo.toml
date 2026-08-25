@@ -27,6 +27,7 @@ openbot-application.workspace = true
 openbot-domain.workspace = true
 # W-4 生产组装与 PostgreSQL session resolver；依赖方向 server -> infra -> application，无环。
 openbot-infra.workspace = true
+openbot-agent.workspace = true
 
 # `AuthResolver` / `ReadinessProbe` 都要对象安全（state 里持的是 `dyn`），
 # edition 2024 的 AFIT 仍不给对象安全，所以走 `async_trait`。
@@ -72,6 +73,7 @@ time.workspace = true
 tokio.workspace = true
 hmac.workspace = true
 sha2.workspace = true
+zeroize.workspace = true
 
 # §16.4「Server 暴露 Prometheus metrics」。**门面 + exporter 两层**，不直接依赖 prometheus
 # 客户端库：库代码只调 `metrics` 门面，不知道 exporter 是谁 —— 没装 recorder 时每次调用

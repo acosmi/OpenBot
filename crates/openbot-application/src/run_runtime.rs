@@ -53,6 +53,28 @@ pub enum RunFailureCode {
     DispatchPayloadCorrupt,
     /// Dispatch 经过有界重试仍不能被 runtime 接受。
     DispatchDeadLetter,
+    /// Provider key/auth rejected。
+    ProviderAuthentication,
+    /// Provider rate limit exhausted for this run。
+    ProviderRateLimited,
+    /// Provider transport/5xx unavailable。
+    ProviderUnavailable,
+    /// Provider SSE/schema/sequence invalid。
+    ProviderInvalidResponse,
+    /// Provider real body read gap exceeded watchdog。
+    ProviderStreamStalled,
+    /// Provider reported failed/incomplete generation。
+    ProviderGenerationFailed,
+    /// Built-in Agent tool sampling step cap reached。
+    ToolStepLimit,
+    /// G4 tool loop not yet available for this requested call。
+    ToolLoopUnavailable,
+    /// Tool approval/policy denial。
+    ToolDenied,
+    /// Absolute run deadline elapsed。
+    RunDeadlineExceeded,
+    /// Run journal commit result unknown after provider/tool effect。
+    JournalCommitUnknown,
 }
 
 impl RunFailureCode {
@@ -64,6 +86,17 @@ impl RunFailureCode {
             Self::RuntimeLeaseExpired => "runtime_lease_expired",
             Self::DispatchPayloadCorrupt => "dispatch_payload_corrupt",
             Self::DispatchDeadLetter => "dispatch_dead_letter",
+            Self::ProviderAuthentication => "provider_authentication",
+            Self::ProviderRateLimited => "provider_rate_limited",
+            Self::ProviderUnavailable => "provider_unavailable",
+            Self::ProviderInvalidResponse => "provider_invalid_response",
+            Self::ProviderStreamStalled => "agent_stream_stalled",
+            Self::ProviderGenerationFailed => "provider_generation_failed",
+            Self::ToolStepLimit => "tool_step_limit",
+            Self::ToolLoopUnavailable => "tool_loop_unavailable",
+            Self::ToolDenied => "tool_denied",
+            Self::RunDeadlineExceeded => "run_deadline_exceeded",
+            Self::JournalCommitUnknown => "journal_commit_unknown",
         }
     }
 }
@@ -247,6 +280,26 @@ pub struct RunWriteReceipt {
     pub replayed: bool,
 }
 
+/// Normalized provider semantic channel；raw vendor event 不进入 journal。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunSemanticChannel {
+    /// User-visible assistant text；terminal 时物化到 messages。
+    Text,
+    /// Provider reasoning；durable/replayable，但绝不拼进 assistant text。
+    Reasoning,
+}
+
+impl RunSemanticChannel {
+    /// Journal payload 的稳定字面量。
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Reasoning => "reasoning",
+        }
+    }
+}
+
 /// Relay 对 dispatch consumer 的封闭结论。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunDispatchDecision {
@@ -264,8 +317,8 @@ pub trait RunDispatchConsumer: Send + Sync {
     /// 预留/幂等 enqueue；不得在 durable outbox ack 前启动 provider/tool effect。
     async fn dispatch(&self, lease: RunExecutionLease) -> RunDispatchDecision;
 
-    /// Outbox 已 durable ack 后启动该 reservation；必须幂等。
-    async fn activate(&self, lease: &RunExecutionLease);
+    /// Outbox 已 durable ack 后启动该 reservation；必须幂等，队列关闭须显式失败。
+    async fn activate(&self, lease: &RunExecutionLease) -> Result<(), RunFailureCode>;
 
     /// 撤销尚未取得 durable outbox ack 的 enqueue；必须幂等并传播 cancel。
     async fn revoke(&self, lease: &RunExecutionLease);
@@ -281,7 +334,9 @@ impl RunDispatchConsumer for NoRunDispatchConsumer {
         RunDispatchDecision::Rejected(RunFailureCode::AgentRuntimeUnavailable)
     }
 
-    async fn activate(&self, _lease: &RunExecutionLease) {}
+    async fn activate(&self, _lease: &RunExecutionLease) -> Result<(), RunFailureCode> {
+        Ok(())
+    }
 
     async fn revoke(&self, _lease: &RunExecutionLease) {}
 }
@@ -316,6 +371,7 @@ pub trait RunRuntime: Send + Sync {
         &self,
         lease: &RunExecutionLease,
         expected_sequence: u64,
+        channel: RunSemanticChannel,
         chunk: &str,
     ) -> Result<RunWriteReceipt, RunRuntimeError>;
 
@@ -337,7 +393,7 @@ pub struct DurableTextRun {
     lease: RunExecutionLease,
     expected_sequence: u64,
     accumulator: SemanticChunkAccumulator,
-    pending_durable: VecDeque<String>,
+    pending_durable: VecDeque<(RunSemanticChannel, String)>,
 }
 
 impl core::fmt::Debug for DurableTextRun {
@@ -369,14 +425,50 @@ impl DurableTextRun {
         if delta.as_bytes().contains(&0) {
             return Err(RunRuntimeError::InvalidInput { field: "delta" });
         }
-        self.pending_durable
-            .extend(self.accumulator.push(delta, now));
+        self.pending_durable.extend(
+            self.accumulator
+                .push(delta, now)
+                .into_iter()
+                .map(|chunk| (RunSemanticChannel::Text, chunk)),
+        );
+        self.drain_pending().await
+    }
+
+    /// 持久化 normalized reasoning delta。先冲刷此前 text，再按同一 8KiB UTF-8 边界切片，
+    /// 因而 journal 的跨 channel 顺序与 provider 事件顺序一致。
+    pub async fn push_reasoning(
+        &mut self,
+        delta: &str,
+        now: Instant,
+    ) -> Result<(), RunRuntimeError> {
+        if delta.as_bytes().contains(&0) {
+            return Err(RunRuntimeError::InvalidInput {
+                field: "reasoning_delta",
+            });
+        }
+        self.pending_durable.extend(
+            self.accumulator
+                .finish()
+                .map(|chunk| (RunSemanticChannel::Text, chunk)),
+        );
+        let mut reasoning = SemanticChunkAccumulator::new();
+        self.pending_durable.extend(
+            reasoning
+                .push(delta, now)
+                .into_iter()
+                .chain(reasoning.finish())
+                .map(|chunk| (RunSemanticChannel::Reasoning, chunk)),
+        );
         self.drain_pending().await
     }
 
     /// Timer 到点时持久化 pending chunk。
     pub async fn flush_due(&mut self, now: Instant) -> Result<(), RunRuntimeError> {
-        self.pending_durable.extend(self.accumulator.flush_due(now));
+        self.pending_durable.extend(
+            self.accumulator
+                .flush_due(now)
+                .map(|chunk| (RunSemanticChannel::Text, chunk)),
+        );
         self.drain_pending().await
     }
 
@@ -391,7 +483,11 @@ impl DurableTextRun {
         &mut self,
         terminal: RunTerminal,
     ) -> Result<RunWriteReceipt, RunRuntimeError> {
-        self.pending_durable.extend(self.accumulator.finish());
+        self.pending_durable.extend(
+            self.accumulator
+                .finish()
+                .map(|chunk| (RunSemanticChannel::Text, chunk)),
+        );
         self.drain_pending().await?;
         let receipt = self
             .runtime
@@ -408,7 +504,7 @@ impl DurableTextRun {
     }
 
     async fn drain_pending(&mut self) -> Result<(), RunRuntimeError> {
-        while let Some(chunk) = self.pending_durable.front() {
+        while let Some((channel, chunk)) = self.pending_durable.front() {
             if chunk.is_empty() || chunk.len() > SEMANTIC_CHUNK_MAX_BYTES {
                 return Err(RunRuntimeError::Corrupt {
                     field: "semantic_chunk",
@@ -416,7 +512,7 @@ impl DurableTextRun {
             }
             let receipt = self
                 .runtime
-                .append_semantic_chunk(&self.lease, self.expected_sequence, chunk)
+                .append_semantic_chunk(&self.lease, self.expected_sequence, *channel, chunk)
                 .await?;
             self.expected_sequence =
                 receipt
@@ -442,7 +538,7 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum Call {
-        Chunk(u64, String),
+        Chunk(u64, RunSemanticChannel, String),
         Finish(u64, RunTerminal),
     }
 
@@ -498,12 +594,14 @@ mod tests {
             &self,
             _lease: &RunExecutionLease,
             expected_sequence: u64,
+            channel: RunSemanticChannel,
             chunk: &str,
         ) -> Result<RunWriteReceipt, RunRuntimeError> {
-            self.calls
-                .lock()
-                .expect("fake lock")
-                .push(Call::Chunk(expected_sequence, chunk.to_owned()));
+            self.calls.lock().expect("fake lock").push(Call::Chunk(
+                expected_sequence,
+                channel,
+                chunk.to_owned(),
+            ));
             let mut fail = self.fail_first_chunk.lock().expect("fake lock");
             if *fail {
                 *fail = false;
@@ -563,8 +661,12 @@ mod tests {
         assert_eq!(
             runtime.calls(),
             [
-                Call::Chunk(1, "a".repeat(SEMANTIC_CHUNK_MAX_BYTES)),
-                Call::Chunk(2, "a".to_owned()),
+                Call::Chunk(
+                    1,
+                    RunSemanticChannel::Text,
+                    "a".repeat(SEMANTIC_CHUNK_MAX_BYTES)
+                ),
+                Call::Chunk(2, RunSemanticChannel::Text, "a".to_owned()),
                 Call::Finish(3, RunTerminal::Completed),
             ]
         );
@@ -587,8 +689,32 @@ mod tests {
         assert_eq!(
             runtime.calls(),
             [
-                Call::Chunk(1, "durable".to_owned()),
-                Call::Chunk(1, "durable".to_owned()),
+                Call::Chunk(1, RunSemanticChannel::Text, "durable".to_owned()),
+                Call::Chunk(1, RunSemanticChannel::Text, "durable".to_owned()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn reasoning_keeps_provider_order_but_uses_a_distinct_channel() {
+        let runtime = Arc::new(FakeRuntime::default());
+        let start = Instant::now();
+        let mut run = DurableTextRun::new(runtime.clone(), lease());
+        run.push("before", start).await.unwrap();
+        run.push_reasoning("internal", start + std::time::Duration::from_millis(1))
+            .await
+            .unwrap();
+        run.push("after", start + std::time::Duration::from_millis(2))
+            .await
+            .unwrap();
+        run.finish(RunTerminal::Completed).await.unwrap();
+        assert_eq!(
+            runtime.calls(),
+            [
+                Call::Chunk(1, RunSemanticChannel::Text, "before".to_owned()),
+                Call::Chunk(2, RunSemanticChannel::Reasoning, "internal".to_owned()),
+                Call::Chunk(3, RunSemanticChannel::Text, "after".to_owned()),
+                Call::Finish(4, RunTerminal::Completed),
             ]
         );
     }
