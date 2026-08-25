@@ -289,7 +289,16 @@
     "tooltip_trigger": "Focus for a delayed hint",
     "tooltip_content": "This hint opened after 400 milliseconds.",
     "avatar_ada": "Ada Lovelace",
-    "avatar_zhang": "张三"
+    "avatar_zhang": "张三",
+    "modals": "Dialog and sheet",
+    "dialog_trigger": "Open dialog",
+    "dialog_title": "Add credential",
+    "dialog_description": "A short task that should finish without leaving this page.",
+    "dialog_body": "Focus stays inside until this dialog closes.",
+    "sheet_trigger": "Open sheet",
+    "sheet_title": "Details",
+    "sheet_description": "The same modal kernel, aligned to an edge.",
+    "done": "Done"
   },
   "keyboard": {
     "command": "Command",

@@ -7,12 +7,13 @@ use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
 use crate::primitives::{
     Avatar, AvatarSize, Bubble, BubbleKind, Button, ButtonPreviewState, ButtonSize, ButtonVariant,
-    Field, IconSize, IconView, Input, InputGroup, InputGroupAffix, InputGroupAffixPosition,
-    InputPreviewState, InputType, Item, ItemAction, ItemActions, ItemDescription, ItemMedia,
-    ItemTitle, Kbd, KbdKey, KbdModifier, Message, MessageAlign, MessageAvatar, MessageContent,
-    MessageFooter, MessageGroup, MessageHeader, Separator, SeparatorOrientation, Skeleton,
-    SkeletonShape, Switch, Textarea, TextareaPreviewState, Toast, ToastPreviewState, Tooltip,
-    TooltipTrigger, TooltipTriggerAction,
+    Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogTrigger, Field, IconSize,
+    IconView, Input, InputGroup, InputGroupAffix, InputGroupAffixPosition, InputPreviewState,
+    InputType, Item, ItemAction, ItemActions, ItemDescription, ItemMedia, ItemTitle, Kbd, KbdKey,
+    KbdModifier, Message, MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageGroup,
+    MessageHeader, Separator, SeparatorOrientation, Sheet, SheetSide, Skeleton, SkeletonShape,
+    Switch, Textarea, TextareaPreviewState, Toast, ToastPreviewState, Tooltip, TooltipTrigger,
+    TooltipTriggerAction,
 };
 
 /// Render the first Batch 17 primitive states for golden, keyboard and AX inspection.
@@ -30,6 +31,10 @@ pub fn DesignGallery() -> impl IntoView {
     let toast_auto_visible = RwSignal::new(true);
     let toast_dismiss_count = RwSignal::new(0_u32);
     let tooltip_activation_count = RwSignal::new(0_u32);
+    let dialog_open = RwSignal::new(false);
+    let dialog_close_count = RwSignal::new(0_u32);
+    let sheet_open = RwSignal::new(false);
+    let sheet_close_count = RwSignal::new(0_u32);
 
     view! {
         <section class="ob-page ob-design-gallery" aria-labelledby="design-gallery-title">
@@ -309,6 +314,67 @@ pub fn DesignGallery() -> impl IntoView {
                         </div>
                         <output id="design-tooltip-count" aria-live="polite">
                             {tooltip_activation_count}
+                        </output>
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-modals-title">
+                    <h2 id="design-modals-title">{move || t!(i18n, design_gallery.modals)}</h2>
+                    <div class="ob-design-row" id="design-modals">
+                        <Dialog
+                            id="design-dialog"
+                            open=dialog_open
+                            on_close=UnsyncCallback::new(move |_| dialog_close_count.update(|count| *count += 1))
+                        >
+                            <DialogTrigger id="design-dialog-trigger">
+                                {move || t!(i18n, design_gallery.dialog_trigger)}
+                            </DialogTrigger>
+                            <DialogContent
+                                title=move || t_string!(i18n, design_gallery.dialog_title).to_owned()
+                                description=move || t_string!(i18n, design_gallery.dialog_description).to_owned()
+                            >
+                                <DialogBody>
+                                    <p>{move || t!(i18n, design_gallery.dialog_body)}</p>
+                                </DialogBody>
+                                <DialogFooter>
+                                    <DialogClose id="design-dialog-cancel">
+                                        {move || t!(i18n, common.cancel)}
+                                    </DialogClose>
+                                    <DialogClose id="design-dialog-save">
+                                        {move || t!(i18n, common.save)}
+                                    </DialogClose>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+                        <output id="design-dialog-close-count" aria-live="polite">
+                            {dialog_close_count}
+                        </output>
+
+                        <Sheet
+                            id="design-sheet"
+                            open=sheet_open
+                            side=SheetSide::Right
+                            on_close=UnsyncCallback::new(move |_| sheet_close_count.update(|count| *count += 1))
+                        >
+                            <DialogTrigger id="design-sheet-trigger">
+                                {move || t!(i18n, design_gallery.sheet_trigger)}
+                            </DialogTrigger>
+                            <DialogContent
+                                title=move || t_string!(i18n, design_gallery.sheet_title).to_owned()
+                                description=move || t_string!(i18n, design_gallery.sheet_description).to_owned()
+                            >
+                                <DialogBody>
+                                    <p>{move || t!(i18n, design_gallery.dialog_body)}</p>
+                                </DialogBody>
+                                <DialogFooter>
+                                    <DialogClose id="design-sheet-done">
+                                        {move || t!(i18n, design_gallery.done)}
+                                    </DialogClose>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Sheet>
+                        <output id="design-sheet-close-count" aria-live="polite">
+                            {sheet_close_count}
                         </output>
                     </div>
                 </section>

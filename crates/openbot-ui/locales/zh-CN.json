@@ -289,7 +289,16 @@
     "tooltip_trigger": "聚焦后延迟显示提示",
     "tooltip_content": "这条提示在 400 毫秒后显示。",
     "avatar_ada": "Ada Lovelace",
-    "avatar_zhang": "张三"
+    "avatar_zhang": "张三",
+    "modals": "对话框与侧滑面板",
+    "dialog_trigger": "打开对话框",
+    "dialog_title": "添加凭据",
+    "dialog_description": "无需离开当前页面即可完成的短任务。",
+    "dialog_body": "关闭对话框前，焦点会留在其中。",
+    "sheet_trigger": "打开侧滑面板",
+    "sheet_title": "详情",
+    "sheet_description": "使用同一套模态内核，只是贴边显示。",
+    "done": "完成"
   },
   "keyboard": {
     "command": "Command",

@@ -74,6 +74,9 @@ impl ButtonPreviewState {
 /// Render a semantic `<button>` with token-only variants and explicit loading/disabled states.
 #[component]
 pub fn Button(
+    /// Optional stable DOM ID for focus choreography.
+    #[prop(optional, into)]
+    id: Option<String>,
     /// Visual treatment.
     #[prop(optional)]
     variant: ButtonVariant,
@@ -108,6 +111,7 @@ pub fn Button(
         Signal::derive(move || disabled.get().unwrap_or(false) || loading.get().unwrap_or(false));
     view! {
         <button
+            id=id
             type="button"
             class="ob-button"
             data-variant=variant.as_str()

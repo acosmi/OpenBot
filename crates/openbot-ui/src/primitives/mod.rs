@@ -4,6 +4,7 @@ mod avatar;
 mod badge;
 mod bubble;
 mod button;
+mod dialog;
 mod empty_state;
 mod field;
 mod icon;
@@ -14,7 +15,9 @@ mod kbd;
 mod label;
 mod locale_switch;
 mod message;
+mod modal;
 mod separator;
+mod sheet;
 mod skeleton;
 mod switch;
 mod textarea;
@@ -27,6 +30,7 @@ pub use avatar::{Avatar, AvatarSize};
 pub use badge::{Badge, BadgeTone};
 pub use bubble::{Bubble, BubbleGroup, BubbleKind};
 pub use button::{Button, ButtonPreviewState, ButtonSize, ButtonVariant};
+pub use dialog::{Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogTrigger};
 pub use empty_state::EmptyState;
 pub use field::Field;
 pub use icon::{IconSize, IconView};
@@ -40,7 +44,9 @@ pub use message::{
     Message, MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageGroup,
     MessageHeader,
 };
+pub use modal::SheetSide;
 pub use separator::{Separator, SeparatorOrientation};
+pub use sheet::Sheet;
 pub use skeleton::{Skeleton, SkeletonShape};
 pub use switch::Switch;
 pub use textarea::{Textarea, TextareaPreviewState};
