@@ -9,7 +9,7 @@
 //! - 最多 [`MAX_REDIRECTS`]（3）次 redirect，每一跳重新解析、校验并绑定；
 //! - 默认拒绝 IANA 特殊用途、非全局单播、metadata、loopback、link-local、private/reserved；
 //! - 唯一放行例外是管理员给出的**数值 CIDR** [`CidrAllowlist`]，不接受 hostname；
-//! - `Authorization` 只在同 origin redirect 保留，跨 origin 构造性删除；
+//! - 所有 credential header 只在同 origin redirect 保留，跨 origin 构造性删除；
 //! - 带 secret body 的 POST 不跨 origin 做 307/308，301/302 的含混 POST 语义直接拒绝；
 //! - 总墙钟与响应体大小在读取时执行，不先把无界 body 收进内存；
 //! - HTTP/1 only，无代理、无自动 retry、无自动 redirect、无自动解压。
@@ -252,6 +252,29 @@ impl AuthorizationValue {
     }
 }
 
+/// Provider API key 的不可打印 header value；header 名由封闭方法决定，不接受调用方自由输入。
+pub struct ProviderApiKeyValue(HeaderValue);
+
+impl ProviderApiKeyValue {
+    /// HeaderValue 拒绝 CR/LF/非法字节；空 key 由 provider config/source 在更早处拒绝。
+    pub fn parse(raw: &str) -> Result<Self, SafeHttpError> {
+        let mut value = HeaderValue::from_str(raw).map_err(|_| SafeHttpError::InvalidHeader)?;
+        value.set_sensitive(true);
+        Ok(Self(value))
+    }
+}
+
+impl fmt::Debug for ProviderApiKeyValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ProviderApiKeyValue([REDACTED])")
+    }
+}
+
+enum ProviderAuthentication {
+    Anthropic(HeaderValue),
+    Google(HeaderValue),
+}
+
 impl fmt::Debug for AuthorizationValue {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("AuthorizationValue([REDACTED])")
@@ -281,6 +304,7 @@ pub struct SafeHttpRequest {
     method: SafeMethod,
     body: Bytes,
     authorization: Option<AuthorizationValue>,
+    provider_authentication: Option<ProviderAuthentication>,
     budget: SafeHttpBudget,
 }
 
@@ -298,6 +322,7 @@ impl SafeHttpRequest {
             method: SafeMethod::Get,
             body: Bytes::new(),
             authorization: None,
+            provider_authentication: None,
             budget,
         })
     }
@@ -319,6 +344,7 @@ impl SafeHttpRequest {
             method: SafeMethod::PostForm,
             body: Bytes::from(body),
             authorization,
+            provider_authentication: None,
             budget,
         })
     }
@@ -350,6 +376,7 @@ impl SafeHttpRequest {
             method: SafeMethod::PostJson,
             body: Bytes::from(body),
             authorization,
+            provider_authentication: None,
             budget,
         })
     }
@@ -358,6 +385,20 @@ impl SafeHttpRequest {
     #[must_use]
     pub fn with_authorization(mut self, authorization: AuthorizationValue) -> Self {
         self.authorization = Some(authorization);
+        self
+    }
+
+    /// Anthropic Messages 固定 `x-api-key` + stable API version；跨 origin redirect 同时删除。
+    #[must_use]
+    pub(crate) fn with_anthropic_api_key(mut self, api_key: ProviderApiKeyValue) -> Self {
+        self.provider_authentication = Some(ProviderAuthentication::Anthropic(api_key.0));
+        self
+    }
+
+    /// Google Generative AI 固定 `x-goog-api-key`；不把 key 放 query/URL/log。
+    #[must_use]
+    pub(crate) fn with_google_api_key(mut self, api_key: ProviderApiKeyValue) -> Self {
+        self.provider_authentication = Some(ProviderAuthentication::Google(api_key.0));
         self
     }
 }
@@ -370,6 +411,10 @@ impl fmt::Debug for SafeHttpRequest {
             .field("method", &self.method)
             .field("body_bytes", &self.body.len())
             .field("has_authorization", &self.authorization.is_some())
+            .field(
+                "has_provider_authentication",
+                &self.provider_authentication.is_some(),
+            )
             .field("budget", &self.budget)
             .finish()
     }
@@ -628,6 +673,7 @@ impl SafeDialer {
             let same_origin = Origin::from_url(&request.url)? == Origin::from_url(&next)?;
             if !same_origin {
                 request.authorization = None;
+                request.provider_authentication = None;
             }
 
             match (request.method, raw.status) {
@@ -799,6 +845,17 @@ fn build_http_request(request: &SafeHttpRequest) -> Result<Request<Full<Bytes>>,
     }
     if let Some(authorization) = &request.authorization {
         builder = builder.header(AUTHORIZATION, authorization.0.clone());
+    }
+    match &request.provider_authentication {
+        Some(ProviderAuthentication::Anthropic(api_key)) => {
+            builder = builder
+                .header("x-api-key", api_key.clone())
+                .header("anthropic-version", "2023-06-01");
+        }
+        Some(ProviderAuthentication::Google(api_key)) => {
+            builder = builder.header("x-goog-api-key", api_key.clone());
+        }
+        None => {}
     }
     builder
         .body(Full::new(request.body.clone()))
@@ -1302,7 +1359,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authorization_is_stripped_on_cross_origin_redirect() {
+    async fn every_sensitive_header_is_stripped_on_cross_origin_redirect() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -1313,6 +1370,8 @@ mod tests {
                     .to_ascii_lowercase()
                     .contains("authorization: bearer secret")
             );
+            assert!(first_request.contains("x-api-key: anthropic-secret"));
+            assert!(first_request.contains("anthropic-version: 2023-06-01"));
             let location = format!("http://beta.test:{}/final", address.port());
             let response = format!(
                 "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -1326,6 +1385,8 @@ mod tests {
                     .to_ascii_lowercase()
                     .contains("authorization:")
             );
+            assert!(!second_request.contains("x-api-key:"));
+            assert!(!second_request.contains("anthropic-version:"));
             second
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
                 .await
@@ -1338,7 +1399,8 @@ mod tests {
         let url = Url::parse(&format!("http://alpha.test:{}/start", address.port())).unwrap();
         let request = SafeHttpRequest::get(url, SchemePolicy::HttpOrHttps, budget(32))
             .unwrap()
-            .with_authorization(AuthorizationValue::parse("Bearer secret").unwrap());
+            .with_authorization(AuthorizationValue::parse("Bearer secret").unwrap())
+            .with_anthropic_api_key(ProviderApiKeyValue::parse("anthropic-secret").unwrap());
         let response = SafeDialer::with_resolver(loopback_policy(), resolver.clone())
             .execute(request)
             .await

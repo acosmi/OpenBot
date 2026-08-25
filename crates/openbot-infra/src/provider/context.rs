@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use openbot_application::{
     AgentContextError, AgentContextSource, ProviderMessage, ProviderMessageRole, ProviderRequest,
-    RunExecutionLease,
+    ProviderRoute, RunExecutionLease,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use serde_json::Value;
@@ -106,6 +106,7 @@ impl AgentContextSource for PostgresAgentContextSource {
                     field: "agent_configuration",
                 })?;
         let standing_prompt = standing_prompt(&configuration)?;
+        let route = provider_route(&configuration)?;
         let count: i64 = client
             .query_one(
                 "SELECT count(*)::bigint FROM public.messages WHERE thread_id=$1",
@@ -142,6 +143,7 @@ impl AgentContextSource for PostgresAgentContextSource {
             role: ProviderMessageRole::System,
             content: standing_prompt,
             tool_call_id: None,
+            tool_name: None,
         });
         for row in rows {
             let role: String = row
@@ -172,13 +174,29 @@ impl AgentContextSource for PostgresAgentContextSource {
                 role,
                 content: text,
                 tool_call_id: None,
+                tool_name: None,
             });
         }
         Ok(ProviderRequest {
+            route,
             messages,
             tools: Vec::new(),
             max_output_tokens: self.max_output_tokens,
         })
+    }
+}
+
+fn provider_route(configuration: &Value) -> Result<ProviderRoute, AgentContextError> {
+    match configuration
+        .as_object()
+        .and_then(|value| value.get("providerSource"))
+    {
+        None | Some(Value::Null) => Ok(ProviderRoute::PackageOpenAi),
+        Some(Value::String(value)) if value == "package" => Ok(ProviderRoute::PackageOpenAi),
+        Some(Value::String(value)) if value == "managed" => Ok(ProviderRoute::Managed),
+        _ => Err(AgentContextError::Corrupt {
+            field: "provider_source",
+        }),
     }
 }
 
@@ -235,6 +253,16 @@ mod tests {
             standing_prompt(&serde_json::json!({"systemPrompt":"  "})),
             Err(AgentContextError::Corrupt {
                 field: "system_prompt"
+            })
+        );
+        assert_eq!(
+            provider_route(&serde_json::json!({"systemPrompt":"x","providerSource":"managed"})),
+            Ok(ProviderRoute::Managed)
+        );
+        assert_eq!(
+            provider_route(&serde_json::json!({"systemPrompt":"x","providerSource":"unknown"})),
+            Err(AgentContextError::Corrupt {
+                field: "provider_source"
             })
         );
     }

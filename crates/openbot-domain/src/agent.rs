@@ -52,12 +52,16 @@ pub enum AgentFailure {
     ProviderRateLimited,
     /// Provider 5xx/transport unavailable。
     ProviderUnavailable,
+    /// Provider request may have been sent but no response headers became knowable。
+    ProviderCommitUnknown,
     /// Provider schema/sequence invalid。
     ProviderInvalidResponse,
     /// Real read gap exceeded watchdog。
     ProviderStreamStalled,
     /// Provider reported failed/incomplete generation。
     ProviderGenerationFailed,
+    /// Provider reported output beyond the authoritative per-sampling cap。
+    ProviderTokenBudgetExceeded,
     /// Tool step cap 8。
     ToolStepLimit,
     /// Tool loop implementation unavailable。
@@ -348,7 +352,7 @@ pub fn reduce(
             begin_terminal(&mut next, AgentTerminal::Succeeded)
         }
         (AgentPhase::Sampling, AgentEvent::ProviderFailed(failure)) => {
-            begin_terminal(&mut next, AgentTerminal::Failed(failure))
+            begin_terminal(&mut next, failure_terminal(failure))
         }
         (AgentPhase::Sampling | AgentPhase::ExecutingTools, AgentEvent::HumanRequired) => {
             next.phase = AgentPhase::AwaitingHuman;
@@ -423,9 +427,9 @@ fn begin_terminal(state: &mut AgentState, terminal: AgentTerminal) -> Vec<AgentE
 
 const fn failure_terminal(failure: AgentFailure) -> AgentTerminal {
     match failure {
-        AgentFailure::RuntimeLeaseLost | AgentFailure::JournalCommitUnknown => {
-            AgentTerminal::ReconciliationRequired(failure)
-        }
+        AgentFailure::ProviderCommitUnknown
+        | AgentFailure::RuntimeLeaseLost
+        | AgentFailure::JournalCommitUnknown => AgentTerminal::ReconciliationRequired(failure),
         _ => AgentTerminal::Failed(failure),
     }
 }

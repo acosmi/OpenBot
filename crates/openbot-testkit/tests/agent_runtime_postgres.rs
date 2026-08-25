@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use harness::{admin_config, with_temp_database};
-use openbot_agent::{BuiltInAgentConfig, BuiltInAgentRuntime};
+use openbot_agent::{
+    BuiltInAgentConfig, BuiltInAgentRuntime, ProviderRouter, RetryingProvider,
+    RetryingProviderConfig,
+};
 use openbot_application::{
     BeginThreadRunRequest, ProviderAdapter, ProviderEvent, ProviderMessage, ProviderPortError,
     ProviderRequest, ProviderSession, ProviderUsage, RunRuntime, ThreadDirectory,
@@ -19,13 +22,18 @@ use openbot_contracts::command::{BeginThreadRun, ThreadRunAnchor};
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
 use openbot_domain::vault::{KeyVersion, SecretBytes, SecretKind, SecretPrincipal, WrappingKey};
+use openbot_infra::agent_audit::PostgresAgentAudit;
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::net::safe_http::{
     CidrAllowlist, EgressPolicy, SafeDialer, SafeHttpBudget, SchemePolicy,
 };
+use openbot_infra::provider::anthropic::{
+    AnthropicApiKey, AnthropicProvider, AnthropicProviderConfig,
+};
 use openbot_infra::provider::context::PostgresAgentContextSource;
 use openbot_infra::provider::credential::PostgresOpenAiCredentialSource;
+use openbot_infra::provider::google::{GoogleApiKey, GoogleProvider, GoogleProviderConfig};
 use openbot_infra::provider::openai::{
     OpenAiApiKey, OpenAiCredentialError, OpenAiCredentialSource, OpenAiProtocol, OpenAiProvider,
     OpenAiProviderConfig,
@@ -101,6 +109,36 @@ struct RecordedSession {
     events: VecDeque<ProviderEvent>,
 }
 
+#[derive(Default)]
+struct RejectingPackageProvider {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+struct HoldingAgentContext;
+
+#[async_trait]
+impl openbot_application::AgentContextSource for HoldingAgentContext {
+    async fn load(
+        &self,
+        _lease: &openbot_application::RunExecutionLease,
+    ) -> Result<ProviderRequest, openbot_application::AgentContextError> {
+        std::future::pending().await
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for RejectingPackageProvider {
+    async fn start(
+        &self,
+        _request: ProviderRequest,
+    ) -> Result<Box<dyn ProviderSession>, ProviderPortError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(ProviderPortError::InvalidRequest {
+            field: "wrong_package_route",
+        })
+    }
+}
+
 #[async_trait]
 impl ProviderSession for RecordedSession {
     async fn next_event(&mut self) -> Result<Option<ProviderEvent>, ProviderPortError> {
@@ -153,6 +191,10 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
                 runtime.clone(),
                 context,
                 provider.clone(),
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 2,
@@ -224,7 +266,7 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
             {
                 return Err(format!("agent PG terminal shape 漂移：{final_shape:?}"));
             }
-            let requests = provider.requests.lock().expect("provider lock");
+            let requests = provider.requests.lock().expect("provider lock").clone();
             if requests.len() != 1
                 || requests[0].messages.len() != 2
                 || requests[0].messages[0].role != openbot_application::ProviderMessageRole::System
@@ -237,9 +279,24 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
                         role: openbot_application::ProviderMessageRole::User,
                         content: "hello provider".to_owned(),
                         tool_call_id: None,
+                        tool_name: None,
                     })
             {
                 return Err(format!("provider context projection 漂移：{requests:?}"));
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let invoked: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM public.audit_events \
+                     WHERE event_type='agent.invoked' AND target_id='run-agent-1'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if invoked != 1 {
+                return Err(format!("agent.invoked audit 漂移：{invoked}"));
             }
             Ok(())
         }
@@ -437,6 +494,10 @@ async fn real_openai_http_stream_uses_fresh_vault_credential_and_durable_reasoni
                 runtime.clone(),
                 context,
                 provider,
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 2,
@@ -580,6 +641,19 @@ async fn real_openai_http_stream_uses_fresh_vault_credential_and_durable_reasoni
             if reasoning_count != 1 {
                 return Err(format!("reasoning durable channel 漂移：{reasoning_count}"));
             }
+            let invoked_count: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM public.audit_events \
+                     WHERE event_type='agent.invoked' AND target_id LIKE 'run-openai-http-%'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if invoked_count != 3 {
+                return Err(format!("OpenAI invoked audit count 漂移：{invoked_count}"));
+            }
             Ok(())
         }
         .await;
@@ -587,6 +661,405 @@ async fn real_openai_http_stream_uses_fresh_vault_credential_and_durable_reasoni
         result
     })
     .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL 与 loopback socket：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn managed_route_runs_anthropic_and_google_without_touching_package_provider() {
+    let admin = batch6_admin_config(
+        "managed_route_runs_anthropic_and_google_without_touching_package_provider",
+    );
+    with_temp_database(&admin, "agentmanaged", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "UPDATE public.agents SET configuration=jsonb_build_object( \
+                       'systemPrompt','Managed system role.','providerSource','managed' \
+                     ) WHERE id='bot-1'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            drop(client);
+
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let owner = "runtime-managed".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner,
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let context = Arc::new(
+                PostgresAgentContextSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    Some(64),
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let package = Arc::new(RejectingPackageProvider::default());
+            let harness = ManagedRunHarness {
+                runtime,
+                context,
+                package: package.clone(),
+                directory: &directory,
+                pool: &pool,
+                deployment: &deployment,
+                tenant: &tenant,
+            };
+
+            let anthropic_listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .map_err(|error| error.to_string())?;
+            let anthropic_address = anthropic_listener
+                .local_addr()
+                .map_err(|error| error.to_string())?;
+            let anthropic_server = tokio::spawn(one_anthropic_response(anthropic_listener));
+            let anthropic: Arc<dyn ProviderAdapter> = Arc::new(AnthropicProvider::new(
+                AnthropicProviderConfig::new_with_transport_policy(
+                    Url::parse(&format!("http://{anthropic_address}/v1/messages"))
+                        .map_err(|error| error.to_string())?,
+                    "claude-sonnet-4-5".to_owned(),
+                    AnthropicApiKey::from_bytes(b"anthropic-managed-key".to_vec())
+                        .map_err(|error| error.to_string())?,
+                    SafeHttpBudget::new(64 * 1024, Duration::from_secs(2))
+                        .map_err(|error| error.to_string())?,
+                    Some(Duration::from_secs(1)),
+                    SchemePolicy::HttpOrHttps,
+                )
+                .map_err(|error| error.to_string())?,
+                SafeDialer::new(EgressPolicy::new(
+                    CidrAllowlist::parse_exact(["127.0.0.1/32"])
+                        .map_err(|error| error.to_string())?,
+                )),
+            ));
+            harness
+                .run(
+                    anthropic,
+                    5,
+                    "run-managed-anthropic",
+                    "anthropic managed",
+                )
+                .await?;
+            anthropic_server
+                .await
+                .map_err(|error| error.to_string())??;
+
+            let google_listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .map_err(|error| error.to_string())?;
+            let google_address = google_listener
+                .local_addr()
+                .map_err(|error| error.to_string())?;
+            let google_server = tokio::spawn(one_google_response(google_listener));
+            let google: Arc<dyn ProviderAdapter> = Arc::new(GoogleProvider::new(
+                GoogleProviderConfig::new_with_transport_policy(
+                    Url::parse(&format!(
+                        "http://{google_address}/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+                    ))
+                    .map_err(|error| error.to_string())?,
+                    "gemini-2.5-flash".to_owned(),
+                    GoogleApiKey::from_bytes(b"google-managed-key".to_vec())
+                        .map_err(|error| error.to_string())?,
+                    SafeHttpBudget::new(64 * 1024, Duration::from_secs(2))
+                        .map_err(|error| error.to_string())?,
+                    Some(Duration::from_secs(1)),
+                    SchemePolicy::HttpOrHttps,
+                )
+                .map_err(|error| error.to_string())?,
+                SafeDialer::new(EgressPolicy::new(
+                    CidrAllowlist::parse_exact(["127.0.0.1/32"])
+                        .map_err(|error| error.to_string())?,
+                )),
+            ));
+            harness
+                .run(google, 6, "run-managed-google", "google managed")
+                .await?;
+            google_server.await.map_err(|error| error.to_string())??;
+            if package.calls.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+                return Err("managed route touched package provider".to_owned());
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let invoked: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM public.audit_events \
+                     WHERE event_type='agent.invoked' AND target_id LIKE 'run-managed-%'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if invoked != 2 {
+                return Err(format!("managed invoked audit count 漂移：{invoked}"));
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL 与 loopback socket：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn deadline_and_real_stream_stall_append_hash_chain_audits_before_terminal() {
+    let admin = batch6_admin_config(
+        "deadline_and_real_stream_stall_append_hash_chain_audits_before_terminal",
+    );
+    with_temp_database(&admin, "agentaudit", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let owner = "runtime-audit".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner,
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+
+            let deadline_agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                Arc::new(HoldingAgentContext),
+                Arc::new(RejectingPackageProvider::default()),
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 1,
+                    lease_renew_interval: Duration::from_millis(5),
+                    run_deadline: Some(Duration::from_millis(30)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let deadline_relay = RunRelay::start(runtime.clone(), deadline_agent.consumer());
+            begin_test_run(
+                &directory,
+                &deployment,
+                &tenant,
+                7,
+                "run-audit-deadline",
+                "deadline",
+            )
+            .await?;
+            wait_for_status(&pool, "run-audit-deadline", "cancelled", None).await?;
+            deadline_relay.stop().await;
+            deadline_agent.stop().await;
+
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .map_err(|error| error.to_string())?;
+            let address = listener.local_addr().map_err(|error| error.to_string())?;
+            let stall_server = tokio::spawn(one_stalling_openai_response(listener));
+            let openai: Arc<dyn ProviderAdapter> = Arc::new(OpenAiProvider::new(
+                OpenAiProviderConfig::new_with_transport_policy(
+                    Url::parse(&format!("http://{address}/v1/responses"))
+                        .map_err(|error| error.to_string())?,
+                    "model".to_owned(),
+                    OpenAiProtocol::Responses,
+                    SafeHttpBudget::new(64 * 1024, Duration::from_secs(2))
+                        .map_err(|error| error.to_string())?,
+                    Some(Duration::from_millis(20)),
+                    SchemePolicy::HttpOrHttps,
+                )
+                .map_err(|error| error.to_string())?,
+                OpenAiApiKey::from_bytes(b"stall-key".to_vec())
+                    .map_err(|error| error.to_string())?,
+                SafeDialer::new(EgressPolicy::new(
+                    CidrAllowlist::parse_exact(["127.0.0.1/32"])
+                        .map_err(|error| error.to_string())?,
+                )),
+            ));
+            let stall_provider = Arc::new(
+                RetryingProvider::new(openai, RetryingProviderConfig::default())
+                    .map_err(|error| error.to_string())?,
+            );
+            let context = Arc::new(
+                PostgresAgentContextSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    Some(64),
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let stall_agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                context,
+                stall_provider,
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 1,
+                    lease_renew_interval: Duration::from_secs(1),
+                    run_deadline: Some(Duration::from_secs(5)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let stall_relay = RunRelay::start(runtime, stall_agent.consumer());
+            begin_test_run(
+                &directory,
+                &deployment,
+                &tenant,
+                8,
+                "run-audit-stall",
+                "stall",
+            )
+            .await?;
+            wait_for_status(
+                &pool,
+                "run-audit-stall",
+                "failed",
+                Some("agent_stream_stalled"),
+            )
+            .await?;
+            stall_relay.stop().await;
+            stall_agent.stop().await;
+            stall_server.await.map_err(|error| error.to_string())??;
+
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let rows = client
+                .query(
+                    "SELECT event_type,target_id,payload,prev_hash,row_hash \
+                     FROM public.audit_events ORDER BY created_at,id",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let shapes = rows
+                .iter()
+                .map(|row| {
+                    Ok::<_, String>((
+                        row.try_get::<_, String>(0)
+                            .map_err(|error| error.to_string())?,
+                        row.try_get::<_, Option<String>>(1)
+                            .map_err(|error| error.to_string())?,
+                        row.try_get::<_, serde_json::Value>(2)
+                            .map_err(|error| error.to_string())?,
+                        row.try_get::<_, Option<String>>(3)
+                            .map_err(|error| error.to_string())?,
+                        row.try_get::<_, Option<String>>(4)
+                            .map_err(|error| error.to_string())?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if shapes.len() != 4
+                || shapes[0].0 != "agent.invoked"
+                || shapes[1].0 != "agent.run_deadline_exceeded"
+                || shapes[2].0 != "agent.invoked"
+                || shapes[3].0 != "agent.stream_stalled"
+                || shapes[1].1.as_deref() != Some("run-audit-deadline")
+                || shapes[3].1.as_deref() != Some("run-audit-stall")
+                || shapes[1].2["error_code"] != "run_deadline_exceeded"
+                || shapes[3].2["error_code"] != "agent_stream_stalled"
+                || shapes.iter().any(|shape| shape.4.is_none())
+                || shapes.iter().skip(1).any(|shape| shape.3.is_none())
+            {
+                return Err(format!("Agent lifecycle audit chain 漂移：{shapes:?}"));
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+struct ManagedRunHarness<'a> {
+    runtime: Arc<dyn RunRuntime>,
+    context: Arc<PostgresAgentContextSource>,
+    package: Arc<RejectingPackageProvider>,
+    directory: &'a PostgresThreadDirectory,
+    pool: &'a deadpool_postgres::Pool,
+    deployment: &'a DeploymentId,
+    tenant: &'a TenantId,
+}
+
+impl ManagedRunHarness<'_> {
+    async fn run(
+        &self,
+        managed: Arc<dyn ProviderAdapter>,
+        entropy_tail: u8,
+        run_id: &str,
+        expected_text: &str,
+    ) -> Result<(), String> {
+        let router: Arc<dyn ProviderAdapter> =
+            Arc::new(ProviderRouter::new(self.package.clone(), Some(managed)));
+        let provider = Arc::new(
+            RetryingProvider::new(router, RetryingProviderConfig::default())
+                .map_err(|error| error.to_string())?,
+        );
+        let agent = BuiltInAgentRuntime::start(
+            self.runtime.clone(),
+            self.context.clone(),
+            provider,
+            Arc::new(
+                PostgresAgentAudit::new(self.pool.clone(), vec![0xa5; 32])
+                    .map_err(|error| error.to_string())?,
+            ),
+            BuiltInAgentConfig {
+                queue_capacity: 4,
+                max_concurrency: 2,
+                lease_renew_interval: Duration::from_secs(1),
+                run_deadline: Some(Duration::from_secs(5)),
+            },
+        )
+        .map_err(|code| format!("agent config {code:?}"))?;
+        let relay = RunRelay::start(self.runtime.clone(), agent.consumer());
+        begin_test_run(
+            self.directory,
+            self.deployment,
+            self.tenant,
+            entropy_tail,
+            run_id,
+            "managed request",
+        )
+        .await?;
+        wait_for_terminal(self.pool, run_id, expected_text).await?;
+        relay.stop().await;
+        agent.stop().await;
+        Ok(())
+    }
 }
 
 fn batch6_admin_config(test_name: &str) -> DatabaseConfig {
@@ -694,6 +1167,132 @@ async fn wait_for_failure(
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     Err(format!("run {run_id} 未在本地期限内 failed"))
+}
+
+async fn wait_for_status(
+    pool: &deadpool_postgres::Pool,
+    run_id: &str,
+    expected_status: &str,
+    expected_code: Option<&str>,
+) -> Result<(), String> {
+    for _ in 0..200 {
+        let client = pool.get().await.map_err(|error| error.to_string())?;
+        let row = client
+            .query_one(
+                "SELECT status,error_code FROM public.runs WHERE run_id=$1",
+                &[&run_id],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let status: String = row.try_get(0).map_err(|error| error.to_string())?;
+        if status != "running" {
+            let code: Option<String> = row.try_get(1).map_err(|error| error.to_string())?;
+            return if status == expected_status && code.as_deref() == expected_code {
+                Ok(())
+            } else {
+                Err(format!("run {run_id} status 漂移：{status}/{code:?}"))
+            };
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    Err(format!("run {run_id} 未在本地期限内到达 {expected_status}"))
+}
+
+async fn one_stalling_openai_response(listener: TcpListener) -> Result<(), String> {
+    let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .map_err(|_| "stall provider local accept timeout".to_owned())?
+        .map_err(|error| error.to_string())?;
+    let _request = read_http_request(&mut stream).await?;
+    stream
+        .write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    stream.flush().await.map_err(|error| error.to_string())?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let _ = stream.write_all(b"d\r\ndata: late\n\n\r\n0\r\n\r\n").await;
+    Ok(())
+}
+
+async fn one_anthropic_response(listener: TcpListener) -> Result<(), String> {
+    let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .map_err(|_| "Anthropic local accept timeout".to_owned())?
+        .map_err(|error| error.to_string())?;
+    let request = read_http_request(&mut stream).await?;
+    if header_value(&request, "x-api-key") != Some("anthropic-managed-key")
+        || header_value(&request, "anthropic-version") != Some("2023-06-01")
+    {
+        return Err("Anthropic managed credential headers 漂移".to_owned());
+    }
+    let body: serde_json::Value = serde_json::from_str(
+        request
+            .split("\r\n\r\n")
+            .nth(1)
+            .ok_or("Anthropic request body missing")?,
+    )
+    .map_err(|error| error.to_string())?;
+    if body["model"] != "claude-sonnet-4-5"
+        || !body["system"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("Managed system role."))
+    {
+        return Err(format!("Anthropic managed request 漂移：{body:?}"));
+    }
+    let sse = concat!(
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"managed-a\",\"content\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"anthropic managed\"}}\n\n",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+        "data: {\"type\":\"message_stop\"}\n\n",
+    );
+    write_sse_response(&mut stream, sse).await
+}
+
+async fn one_google_response(listener: TcpListener) -> Result<(), String> {
+    let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .map_err(|_| "Google local accept timeout".to_owned())?
+        .map_err(|error| error.to_string())?;
+    let request = read_http_request(&mut stream).await?;
+    if header_value(&request, "x-goog-api-key") != Some("google-managed-key")
+        || request.contains("key=google-managed-key")
+    {
+        return Err("Google managed credential placement 漂移".to_owned());
+    }
+    let body: serde_json::Value = serde_json::from_str(
+        request
+            .split("\r\n\r\n")
+            .nth(1)
+            .ok_or("Google request body missing")?,
+    )
+    .map_err(|error| error.to_string())?;
+    if !body["systemInstruction"]["parts"][0]["text"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("Managed system role."))
+    {
+        return Err(format!("Google managed request 漂移：{body:?}"));
+    }
+    let sse = "data: {\"candidates\":[{\"index\":0,\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"google managed\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":1,\"candidatesTokenCount\":2,\"totalTokenCount\":3}}\n\n";
+    write_sse_response(&mut stream, sse).await
+}
+
+async fn write_sse_response(stream: &mut TcpStream, body: &str) -> Result<(), String> {
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|error| error.to_string())?;
+    stream
+        .write_all(body.as_bytes())
+        .await
+        .map_err(|error| error.to_string())
 }
 
 async fn recording_openai_server(listener: TcpListener) -> Result<Vec<String>, String> {

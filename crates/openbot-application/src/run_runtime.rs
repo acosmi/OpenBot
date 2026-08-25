@@ -59,12 +59,16 @@ pub enum RunFailureCode {
     ProviderRateLimited,
     /// Provider transport/5xx unavailable。
     ProviderUnavailable,
+    /// Provider request may have left the process before acknowledgement。
+    ProviderCommitUnknown,
     /// Provider SSE/schema/sequence invalid。
     ProviderInvalidResponse,
     /// Provider real body read gap exceeded watchdog。
     ProviderStreamStalled,
     /// Provider reported failed/incomplete generation。
     ProviderGenerationFailed,
+    /// Provider output token usage exceeded configured cap。
+    ProviderTokenBudgetExceeded,
     /// Built-in Agent tool sampling step cap reached。
     ToolStepLimit,
     /// G4 tool loop not yet available for this requested call。
@@ -89,9 +93,11 @@ impl RunFailureCode {
             Self::ProviderAuthentication => "provider_authentication",
             Self::ProviderRateLimited => "provider_rate_limited",
             Self::ProviderUnavailable => "provider_unavailable",
+            Self::ProviderCommitUnknown => "provider_commit_unknown",
             Self::ProviderInvalidResponse => "provider_invalid_response",
             Self::ProviderStreamStalled => "agent_stream_stalled",
             Self::ProviderGenerationFailed => "provider_generation_failed",
+            Self::ProviderTokenBudgetExceeded => "provider_token_budget_exceeded",
             Self::ToolStepLimit => "tool_step_limit",
             Self::ToolLoopUnavailable => "tool_loop_unavailable",
             Self::ToolDenied => "tool_denied",

@@ -29,6 +29,7 @@ url.workspace = true
 # `net::safe_http`，并由 `tools/check-safe-dialer-dependencies.sh` 锁死依赖图与调用面。
 bytes.workspace = true
 http.workspace = true
+httpdate.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true

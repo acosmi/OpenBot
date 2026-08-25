@@ -18,15 +18,16 @@ use serde_json::{Map, Value, json};
 use url::Url;
 use zeroize::Zeroizing;
 
+use super::common::{
+    ImmediateSession, MAX_PROVIDER_FIELD_BYTES, map_start_error, response_retry_after,
+    validate_request,
+};
 use super::sse::SseDecoder;
 use crate::net::safe_http::{
     AuthorizationValue, SafeDialer, SafeHttpBudget, SafeHttpError, SafeHttpRequest,
     SafeHttpStreamResponse, SchemePolicy,
 };
 
-const MAX_PROVIDER_MESSAGES: usize = 4096;
-const MAX_PROVIDER_TOOLS: usize = 256;
-const MAX_PROVIDER_FIELD_BYTES: usize = 1024 * 1024;
 const EVENT_STREAM_CONTENT_TYPE: &str = "text/event-stream";
 
 /// OpenAI-compatible wire protocol。
@@ -250,8 +251,8 @@ impl ProviderAdapter for OpenAiProvider {
             .dialer
             .execute_stream(request)
             .await
-            .map_err(|_| ProviderPortError::Unavailable)?;
-        if let Some(failure) = status_failure(response.status()) {
+            .map_err(map_start_error)?;
+        if let Some(failure) = status_failure(response.status(), response_retry_after(&response)) {
             return Ok(Box::new(ImmediateSession::new(ProviderEvent::Failed(
                 failure,
             ))));
@@ -283,41 +284,6 @@ impl ProviderAdapter for OpenAiProvider {
             ended: false,
         }))
     }
-}
-
-fn validate_request(request: &ProviderRequest) -> Result<(), ProviderPortError> {
-    if request.messages.is_empty()
-        || request.messages.len() > MAX_PROVIDER_MESSAGES
-        || request.tools.len() > MAX_PROVIDER_TOOLS
-        || request.max_output_tokens == Some(0)
-    {
-        return Err(ProviderPortError::InvalidRequest {
-            field: "provider_request",
-        });
-    }
-    for message in &request.messages {
-        if message.content.len() > MAX_PROVIDER_FIELD_BYTES
-            || message.content.as_bytes().contains(&0)
-            || (message.role == ProviderMessageRole::Tool) != message.tool_call_id.is_some()
-        {
-            return Err(ProviderPortError::InvalidRequest {
-                field: "provider_message",
-            });
-        }
-    }
-    for tool in &request.tools {
-        if tool.name.is_empty()
-            || tool.name.len() > 256
-            || tool.name.as_bytes().contains(&0)
-            || tool.description.len() > 64 * 1024
-            || !tool.input_schema.is_object()
-        {
-            return Err(ProviderPortError::InvalidRequest {
-                field: "provider_tool",
-            });
-        }
-    }
-    Ok(())
 }
 
 fn build_request_body(
@@ -423,29 +389,14 @@ const fn role_literal(role: ProviderMessageRole) -> &'static str {
     }
 }
 
-fn status_failure(status: StatusCode) -> Option<ProviderFailure> {
+fn status_failure(status: StatusCode, retry_after: Option<Duration>) -> Option<ProviderFailure> {
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Some(ProviderFailure::Authentication),
-        StatusCode::TOO_MANY_REQUESTS => Some(ProviderFailure::RateLimited),
-        status if status.is_server_error() => Some(ProviderFailure::ServerUnavailable),
+        StatusCode::TOO_MANY_REQUESTS => Some(ProviderFailure::RateLimited { retry_after }),
+        status if status.is_server_error() => {
+            Some(ProviderFailure::ServerUnavailable { retry_after })
+        }
         _ => None,
-    }
-}
-
-struct ImmediateSession {
-    event: Option<ProviderEvent>,
-}
-
-impl ImmediateSession {
-    const fn new(event: ProviderEvent) -> Self {
-        Self { event: Some(event) }
-    }
-}
-
-#[async_trait]
-impl ProviderSession for ImmediateSession {
-    async fn next_event(&mut self) -> Result<Option<ProviderEvent>, ProviderPortError> {
-        Ok(self.event.take())
     }
 }
 
@@ -678,9 +629,9 @@ impl ResponsesDecoder {
                     return Err(ProviderFailure::InvalidResponse);
                 }
                 let response = object_field(&value, "response")?;
-                if let Some(usage) = parse_usage(response.get("usage"))? {
-                    output.push(ProviderEvent::Usage(usage));
-                }
+                let usage =
+                    parse_usage(response.get("usage"))?.ok_or(ProviderFailure::InvalidResponse)?;
+                output.push(ProviderEvent::Usage(usage));
                 output.push(ProviderEvent::Completed);
                 self.terminal = true;
             }
@@ -707,6 +658,7 @@ struct ChatDecoder {
     response_id: Option<String>,
     tools: BTreeMap<(u32, u32), ChatToolAccumulator>,
     finish_seen: bool,
+    usage_seen: bool,
     terminal: bool,
 }
 
@@ -739,6 +691,10 @@ impl ChatDecoder {
             }
         }
         if let Some(usage) = parse_usage(value.get("usage"))? {
+            if self.usage_seen {
+                return Err(ProviderFailure::InvalidResponse);
+            }
+            self.usage_seen = true;
             output.push(ProviderEvent::Usage(usage));
         }
         let choices = value
@@ -818,7 +774,7 @@ impl ChatDecoder {
     }
 
     fn complete_stream(&mut self) -> Result<Vec<ProviderEvent>, ProviderFailure> {
-        if !self.finish_seen || self.response_id.is_none() {
+        if !self.finish_seen || !self.usage_seen || self.response_id.is_none() {
             return Err(ProviderFailure::InvalidResponse);
         }
         let mut output = Vec::new();
@@ -1235,10 +1191,12 @@ mod tests {
     #[test]
     fn request_shapes_keep_responses_and_chat_distinct() {
         let request = ProviderRequest {
+            route: openbot_application::ProviderRoute::PackageOpenAi,
             messages: vec![openbot_application::ProviderMessage {
                 role: ProviderMessageRole::User,
                 content: "hello".to_owned(),
                 tool_call_id: None,
+                tool_name: None,
             }],
             tools: Vec::new(),
             max_output_tokens: Some(32),
@@ -1306,10 +1264,12 @@ mod tests {
         );
         let mut session = adapter
             .start(ProviderRequest {
+                route: openbot_application::ProviderRoute::PackageOpenAi,
                 messages: vec![openbot_application::ProviderMessage {
                     role: ProviderMessageRole::User,
                     content: "hello".to_owned(),
                     tool_call_id: None,
+                    tool_name: None,
                 }],
                 tools: Vec::new(),
                 max_output_tokens: Some(16),

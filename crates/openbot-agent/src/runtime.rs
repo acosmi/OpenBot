@@ -8,9 +8,10 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use openbot_application::{
-    AgentContextError, AgentContextSource, DurableTextRun, ProviderAdapter, ProviderEvent,
-    ProviderFailure, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode,
-    RunRuntime, RunRuntimeError, RunTerminal,
+    AgentAudit, AgentAuditKind, AgentContextError, AgentContextSource, DurableTextRun,
+    ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, RunDispatchConsumer,
+    RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError,
+    RunTerminal,
 };
 use openbot_domain::agent::{
     AgentEffect, AgentEvent, AgentFailure, AgentState, AgentTerminal, reduce,
@@ -91,6 +92,7 @@ impl BuiltInAgentRuntime {
         runtime: Arc<dyn RunRuntime>,
         context: Arc<dyn AgentContextSource>,
         provider: Arc<dyn ProviderAdapter>,
+        audit: Arc<dyn AgentAudit>,
         config: BuiltInAgentConfig,
     ) -> Result<Self, RunFailureCode> {
         let config = config.validate()?;
@@ -100,6 +102,7 @@ impl BuiltInAgentRuntime {
             runtime,
             context,
             provider,
+            audit,
             config,
             sender,
             reservations: Mutex::new(BTreeMap::new()),
@@ -213,6 +216,7 @@ struct Inner {
     runtime: Arc<dyn RunRuntime>,
     context: Arc<dyn AgentContextSource>,
     provider: Arc<dyn ProviderAdapter>,
+    audit: Arc<dyn AgentAudit>,
     config: BuiltInAgentConfig,
     sender: mpsc::Sender<Activation>,
     reservations: Mutex<BTreeMap<String, Reservation>>,
@@ -231,9 +235,15 @@ struct Activation {
     cancel: watch::Receiver<bool>,
 }
 
+#[derive(Clone, Copy)]
+enum CancellationSource {
+    User,
+    Deadline,
+}
+
 enum ControlledChild<T> {
     Ready(T),
-    Cancelled,
+    Cancelled(CancellationSource),
     LeaseLost,
 }
 
@@ -334,6 +344,15 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
         return;
     }
     let mut journal = DurableTextRun::new(inner.runtime.clone(), lease.clone());
+    if inner
+        .audit
+        .record(lease, AgentAuditKind::Invoked)
+        .await
+        .is_err()
+    {
+        drive_terminal_event(&mut state, &mut journal, AgentEvent::JournalCommitUnknown).await;
+        return;
+    }
     let mut renew = tokio::time::interval(inner.config.lease_renew_interval);
     renew.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     renew.tick().await;
@@ -352,8 +371,15 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
     .await
     {
         ControlledChild::Ready(result) => result,
-        ControlledChild::Cancelled => {
-            cancel_and_commit(&mut state, &mut journal).await;
+        ControlledChild::Cancelled(source) => {
+            cancel_and_commit(
+                &mut state,
+                &mut journal,
+                inner.audit.as_ref(),
+                lease,
+                source,
+            )
+            .await;
             return;
         }
         ControlledChild::LeaseLost => {
@@ -392,8 +418,15 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
     .await
     {
         ControlledChild::Ready(result) => result,
-        ControlledChild::Cancelled => {
-            cancel_and_commit(&mut state, &mut journal).await;
+        ControlledChild::Cancelled(source) => {
+            cancel_and_commit(
+                &mut state,
+                &mut journal,
+                inner.audit.as_ref(),
+                lease,
+                source,
+            )
+            .await;
             return;
         }
         ControlledChild::LeaseLost => {
@@ -403,16 +436,17 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
     };
     let mut session = match session {
         Ok(session) => session,
-        Err(_) => {
+        Err(error) => {
             drive_terminal_event(
                 &mut state,
                 &mut journal,
-                AgentEvent::ProviderFailed(AgentFailure::ProviderUnavailable),
+                AgentEvent::ProviderFailed(provider_port_failure(error)),
             )
             .await;
             return;
         }
     };
+    let mut usage_seen = false;
 
     loop {
         let chunk_deadline = journal.next_deadline().map(tokio::time::Instant::from_std);
@@ -420,14 +454,26 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
             changed = activation.cancel.changed() => {
                 if changed.is_err() || *activation.cancel.borrow() {
                     drop(session);
-                    cancel_and_commit(&mut state, &mut journal).await;
+                    cancel_and_commit(
+                        &mut state,
+                        &mut journal,
+                        inner.audit.as_ref(),
+                        lease,
+                        CancellationSource::User,
+                    ).await;
                     return;
                 }
             }
             () = wait_optional(deadline) => {
                 drop(session);
                 // Deadline is cancellation semantics: child drop is the stopped fact.
-                cancel_and_commit(&mut state, &mut journal).await;
+                cancel_and_commit(
+                    &mut state,
+                    &mut journal,
+                    inner.audit.as_ref(),
+                    lease,
+                    CancellationSource::Deadline,
+                ).await;
                 return;
             }
             _ = renew.tick() => {
@@ -456,15 +502,26 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
                             &mut journal,
                             event,
                             max_output_tokens,
+                            &mut usage_seen,
+                            inner.audit.as_ref(),
+                            lease,
                         ).await {
                             return;
                         }
                     }
-                    Ok(None) | Err(_) => {
+                    Ok(None) => {
                         drive_terminal_event(
                             &mut state,
                             &mut journal,
                             AgentEvent::ProviderFailed(AgentFailure::ProviderInvalidResponse),
+                        ).await;
+                        return;
+                    }
+                    Err(error) => {
+                        drive_terminal_event(
+                            &mut state,
+                            &mut journal,
+                            AgentEvent::ProviderFailed(provider_port_failure(error)),
                         ).await;
                         return;
                     }
@@ -497,10 +554,12 @@ where
         tokio::select! {
             changed = cancel.changed() => {
                 if changed.is_err() || *cancel.borrow() {
-                    return ControlledChild::Cancelled;
+                    return ControlledChild::Cancelled(CancellationSource::User);
                 }
             }
-            () = wait_optional(deadline) => return ControlledChild::Cancelled,
+            () = wait_optional(deadline) => {
+                return ControlledChild::Cancelled(CancellationSource::Deadline);
+            }
             _ = renew.tick() => {
                 if runtime.renew_lease(lease).await.is_err() {
                     return ControlledChild::LeaseLost;
@@ -516,6 +575,9 @@ async fn handle_provider_event(
     journal: &mut DurableTextRun,
     event: ProviderEvent,
     max_output_tokens: Option<u32>,
+    usage_seen: &mut bool,
+    audit: &dyn AgentAudit,
+    lease: &RunExecutionLease,
 ) -> bool {
     match event {
         ProviderEvent::ResponseStarted { .. }
@@ -575,7 +637,12 @@ async fn handle_provider_event(
             true
         }
         ProviderEvent::Usage(usage) => {
-            if max_output_tokens.is_some_and(|limit| usage.output_tokens > u64::from(limit)) {
+            let usage_is_invalid = *usage_seen
+                || usage
+                    .input_tokens
+                    .checked_add(usage.output_tokens)
+                    .is_none_or(|known| usage.total_tokens < known);
+            if usage_is_invalid {
                 drive_terminal_event(
                     state,
                     journal,
@@ -583,11 +650,31 @@ async fn handle_provider_event(
                 )
                 .await;
                 true
+            } else if max_output_tokens.is_some_and(|limit| usage.output_tokens > u64::from(limit))
+            {
+                *usage_seen = true;
+                drive_terminal_event(
+                    state,
+                    journal,
+                    AgentEvent::ProviderFailed(AgentFailure::ProviderTokenBudgetExceeded),
+                )
+                .await;
+                true
             } else {
+                *usage_seen = true;
                 false
             }
         }
         ProviderEvent::Completed => {
+            if max_output_tokens.is_some() && !*usage_seen {
+                drive_terminal_event(
+                    state,
+                    journal,
+                    AgentEvent::ProviderFailed(AgentFailure::ProviderInvalidResponse),
+                )
+                .await;
+                return true;
+            }
             let Ok((next, effects)) = reduce(state, AgentEvent::ProviderCompleted) else {
                 return true;
             };
@@ -599,6 +686,16 @@ async fn handle_provider_event(
             true
         }
         ProviderEvent::Failed(failure) => {
+            if failure == ProviderFailure::StreamStalled && {
+                metrics::counter!("openbot_agent_stream_stalled_total").increment(1);
+                audit
+                    .record(lease, AgentAuditKind::StreamStalled)
+                    .await
+                    .is_err()
+            } {
+                drive_terminal_event(state, journal, AgentEvent::JournalCommitUnknown).await;
+                return true;
+            }
             let failure = provider_failure(failure);
             let Ok((next, effects)) = reduce(state, AgentEvent::ProviderFailed(failure)) else {
                 return true;
@@ -640,7 +737,23 @@ async fn drive_terminal_event(
     commit_terminal(state, journal, *terminal).await;
 }
 
-async fn cancel_and_commit(state: &mut AgentState, journal: &mut DurableTextRun) {
+async fn cancel_and_commit(
+    state: &mut AgentState,
+    journal: &mut DurableTextRun,
+    audit: &dyn AgentAudit,
+    lease: &RunExecutionLease,
+    source: CancellationSource,
+) {
+    if matches!(source, CancellationSource::Deadline) && {
+        metrics::counter!("openbot_agent_run_deadline_total").increment(1);
+        audit
+            .record(lease, AgentAuditKind::RunDeadlineExceeded)
+            .await
+            .is_err()
+    } {
+        drive_terminal_event(state, journal, AgentEvent::JournalCommitUnknown).await;
+        return;
+    }
     let Ok((next, effects)) = reduce(state, AgentEvent::CancelRequested) else {
         return;
     };
@@ -670,13 +783,21 @@ async fn journal_failure(
 const fn provider_failure(failure: ProviderFailure) -> AgentFailure {
     match failure {
         ProviderFailure::Authentication => AgentFailure::ProviderAuthentication,
-        ProviderFailure::RateLimited => AgentFailure::ProviderRateLimited,
-        ProviderFailure::ServerUnavailable | ProviderFailure::Transport => {
+        ProviderFailure::RateLimited { .. } => AgentFailure::ProviderRateLimited,
+        ProviderFailure::ServerUnavailable { .. } | ProviderFailure::Transport => {
             AgentFailure::ProviderUnavailable
         }
         ProviderFailure::InvalidResponse => AgentFailure::ProviderInvalidResponse,
         ProviderFailure::StreamStalled => AgentFailure::ProviderStreamStalled,
         ProviderFailure::GenerationFailed => AgentFailure::ProviderGenerationFailed,
+    }
+}
+
+const fn provider_port_failure(error: ProviderPortError) -> AgentFailure {
+    match error {
+        ProviderPortError::InvalidRequest { .. } => AgentFailure::ProviderInvalidResponse,
+        ProviderPortError::Unavailable => AgentFailure::ProviderUnavailable,
+        ProviderPortError::CommitUnknown => AgentFailure::ProviderCommitUnknown,
     }
 }
 
@@ -706,9 +827,11 @@ const fn failure_code(failure: AgentFailure) -> RunFailureCode {
         AgentFailure::ProviderAuthentication => RunFailureCode::ProviderAuthentication,
         AgentFailure::ProviderRateLimited => RunFailureCode::ProviderRateLimited,
         AgentFailure::ProviderUnavailable => RunFailureCode::ProviderUnavailable,
+        AgentFailure::ProviderCommitUnknown => RunFailureCode::ProviderCommitUnknown,
         AgentFailure::ProviderInvalidResponse => RunFailureCode::ProviderInvalidResponse,
         AgentFailure::ProviderStreamStalled => RunFailureCode::ProviderStreamStalled,
         AgentFailure::ProviderGenerationFailed => RunFailureCode::ProviderGenerationFailed,
+        AgentFailure::ProviderTokenBudgetExceeded => RunFailureCode::ProviderTokenBudgetExceeded,
         AgentFailure::ToolStepLimit => RunFailureCode::ToolStepLimit,
         AgentFailure::ToolLoopUnavailable => RunFailureCode::ToolLoopUnavailable,
         AgentFailure::ToolDenied => RunFailureCode::ToolDenied,
@@ -723,8 +846,9 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     use openbot_application::{
-        ClaimedRunDispatch, ProviderMessage, ProviderMessageRole, ProviderPortError,
-        ProviderRequest, ProviderSession, RunSemanticChannel, RunWriteReceipt,
+        AgentAuditError, ClaimedRunDispatch, NoAgentAudit, ProviderMessage, ProviderMessageRole,
+        ProviderPortError, ProviderRequest, ProviderSession, ProviderUsage, RunSemanticChannel,
+        RunWriteReceipt,
     };
     use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId};
     use openbot_domain::thread::FencingToken;
@@ -735,6 +859,29 @@ mod tests {
     struct FakeRuntime {
         calls: StdMutex<Vec<RuntimeCall>>,
         terminal: Notify,
+    }
+
+    #[derive(Default)]
+    struct FakeAudit {
+        kinds: StdMutex<Vec<AgentAuditKind>>,
+    }
+
+    #[async_trait]
+    impl AgentAudit for FakeAudit {
+        async fn record(
+            &self,
+            _lease: &RunExecutionLease,
+            kind: AgentAuditKind,
+        ) -> Result<(), AgentAuditError> {
+            self.kinds.lock().expect("audit lock").push(kind);
+            Ok(())
+        }
+    }
+
+    impl FakeAudit {
+        fn kinds(&self) -> Vec<AgentAuditKind> {
+            self.kinds.lock().expect("audit lock").clone()
+        }
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -836,10 +983,12 @@ mod tests {
             _lease: &RunExecutionLease,
         ) -> Result<ProviderRequest, AgentContextError> {
             Ok(ProviderRequest {
+                route: openbot_application::ProviderRoute::PackageOpenAi,
                 messages: vec![ProviderMessage {
                     role: ProviderMessageRole::User,
                     content: "hello".to_owned(),
                     tool_call_id: None,
+                    tool_name: None,
                 }],
                 tools: Vec::new(),
                 max_output_tokens: Some(32),
@@ -862,6 +1011,18 @@ mod tests {
     struct FakeProvider {
         events: Vec<ProviderEvent>,
         hold: bool,
+    }
+
+    struct FailingStartProvider(ProviderPortError);
+
+    #[async_trait]
+    impl ProviderAdapter for FailingStartProvider {
+        async fn start(
+            &self,
+            _request: ProviderRequest,
+        ) -> Result<Box<dyn ProviderSession>, ProviderPortError> {
+            Err(self.0)
+        }
     }
 
     #[async_trait]
@@ -940,10 +1101,16 @@ mod tests {
                         index: 0,
                         delta: "hello".to_owned(),
                     },
+                    ProviderEvent::Usage(ProviderUsage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                    }),
                     ProviderEvent::Completed,
                 ],
                 hold: false,
             }),
+            Arc::new(NoAgentAudit),
             test_config(),
         )
         .unwrap();
@@ -968,6 +1135,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reported_output_above_authoritative_token_cap_fails_before_completed() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            Arc::new(FakeProvider {
+                events: vec![
+                    ProviderEvent::ResponseStarted {
+                        response_id: "response-budget".to_owned(),
+                    },
+                    ProviderEvent::Usage(ProviderUsage {
+                        input_tokens: 10,
+                        output_tokens: 33,
+                        total_tokens: 43,
+                    }),
+                    ProviderEvent::Completed,
+                ],
+                hold: false,
+            }),
+            Arc::new(NoAgentAudit),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-token-budget");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.calls(),
+            [RuntimeCall::Finish(
+                1,
+                RunTerminal::Failed(RunFailureCode::ProviderTokenBudgetExceeded)
+            )]
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn completed_without_usage_cannot_bypass_authoritative_token_cap() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            Arc::new(FakeProvider {
+                events: vec![
+                    ProviderEvent::ResponseStarted {
+                        response_id: "response-no-usage".to_owned(),
+                    },
+                    ProviderEvent::Completed,
+                ],
+                hold: false,
+            }),
+            Arc::new(NoAgentAudit),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-no-usage");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.calls(),
+            [RuntimeCall::Finish(
+                1,
+                RunTerminal::Failed(RunFailureCode::ProviderInvalidResponse)
+            )]
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
     async fn tool_call_fails_closed_until_unique_tool_loop_is_connected() {
         let runtime = Arc::new(FakeRuntime::new());
         let agent = BuiltInAgentRuntime::start(
@@ -982,6 +1232,7 @@ mod tests {
                 }],
                 hold: false,
             }),
+            Arc::new(NoAgentAudit),
             test_config(),
         )
         .unwrap();
@@ -1015,6 +1266,7 @@ mod tests {
                 events: Vec::new(),
                 hold: true,
             }),
+            Arc::new(NoAgentAudit),
             test_config(),
         )
         .unwrap();
@@ -1040,6 +1292,7 @@ mod tests {
     #[tokio::test]
     async fn absolute_deadline_and_lease_heartbeat_start_before_context_finishes() {
         let runtime = Arc::new(FakeRuntime::new());
+        let audit = Arc::new(FakeAudit::default());
         let agent = BuiltInAgentRuntime::start(
             runtime.clone(),
             Arc::new(HoldingContext),
@@ -1047,6 +1300,7 @@ mod tests {
                 events: Vec::new(),
                 hold: true,
             }),
+            audit.clone(),
             BuiltInAgentConfig {
                 queue_capacity: 4,
                 max_concurrency: 2,
@@ -1070,6 +1324,80 @@ mod tests {
         assert_eq!(
             calls.last(),
             Some(&RuntimeCall::Finish(1, RunTerminal::Cancelled))
+        );
+        assert_eq!(
+            audit.kinds(),
+            [AgentAuditKind::Invoked, AgentAuditKind::RunDeadlineExceeded]
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn stream_stall_is_audited_before_failed_terminal() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let audit = Arc::new(FakeAudit::default());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            Arc::new(FakeProvider {
+                events: vec![ProviderEvent::Failed(ProviderFailure::StreamStalled)],
+                hold: false,
+            }),
+            audit.clone(),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-stall-audit");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.calls(),
+            [RuntimeCall::Finish(
+                1,
+                RunTerminal::Failed(RunFailureCode::ProviderStreamStalled)
+            )]
+        );
+        assert_eq!(
+            audit.kinds(),
+            [AgentAuditKind::Invoked, AgentAuditKind::StreamStalled]
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn provider_start_commit_unknown_is_reconciliation_not_retry_or_failure() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            Arc::new(FailingStartProvider(ProviderPortError::CommitUnknown)),
+            Arc::new(NoAgentAudit),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-provider-unknown");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.calls(),
+            [RuntimeCall::Finish(
+                1,
+                RunTerminal::ReconciliationRequired(RunFailureCode::ProviderCommitUnknown)
+            )]
         );
         agent.stop().await;
     }

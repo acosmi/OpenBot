@@ -30,9 +30,13 @@
 #![deny(missing_docs)]
 
 mod gateway;
+mod provider_router;
+mod retry;
 mod runtime;
 
 pub use gateway::AgentToolGateway;
+pub use provider_router::ProviderRouter;
+pub use retry::{RetryingProvider, RetryingProviderConfig};
 pub use runtime::{
     AGENT_SHUTDOWN_DEADLINE, BuiltInAgentConfig, BuiltInAgentRuntime, DEFAULT_AGENT_CONCURRENCY,
     DEFAULT_AGENT_QUEUE_CAPACITY, DEFAULT_LEASE_RENEW_INTERVAL, DEFAULT_RUN_DEADLINE,

@@ -113,8 +113,14 @@ impl TenantPackageSynchronizer for PostgresTenantPackageSynchronizer {
                 TenantAgentType::RemoteAgUi => AgentType::RemoteAgUi,
             };
             let configuration = match &agent.configuration {
-                TenantAgentConfiguration::BuiltIn { system_prompt } => {
-                    serde_json::json!({"systemPrompt": system_prompt})
+                TenantAgentConfiguration::BuiltIn {
+                    system_prompt,
+                    provider_source,
+                } => {
+                    serde_json::json!({
+                        "systemPrompt": system_prompt,
+                        "providerSource": provider_source.as_str(),
+                    })
                 }
                 TenantAgentConfiguration::RemoteAgUi { endpoint } => {
                     serde_json::json!({"endpoint": endpoint})

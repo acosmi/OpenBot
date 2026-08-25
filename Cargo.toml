@@ -131,6 +131,7 @@ futures-util = { version = "0.3.34", default-features = false, features = ["sink
 tower = { version = "0.5.3", features = ["timeout", "limit"] }
 tower-http = { version = "0.6", features = ["trace", "limit"] }
 http = "1.5.0"
+httpdate = "1.0.3"
 
 # W-7 HTTP safe dialer（v3 §6.2 / §7.5 / §10.5，R29 delta audit）。这里不引入
 # reqwest：它会再带一层代理、自动 retry/redirect 与 resolver 组合，反而让「连接必须绑定

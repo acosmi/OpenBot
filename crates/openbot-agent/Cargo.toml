@@ -20,6 +20,8 @@ uuid.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+getrandom.workspace = true
+metrics.workspace = true
 
 [dev-dependencies]
 openbot-contracts = { workspace = true, features = ["testkit"] }

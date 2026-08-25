@@ -44,6 +44,8 @@ pub struct AgentBudgets {
     pub stall_timeout: Option<Duration>,
     /// `None` = OPENBOT_RUN_DEADLINE_MS=0；unset defaults 30min。
     pub run_deadline: Option<Duration>,
+    /// Per-sampling output cap；tool loop 后续还须累计成 per-run token budget。
+    pub max_output_tokens: u32,
 }
 
 /// Package-declared built-in Bots 的 OpenAI transport/fallback config。
@@ -78,9 +80,11 @@ pub fn parse_agent_config(
         Some(1_800_000),
         problems,
     );
+    let max_output_tokens = parse_output_tokens(env_map, problems);
     let budgets = AgentBudgets {
         stall_timeout,
         run_deadline,
+        max_output_tokens,
     };
     let package_openai = parse_package_openai(env_map, problems);
     let managed_requested = [
@@ -172,6 +176,23 @@ pub fn parse_agent_config(
     )
 }
 
+fn parse_output_tokens(env_map: &EnvMap, problems: &mut Vec<ConfigProblem>) -> u32 {
+    const DEFAULT: u32 = 16_384;
+    match env::optional(env_map, "OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS") {
+        None => DEFAULT,
+        Some(raw) => match raw.parse::<u32>() {
+            Ok(value @ 1..=1_000_000) => value,
+            _ => {
+                problems.push(ConfigProblem::Malformed {
+                    variable: "OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS",
+                    expectation: Expectation::WholeTokensOneToMillion,
+                });
+                DEFAULT
+            }
+        },
+    }
+}
+
 fn parse_package_openai(
     env_map: &EnvMap,
     problems: &mut Vec<ConfigProblem>,
@@ -255,6 +276,7 @@ mod tests {
         assert!(problems.is_empty());
         assert_eq!(budgets.stall_timeout, None);
         assert_eq!(budgets.run_deadline, Some(Duration::from_millis(1_800_000)));
+        assert_eq!(budgets.max_output_tokens, 16_384);
         let provider = provider.unwrap();
         assert_eq!(
             package.environment_api_key.as_ref().unwrap().expose(),
@@ -267,6 +289,61 @@ mod tests {
         assert!(!provider.allow_http);
         assert_eq!(provider.api_key.expose(), "key");
         assert_eq!(provider.base_url.as_str(), "https://api.openai.com/v1");
+
+        let mut exact = env;
+        exact.insert("BOT_RESPONSES_API".to_owned(), "true".to_owned());
+        let (_, _, provider) = parse_agent_config(&exact, &mut Vec::new());
+        assert!(provider.unwrap().use_responses_api);
+    }
+
+    #[test]
+    fn anthropic_and_google_select_only_their_exact_key_base_and_model_inputs() {
+        let cases = [
+            (
+                BTreeMap::from([
+                    ("BOT_PROVIDER".to_owned(), "anthropic".to_owned()),
+                    ("ANTHROPIC_API_KEY".to_owned(), " anthropic-key ".to_owned()),
+                    (
+                        "ANTHROPIC_BASE_URL".to_owned(),
+                        " https://anthropic.example ".to_owned(),
+                    ),
+                    ("GOOGLE_API_KEY".to_owned(), "wrong-key".to_owned()),
+                    ("BOT_RESPONSES_API".to_owned(), "true".to_owned()),
+                ]),
+                ManagedProviderKind::Anthropic,
+                "claude-sonnet-4-5",
+                "anthropic-key",
+                "https://anthropic.example",
+            ),
+            (
+                BTreeMap::from([
+                    ("BOT_PROVIDER".to_owned(), "google".to_owned()),
+                    ("BOT_MODEL".to_owned(), " gemini-custom ".to_owned()),
+                    ("GOOGLE_API_KEY".to_owned(), " google-key ".to_owned()),
+                    (
+                        "GOOGLE_GENERATIVE_AI_BASE_URL".to_owned(),
+                        "https://google.example/root".to_owned(),
+                    ),
+                    ("ANTHROPIC_API_KEY".to_owned(), "wrong-key".to_owned()),
+                    ("BOT_RESPONSES_API".to_owned(), "true".to_owned()),
+                ]),
+                ManagedProviderKind::Google,
+                "gemini-custom",
+                "google-key",
+                "https://google.example/root",
+            ),
+        ];
+        for (env, expected_kind, expected_model, expected_key, expected_base) in cases {
+            let mut problems = Vec::new();
+            let (_, _, provider) = parse_agent_config(&env, &mut problems);
+            assert!(problems.is_empty());
+            let provider = provider.unwrap();
+            assert_eq!(provider.provider, expected_kind);
+            assert_eq!(provider.model, expected_model);
+            assert_eq!(provider.api_key.expose(), expected_key);
+            assert_eq!(provider.base_url.as_str(), expected_base);
+            assert!(!provider.use_responses_api);
+        }
     }
 
     #[test]
@@ -319,5 +396,25 @@ mod tests {
         exact.insert("OPENBOT_PROVIDER_ALLOW_HTTP".to_owned(), "true".to_owned());
         let (_, package, _) = parse_agent_config(&exact, &mut Vec::new());
         assert!(package.allow_http);
+    }
+
+    #[test]
+    fn provider_output_token_budget_is_bounded_and_never_silently_disabled() {
+        for raw in ["0", "1000001", "-1", "1.5"] {
+            let env = BTreeMap::from([(
+                "OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS".to_owned(),
+                raw.to_owned(),
+            )]);
+            let mut problems = Vec::new();
+            let (budgets, _, _) = parse_agent_config(&env, &mut problems);
+            assert_eq!(budgets.max_output_tokens, 16_384);
+            assert_eq!(problems.len(), 1, "{raw}");
+        }
+        let env = BTreeMap::from([(
+            "OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS".to_owned(),
+            "32768".to_owned(),
+        )]);
+        let (budgets, _, _) = parse_agent_config(&env, &mut Vec::new());
+        assert_eq!(budgets.max_output_tokens, 32_768);
     }
 }

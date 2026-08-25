@@ -602,14 +602,25 @@ pub enum ProviderEvent {
 
 解析器必须接受 skeleton item、字段延迟、交错的并行 tool arguments、partial JSON、未知扩展事件和 UTF-8 分片；聚合键使用稳定 index + call ID，不假设 provider item ID 永不变化。原始事件默认不持久化，只把规范化事件写 journal。
 
+managed provider 的首版协议再固定如下：Anthropic 走 Messages streaming API，API key 只放
+`x-api-key`，`anthropic-version=2023-06-01`，system 与 messages 分离；未显式配置 output cap 时才按
+锁定 `@langchain/anthropic@1.5.6` 的 model table 取默认。Google 走
+`v1beta/models/{model}:streamGenerateContent?alt=sse`，API key 只放 `x-goog-api-key`，不得进入 query；
+`systemInstruction`、`contents`、`functionDeclarations` 与 `functionResponse` 分域。锁定
+`@google/generative-ai@0.24.1` 的 stream DTO 没有稳定 response id，Rust 侧以首个规范 chunk 的
+SHA-256 合成仅用于 trace/correlation 的确定 id，不把它当授权或业务 identity。三家 adapter 都必须在
+`Completed` 前给出单调、自洽的 normalized `Usage`；缺失、重复或回退按 invalid response fail-closed。
+这些是本地协议实现证据，不等于 provider gate 要求的三家 recorded vendor trace。（§28.1 R70）
+
 ### 7.4 Retry、Cancel、Budget 与 Commit
 
 - `CancellationToken` 按 run → provider/tool/computer/process tree 传播；
 - UI 先显示 `Cancelling`，收到子任务终止事实后才显示 `Cancelled`；
-- 429、明确可重试 5xx 和连接前失败可指数退避；认证、schema、policy 错误不重试；
+- 429、明确可重试 5xx 和连接前失败可指数退避；认证、schema、policy 错误不重试；首版按锁定 `@langchain/core@1.2.8` 固定为首次请求后最多 6 次重试、1s×2 指数退避、`[1,2)` jitter、指数项最多 64s，`Retry-After` 取其与指数项较大值，外层 absolute deadline 始终是总上限；只允许 pre-send `Unavailable` 或 session 首事件就是明确 429/5xx 时重试，见到任何响应身份/增量后的 transport/commit-unknown 永不自动重放；
 - 非幂等请求已发送但未确认时，`commit_state=Unknown`，进入 reconciliation；
 - tool 只有显式 `parallel_safe=true` 且资源锁不冲突才并行；结果按原 call 顺序回注；
-- budget 同时限制 absolute deadline、idle deadline、provider token、tool steps、并发 tool、computer runtime 和用户配置的费用上限；
+- budget 同时限制 absolute deadline、idle deadline、provider token、tool steps、并发 tool、computer runtime 和用户配置的费用上限；首版新增 `OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS`，缺省 16384，只接受 1..=1000000，0 不能静默关闭；它是**每次 sampling 输出上限**，三家 request 和 host 的 normalized usage 双重校验。真实 tool loop 落地时仍须累计整个 run 的多步 input/output token 与费用，本变量不能冒充完整 budget；
+- Agent durable activate 后、读取 context/provider 前写 `agent.invoked`；真实 body read gap 到点时先停止 session，再写 `agent.stream_stalled`，最后 failed terminal；absolute deadline 到点时先停止 child，再写新增 `agent.run_deadline_exceeded`，最后走 `Cancelling → Cancelled`。三类 audit 只带权威 run/actor 与 allowlisted stable code，任一 audit 写失败都进入 reconciliation，不继续 sampling/提交普通终态；
 - 上下文压缩保留 system/standing role、未完成 tool pair、最近对话和 provenance；压缩摘要带 source range。
 
 ### 7.5 Remote AG-UI
@@ -1191,6 +1202,7 @@ AG-UI 是持续支持的开放协议边界；CopilotKit Intelligence 私有 wire
 | `GOOGLE_OAUTH_*` / `MICROSOFT_OAUTH_*` / `OKTA_OAUTH_*` | preserve | 三家可同时配置（§6.2） |
 | `AGENT_STALL_TIMEOUT_MS` / `AUDIT_RETENTION_DAYS` | preserve | §7.2 / §8.6 |
 | `OPENBOT_RUN_DEADLINE_MS` | 新增 | §7.2 |
+| `OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS` | 新增 | §7.4 / R70；缺省 16384，只接受 1..=1000000，0 不关闭预算；当前为每 sampling output cap，不冒充 run-wide token/cost budget |
 | `OPENBOT_PROVIDER_EGRESS_ALLOW_CIDRS` / `OPENBOT_PROVIDER_ALLOW_HTTP` | 新增 | §7.3 / §7.5；前者只收精确数值 CIDR，后者只有逐字 `true` 才允许 HTTP；二者互不替代，默认仍 HTTPS + 禁 private/special address |
 | `AGENT_TOOL_TOKEN` | remove | §3.4；preflight 列出仍在用它的端点 |
 | `MANAGED_AGENT_AG_UI_URL` / `MANAGED_AGENT_TOKEN` | preserve（可选覆盖） | §3.4；未设时 managed 插槽 = 进程内 built-in Agent |
@@ -1705,14 +1717,19 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G4**：整关未通过；以下 Rust built-in Agent 子面已有本机机械证据：
   - [x] pure reducer + bounded dispatch consumer；reserve→durable ack→activate、activation 起算 absolute deadline/lease heartbeat、cancel 等 children stopped；
   - [x] OpenAI-compatible Responses + Chat adapter：safe dialer、SSE UTF-8/multiline、skeleton/延迟字段、partial JSON、交错 tool calls、未知扩展、真实 read-gap stall；
+  - [x] Anthropic Messages adapter：system/messages/tools 分域、thinking/text/partial tool JSON/usage、固定 version + header-only key、未知事件隔离；
+  - [x] Google streamGenerateContent adapter：systemInstruction/content/function call+result/usage、header-only key、无 vendor response id 时确定性 trace id；
   - [x] package `model.yaml` model/credential ref、每 run PostgreSQL active credential 精确选择、stored-first/env fallback/corrupt-no-fallback、standing prompt/provenance 与 Server production assembly；
-  - [ ] Anthropic/Google adapter、429/5xx retry 与完整 budget/audit、真实 tool loop/8-step/remember、remote AG-UI/RMCP/Drive 及 browser/file/shell executor 尚未闭合；provider gate 要求的三家 recorded vendor trace 仍为 0/3。
+  - [x] `providerSource=package|managed` 权威路由、managed 三家 production factory；缺 managed adapter 不回落 package key/provider；
+  - [x] pre-stream unavailable/首事件 429/5xx 有界 retry + Retry-After，auth/schema/commit-unknown/mid-stream 永不重放；
+  - [x] 每 sampling output token cap 与 usage 双校验；`agent.invoked` / `agent.stream_stalled` / 新增 deadline audit 均写 production hash chain 且先于普通 terminal；
+  - [ ] provider gate 要求的三家 recorded vendor trace 仍为 **0/3**，本批未使用 live vendor credential；完整 run-wide token/cost/并发/computer budget、真实 tool loop/8-step/remember、remote AG-UI/RMCP/Drive 及 browser/file/shell executor 尚未闭合。
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
 - [ ] **G6**：Leptos/Tauri GUI、设计系统 golden、a11y/i18n/bundle gates 未实施完成。
 - [ ] **G7**：Screen/Handover 性能、安全票据、human lease 未实施完成。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账：parity **305/1655 done（1350 todo）**，fixtures **10/32 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账：parity **320/1657 done（1337 todo）**，fixtures **10/32 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -1751,6 +1768,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [Grok Build 固定源码](https://github.com/xai-org/grok-build/tree/19d42e35c07a9c9244f03f6df0c4c353f970d4f9)
 - [AG-UI 固定源码](https://github.com/ag-ui-protocol/ag-ui/tree/e42bdbedc27cdf982ed9b5de904215acd73a17fb)
 - [AG-UI Events](https://docs.ag-ui.com/concepts/events)
+- [Anthropic Messages streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)
+- [Google Gemini generateContent / streamGenerateContent](https://ai.google.dev/api/generate-content)
 - [RMCP release 3.1.4](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v3.1.4)
 - [MCP conformance](https://github.com/modelcontextprotocol/conformance)
 - [MCP 2026-07-28 authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
@@ -1877,6 +1896,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R68 | §4.1 / §4.3 / §14.3 / §16.1 / §20.3 / §24 G3、G8（2026-08-24 G3 Intelligence importer batch 5） | §20.3 只写“加密、签名、中立 bundle / schema-signature-hash / cursor”，没有固定算法、canonical hash、target mapping 权威性或 crash cursor 事务。若 bundle 自带 target user/deployment 即可越权；若导入 queued/running run 会在 maintenance 后伪造仍在执行；若每表各自提交，失败恢复会留下 thread/message/event 半棵；0016 的 tool_calls→runs NOT VALID FK 也会永久不 validate。另一个安全坑是直接用同 AES master+随机 nonce 跨 bundle，exporter nonce 重用会破坏 GCM | 固定 `openbot-intelligence-bundle-v1`：外信封 format/bundle/source/key-id/nonce/ciphertext/plaintext SHA-256 全进 Ed25519 strict signature；AES-256-GCM key 由 32-byte migration master 以 payload hash 作 HKDF-SHA256 salt、同 header 作 info 派生并 Zeroizing，AAD 同 header，signature 先于 decrypt。信封 512MiB cap；CLI 只收 regular file，Unix key 要同 inode + 0600，key 不进 argv/stdout/stderr。Payload 只允许 maintenance 已 drain 的 terminal run；running/queued 在 enum 层无入口。Target deployment/tenant/user/bot/channel 与 foreign UUID claim 只来自独立 mapping；未 claim 先出 report 且 DB 调用 0。每 thread aggregate + 四类 cursor 同事务；source checksum 先验，写后从 PG 重建 thread/member/title/message/event/terminal/memory/sample projection 再算 length-framed SHA-256；existing ID 逐字段同才幂等，异值 conflict。只导 observable active/superseded memory，强制 source，落 `verified_import`。失败 cursor 可精确 resume，completed rerun仍全量 DB recheck。独立 finalizer 在四行 cursor 全 completed 且 orphan tool call=0 后才 `VALIDATE tool_calls_run_id_fkey`。Importer 只在 `openbot-migrate`，Server main guard 为零调用点 | application importer=`7/0/0`；crypto=`1/0/0`（header/signature/key/ciphertext tamper 全拒）；CLI unit=`3/0/0`、旧 preflight=`2/0/0`。PG17/SCRAM adapter=`3/0/0`：第二 thread 末段失败后第一 cursor committed+failed，修复后只续第二并 completed；existing binding conflict 全回滚+四行 failed/$none；incomplete+orphan 阻止 FK，修复后 convalidated=true。真实 `openbot-migrate` 子进程=`1/0/0`：独立 exporter 侧 HKDF/AES/Ed 实现，0644 key exit65、0600 import exit0、四 completed cursor、FK finalize exit0。import dependency guard、clippy、WASM contracts 绿；Cargo.lock 新 package=0、仍 428 packages，vet 仍 15/403。上游 thread-status covered-by-golden 5 条转 done：tests=`174/873`；API=`26/130/156`，总 parity=`293/1360/1653`，0 violations。尚未取得真实 Intelligence export/API 与 production bundle，三次 production-scale 演练/合同法务/实际 legacy exporter 留 G8，故 G3/G8 整关均不勾 |
 
 | R69 | §4.3 / §6.4 / §7.2–§7.5 / §15.4 / §16.3 / §24 G3、G4（2026-08-24 Rust Agent + OpenAI provider batch 6） | R67 的 `NoRunDispatchConsumer` 虽能防永久 running，却证明真实 Agent/provider 仍不存在。第一版草稿又把 managed `BOT_MODEL` + 启动期静态 key 直接接到 package Bot，违反 §7.3 的两层选择与固定上游“每 request 重建 Agent/credential”；context 没带 `systemPrompt`/provenance，reasoning 虽解析却被 host 当坏响应。更隐蔽的时序洞是 30s lease heartbeat 在 context/provider connect 之后才启动，而 connect budget 本身恰为 30s，可能首次续租前过期。package 默认协议也不能凭印象选 Chat/Responses | 新增纯 `AgentState + reduce(state,event)->effects`，固定 Queued→Preparing→Sampling→tool/approval/human→Committing→四 terminal；DB/provider/tool 全为 effect，tool cap=8，cancel 只有 child-stopped fact 后 terminal，journal/lease unknown 进 reconciliation。`BuiltInAgentRuntime` 实现 bounded reserve/activate/revoke、并发上限、activation 起算 deadline/heartbeat、provider stream→50ms/8KiB `DurableTextRun`；text/reasoning 共用 expected sequence，reasoning 不进 assistant materialization。OpenAI adapter 同时实现 Responses/Chat，请求只经 SafeDialer；SSE 接受 UTF-8 分片/multiline、skeleton/延迟 name、partial JSON、交错 tool call、空 delta、未知扩展，限制聚合字段/总 body，并按真实 body read gap 判 stall。固定发布物 `@ai-sdk/openai@3.0.99` 的 `createLanguageModel` 实读直接返回 Responses，故 package Bot 固定 Responses；model/credential ref 只取 `model.yaml`。每 sampling 从 PG 精确选 active model credential（created_at/id 降序），stored 优先、无匹配才 env fallback、匹配密文坏不得 fallback；v1/v2 都经现有 Vault。context 每 run 重读 package Agent `systemPrompt`，前置 MIT provenance guidance。新增 private/self-hosted provider 的精确 CIDR 与 HTTP 双开关，HTTP 不代替 destination allowlist；Server main 已接真实 package Agent，缺失面不造假 | 本机：domain Agent=`3/0/0`，application run runtime=`4/0/0`，Agent host=`7/0/0`，OpenAI adapter=`6/0/0`，safe streaming=`2/0/0`，Server config=`65/0/0`；PG17.11 **trust Unix socket**（不是新增 SCRAM 证据）真实竖切=`2/0/0`：BeginRun→relay→scope context→HTTP/SSE→reasoning/text journal→assistant/completed；stored/env/corrupt/missing、active exact match、created_at/id tie-breaker、role 热更新均实得。`cargo clippy` 六 crate all-targets/all-features `-D warnings`、safe-dialer guard 绿；Cargo.lock 仍 428 packages。env 新增 2 条、上游 tests 转 done 10 条：env=`37/36/73`、tests=`184/863/1047`、API=`26/130/156`、总 parity=`305/1350/1655`，0 violations，fixtures=`10/22/32`，Actions 未派发。仍未完成 Anthropic/Google、三家 recorded/live trace、429/5xx retry、完整 usage/cost/deadline audit、真实 tool loop/remember、remote AG-UI/RMCP/Drive/browser/file/shell；因此 G4 整关不勾，G3 只勾真实 provider producer 子项。详见 `docs/2026-08-24-G4-Rust-Agent-OpenAI-provider-batch6.md` |
+
+| R70 | §6.4 / §7.2–§7.5 / §8.6 / §15.4 / §24 G4（2026-08-24 三 Provider + retry/budget/audit batch 7） | R69 只有 package OpenAI；managed 插槽仍会缺 provider，且 Agent row 没有权威 route 时存在误触 package key 的风险。若凭当前 SDK 印象实现 Anthropic/Google，会把 Google API key 放 query、假设并不存在的 response id，或把 Anthropic system/tool/usage 形状翻错。原 retry 草稿若对已见 response identity/delta 的断流重放，会重复非幂等 sampling；token cap 若只发给 vendor 而 host 接受无 usage 的 Completed，则 adapter 漏报即可绕过。deadline/stall 只有 terminal/metric 没有 durable audit，也不能证明停止发生在记录之前 | 新增独立 Anthropic Messages 与 Google streamGenerateContent adapter，固定官方协议和锁定发布物 `@langchain/anthropic@1.5.6`、`@langchain/google-genai@2.2.0`、`@google/generative-ai@0.24.1`；Google key 只进 header，缺 response id 时以首 chunk SHA-256 合成 trace id。Tenant package 以封闭 `providerSource=package|managed` 写 Agent configuration，context 每 run 读取，`ProviderRouter` 精确选择且 managed 缺失绝不回落 package。Retry 固定 `@langchain/core@1.2.8` 的 6 次/1s×2/jitter/64s 与 Retry-After，只有 pre-send unavailable 或首事件明确 429/5xx 可重试，response/增量后与 commit-unknown 永不重放。新增 `OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS` 每 sampling cap；三家请求传 cap、adapter 必须给单调 usage，host 再拒绝缺失/重复/不自洽/超限。Agent lifecycle audit 以 production `PostgresAgentAudit` 写既有 hash chain：invoked 在 context/provider 前，stall/deadline 在 child/session drop 后、terminal 前，失败转 reconciliation；payload 只允许稳定 code | 本机定向：Agent=`16/0/0`；Anthropic=`5/0/0`、Google=`4/0/0`、OpenAI=`6/0/0`，provider filter=`44/0/0`；SafeDialer=`14/0/0`；Server agent config=`6/0/0`、main factory=`7/0/0`；application tenant=`19/0/0`、fixture=`1/0/0`。PG17.11 trust 临时实例：Agent/provider/audit=`4/0/0`（package、fresh Vault OpenAI、managed Anthropic+Google 且 package call=0、真实 deadline/stalling SSE 的四行 hash chain），tenant sync=`8/0/0`；这不是新增 SCRAM 证据。六 crate targeted Clippy `-D warnings`、fmt/diff、safe-dialer guard 全绿，Cargo.lock 仍 428 packages。strict recount=`153/153/0`；env=`49/25/74`、events=`7/67/74`、总 parity=`320/1337/1657`、fixtures=`10/22/32`，0 violations/warnings。未使用 live vendor credential，三家 recorded vendor fixture 仍 0/3；完整 run-wide token/cost/并发/computer budget、真实 tool loop/remember、remote AG-UI/RMCP/Drive/browser/file/shell 仍未完成，故 G4 整关不勾。详见 `docs/2026-08-24-G4-三Provider与Retry审计-batch7.md` |
 
 ### 28.2 复核通过、原样保留的断言
 
