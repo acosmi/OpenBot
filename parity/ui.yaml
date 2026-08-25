@@ -30,8 +30,8 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–17 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 14 条原语打勾：
-# EmptyState/Badge/ThemeToggle/LocaleSwitch + Batch17 十条基础原语；其余即使已有部分源码也
+# Batch 15–18 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 20 条原语打勾：
+# Batch17 前 14 条 + Batch18 Message/Bubble/Tooltip/Toast/Kbd/Avatar；其余即使已有部分源码也
 # 保持 todo，不能用 Approval/preferences/design-gallery 冒充 27 原语、45 业务组件或 27 页
 # golden 全量完成。
 #
@@ -137,16 +137,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 17 精确完成 14 条；其余部分实现或完全未实现均保持 todo
+  # Batch 18 精确完成 20 条；其余部分实现或完全未实现均保持 todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 138
+    expect: 132
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 14
+    expect: 20
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 14
+    expect: 20
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -296,7 +296,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0012"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "MessageGroup + Message(article) + Avatar/Content/Header/Footer compound 全部落 Rust；MessageAlign 只 start/end，article 要非空 aria-label。真实 Chromium AX 得 article Ada Lovelace:start 与 张三:end，header/footer/bubble 均在各自 article 内；Bubble/markdown 语义不混入本条。UI all-features 40/0/0、WASM/Clippy/gates 绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：`article` 语义。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。Bot 正文的 markdown 渲染不在本条，见 (d) 组 streamdown → pulldown-cmark + syntect。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -307,7 +308,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0013"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "BubbleKind 只 Assistant/User，纯展示 div 无独立 role；两类无 border、neutral bg，forced hover 只换 neutral popover surface。Chromium 实得 assistant/user borderWidth=0px、data-kind exact，用户端随 MessageAlign=end；无彩色 background/border、无 remote asset。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：纯展示外框，无独立语义。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。用户 / Bot 两种气泡外框；卡片无边框、hover 只换底（GUI 裁决）。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -388,7 +390,7 @@ entries:
     test_id: "T-UI-0020"
     migration_rule: "preserve"
     status: "done"
-    done_evidence: "controlled Textarea 是 multiline textbox，Field 自动接线；Rust/WASM 以真实 scrollHeight 设置 inline height，跨引擎 max-height 取 tokens.toml 唯一 --size-textarea-max=218px（十行×20 + padding16 + border2），不用不兼容 calc 乘法。Chromium 输入16行得 client=216/max=218/scroll=374、capped=true；invalid/error/disabled/focus 与 UI/WASM/Clippy 全绿。"
+    done_evidence: "controlled Textarea 是 multiline textbox，Field 自动接线；Rust/WASM 以真实 scrollHeight 设置 inline height，跨引擎 max-height 取 tokens.toml 唯一 --size-textarea-max=218px（十行×20 + padding16 + border2），不把十行公式分裂到手写 CSS typed arithmetic。Chromium 输入16行得 client=216/max=218/scroll=374、capped=true；invalid/error/disabled/focus 与 UI/WASM/Clippy 全绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG textbox multiline。状态子集：focus/disabled/invalid。上游此原语无无头库依赖（自绘）。自动增高上限 10 行。Composer 内嵌它（§6.5），输入法组合期间 Enter 不发送那条是 Composer 的新增行为，不在本条。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -399,7 +401,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0021"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Tooltip/TooltipTrigger 用 scoped Provider；trigger 只 bounded same-origin Link 或 unit Button。hover/focus 共用 exact 400ms generation，分别跟踪 hovered/focused，leave 不会关掉仍 focused 的提示；blur-before-delay 取消，Escape 立即关并清 aria-describedby。Chromium：immediate hidden→450ms visible(role=tooltip/exact describedBy)→Escape hidden；blur-before-delay 恒 hidden；preview forced open，external link 负向拒绝。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG tooltip；hover/focus 显示、Esc 隐藏、延迟 400ms。状态子集：open。替代的无头库 = base-ui Tooltip。400ms 延迟是确定值，golden 截图前必须等过它或强制 `data-state=\"open\"`，否则截图不确定。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -414,7 +417,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0022"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Toast role=status + aria-live=polite，exact 5000ms timeout、manual dismiss、compile-gallery forced open；ToastViewport 提供固定有界 stack。Chromium 初始自动 dismiss count=1；reopen 3s→manual count=2→立即 reopen，旧 deadline 后仍 visible/count=2，新 deadline 后 hidden/count=3，证明 generation 防 stale timer。preview toast 在 AX 为 polite status；未把它冒充所有 accepted:false 业务面已接线。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1"
     notes: "键盘 / ARIA：`role=\"status\"`（不是 alert：非阻塞反馈不该打断屏幕阅读器当前朗读），5s 自动消失，可手动关闭。 用于一切 `accepted:false` 类用户可见反馈——「静默失败」在这套 UI 里是缺陷不是省事。5s 与 `role` 都是确定值，golden 里必须靠 `data-state` 强制而不是等真定时器。"
 
@@ -437,7 +441,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0024"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Kbd 使用 semantic <kbd>，modifier 闭集 Primary/Control/Alt/Shift，key 闭集 Enter/Escape/Slash/ASCII alphanumeric；任意标点负向拒绝。WASM 读 Navigator platform：Apple Primary/Alt/Shift→⌘/⌥/⇧，其它平台→Ctrl/Alt/Shift+，纯函数双平台测试钉映射；特殊键文案走 i18n。Mac Chromium 显示⌘K并读 Command K，另有回车/⇧回车/Esc/斜杠 exact AX name。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1"
     notes: "键盘 / ARIA：`<kbd>` 语义，无交互。 渲染快捷键字面（`Enter` / `Shift+Enter` / `Esc` / `⌘K`）。跨平台修饰键名由 i18n + 平台探测决定，不 hardcode 单一平台写法。"
 
@@ -448,7 +453,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0025"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "AvatarSize 闭集24/32/40；image 只允许 bounded same-origin absolute path且 alt空，remote URL负向拒绝；fallback 英文首/末词 initials、CJK首字。SHA-256(principal_id) 前32bit mod8 选 tokenized light/dark palette，16组 fg 对比均≥4.5。Chromium 三样本=AL/张/AL、32/24/40，same principal palette 1/1、另一 principal 3；外层 role=img 只按 name 宣读一次。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1；另 find app/src/components -name '*avatar*.tsx' | wc -l = 2（业务层确实有，原语层确实没有）"
     notes: "键盘 / ARIA：`img` 或首字母文本 + `aria-label`；无交互。 §6.6。上游 primitives 层零 avatar（本条 evidence），但业务层有 2 个（find app/src/components -name '*avatar*.tsx' | wc -l = 2），它们各自在 (b) 组记一条 `替代`（T-UI-0029 abstract-avatar、T-UI-0040 channels/avatar）。本条 label=新增 的作用域是**原语层**，不是「OpenBot 从来没有头像」——两者不冲突，但混起来就是把新增写成当前行为。确定性：同一 principal_id 在任何平台任何时间得到同一头像（SHA-256 前 8 位 → 8 个预设中性低饱和底色），golden 依赖这条。"
 

@@ -64,6 +64,8 @@ css_theme_drift_gate = "done"
 #   pairs: 84  failures: 0，最低一对 = 暗色 fg_muted on bg_chip = 4.59:1。
 # 注：GUI 方案 §17 的脚本只算 66 对（它排除了 fg_muted on bg_popover，且 danger/caution/
 # success/info 只对 2–3 个底）。84 对是 66 对的超集，两者都为 0 failure；单测按 84 对写。
+# Batch18 另给 avatar_0..7 增加 fg 对比度 8×2=16 对独立单测；不把头像底加入所有文字 token
+# 的 surface 全交叉，因为它只承载 Avatar initials 的 fg，不是通用页面 surface。
 # 改任何值都必须让该单测继续为绿。
 # ---------------------------------------------------------------------------
 [color]
