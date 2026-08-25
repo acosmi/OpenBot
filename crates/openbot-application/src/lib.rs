@@ -73,6 +73,7 @@
 
 pub mod agent_admin;
 mod app;
+pub mod approval_admin;
 pub mod builtin_tools;
 pub mod chunk;
 pub mod cursor;
@@ -95,6 +96,10 @@ pub use agent_admin::{
     issue_agent_callback_token, revoke_agent_callback_token,
 };
 pub use app::OpenBotApplication;
+pub use approval_admin::{
+    NoToolApprovalAdministration, ToolApprovalAdministration, ToolApprovalAdministrationError,
+    decide_tool_approval, list_pending_tool_approvals,
+};
 pub use builtin_tools::{
     BUILTIN_TOOL_CATALOG_GENERATION, REMEMBER_TOOL_NAME, RememberToolArguments, RememberToolMemory,
     RememberToolMemoryRequest, RememberToolScope, parse_remember_tool_arguments,
@@ -144,9 +149,10 @@ pub use service::{
 };
 pub use tool::{
     AuthorizedToolCall, ExecutableToolCall, NoToolControlPlane, NoToolJournal, ResolvedToolScope,
-    ToolApprovalRequest, ToolAuditDraftError, ToolCallSequence, ToolCallSequenceError,
-    ToolControlPlane, ToolDecisionDraft, ToolExecutionReport, ToolJournal, ToolOutcomeDraft,
-    ToolPolicyEvaluation, ToolPortError, ToolPreflightRefusal, ToolRefusalDraft, invoke_tool,
+    ToolApprovalPresentation, ToolApprovalRequest, ToolAuditDraftError, ToolCallSequence,
+    ToolCallSequenceError, ToolControlPlane, ToolDecisionDraft, ToolExecutionReport, ToolJournal,
+    ToolOutcomeDraft, ToolPolicyEvaluation, ToolPortError, ToolPreflightRefusal, ToolRefusalDraft,
+    invoke_tool,
 };
 pub use use_cases::{
     DEFAULT_AUDIT_PAGE, DEFAULT_CHANNEL_PAGE, DEFAULT_MEMORY_PAGE, DEFAULT_PEOPLE_PAGE,

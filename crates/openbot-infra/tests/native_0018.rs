@@ -37,7 +37,7 @@ async fn post_0018_is_exact_expand_only_and_credential_generation_is_independent
             if before != facts(POST_0017) {
                 return Err("0018 prerequisite fixture drift".to_owned());
             }
-            if native::apply(&mut client)
+            if native::apply_through(&mut client, native::NATIVE_0018_VERSION)
                 .await
                 .map_err(|error| error.to_string())?
                 != ApplyOutcome::Applied

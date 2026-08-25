@@ -183,6 +183,8 @@ pub enum PolicyVerdict {
 /// 一份过期批准被拿去执行的入口。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalEvidence {
+    /// Durable approval row identity used by the decision/audit link.
+    pub approval_id: String,
     /// 当初批准时绑定的那些字段。
     pub binding: ApprovalBinding,
     /// 此刻世界的样子。
@@ -606,6 +608,14 @@ pub struct ApprovalSettled {
 }
 
 impl ApprovalSettled {
+    /// Durable human-approval identity, absent only for tools whose catalog says not required.
+    #[must_use]
+    pub fn approval_id(&self) -> Option<&str> {
+        self.approval
+            .as_ref()
+            .map(|evidence| evidence.approval_id.as_str())
+    }
+
     /// 第 6 → 7 段：把 decision + attempt 落成 durable。
     ///
     /// 入参是**写库的结果**，不是"打算去写"。写失败的那一支返回 [`ToolCallTerminal`]，
@@ -1257,6 +1267,7 @@ pub enum AuditProjectionError {
 
 #[cfg(test)]
 mod tests {
+    use openbot_contracts::auth::AuthGeneration;
     use openbot_contracts::ids::{ComputerGeneration, DocumentGeneration};
     use serde_json::json;
     use time::OffsetDateTime;
@@ -1607,6 +1618,7 @@ mod tests {
         // 3. 批准已失效（这里用过期）。
         let binding = ApprovalBinding {
             actor: ActorId::new("actor-1"),
+            auth_generation: AuthGeneration::new(3),
             bot: BotId::new("bot-1"),
             run: RunId::new("run-1"),
             tool: ToolName::new("browser.click").unwrap(),
@@ -1620,6 +1632,7 @@ mod tests {
         };
         let expired = ApprovalObservation {
             actor: binding.actor.clone(),
+            auth_generation: binding.auth_generation,
             bot: binding.bot.clone(),
             run: binding.run.clone(),
             tool: binding.tool.clone(),
@@ -1635,6 +1648,7 @@ mod tests {
         assert_eq!(
             passed()
                 .settle_approval(ApprovalOutcome::Granted(Box::new(ApprovalEvidence {
+                    approval_id: "approval-expired".to_owned(),
                     binding: binding.clone(),
                     observed: expired,
                 })))
@@ -1646,6 +1660,7 @@ mod tests {
         // 正向对照：一份仍然有效的批准能过。
         let fresh = ApprovalObservation {
             actor: binding.actor.clone(),
+            auth_generation: binding.auth_generation,
             bot: binding.bot.clone(),
             run: binding.run.clone(),
             tool: binding.tool.clone(),
@@ -1661,6 +1676,7 @@ mod tests {
         assert!(
             passed()
                 .settle_approval(ApprovalOutcome::Granted(Box::new(ApprovalEvidence {
+                    approval_id: "approval-valid".to_owned(),
                     binding,
                     observed: fresh,
                 })))

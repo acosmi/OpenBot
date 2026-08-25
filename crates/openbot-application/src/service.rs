@@ -127,6 +127,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::RegisterMcpOAuthClient { .. } => "register_mcp_oauth_client",
         AppCommand::AddCuratedMcpServer { .. } => "add_curated_mcp_server",
         AppCommand::RefreshMcpServer { .. } => "refresh_mcp_server",
+        AppCommand::ListPendingToolApprovals => "list_pending_tool_approvals",
+        AppCommand::DecideToolApproval { .. } => "decide_tool_approval",
     }
 }
 
@@ -372,6 +374,17 @@ mod tests {
                     server_id: "google-drive".to_owned(),
                 },
                 "refresh_mcp_server",
+            ),
+            (
+                AppCommand::ListPendingToolApprovals,
+                "list_pending_tool_approvals",
+            ),
+            (
+                AppCommand::DecideToolApproval {
+                    approval_id: "approval-1".to_owned(),
+                    decision: openbot_contracts::tool::ToolApprovalDecision::Grant,
+                },
+                "decide_tool_approval",
             ),
         ];
         for (command, expected) in commands {

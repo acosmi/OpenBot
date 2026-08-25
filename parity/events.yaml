@@ -14,7 +14,7 @@
 #       identity_provider.registered / knowledge.searched）在 server/src 无任何发出点。
 #       owner 判据（机械）：发出点是进程启动顶层代码或传输层看门狗（无 use case）=> openbot-infra，
 #       其余 => openbot-application（铸造）；落库一律 openbot-infra，见 §8.6 的 DB role 分离。
-#   (c) 新增语义事件 9 条，label=新增，upstream=-。
+#   (c) 新增语义事件 14 条，label=新增，upstream=-。
 #
 # target 统一写事件名的 Rust 符号落点；audit 的名字是契约层封闭枚举（§5.1 openbot-contracts
 # 的职责原文 = "native/wasm-safe ID、DTO、event、error、schema"），owner 写的是谁负责铸造它。
@@ -43,17 +43,17 @@ recount:
   - command: |-
       grep -c '^  - id: ' parity/events.yaml
     cwd: repo
-    expect: 77
-  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，9 新增）
+    expect: 82
+  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，14 新增）
   - command: |-
       printf 'parity=%s 新增=%s 替代=%s\n' "$(grep -c "^    label: 'parity'$" parity/events.yaml)" "$(grep -c "^    label: '新增'$" parity/events.yaml)" "$(grep -c "^    label: '替代'$" parity/events.yaml)"
     cwd: repo
-    expect: 'parity=68 新增=9 替代=0'
-  # owner 分布（openbot-agent 11 = AG-UI 11；openbot-infra 3 = 启动顶层 2 + 传输层看门狗 1；其余 openbot-application 63 = audit 54 + 新增 9）
+    expect: 'parity=68 新增=14 替代=0'
+  # owner 分布（openbot-agent 11；openbot-infra 3；其余 openbot-application 68 = audit 54 + 新增 14）
   - command: |-
       grep -oE "^    owner: 'openbot-[a-z]+'" parity/events.yaml | tr -d "'" | sort | uniq -c | awk '{print $3"="$1}' | paste -sd' ' -
     cwd: repo
-    expect: 'openbot-agent=11 openbot-application=63 openbot-infra=3'
+    expect: 'openbot-agent=11 openbot-application=68 openbot-infra=3'
   # 新增 absolute deadline audit 在固定上游零命中；同形命令对既有 stall audit 命中 5 个文件。
   - command: |-
       printf 'deadline=%s stalled=%s\n' "$(git grep -l 'agent.run_deadline_exceeded' | wc -l | tr -d ' ')" "$(git grep -l 'agent.stream_stalled' | wc -l | tr -d ' ')"
@@ -64,6 +64,10 @@ recount:
       printf 'remember=%s computer=%s\n' "$(git grep -l 'memory.remember_' | wc -l | tr -d ' ')" "$(git grep -l 'computer.action_allowed' | wc -l | tr -d ' ')"
     cwd: upstream
     expect: 'remember=0 computer=5'
+  - command: |-
+      printf 'approval=%s decision=%s\n' "$(git grep -l 'tool.approval_' | wc -l | tr -d ' ')" "$(git grep -l 'mcp.call_succeeded' | wc -l | tr -d ' ')"
+    cwd: upstream
+    expect: 'approval=0 decision=8'
 
 entries:
   - id: 'agui-lifecycle'
@@ -244,6 +248,61 @@ entries:
     done_evidence: 'PG17.11 故障注入在 capability mint 后推进 `users.auth_generation`；remember writer 在同一 INSERT 事务再次比较 generation/revoked/role，返回 definite not-committed，memory 行仍只有第一次成功的 1 条。tool attempt 以 `not_committed` 完成并写 `memory.remember_failed`，稳定 error 回注，run 可继续；unknown/timeout 分支仍由 application 转 reconciliation，不冒充本事件。'
     evidence: 'git grep -l ''memory.remember_'' | wc -l => 0；正向对照同形命令对 computer.action_allowed 命中 5 个文件'
     notes: 'failed 与 refused 分开：前者已有 durable decision+attempt/capability 并得到确定非成功 outcome；后者在执行前停止且没有 attempt。commit unknown 不进 failed，而是 run reconciliation。'
+  - id: 'audit-tool-approval-requested'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::TOOL_APPROVAL_REQUESTED + openbot-infra::tool_approval::PostgresToolApprovalCoordinator'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0078'
+    migration_rule: 'n/a: 第一真源 §8.5 新增 durable human proof-of-intent'
+    status: 'done'
+    evidence: 'docs/2026-08-25-G4-Durable-Approval生产面-batch14.md'
+    done_evidence: 'PG17 approval runtime 与 acting MCP 真链：pending row、`tool.approval_requested` hash-chain audit 同事务提交后才对 UI 可见；payload 空且 target 只有 approval id，argument summary/canary 命中 0。'
+    notes: '请求事件发生在 human wait 与 decision/attempt 之前；audit 写失败则 pending 不提交。'
+  - id: 'audit-tool-approval-granted'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::TOOL_APPROVAL_GRANTED + openbot-infra::tool_approval::PostgresToolApprovalCoordinator'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0079'
+    migration_rule: 'n/a: 第一真源 §8.5 新增 durable human proof-of-intent'
+    status: 'done'
+    evidence: 'docs/2026-08-25-G4-Durable-Approval生产面-batch14.md'
+    done_evidence: 'fresh same-origin actor grant 以 state CAS、pending summary 清除与 `tool.approval_granted` 同事务提交；随后 tool_calls.approval_id 与 mcp.call_succeeded payload.approval_id 逐字等于该 row，vendor execute 恰一次。'
+    notes: 'grant 只批准 stored exact binding；renderer 不能提交 actor/Bot/run/tool/args/target/generation/policy/expiry。'
+  - id: 'audit-tool-approval-denied'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::TOOL_APPROVAL_DENIED + openbot-infra::tool_approval::PostgresToolApprovalCoordinator'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0080'
+    migration_rule: 'n/a: 第一真源 §8.5 新增 durable human proof-of-intent'
+    status: 'done'
+    evidence: 'docs/2026-08-25-G4-Durable-Approval生产面-batch14.md'
+    done_evidence: 'PG17 真实 human deny 唤醒 Agent waiter，写 `tool.approval_denied` 后由唯一 pipeline 写 approval_denied refusal；vendor call 数不增、tool decision/attempt 不新增。'
+    notes: 'deny 与 policy refusal 分开；二者都在外部 action 前终止。'
+  - id: 'audit-tool-approval-expired'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::TOOL_APPROVAL_EXPIRED + openbot-infra::tool_approval::PostgresToolApprovalCoordinator'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0081'
+    migration_rule: 'n/a: 第一真源 §8.5 expiry 机械失效'
+    status: 'done'
+    evidence: 'docs/2026-08-25-G4-Durable-Approval生产面-batch14.md'
+    done_evidence: 'DB clock `now >= expires_at` 经 pending CAS 写 expired、清摘要并追加 hash-chain audit；跨 replica waiter 最迟 1s 返回 Denied，零 effect。'
+    notes: 'TTL 5 分钟是新增 runtime budget；inclusive expiry 语义来自领域测试。'
+  - id: 'audit-tool-approval-cancelled'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::TOOL_APPROVAL_CANCELLED + openbot-infra::tool_approval::PostgresToolApprovalCoordinator'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0082'
+    migration_rule: 'n/a: 第一真源 §6.2/§8.5 generation 与 run scope 失效'
+    status: 'done'
+    evidence: 'docs/2026-08-25-G4-Durable-Approval生产面-batch14.md'
+    done_evidence: 'PG17 pending 后推进 users.auth_generation，poll 在 action 前把 request CAS 为 cancelled、清摘要并写 audit；run/member/lease 任一失效走同一分支。'
+    notes: 'cancelled 不是 human deny；它表示权威 scope 已不存在，旧批准不能排队等待恢复。'
   - id: 'audit-bot-callback-token-issued'
     upstream: 'server/src/agents/routes.ts::createAgentRoutes'
     label: 'parity'

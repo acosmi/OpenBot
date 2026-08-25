@@ -233,6 +233,8 @@ pub enum AuditFact {
     Idempotency(AuditLabel),
     /// 工具声明的 approval 档位。
     ApprovalClass(AuditLabel),
+    /// Durable human proof-of-intent row used by this decision.
+    ApprovalId(AuditIdentifier),
     /// 工具声明的沙箱要求。
     SandboxRequirement(AuditLabel),
     /// 工具是否声明可并行。
@@ -297,6 +299,7 @@ impl AuditFact {
             Self::DocumentGeneration(_) => "document_generation",
             Self::Idempotency(_) => "idempotency",
             Self::ApprovalClass(_) => "approval_class",
+            Self::ApprovalId(_) => "approval_id",
             Self::SandboxRequirement(_) => "sandbox_requirement",
             Self::ParallelSafe(_) => "parallel_safe",
             Self::AttemptNumber(_) => "attempt_number",
@@ -316,6 +319,7 @@ impl AuditFact {
             | Self::Bot(value)
             | Self::TargetId(value)
             | Self::DecisionId(value)
+            | Self::ApprovalId(value)
             | Self::PolicyVersion(value)
             | Self::RefusedByRule(value)
             | Self::CredentialOwner(value) => Value::String(value.as_str().to_owned()),
@@ -382,6 +386,7 @@ impl AuditFact {
             | Self::Bot(value)
             | Self::TargetId(value)
             | Self::DecisionId(value)
+            | Self::ApprovalId(value)
             | Self::PolicyVersion(value)
             | Self::RefusedByRule(value)
             | Self::CredentialOwner(value) => writer.str(value.as_str()),
@@ -456,6 +461,7 @@ pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "document_generation",
     "idempotency",
     "approval_class",
+    "approval_id",
     "sandbox_requirement",
     "parallel_safe",
     "attempt_number",
@@ -600,6 +606,7 @@ mod tests {
             AuditFact::DocumentGeneration(5),
             AuditFact::Idempotency(AuditLabel::new("non_idempotent")),
             AuditFact::ApprovalClass(AuditLabel::new("every_call")),
+            AuditFact::ApprovalId(identifier("approval-1")),
             AuditFact::SandboxRequirement(AuditLabel::new("required")),
             AuditFact::ParallelSafe(false),
             AuditFact::AttemptNumber(2),

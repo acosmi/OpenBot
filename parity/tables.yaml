@@ -7,7 +7,7 @@
 # 三类 entry：
 #   1. 上游 28 张表（表名取自 server/src/db/schema/*.ts 的 pgTable 实参，不抄文档）—— label: parity
 #   2. 上游 13 条 migration（server/drizzle/0000–0012）—— label: parity
-#   3. v3 §4.3 的 12 张 native 新表 + §8.6 的 audit_checkpoints —— label: 新增
+#   3. v3 §4.3 的 12 张 native 新表 + audit_checkpoints + tool_approvals —— label: 新增
 #
 # status 随实施推进；权威计数是 `cargo xtask parity-check --json`。done 只表示本条 target
 # 与证据已落地，不蕴含 notes 里的 repository 已实现。
@@ -62,15 +62,15 @@ recount:
     expect: 13
   - command: "grep -c '^  - id: ' parity/tables.yaml"
     cwd: repo
-    expect: 54
+    expect: 55
   - command: "grep -c 'label: \"parity\"' parity/tables.yaml"
     cwd: repo
     expect: 41
   - command: "grep -c 'label: \"新增\"' parity/tables.yaml"
     cwd: repo
-    expect: 13
-  # 「上游没有这 12 张 native 表」的负向断言。
-  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(audit_checkpoints|threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|outbox|memories|memory_events|intelligence_import_cursors)\"'"
+    expect: 14
+  # 「上游没有这 14 张 native 表」的负向断言。
+  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(audit_checkpoints|threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|tool_approvals|outbox|memories|memory_events|intelligence_import_cursors)\"'"
     cwd: upstream
     expect: 0
   # 上一条的正向对照：同一条管线在确实存在的表名上命中，证明它不是恒 0 的坏探测器。
@@ -703,7 +703,7 @@ entries:
     status: "done"
     done_evidence: "openbot-infra::db::native 的 native_0013.sql 建 public.tool_calls；tool_calls::Row + COLUMNS + COLUMN_SPECS + TryFrom 已实现；PostgreSQL 17 fixture 钉死 19 列、主键(tool_call_id)、unique(run_id,call_seq) 与 unique(decision_id)，effect/idempotency/approval/hash/generation CHECK 全部进入 93 条 post-0013 约束；并发真库测试证明账本只施加一次，约束测试证明 durable call 可写且 args_hash/idempotency_key 的 Debug 脱敏"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"tool_calls\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::tools::ToolCallRepo | PK=tool_call_id | unique=(run_id, call_seq) 与 decision_id | FK=0013 暂无：run_id 已强类型落列，但 runs 属 G3 尚不存在；G3 建 runs 时只用 expand-only ADD FK，不为当前外键越界提前建整套 G3 schema | delete=待 runs 落地后与 FK 一并裁决 cascade；当前不允许悬空删除 call（attempt 侧 cascade 到 call） | 加密=不保存原始 args，只存 args_hash 且 Debug 脱敏；idempotency_key 同样脱敏 | retention=terminal + reconciliation 完成后按策略归档 | API owner=openbot-agent 的 tool runtime，经 §8.1 唯一执行管线 | 一次 call 对应 0..N 次 attempt；上游把这些事实写进 audit_events.payload，Rust 版拆成结构化表，故是新增不是 parity"
+    notes: "repo=openbot-infra::repo::tools::ToolCallRepo | PK=tool_call_id | unique=(run_id, call_seq) 与 decision_id | FK=run_id 已由 0016 staged；native 0020 追加 nullable approval_id，生产 journal 对 requiring-human 的 decision 要求它指向仍 granted/未过期且 actor/Bot/run/tool/args/target/catalog/policy 全匹配的 approval row | 加密=不保存原始 args，只存 args_hash 且 Debug 脱敏；idempotency_key 同样脱敏 | retention=terminal + reconciliation 完成后按策略归档 | API owner=openbot-agent 的 tool runtime，经 §8.1 唯一执行管线 | 一次 call 对应 0..N 次 attempt；上游把这些事实写进 audit_events.payload，Rust 版拆成结构化表，故是新增不是 parity"
 
   - id: "native-tool-attempts"
     upstream: "-"
@@ -764,3 +764,14 @@ entries:
     done_evidence: "native 0016 建 (bundle_id,aggregate_kind) PK、kind/hash/count/status/provenance CHECK；ImportCursorRepo 进入 40/40 inventory，真库写 verified provenance + 64 位 lowercase hash"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"intelligence_import_cursors\"' == 0（正向对照 users|channels == 2）"
     notes: "repo=openbot-infra::repo::import::ImportCursorRepo | PK=(bundle_id,aggregate_kind)，外部 bundle 故意无 FK | aggregate_kind=thread/message/run_event/memory，last_hash lowercase SHA-256，provenance object；cursor/provenance Debug 脱敏 | retention 随导入审计期 | importer/bundle signature、owns 分类与最终 image 排除仍归 G3/G8，物理 cursor 不冒充完整迁移工具；hidden learning 无来源继续不导入"
+  - id: "native-tool-approvals"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-infra::db::tables::tool_approvals"
+    owner: "openbot-infra"
+    test_id: "T-TBL-0055"
+    migration_rule: "n/a: 第一真源 §8.5 durable human proof-of-intent"
+    status: "done"
+    done_evidence: "native 0020 PG17/SCRAM 2/0/0：42表/398列/217约束/85索引 exact fixture；pending/resolved/expiry/effect/class/generation/time/FK 形状负例，actor 删除退役；PG approval runtime 1/0/0 与 acting MCP 1/0/0 证明 request/grant/deny/expire/cancel、summary clear、tool_calls/audit approval_id 同一身份。"
+    evidence: "固定上游 schema pgTable 集合对 tool_approvals 命中 0（同管线 users|channels=2）"
+    notes: "typed boundary=PostgresToolApprovalCoordinator（不是空 repo） | PK=approval_id；unique=tool_call_id；FK thread/run/actor/Bot，operational row 随 scope 删除；state=pending/granted/denied/expired/cancelled | pending 才保留 bounded redacted arguments/change summary，resolved 同事务清 NULL，Row::Debug 强制脱敏 | binding 固定 actor/auth generation/Bot/run/tool/args hash/target/computer+catalog+document generation/policy/expiry；跨 replica 1s durable poll | API owner=openbot-server typed ApplicationService；完整 Leptos approval UI 仍归 G6，不借本表冒充。"
