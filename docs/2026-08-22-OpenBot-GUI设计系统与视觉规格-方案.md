@@ -101,7 +101,8 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 | `--radius` | `radius` | |
 | `--sidebar*`（8 个） | `bg-sidebar` + 复用 `fg` / `fg-secondary` / `bg-chip` | 侧栏不再独立一套 |
 
-新增 token（上游无）：`fg-secondary`、`caution`、`info`、`shadow-popover`、`shadow-dialog`、`image-dim`。
+新增 token（上游无）：`fg-secondary`、`caution`、`info`、`shadow-popover`、`shadow-dialog`、
+`image-dim`、`avatar-0..7`、`modal-overlay`。
 
 ### 4.2 颜色（亮 / 暗两套，WCAG 对比度已实测）
 
@@ -128,6 +129,7 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 | `shadow-popover` | `0 4px 16px rgb(0 0 0 / .10)` | `0 4px 16px rgb(0 0 0 / .45)` | |
 | `shadow-dialog` | `0 12px 40px rgb(0 0 0 / .18)` | `0 12px 40px rgb(0 0 0 / .60)` | |
 | `image-dim` | `1` | `.88` | 暗色下内容图片 `filter: brightness()` |
+| `modal-overlay` | `rgb(0 0 0 / .10)` | `rgb(0 0 0 / .35)` | Dialog/Sheet 共用 backdrop |
 
 **对比度判据**（机械，§9.2 单测读同一份 `tokens.toml`）：文字 token（`fg` / `fg-secondary` / `fg-muted` / `danger` / `caution` / `success` / `info`）对每个可作其底的背景 token（`bg` / `bg-subtle` / `bg-chip` / `bg-sidebar` / `bg-popover`）≥ **4.5:1**；`fg-inverse` 对 `bg-inverse` ≥ 4.5:1；`ring` 与 `chart-*` 对 `bg` ≥ **3:1**；`fg` 对 `avatar-0..7` 亮暗 16 组均 ≥4.5:1。当前 core 超集 84 对 + avatar 16 对 = **100 对**全部通过，整体最低仍为暗色 `fg-muted` on `bg-chip` = 4.59:1。改任何值都必须让 `token_contrast_wcag_aa_covers_all_84_required_pairs` 与 `all_avatar_palettes_keep_initials_wcag_aa_in_both_themes` 继续为绿。
 
@@ -145,7 +147,8 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 - **圆角**：`radius = 8px`；`sm 6` / `md 8` / `lg 10` / `xl 14` / `full`。胶囊按钮与芯片 = `full`；输入框、菜单项、卡片 = `md`；popover / dialog = `lg`。
 - **边框**：1px `border`；只用于 Input / Select / Textarea / Separator / Table / Combobox 列表容器。
 - **焦点**：仅 `:focus-visible`：`outline: 2px solid var(--ring); outline-offset: 2px`；禁止 `outline: none` 而无替代。
-- **控件高度**：`sm 28` / `md 32`（默认）/ `lg 36`；表格行 36；侧栏项 32；顶栏 44。
+- **控件高度/固定尺寸**：`sm 28` / `md 32`（默认）/ `lg 36`；表格行 36；侧栏项 32；顶栏 44；
+  Avatar 24/32/40；Kbd 22；Textarea 十行 cap 218；modal gutter 32、Dialog max 512。
 - **z-index 阶**：base 0 / sticky 10 / sidebar 与 detail panel 20 / popover·menu·combobox 30 / sheet 40 / dialog 50 / tooltip 60 / toast 70。禁止其它值。
 - **阴影**：只有 `shadow-popover` 与 `shadow-dialog` 两个 token（§4.2）；卡片、按钮、输入框零阴影。
 
@@ -624,20 +627,22 @@ G6 重写后的文本（替换 v3 原四条）：
   UI startup read/serialized partial write/reload persistence；
 - [x] Tauri 2.11.5 production custom-protocol adapter：window-label authority、typed in-process、
   本地首帧/CSP/canonical asset；依赖只进入 macOS/Windows Desktop target；
-- [x] 当前 UI ledger 只勾有机器证据的 20 条：Batch17 前14条 + Batch18 的
-  Message/Bubble/Tooltip/Toast/Kbd/Avatar，=`20/132/152`；其余即使有局部源码也保持 todo；
+- [x] 当前 UI ledger 只勾有机器证据的 22 条：Batch18 前20条 + Dialog/Sheet，
+  =`22/130/152`；其余即使有局部源码也保持 todo；
 - [x] `design-gallery` compile feature 才有 `/_design`，production bundle WASM `_design` byte=0；
   当前画廊用于状态/键盘/AX/目视 QA，不冒充正式 golden；
 - [x] Message 命名 article、neutral Bubble、跨平台 Kbd、SHA-256 deterministic Avatar、5s
   generation-safe polite Toast、400ms hover/focus/Escape Tooltip 已过真实 Chromium/AX；
-- [ ] 31 route journey、其余 7 个 primitive ledger 条目、45 个业务组件、compiled gallery、
+- [x] Dialog/Sheet 共享 modal kernel：双向 focus trap、Escape/backdrop/return、scroll lock 与
+  path-sibling inert；Sheet top/right/bottom/left closed side；
+- [ ] 31 route journey、其余 5 个 primitive ledger 条目、45 个业务组件、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
 - [ ] Tauri 图的 MPL-2.0×5、runtime UNIC unmaintained×5、Cargo Vet macOS 270/Windows 269
   仍红；不得把 bans/sources 已绿写成供应链整关已绿。
 
-完整证据见 Batch16 两份文档、Batch17 与 `docs/2026-08-25-G6-展示反馈原语-batch18.md`；
+完整证据见 Batch16–18 文档与 `docs/2026-08-25-G6-Dialog与Sheet-batch19.md`；
 G6 整关继续不勾。
 
 ---

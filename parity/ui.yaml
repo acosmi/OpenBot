@@ -30,8 +30,8 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–18 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 20 条原语打勾：
-# Batch17 前 14 条 + Batch18 Message/Bubble/Tooltip/Toast/Kbd/Avatar；其余即使已有部分源码也
+# Batch 15–19 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 22 条原语打勾：
+# Batch18 前 20 条 + Batch19 Dialog/Sheet；其余即使已有部分源码也
 # 保持 todo，不能用 Approval/preferences/design-gallery 冒充 27 原语、45 业务组件或 27 页
 # golden 全量完成。
 #
@@ -137,16 +137,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 18 精确完成 20 条；其余部分实现或完全未实现均保持 todo
+  # Batch 19 精确完成 22 条；其余部分实现或完全未实现均保持 todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 132
+    expect: 130
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 20
+    expect: 22
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 20
+    expect: 22
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -191,7 +191,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0003"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Dialog 与 Sheet 共用唯一 modal kernel。Dialog trigger 显式 haspopup/expanded/controls；panel role=dialog、aria-modal、title/description IDs exact。Chromium 打开首焦点 close，focusables=close/cancel/save；Shift+Tab 首→末、Tab 末→首；Escape/Cancel/真实 CUA backdrop 点击均关闭，body scroll 与16个 path-sibling inert/aria-hidden 全恢复，焦点回 trigger。closed DOM duplicate/unnamed/nested=0，final bundle error=0；UI42/0/0、WASM/Clippy/gates绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG modal dialog；焦点陷阱、Esc 关闭、关闭后焦点归还触发元素。状态子集：open。替代的无头库 = base-ui Dialog。焦点归还触发元素这条是 a11y 闸门（§9.2）的机械判据之一，不是「尽量」。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -343,7 +344,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0016"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Sheet 只选择 shared modal kernel 的 presentation+side，不复制焦点/关闭规则；SheetSide 闭集 top/right/bottom/left。Chromium right 样本 role=dialog/aria-modal、width=360、height=720=viewport，首焦点close；Shift+Tab/Tab 环 exact，Escape/Done 均关闭并把焦点还给 sheet trigger，scroll/inert marker 归零。四 side enum/CSS selectors 与 production WASM/Clippy gates 全绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：同 Dialog（焦点陷阱、Esc 关闭、焦点归还）。状态子集：open。上游此原语无无头库依赖（自绘）。侧向 dialog；Sidebar 在窄视口下折叠成 Sheet 形态（见 T-UI-0017）。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 

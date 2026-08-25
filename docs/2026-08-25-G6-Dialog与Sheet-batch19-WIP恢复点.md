@@ -1,7 +1,9 @@
 # Batch 19 WIP 恢复点：Dialog 与 Sheet
 
 > 分支 `codex/2026-08-25-G6-dialog-sheet-primitives`，base = Batch18 正式 head
-> `c05906a19be9bea2f58965df7c36bfb045e0c15d`。只跑本地定向测试，不运行
+> `c05906a19be9bea2f58965df7c36bfb045e0c15d`；implementation checkpoint
+> `79f696ecdcb1a0da5e30bb14b7ef5e1430c6e968`。正式证据文档为
+> `2026-08-25-G6-Dialog与Sheet-batch19.md`。只跑本地定向测试，不运行
 > `cargo xtask ci`，不派发 Actions，不处理 `grok-bot`。
 
 ## 本批范围
@@ -25,7 +27,7 @@ Menu/Combobox/Select、MessageScroller/Sidebar；modal 出现不等于这些依�
 - UI all-features=`42/0/0`；WASM all-features、UI/testkit all-targets Clippy `-D warnings`、
   fmt 全绿；
 - i18n=`306` keys、design=`39 Rust/74 icons`、css=`93 classes`；production bundle
-  wasm gzip=`369319`、CSS=`44191`、fonts=`740216`、external/inline=`1/0`；
+  wasm gzip=`369319`、CSS=`44218`、fonts=`740216`、external/inline=`1/0`；
 - Dialog：initial expanded=false/hidden；打开后 role=dialog、aria-modal=true、label/description IDs
   exact、active=`design-dialog-close`、body overflow=hidden；focusables=close/cancel/save；
   Shift+Tab(close)→save，Tab(save)→close；Escape/Cancel/真实 CUA backdrop 点击均关闭并把焦点
