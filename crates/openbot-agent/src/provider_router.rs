@@ -11,6 +11,7 @@ use openbot_application::{
 pub struct ProviderRouter {
     package_openai: Arc<dyn ProviderAdapter>,
     managed: Option<Arc<dyn ProviderAdapter>>,
+    remote_agui: Option<Arc<dyn ProviderAdapter>>,
 }
 
 impl ProviderRouter {
@@ -23,7 +24,15 @@ impl ProviderRouter {
         Self {
             package_openai,
             managed,
+            remote_agui: None,
         }
+    }
+
+    /// Attach the remote AG-UI semantic adapter. Missing means remote routes fail closed.
+    #[must_use]
+    pub fn with_remote_agui(mut self, remote: Arc<dyn ProviderAdapter>) -> Self {
+        self.remote_agui = Some(remote);
+        self
     }
 }
 
@@ -32,6 +41,7 @@ impl core::fmt::Debug for ProviderRouter {
         f.debug_struct("ProviderRouter")
             .field("package_openai", &"configured/[redacted]")
             .field("managed", &self.managed.is_some())
+            .field("remote_agui", &self.remote_agui.is_some())
             .finish()
     }
 }
@@ -42,9 +52,13 @@ impl ProviderAdapter for ProviderRouter {
         &self,
         request: ProviderRequest,
     ) -> Result<Box<dyn ProviderSession>, ProviderPortError> {
-        match request.route {
+        match &request.route {
             ProviderRoute::PackageOpenAi => self.package_openai.start(request).await,
             ProviderRoute::Managed => match &self.managed {
+                Some(provider) => provider.start(request).await,
+                None => Err(ProviderPortError::Unavailable),
+            },
+            ProviderRoute::RemoteAgUi(_) => match &self.remote_agui {
                 Some(provider) => provider.start(request).await,
                 None => Err(ProviderPortError::Unavailable),
             },

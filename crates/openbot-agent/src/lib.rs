@@ -29,16 +29,24 @@
 
 #![deny(missing_docs)]
 
+pub mod agui;
 mod gateway;
 mod provider_router;
+mod remote_provider;
 mod retry;
 mod runtime;
 
+pub use agui::{
+    AGUI_EVENT_TYPES, AGUI_SCHEMA_VERSION, AguiDecoder, AguiEvent, AguiProtocolError, AguiRole,
+    MAX_AGUI_COLLECTION_ITEMS, MAX_AGUI_EVENT_BYTES, MAX_AGUI_RUN_INPUT_BYTES,
+    apply_patch as apply_agui_json_patch, encode_run_agent_input,
+};
 pub use gateway::{
     AgentToolGateway, AgentToolInvokeError, AgentToolInvoker, AgentToolReply,
     AuthorizedAgentToolGateway, NoAgentToolInvoker,
 };
 pub use provider_router::ProviderRouter;
+pub use remote_provider::RemoteAguiProvider;
 pub use retry::{RetryingProvider, RetryingProviderConfig};
 pub use runtime::{
     AGENT_SHUTDOWN_DEADLINE, BuiltInAgentConfig, BuiltInAgentRuntime, DEFAULT_AGENT_CONCURRENCY,

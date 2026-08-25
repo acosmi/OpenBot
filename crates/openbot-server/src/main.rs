@@ -8,7 +8,7 @@ use std::time::Duration;
 use hmac::{Hmac, Mac};
 use openbot_agent::{
     AgentToolInvoker, AuthorizedAgentToolGateway, BuiltInAgentConfig, BuiltInAgentRuntime,
-    ProviderRouter, RetryingProvider, RetryingProviderConfig,
+    ProviderRouter, RemoteAguiProvider, RetryingProvider, RetryingProviderConfig,
 };
 use openbot_application::tenant::package::{
     BuiltInProviderSource, TenantAgentConfiguration, TenantAgentType, TenantPackageAudienceContext,
@@ -55,6 +55,7 @@ use openbot_infra::provider::google::{GoogleApiKey, GoogleProvider, GoogleProvid
 use openbot_infra::provider::openai::{
     OpenAiApiKey, OpenAiProtocol, OpenAiProvider, OpenAiProviderConfig,
 };
+use openbot_infra::remote_agui::SafeRemoteAguiTransport;
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
@@ -124,11 +125,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         TenantPackageEnvironment::from_allowlist(&env, &["MANAGED_AGENT_AG_UI_URL"]);
     let package_directory = tenant_package_directory_for_startup(&server.tenant_package_directory);
     let tenant_package = load_tenant_package(&package_directory, &package_environment)?;
-    let requires_built_in_agent = tenant_package
-        .package
-        .agents
-        .iter()
-        .any(|agent| agent.agent_type == TenantAgentType::BuiltIn);
+    let requires_agent_runtime = tenant_package.package.agents.iter().any(|agent| {
+        matches!(
+            agent.agent_type,
+            TenantAgentType::BuiltIn | TenantAgentType::RemoteAgUi
+        )
+    });
     let requires_managed_agent = tenant_package.package.agents.iter().any(|agent| {
         matches!(
             &agent.configuration,
@@ -347,7 +349,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         deployment: deployment.clone(),
         tenant: tenant.clone(),
         runtime: run_runtime.clone(),
-        required: requires_built_in_agent,
+        required: requires_agent_runtime,
         requires_managed: requires_managed_agent,
         model: tenant_package.package.model.default_model.clone(),
         credential_key_id: tenant_package.package.model.credential_secret_ref.clone(),
@@ -358,7 +360,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         audit: agent_audit,
         budgets: server.agent_budgets,
     })?;
-    let built_in_agent_ready = built_in_agent.is_some() || !requires_built_in_agent;
+    let built_in_agent_ready = built_in_agent.is_some() || !requires_agent_runtime;
     let run_relay = RunRelay::start(run_runtime, run_consumer);
     let metrics = install_recorder()?;
     let db_probe_pool = pool.clone();
@@ -469,6 +471,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         environment_fallback,
     )?);
     let egress = CidrAllowlist::parse_exact(egress_allow_cidrs.iter().map(String::as_str))?;
+    let egress_policy = EgressPolicy::new(egress);
     let package_provider: Arc<dyn ProviderAdapter> =
         Arc::new(OpenAiProvider::new_with_credential_source(
             OpenAiProviderConfig::new_with_transport_policy(
@@ -484,7 +487,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
                 },
             )?,
             credentials,
-            SafeDialer::new(EgressPolicy::new(egress)),
+            SafeDialer::new(egress_policy.clone()),
         ));
     let managed = if requires_managed {
         Some(build_managed_provider(
@@ -494,8 +497,20 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
     } else {
         None
     };
+    let remote_transport = Arc::new(SafeRemoteAguiTransport::new(
+        SafeDialer::new(egress_policy),
+        SafeHttpBudget::new(64 * 1024 * 1024, Duration::from_secs(30))?,
+        budgets.stall_timeout,
+        if allow_http {
+            SchemePolicy::HttpOrHttps
+        } else {
+            SchemePolicy::HttpsOnly
+        },
+    )?);
+    let remote_provider: Arc<dyn ProviderAdapter> =
+        Arc::new(RemoteAguiProvider::new(remote_transport));
     let provider = Arc::new(RetryingProvider::new(
-        Arc::new(ProviderRouter::new(package_provider, managed)),
+        Arc::new(ProviderRouter::new(package_provider, managed).with_remote_agui(remote_provider)),
         RetryingProviderConfig::default(),
     )?);
     let context = Arc::new(

@@ -80,6 +80,7 @@ pub mod memory_admin;
 pub mod net;
 pub mod policy;
 pub mod provider;
+pub mod remote_agui;
 pub mod repo;
 pub mod run_runtime;
 pub mod store;
