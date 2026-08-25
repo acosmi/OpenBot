@@ -2,9 +2,11 @@
 
 use leptos::prelude::*;
 use leptos::{ev::KeyboardEvent, html};
+use openbot_contracts::ui::UiLocale;
 
 use crate::i18n::{Locale, t, use_i18n};
 use crate::icons::Icon;
+use crate::preferences::use_ui_preferences;
 
 use super::{IconSize, IconView};
 
@@ -143,7 +145,11 @@ fn choose_locale(
     open: RwSignal<bool>,
     trigger_ref: NodeRef<html::Button>,
 ) {
-    i18n.set_locale(locale);
+    let stored = match locale {
+        Locale::en => UiLocale::En,
+        Locale::zh_CN => UiLocale::ZhCn,
+    };
+    use_ui_preferences().select_locale(i18n, stored);
     open.set(false);
     focus_button(trigger_ref);
 }

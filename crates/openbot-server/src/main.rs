@@ -78,6 +78,7 @@ use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_packa
 use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
 use openbot_infra::thread_id::mint_thread_id;
 use openbot_infra::tool_approval::PostgresToolApprovalCoordinator;
+use openbot_infra::ui_preferences::PostgresUiPreferenceAdministration;
 use openbot_infra::vault::CredentialRecordVault;
 use openbot_server::config::{
     AgentBudgets, DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, ManagedProviderConfig,
@@ -448,7 +449,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_agent_callback_tokens(callback_tokens);
     let application = application
         .with_mcp_connections(mcp_connections.clone())
-        .with_tool_approvals(tool_approvals);
+        .with_tool_approvals(tool_approvals)
+        .with_ui_preferences(Arc::new(PostgresUiPreferenceAdministration::new(
+            pool.clone(),
+        )));
     let mcp_revocation_reconciler = McpRevocationReconciler::start(mcp_connections.clone());
     let application: Arc<dyn ApplicationService> = Arc::new(application);
     let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence(

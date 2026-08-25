@@ -144,7 +144,8 @@ pub async fn list(
         | AppReply::McpOAuthClientRegistered(_)
         | AppReply::McpServerMutation(_)
         | AppReply::PendingToolApprovals(_)
-        | AppReply::ToolApprovalResolved(_) => {
+        | AppReply::ToolApprovalResolved(_)
+        | AppReply::UiPreferences(_) => {
             tracing::error!(
                 "ListVisibleChannels 收到非 Channels 应答 —— ApplicationService 契约破损"
             );

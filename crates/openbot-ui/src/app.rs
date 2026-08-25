@@ -8,6 +8,7 @@ use leptos_router::path;
 use crate::features::approvals::ApprovalPage;
 use crate::i18n::{I18nContextProvider, t, t_string, use_i18n};
 use crate::icons::Icon;
+use crate::preferences::{PreferenceSaveStatus, provide_ui_preferences};
 use crate::primitives::{IconSize, IconView, LocaleSwitch, ThemeToggle};
 
 /// Single CSR application root used by both supported hosts.
@@ -27,6 +28,7 @@ pub fn App() -> impl IntoView {
 #[component]
 fn AppShell() -> impl IntoView {
     let i18n = use_i18n();
+    provide_ui_preferences(i18n);
     view! {
         <a class="ob-skip-link" href="#main-content">
             {move || t!(i18n, shell.skip_to_content)}
@@ -49,6 +51,7 @@ fn AppShell() -> impl IntoView {
                 <div class="ob-sidebar-controls">
                     <ThemeToggle />
                     <LocaleSwitch />
+                    <PreferenceSaveStatus />
                 </div>
             </aside>
             <main id="main-content" class="ob-main" tabindex="-1">

@@ -228,7 +228,8 @@ impl AgentToolGateway {
                 | AppReply::McpOAuthClientRegistered(_)
                 | AppReply::McpServerMutation(_)
                 | AppReply::PendingToolApprovals(_)
-                | AppReply::ToolApprovalResolved(_),
+                | AppReply::ToolApprovalResolved(_)
+                | AppReply::UiPreferences(_),
             ) => Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }),

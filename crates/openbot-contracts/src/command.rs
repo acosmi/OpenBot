@@ -47,6 +47,7 @@ use crate::policy::ActionPolicyDocument;
 use crate::tool::{
     PendingToolApprovals, ToolApprovalDecision, ToolApprovalResolved, ToolInvocation, ToolResult,
 };
+use crate::ui::{UiPreferences, UpdateUiPreferences};
 
 /// 单页 channel 的条数上限。
 ///
@@ -272,6 +273,12 @@ pub enum AppCommand {
         /// Grant or deny.
         decision: ToolApprovalDecision,
     },
+
+    /// Read the authenticated actor's independently optional theme/locale preferences.
+    GetUiPreferences,
+
+    /// Atomically update one or both UI preferences; actor/scope come only from `AuthContext`.
+    UpdateUiPreferences(UpdateUiPreferences),
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -331,6 +338,8 @@ pub enum AppReply {
     PendingToolApprovals(PendingToolApprovals),
     /// [`AppCommand::DecideToolApproval`] response.
     ToolApprovalResolved(ToolApprovalResolved),
+    /// UI preference read/update response.
+    UiPreferences(UiPreferences),
 }
 
 /// 探活结果。

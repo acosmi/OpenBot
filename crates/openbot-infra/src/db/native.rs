@@ -103,8 +103,17 @@ pub const NATIVE_0020_NAME: &str = "native_0020_tool_approvals";
 /// 0020 SQL source.
 pub const NATIVE_0020_SQL: &str = include_str!("../../sql/native_0020.sql");
 
+/// Actor-scoped Server UI preference version.
+pub const NATIVE_0021_VERSION: i32 = 21;
+
+/// 0021 stable name.
+pub const NATIVE_0021_NAME: &str = "native_0021_user_ui_preferences";
+
+/// 0021 SQL source.
+pub const NATIVE_0021_SQL: &str = include_str!("../../sql/native_0021.sql");
+
 /// 当前二进制认识的最新 native schema 版本。
-pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0020_VERSION;
+pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0021_VERSION;
 
 /// 当前二进制钉住的 native migration 数量。
 pub const NATIVE_MIGRATION_COUNT: usize = MIGRATIONS.len();
@@ -160,6 +169,11 @@ const MIGRATIONS: &[MigrationSpec] = &[
         version: NATIVE_0020_VERSION,
         name: NATIVE_0020_NAME,
         sql: NATIVE_0020_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0021_VERSION,
+        name: NATIVE_0021_NAME,
+        sql: NATIVE_0021_SQL,
     },
 ];
 
@@ -261,6 +275,12 @@ pub fn native_0019_checksum() -> String {
 #[must_use]
 pub fn native_0020_checksum() -> String {
     Sha256Digest::of(NATIVE_0020_SQL.as_bytes()).to_hex()
+}
+
+/// Current 0021 SQL lowercase SHA-256.
+#[must_use]
+pub fn native_0021_checksum() -> String {
+    Sha256Digest::of(NATIVE_0021_SQL.as_bytes()).to_hex()
 }
 
 /// 在一个已到 0012 的数据库上施加当前二进制认识的全部 Rust-owned migrations。
@@ -426,6 +446,7 @@ mod tests {
             .chain(statement_lines(NATIVE_0018_SQL))
             .chain(statement_lines(NATIVE_0019_SQL))
             .chain(statement_lines(NATIVE_0020_SQL))
+            .chain(statement_lines(NATIVE_0021_SQL))
         {
             let uppercase = line.to_ascii_uppercase();
             assert!(
@@ -468,6 +489,8 @@ mod tests {
         assert!(NATIVE_0019_SQL.contains("google_drive_rest"));
         assert!(NATIVE_0020_SQL.contains("CREATE TABLE public.tool_approvals"));
         assert!(NATIVE_0020_SQL.contains("tool_approvals_decision_shape"));
+        assert!(NATIVE_0021_SQL.contains("CREATE TABLE public.user_ui_preferences"));
+        assert!(NATIVE_0021_SQL.contains("user_ui_preferences_nonempty"));
     }
 
     #[test]
@@ -481,6 +504,7 @@ mod tests {
                 .chain(statement_lines(NATIVE_0018_SQL))
                 .chain(statement_lines(NATIVE_0019_SQL))
                 .chain(statement_lines(NATIVE_0020_SQL))
+                .chain(statement_lines(NATIVE_0021_SQL))
                 .any(|line| line.contains("IF NOT EXISTS"))
         );
         assert!(LEDGER_BOOTSTRAP_SQL.contains("IF NOT EXISTS"));
@@ -519,7 +543,10 @@ mod tests {
         let native_approval = native_0020_checksum();
         assert_eq!(native_approval.len(), 64);
         assert_ne!(native_transport, native_approval);
-        assert_eq!(MIGRATIONS.len(), 8);
-        assert_eq!(MIGRATIONS[7].version, NATIVE_LATEST_VERSION);
+        let native_ui_preferences = native_0021_checksum();
+        assert_eq!(native_ui_preferences.len(), 64);
+        assert_ne!(native_approval, native_ui_preferences);
+        assert_eq!(MIGRATIONS.len(), 9);
+        assert_eq!(MIGRATIONS[8].version, NATIVE_LATEST_VERSION);
     }
 }

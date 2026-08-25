@@ -13,6 +13,7 @@ use axum::http::header::{
 };
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Response, StatusCode, Uri};
 use axum::routing::{MethodRouter, get};
+use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme};
 use tower_http::services::ServeDir;
 
 const INDEX_MAX_BYTES: u64 = 1024 * 1024;
@@ -204,21 +205,6 @@ struct FirstFramePreferences {
     locale: UiLocale,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum UiTheme {
-    #[default]
-    System,
-    Light,
-    Dark,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum UiLocale {
-    #[default]
-    En,
-    ZhCn,
-}
-
 fn first_frame_preferences(headers: &HeaderMap) -> FirstFramePreferences {
     if let Some(cookie) = ui_cookie(headers) {
         return cookie;
@@ -227,6 +213,25 @@ fn first_frame_preferences(headers: &HeaderMap) -> FirstFramePreferences {
         theme: UiTheme::System,
         locale: accept_language(headers),
     }
+}
+
+/// Build the closed non-sensitive mirror cookie from stored fields and this request's host
+/// fallback. Stored values win independently; an unset field retains cookie/Accept-Language.
+pub(crate) fn preference_cookie(
+    stored: UiPreferences,
+    request_headers: &HeaderMap,
+    secure: bool,
+) -> HeaderValue {
+    let fallback = first_frame_preferences(request_headers);
+    let theme = stored.theme.unwrap_or(fallback.theme);
+    let locale = stored.locale.unwrap_or(fallback.locale);
+    let secure_attribute = if secure { "; Secure" } else { "" };
+    HeaderValue::from_str(&format!(
+        "{UI_COOKIE_NAME}=v1.{}.{}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly{secure_attribute}",
+        theme.as_str(),
+        locale.as_str(),
+    ))
+    .expect("closed UI preference cookie is a valid header")
 }
 
 fn ui_cookie(headers: &HeaderMap) -> Option<FirstFramePreferences> {
@@ -387,6 +392,19 @@ mod tests {
         headers.insert(COOKIE, HeaderValue::from_static("openbot-ui=v2.dark.en"));
         assert_eq!(first_frame_preferences(&headers).locale, UiLocale::En);
         assert_eq!(first_frame_preferences(&headers).theme, UiTheme::System);
+
+        let mirrored = preference_cookie(
+            UiPreferences {
+                theme: Some(UiTheme::Light),
+                locale: None,
+            },
+            &headers,
+            true,
+        );
+        assert_eq!(
+            mirrored,
+            "openbot-ui=v1.light.en; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly; Secure"
+        );
     }
 
     #[test]

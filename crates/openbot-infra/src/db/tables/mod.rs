@@ -43,8 +43,8 @@
 //! [`SECRET_COLUMN_NAME_ROOTS`] 却既不在 [`SECRET_COLUMNS`] 也不在 [`SECRET_SCAN_EXEMPTIONS`]
 //! 的，当场判红。将来有人加一列 `refresh_token` 而忘了登记，闸门会拦住。
 //!
-//! 0013、0016 与 0020 的 native 表分别登记在 [`NATIVE_0013_TABLES`] /
-//! [`NATIVE_0016_TABLES`] / [`NATIVE_0020_TABLES`]，
+//! 0013、0016、0020 与 0021 的 native 表分别登记在 [`NATIVE_0013_TABLES`] /
+//! [`NATIVE_0016_TABLES`] / [`NATIVE_0020_TABLES`] / [`NATIVE_0021_TABLES`]，
 //! 始终不混进只代表固定上游 0012 的 [`ALL_TABLES`]。
 
 use std::fmt;
@@ -540,6 +540,15 @@ pub const NATIVE_0020_TABLES: &[TableSpec] = &[TableSpec {
     column_specs: tool_approvals::COLUMN_SPECS,
 }];
 
+pub mod user_ui_preferences;
+
+/// Native 0021 actor-scoped UI preference table.
+pub const NATIVE_0021_TABLES: &[TableSpec] = &[TableSpec {
+    name: user_ui_preferences::TABLE_NAME,
+    columns: user_ui_preferences::COLUMNS,
+    column_specs: user_ui_preferences::COLUMN_SPECS,
+}];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,6 +559,7 @@ mod tests {
             .chain(NATIVE_0013_TABLES.iter())
             .chain(NATIVE_0016_TABLES.iter())
             .chain(NATIVE_0020_TABLES.iter())
+            .chain(NATIVE_0021_TABLES.iter())
     }
 
     /// 每张表的列数。数值取自参照库（`fixtures/db/schema-0012.json`），合计必须是 204。

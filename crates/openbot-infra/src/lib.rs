@@ -35,8 +35,8 @@
 //! - [`db::compat`] —— 迁移边界检查（v3 §14.1「Rust 不接收更早 schema」）。
 //! - [`db::schema_facts`] —— schema 事实提取，与 `fixtures/db/schema-0012.json` 同构。
 //! - [`db::pool`] —— `deadpool-postgres` 连接池。
-//! - [`db::native`] —— Rust-owned 0013–0016，自有 SHA-256 账本与并发施加锁；0016 增加
-//!   native thread/realtime/memory 十表且保持 expand-only。
+//! - [`db::native`] —— Rust-owned 0013–0021，自有 SHA-256 账本与并发施加锁；0021 增加
+//!   actor/deployment/tenant scoped UI preference 表且保持 expand-only。
 //! - [`repo::IMPLEMENTED_REPOSITORIES`] —— 当前 40 个规划落点全部有物理表与具名 repository；
 //!   [`repo::channels::ChannelRepo`] 同时实现 `openbot_application::ChannelReader`。
 //! - [`vault::CredentialRepo`] —— credential CAS 轮换/撤销；
@@ -96,4 +96,5 @@ pub mod tenant;
 pub mod thread_directory;
 pub mod thread_id;
 pub mod tool_approval;
+pub mod ui_preferences;
 pub mod vault;

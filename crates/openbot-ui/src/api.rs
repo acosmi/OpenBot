@@ -4,10 +4,11 @@
 //! decision remain behind `ApplicationService` on the Server.
 
 use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalDecision, ToolApprovalResolved};
+use openbot_contracts::ui::{UiPreferences, UpdateUiPreferences};
 
 /// Stable, payload-free failure categories suitable for localized presentation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApprovalApiError {
+pub enum ApiError {
     /// The browser could not complete the request.
     Network,
     /// The current session is absent or expired.
@@ -25,7 +26,7 @@ pub enum ApprovalApiError {
 }
 
 /// Load at most the Server-bounded current-actor approval page without using browser cache.
-pub async fn list_pending_tool_approvals() -> Result<PendingToolApprovals, ApprovalApiError> {
+pub async fn list_pending_tool_approvals() -> Result<PendingToolApprovals, ApiError> {
     #[cfg(target_arch = "wasm32")]
     {
         use gloo_net::http::Request;
@@ -37,22 +38,22 @@ pub async fn list_pending_tool_approvals() -> Result<PendingToolApprovals, Appro
             .redirect(RequestRedirect::Error)
             .send()
             .await
-            .map_err(|_| ApprovalApiError::Network)?;
+            .map_err(|_| ApiError::Network)?;
         if !response.ok() {
             return Err(status_error(response.status()));
         }
         let page = response
             .json::<PendingToolApprovals>()
             .await
-            .map_err(|_| ApprovalApiError::InvalidResponse)?;
+            .map_err(|_| ApiError::InvalidResponse)?;
         if page.approvals.len() > 100 {
-            return Err(ApprovalApiError::InvalidResponse);
+            return Err(ApiError::InvalidResponse);
         }
         Ok(page)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        Err(ApprovalApiError::Unavailable)
+        Err(ApiError::Unavailable)
     }
 }
 
@@ -60,7 +61,7 @@ pub async fn list_pending_tool_approvals() -> Result<PendingToolApprovals, Appro
 pub async fn decide_tool_approval(
     approval_id: &str,
     decision: ToolApprovalDecision,
-) -> Result<ToolApprovalResolved, ApprovalApiError> {
+) -> Result<ToolApprovalResolved, ApiError> {
     #[cfg(target_arch = "wasm32")]
     {
         use gloo_net::http::Request;
@@ -73,34 +74,96 @@ pub async fn decide_tool_approval(
             .credentials(RequestCredentials::SameOrigin)
             .redirect(RequestRedirect::Error)
             .json(&body)
-            .map_err(|_| ApprovalApiError::InvalidResponse)?;
-        let response = request
-            .send()
-            .await
-            .map_err(|_| ApprovalApiError::Network)?;
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let response = request.send().await.map_err(|_| ApiError::Network)?;
         if !response.ok() {
             return Err(status_error(response.status()));
         }
         let receipt = response
             .json::<ToolApprovalResolved>()
             .await
-            .map_err(|_| ApprovalApiError::InvalidResponse)?;
+            .map_err(|_| ApiError::InvalidResponse)?;
         if receipt.approval_id != approval_id || receipt.decision != decision {
-            return Err(ApprovalApiError::InvalidResponse);
+            return Err(ApiError::InvalidResponse);
         }
         Ok(receipt)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = (approval_id, decision);
-        Err(ApprovalApiError::Unavailable)
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Read authenticated stored UI preferences; absent fields preserve the host-rendered fallback.
+pub async fn load_ui_preferences() -> Result<UiPreferences, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/me/preferences")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<UiPreferences>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Merge one or both closed preference fields through the authenticated same-origin API.
+pub async fn save_ui_preferences(update: UpdateUiPreferences) -> Result<UiPreferences, ApiError> {
+    if update.is_empty() {
+        return Err(ApiError::InvalidResponse);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let request = Request::put("/api/me/preferences")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&update)
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let response = request.send().await.map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let stored = response
+            .json::<UiPreferences>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if update.theme.is_some() && stored.theme != update.theme
+            || update.locale.is_some() && stored.locale != update.locale
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(stored)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
     }
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn approval_decision_path(approval_id: &str) -> Result<String, ApprovalApiError> {
+fn approval_decision_path(approval_id: &str) -> Result<String, ApiError> {
     if approval_id.is_empty() || approval_id.len() > 128 || approval_id.as_bytes().contains(&0) {
-        return Err(ApprovalApiError::InvalidResponse);
+        return Err(ApiError::InvalidResponse);
     }
     let mut encoded = String::with_capacity(approval_id.len());
     for byte in approval_id.bytes() {
@@ -115,12 +178,12 @@ fn approval_decision_path(approval_id: &str) -> Result<String, ApprovalApiError>
 }
 
 #[cfg(target_arch = "wasm32")]
-fn status_error(status: u16) -> ApprovalApiError {
+fn status_error(status: u16) -> ApiError {
     match status {
-        401 => ApprovalApiError::Unauthorized,
-        403 => ApprovalApiError::Forbidden,
-        404 | 409 | 410 | 412 => ApprovalApiError::Conflict,
-        _ => ApprovalApiError::Server,
+        401 => ApiError::Unauthorized,
+        403 => ApiError::Forbidden,
+        404 | 409 | 410 | 412 => ApiError::Conflict,
+        _ => ApiError::Server,
     }
 }
 
@@ -136,11 +199,11 @@ mod tests {
         );
         assert_eq!(
             approval_decision_path("").unwrap_err(),
-            ApprovalApiError::InvalidResponse
+            ApiError::InvalidResponse
         );
         assert_eq!(
             approval_decision_path(&"a".repeat(129)).unwrap_err(),
-            ApprovalApiError::InvalidResponse
+            ApiError::InvalidResponse
         );
     }
 }

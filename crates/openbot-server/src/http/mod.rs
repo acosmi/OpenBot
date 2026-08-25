@@ -54,6 +54,7 @@ pub mod metrics;
 pub mod plugins;
 pub mod static_app;
 pub mod threads;
+pub mod ui_preferences;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -527,6 +528,10 @@ pub fn router(state: ServerState) -> Router {
             get(threads::history),
         )
         .route("/api/me", get(admin::me))
+        .route(
+            "/api/me/preferences",
+            get(ui_preferences::get).put(ui_preferences::put),
+        )
         .route("/api/admin/status", get(admin::status))
         .route("/api/admin/identity-providers", get(auth_sso::list))
         .route(

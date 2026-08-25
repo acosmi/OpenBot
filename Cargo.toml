@@ -132,6 +132,8 @@ leptos_router = "=0.8.13"
 leptos_meta = "=0.8.6"
 leptos_i18n = { version = "=0.6.2", features = ["csr", "plurals", "format_datetime", "format_nums", "icu_compiled_data"] }
 leptos_i18n_build = "=0.6.2"
+tauri = { version = "=2.11.5", default-features = false, features = ["wry"] }
+sys-locale = "=0.3.2"
 toml = "=0.9.8"
 gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json"] }
 js-sys = "=0.3.104"

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
     ApplicationService, ChannelReader, OpenBotApplication, PortError, ToolApprovalAdministration,
-    ToolApprovalAdministrationError,
+    ToolApprovalAdministrationError, UiPreferenceAdministration, UiPreferenceAdministrationError,
 };
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ToolCallId};
@@ -15,6 +15,7 @@ use openbot_contracts::tool::{
     PendingToolApproval, PendingToolApprovals, ToolApprovalClass, ToolApprovalDecision,
     ToolApprovalEffect, ToolApprovalResolved,
 };
+use openbot_contracts::ui::{UiPreferences, UpdateUiPreferences};
 use openbot_domain::identity::session::{SessionState, TrustedOrigins, evaluate_session};
 use openbot_infra::auth::config::default_session_lifetime;
 use openbot_server::auth::FixedAuthResolver;
@@ -38,6 +39,38 @@ impl ChannelReader for EmptyChannels {
 #[derive(Clone)]
 struct FixtureApprovals {
     pending: Arc<Mutex<Option<PendingToolApproval>>>,
+}
+
+#[derive(Default)]
+struct FixturePreferences {
+    stored: Mutex<UiPreferences>,
+}
+
+#[async_trait]
+impl UiPreferenceAdministration for FixturePreferences {
+    async fn get(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<UiPreferences, UiPreferenceAdministrationError> {
+        self.stored
+            .lock()
+            .map(|stored| *stored)
+            .map_err(|_| UiPreferenceAdministrationError::Unavailable)
+    }
+
+    async fn update(
+        &self,
+        _auth: &AuthContext,
+        update: UpdateUiPreferences,
+    ) -> Result<UiPreferences, UiPreferenceAdministrationError> {
+        let mut stored = self
+            .stored
+            .lock()
+            .map_err(|_| UiPreferenceAdministrationError::Unavailable)?;
+        stored.theme = update.theme.or(stored.theme);
+        stored.locale = update.locale.or(stored.locale);
+        Ok(*stored)
+    }
 }
 
 impl FixtureApprovals {
@@ -135,7 +168,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         FixedAuthResolver::granting_resolved(ResolvedAuth::from_live_session(context, live, None));
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(EmptyChannels)
-            .with_tool_approvals(Arc::new(FixtureApprovals::new(now))),
+            .with_tool_approvals(Arc::new(FixtureApprovals::new(now)))
+            .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );
     let origin = format!("http://127.0.0.1:{port}");
     let router = ServerBuilder::new(application, Arc::new(resolver))

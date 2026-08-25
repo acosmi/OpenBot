@@ -41,6 +41,10 @@ use crate::ports::{
 };
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
+use crate::ui_preferences::{
+    NoUiPreferenceAdministration, UiPreferenceAdministration, get_ui_preferences,
+    update_ui_preferences,
+};
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, begin_thread_run, change_person_access,
     change_person_role, correct_memory, current_user, get_action_policy, get_thread_history,
@@ -76,6 +80,7 @@ pub struct OpenBotApplication<
     callback_tokens: B,
     mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
     tool_approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
+    ui_preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
     heartbeat_period: Duration,
 }
 
@@ -106,6 +111,7 @@ impl<R>
             callback_tokens: NoAgentCallbackTokenAdministration,
             mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
             tool_approvals: std::sync::Arc::new(NoToolApprovalAdministration),
+            ui_preferences: std::sync::Arc::new(NoUiPreferenceAdministration),
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
@@ -127,6 +133,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -146,6 +153,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -165,6 +173,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -188,6 +197,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -207,6 +217,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -226,6 +237,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -248,6 +260,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -269,6 +282,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
         approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
     ) -> Self {
         self.tool_approvals = approvals;
+        self
+    }
+
+    /// Attach authenticated UI preference storage shared by Server and Desktop.
+    #[must_use]
+    pub fn with_ui_preferences(
+        mut self,
+        preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
+    ) -> Self {
+        self.ui_preferences = preferences;
         self
     }
 
@@ -443,6 +466,12 @@ where
             } => Ok(AppReply::ToolApprovalResolved(
                 decide_tool_approval(self.tool_approvals.as_ref(), auth, &approval_id, decision)
                     .await?,
+            )),
+            AppCommand::GetUiPreferences => Ok(AppReply::UiPreferences(
+                get_ui_preferences(self.ui_preferences.as_ref(), auth).await?,
+            )),
+            AppCommand::UpdateUiPreferences(update) => Ok(AppReply::UiPreferences(
+                update_ui_preferences(self.ui_preferences.as_ref(), auth, update).await?,
             )),
         }
     }

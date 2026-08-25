@@ -129,6 +129,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::RefreshMcpServer { .. } => "refresh_mcp_server",
         AppCommand::ListPendingToolApprovals => "list_pending_tool_approvals",
         AppCommand::DecideToolApproval { .. } => "decide_tool_approval",
+        AppCommand::GetUiPreferences => "get_ui_preferences",
+        AppCommand::UpdateUiPreferences(_) => "update_ui_preferences",
     }
 }
 
@@ -385,6 +387,14 @@ mod tests {
                     decision: openbot_contracts::tool::ToolApprovalDecision::Grant,
                 },
                 "decide_tool_approval",
+            ),
+            (AppCommand::GetUiPreferences, "get_ui_preferences"),
+            (
+                AppCommand::UpdateUiPreferences(openbot_contracts::ui::UpdateUiPreferences {
+                    theme: Some(openbot_contracts::ui::UiTheme::Dark),
+                    locale: None,
+                }),
+                "update_ui_preferences",
             ),
         ];
         for (command, expected) in commands {

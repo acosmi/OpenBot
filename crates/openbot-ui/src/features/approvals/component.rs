@@ -7,7 +7,7 @@ use openbot_contracts::tool::{ToolApprovalClass, ToolApprovalDecision, ToolAppro
 use time::format_description::well_known::Rfc3339;
 
 use super::ApprovalCardView;
-use crate::api::ApprovalApiError;
+use crate::api::ApiError;
 #[cfg(target_arch = "wasm32")]
 use crate::api::decide_tool_approval;
 #[cfg(target_arch = "wasm32")]
@@ -24,7 +24,7 @@ pub fn ApprovalPage() -> impl IntoView {
     let i18n = use_i18n();
     let approvals = RwSignal::new(Vec::<ApprovalCardView>::new());
     let loading = RwSignal::new(true);
-    let load_error = RwSignal::new(None::<ApprovalApiError>);
+    let load_error = RwSignal::new(None::<ApiError>);
     let decision_error = RwSignal::new(false);
     let notice = RwSignal::new(None::<ToolApprovalDecision>);
     let in_flight = RwSignal::new(BTreeSet::<String>::new());
@@ -326,7 +326,7 @@ fn dispatch_decision(
 fn refresh_once(
     approvals: RwSignal<Vec<ApprovalCardView>>,
     loading: RwSignal<bool>,
-    load_error: RwSignal<Option<ApprovalApiError>>,
+    load_error: RwSignal<Option<ApiError>>,
 ) {
     loading.set(true);
     #[cfg(target_arch = "wasm32")]
@@ -337,14 +337,14 @@ fn refresh_once(
     {
         let _ = approvals;
         loading.set(false);
-        load_error.set(Some(ApprovalApiError::Unavailable));
+        load_error.set(Some(ApiError::Unavailable));
     }
 }
 
 fn start_polling(
     approvals: RwSignal<Vec<ApprovalCardView>>,
     loading: RwSignal<bool>,
-    load_error: RwSignal<Option<ApprovalApiError>>,
+    load_error: RwSignal<Option<ApiError>>,
     now: RwSignal<i64>,
 ) {
     #[cfg(target_arch = "wasm32")]
@@ -358,7 +358,7 @@ fn start_polling(
     #[cfg(not(target_arch = "wasm32"))]
     {
         loading.set(false);
-        load_error.set(Some(ApprovalApiError::Unavailable));
+        load_error.set(Some(ApiError::Unavailable));
         let _ = (approvals, now);
     }
 }
@@ -378,7 +378,7 @@ async fn poll_delay() {
 async fn refresh(
     approvals: RwSignal<Vec<ApprovalCardView>>,
     loading: RwSignal<bool>,
-    load_error: RwSignal<Option<ApprovalApiError>>,
+    load_error: RwSignal<Option<ApiError>>,
 ) {
     match list_pending_tool_approvals().await {
         Ok(page) => {

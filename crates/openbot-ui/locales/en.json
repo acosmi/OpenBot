@@ -57,6 +57,7 @@
     "language_label": "Language",
     "language_english": "English",
     "language_simplified_chinese": "Simplified Chinese",
+    "preference_save_error": "Could not save this preference. Try again.",
     "detail_panel_open": "Show details",
     "detail_panel_close": "Hide details",
     "keyboard_shortcuts": "Keyboard shortcuts",

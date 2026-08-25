@@ -36,7 +36,7 @@ async fn post_0020_is_exact_expand_only_tool_approval_schema() {
             if before != facts(POST_0019) {
                 return Err("0020 prerequisite fixture drift".to_owned());
             }
-            if native::apply(&mut client)
+            if native::apply_through(&mut client, native::NATIVE_0020_VERSION)
                 .await
                 .map_err(|error| error.to_string())?
                 != ApplyOutcome::Applied
@@ -105,7 +105,7 @@ async fn pending_and_resolved_shapes_are_closed_and_actor_owned() {
             baseline::apply(&client)
                 .await
                 .map_err(|error| error.to_string())?;
-            native::apply(&mut client)
+            native::apply_through(&mut client, native::NATIVE_0020_VERSION)
                 .await
                 .map_err(|error| error.to_string())?;
             client

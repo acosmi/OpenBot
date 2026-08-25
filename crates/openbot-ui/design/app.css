@@ -454,6 +454,13 @@ a:focus-visible,
   color: var(--fg);
 }
 
+.ob-preference-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+
 .ob-alert,
 .ob-status {
   gap: calc(var(--spacing) * 2);

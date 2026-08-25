@@ -20,7 +20,7 @@
 //! - Tauri capability 按 window label 单独配置；禁止 `windows:["*"]`、宽泛 filesystem、remote
 //!   API access；production 禁用 devtools；所有 command 枚举注册并生成审计清单（v3 §13.1）。
 //! - sidecar 生命周期与 update（v3 §16.2），含 Desktop 本机 PostgreSQL sidecar 的监管（v3 §14.1）。
-//! - `<html class lang>` 首帧改写：Desktop 从本地设置读（CLAUDE.md §4a）。
+//! - `<html class lang>` 首帧改写：`tauri_host` 从 [`preferences`] 本地设置读（CLAUDE.md §4a）。
 //!
 //! 明确**不**负责：
 //!
@@ -45,11 +45,12 @@
 //! | [`cancel`] | [`CancellationToken`] 与 [`SHUTDOWN_DEADLINE`] | §13.2 |
 //! | [`transport`] | [`InProcessTransport`]：把 `Arc<dyn ApplicationService>` 包成 in-process 通道 | §13.2 / §5.2 |
 //!
-//! **尚未实现**（不要在这里找）：Tauri 宿主与 capability 清单（G6）、sidecar 与 update
-//! （§16.2）、`<html class lang>` 首帧改写（§13.1）、screen 的 loopback binary WebSocket
-//! （§13.4 / G7）、真实认证与 auth generation 的推进（G2）。
+//! **尚未实现**（不要冒充）：可发布 Tauri binary/tauri.conf/capability 清单与真实窗口生命周期
+//! assembly（G6）、sidecar/update（§16.2）、screen loopback binary WebSocket（§13.4/G7）。
+//! Batch 16 已落 opt-in Tauri 2.11.5 custom-protocol adapter、本地偏好原子文件与首帧改写，
+//! 但其许可/RustSec/cargo-vet delta 仍红，不能据此勾 Desktop/G6 整关。
 //!
-//! # G1 不引 Tauri 本体（主控裁决，2026-08-22）
+//! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
 //!
 //! §24 的 G1 判据是「ApplicationService 经 Axum/Tauri 结果一致」。它要证明的事情只有一件：
 //! **没有任何业务规则住在 transport 里**。承载这条风险的是 §13.2 的 typed in-process 层
@@ -57,7 +58,8 @@
 //! G6（W11–28）。
 //!
 //! 此刻引 `tauri` 只会给每条 CI 腿加上 WebView2 / 系统 WebKit 依赖，却不增强那条判据。
-//! 所以本 crate 在 G1 是**纯 Rust 的 in-process transport**，`Cargo.toml` 里没有 `tauri`。
+//! 所以默认 feature 仍是**纯 Rust的 in-process transport**；G6 后续只在显式
+//! `tauri-host` feature 下钉 Tauri/Wry，不改变这条默认路径。
 //!
 //! ## G6 接 Tauri 时接在哪一层
 //!
@@ -95,9 +97,13 @@ pub mod broker;
 pub mod budget;
 pub mod cancel;
 pub mod event;
+pub mod preferences;
 pub mod session;
 pub mod transport;
 pub mod window;
+
+#[cfg(feature = "tauri-host")]
+pub mod tauri_host;
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod testing;
@@ -115,8 +121,14 @@ pub use event::{
     AppEventRef, BrokerEvent, FramePayload, GapCause, SequenceError, SequenceGap, SequenceTracker,
     TERMINAL_FRAME_RESERVE,
 };
+pub use preferences::DesktopUiPreferenceStore;
 pub use session::{DesktopSession, event_of};
 pub use transport::{InProcessTransport, OpenSessionError, ShutdownReport};
 pub use window::{
     EventScope, FilterReason, ScopeTarget, ThreadSubscriptions, WindowIdentity, WindowLabel,
+};
+
+#[cfg(feature = "tauri-host")]
+pub use tauri_host::{
+    DesktopTauriProtocol, TauriHostError, detect_os_locale, register_tauri_protocol,
 };

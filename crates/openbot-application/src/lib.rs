@@ -85,6 +85,7 @@ pub mod run_runtime;
 pub mod service;
 pub mod tenant;
 pub mod tool;
+pub mod ui_preferences;
 pub mod use_cases;
 
 #[cfg(test)]
@@ -153,6 +154,10 @@ pub use tool::{
     ToolCallSequenceError, ToolControlPlane, ToolDecisionDraft, ToolExecutionReport, ToolJournal,
     ToolOutcomeDraft, ToolPolicyEvaluation, ToolPortError, ToolPreflightRefusal, ToolRefusalDraft,
     invoke_tool,
+};
+pub use ui_preferences::{
+    NoUiPreferenceAdministration, UiPreferenceAdministration, UiPreferenceAdministrationError,
+    get_ui_preferences, update_ui_preferences,
 };
 pub use use_cases::{
     DEFAULT_AUDIT_PAGE, DEFAULT_CHANNEL_PAGE, DEFAULT_MEMORY_PAGE, DEFAULT_PEOPLE_PAGE,

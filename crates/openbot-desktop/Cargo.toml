@@ -16,6 +16,9 @@ default = []
 # `AuthContext::for_test` 就住在那后面。默认关：G1 的 Desktop **没有**任何真实认证，
 # 而“默认放行的构造器”正是那种会在 G2 之前被顺手接进生产路径的东西。
 testkit = ["openbot-contracts/testkit"]
+# Real Tauri custom-protocol adapter. Kept opt-in until a reviewed external product identity and
+# tauri.conf capability set are available; the adapter itself is production code, not a fake host.
+tauri-host = ["dep:http", "dep:serde", "dep:serde_json", "dep:sys-locale", "dep:tauri"]
 
 [dependencies]
 # 唯一业务入口。transport 只穿过它，不实现任何业务规则（v3 §5.2）。
@@ -38,14 +41,23 @@ thiserror.workspace = true
 # 库不替二进制决定日志去向。
 tracing.workspace = true
 
+# Desktop-local preference storage implements the shared async application port. No JSON codec is
+# introduced: the file format is a closed three-line host format and in-process commands stay typed.
+async-trait.workspace = true
+
+http = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+sys-locale = { workspace = true, optional = true }
+tauri = { workspace = true, optional = true }
+
 # ---------------------------------------------------------------------------
 # 刻意**没有**的依赖，每一条都是一次裁决：
 #
 # - `tauri`：G1 不引 Tauri 本体（裁决见 `lib.rs` 的〈G1 不引 Tauri 本体〉）。
-# - `serde` / `serde_json`：typed in-process 的定义就是“不复制 JSON-RPC”（§13.2）。
-#   本 crate 依赖图里没有任何序列化器，于是“这条路径不会把 DTO 抄成 JSON 再抄回来”
-#   是构造性事实，不是注释。由 `transport` 里的 `the_in_process_lane_has_no_json_codec`
-#   读本文件钉住。
+# - 默认 typed in-process 路径不开 `serde` / `serde_json`；它们只属于 opt-in `tauri-host`
+#   的 WebView HTTP framing。`transport` 测试扫生产模块源码与 optional feature 声明，防止
+#   codec 渗进 typed lane。
 # - `tokio-util`：只为一个 `CancellationToken` 引一棵新依赖树。它此刻虽在 `Cargo.lock`
 #   里，但那是 `tokio-postgres` 的实现细节，不是本 crate 可以依赖的事实。等价语义由
 #   `cancel::CancellationToken`（`tokio::sync::watch`）承担。
@@ -56,9 +68,7 @@ tracing.workspace = true
 # 生产构建：dev-dependencies 不进 `cargo build` 的依赖图。
 openbot-contracts = { workspace = true, features = ["testkit"] }
 
-# 测试里实现 `ApplicationService` / `ChannelReader` 两个 `#[async_trait]` trait。
-# 生产侧一个都不实现 —— transport 是它们的**调用方**，不是实现方。
-async-trait.workspace = true
+# 测试里另实现 `ApplicationService` / `ChannelReader`；生产只实现 UI preference storage port。
 
 # `ChannelSummary` 里的 RFC 3339 时间戳（测试用的内存 port 要造真行）。
 # 生产侧不需要 —— 本 crate 不解释任何 DTO 内容。

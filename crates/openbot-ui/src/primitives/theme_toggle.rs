@@ -2,35 +2,24 @@
 
 use leptos::prelude::*;
 use leptos::{ev::KeyboardEvent, html};
+pub use openbot_contracts::ui::UiTheme as Theme;
 
 use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
+use crate::preferences::use_ui_preferences;
 
 use super::{IconSize, IconView};
-
-/// Theme preference represented by the `<html>` class contract.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Theme {
-    /// Follow `prefers-color-scheme`; neither forcing class is present.
-    #[default]
-    System,
-    /// Force the light token block.
-    Light,
-    /// Force the dark token block.
-    Dark,
-}
 
 /// Switch the current document among system/light/dark without reloading.
 #[component]
 pub fn ThemeToggle() -> impl IntoView {
     let i18n = use_i18n();
-    let theme = RwSignal::new(current_theme());
+    let preferences = use_ui_preferences();
     let system_ref = NodeRef::<html::Button>::new();
     let light_ref = NodeRef::<html::Button>::new();
     let dark_ref = NodeRef::<html::Button>::new();
     let select = move |next: Theme| {
-        apply_theme(next);
-        theme.set(next);
+        preferences.select_theme(next);
     };
     view! {
         <div
@@ -43,8 +32,8 @@ pub fn ThemeToggle() -> impl IntoView {
                 class="ob-segmented-button"
                 node_ref=system_ref
                 role="radio"
-                aria-checked=move || if theme.get() == Theme::System { "true" } else { "false" }
-                tabindex=move || -i32::from(theme.get() != Theme::System)
+                aria-checked=move || if preferences.theme() == Theme::System { "true" } else { "false" }
+                tabindex=move || -i32::from(preferences.theme() != Theme::System)
                 on:click=move |_| select(Theme::System)
                 on:keydown=move |event| {
                     handle_radio_key(
@@ -65,8 +54,8 @@ pub fn ThemeToggle() -> impl IntoView {
                 class="ob-segmented-button"
                 node_ref=light_ref
                 role="radio"
-                aria-checked=move || if theme.get() == Theme::Light { "true" } else { "false" }
-                tabindex=move || -i32::from(theme.get() != Theme::Light)
+                aria-checked=move || if preferences.theme() == Theme::Light { "true" } else { "false" }
+                tabindex=move || -i32::from(preferences.theme() != Theme::Light)
                 on:click=move |_| select(Theme::Light)
                 on:keydown=move |event| {
                     handle_radio_key(
@@ -87,8 +76,8 @@ pub fn ThemeToggle() -> impl IntoView {
                 class="ob-segmented-button"
                 node_ref=dark_ref
                 role="radio"
-                aria-checked=move || if theme.get() == Theme::Dark { "true" } else { "false" }
-                tabindex=move || -i32::from(theme.get() != Theme::Dark)
+                aria-checked=move || if preferences.theme() == Theme::Dark { "true" } else { "false" }
+                tabindex=move || -i32::from(preferences.theme() != Theme::Dark)
                 on:click=move |_| select(Theme::Dark)
                 on:keydown=move |event| {
                     handle_radio_key(
@@ -156,46 +145,3 @@ fn focus_theme(
     #[cfg(not(target_arch = "wasm32"))]
     let _ = (theme, system_ref, light_ref, dark_ref);
 }
-
-#[cfg(target_arch = "wasm32")]
-fn current_theme() -> Theme {
-    let Some(root) = web_sys::window()
-        .and_then(|window| window.document())
-        .and_then(|document| document.document_element())
-    else {
-        return Theme::System;
-    };
-    let classes = root.class_list();
-    if classes.contains("dark") {
-        Theme::Dark
-    } else if classes.contains("light") {
-        Theme::Light
-    } else {
-        Theme::System
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-const fn current_theme() -> Theme {
-    Theme::System
-}
-
-#[cfg(target_arch = "wasm32")]
-fn apply_theme(theme: Theme) {
-    let Some(root) = web_sys::window()
-        .and_then(|window| window.document())
-        .and_then(|document| document.document_element())
-    else {
-        return;
-    };
-    let classes = root.class_list();
-    _ = classes.remove_2("light", "dark");
-    match theme {
-        Theme::System => {}
-        Theme::Light => _ = classes.add_1("light"),
-        Theme::Dark => _ = classes.add_1("dark"),
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-const fn apply_theme(_theme: Theme) {}
