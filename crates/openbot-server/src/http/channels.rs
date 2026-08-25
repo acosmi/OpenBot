@@ -135,7 +135,9 @@ pub async fn list(
         | AppReply::ThreadHistory(_)
         | AppReply::Memory(_)
         | AppReply::Memories(_)
-        | AppReply::MemoryRecall(_) => {
+        | AppReply::MemoryRecall(_)
+        | AppReply::AgentCallbackToken(_)
+        | AppReply::AgentCallbackTokenRevoked(_) => {
             tracing::error!(
                 "ListVisibleChannels 收到非 Channels 应答 —— ApplicationService 契约破损"
             );

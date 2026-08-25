@@ -781,6 +781,48 @@ pub struct SensitiveWriteApproved {
     approved_at: OffsetDateTime,
 }
 
+/// Fresh same-origin approval for a credential write whose ownership/role rule is evaluated by the
+/// application port rather than being administrator-only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use]
+pub struct FreshOriginWriteApproved {
+    approved_at: OffsetDateTime,
+}
+
+impl FreshOriginWriteApproved {
+    /// Approval time for audit correlation.
+    #[must_use]
+    pub const fn approved_at(self) -> OffsetDateTime {
+        self.approved_at
+    }
+}
+
+/// Require a trusted Origin and a fresh live session, without deciding resource ownership or role.
+///
+/// This is for writes such as rotating a caller-owned remote Agent credential. The application/DB
+/// transaction still decides whether the actor owns or administrates that exact Agent. Reusing the
+/// admin-only function would incorrectly block legitimate owners; omitting freshness would make a
+/// stolen long-lived session sufficient to mint a new machine credential.
+pub fn authorize_fresh_origin_write(
+    policy: SessionLifetimePolicy,
+    trusted: &TrustedOrigins,
+    session: &LiveSession,
+    origin: Option<&str>,
+) -> Result<FreshOriginWriteApproved, SensitiveWriteRejection> {
+    let Some(origin) = origin else {
+        return Err(SensitiveWriteRejection::OriginMissing);
+    };
+    if !trusted.trusts(origin) {
+        return Err(SensitiveWriteRejection::OriginUntrusted);
+    }
+    if session.evaluated_at - session.state.established_at > policy.fresh {
+        return Err(SensitiveWriteRejection::SessionNotFresh);
+    }
+    Ok(FreshOriginWriteApproved {
+        approved_at: session.evaluated_at,
+    })
+}
+
 impl SensitiveWriteApproved {
     /// 准许发生的时刻，供审计行用。
     #[must_use]
@@ -1442,6 +1484,49 @@ mod tests {
         assert_eq!(
             SessionRejection::from(GenerationMismatch::FromTheFuture),
             SessionRejection::GenerationFromTheFuture
+        );
+    }
+
+    #[test]
+    fn fresh_origin_write_separates_session_assurance_from_resource_role() {
+        let now = datetime!(2026-08-24 12:00 UTC);
+        let generation = AuthGeneration::new(1);
+        let trusted = TrustedOrigins::from_configured(["https://app.example.test"]).unwrap();
+        let fresh = evaluate_session(
+            policy(),
+            SessionState::rehydrate(now - Duration::minutes(1), now, generation),
+            generation,
+            now,
+        )
+        .unwrap();
+        assert!(
+            authorize_fresh_origin_write(
+                policy(),
+                &trusted,
+                &fresh,
+                Some("https://app.example.test")
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            authorize_fresh_origin_write(policy(), &trusted, &fresh, None),
+            Err(SensitiveWriteRejection::OriginMissing)
+        );
+        let stale = evaluate_session(
+            policy(),
+            SessionState::rehydrate(now - Duration::minutes(6), now, generation),
+            generation,
+            now,
+        )
+        .unwrap();
+        assert_eq!(
+            authorize_fresh_origin_write(
+                policy(),
+                &trusted,
+                &stale,
+                Some("https://app.example.test")
+            ),
+            Err(SensitiveWriteRejection::SessionNotFresh)
         );
     }
 }

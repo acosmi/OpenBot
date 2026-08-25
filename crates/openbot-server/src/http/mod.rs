@@ -41,6 +41,8 @@
 //! **之外**：一次 413 也是一次真实请求，不计进延迟分布就等于把被拒流量藏起来。
 
 pub mod admin;
+pub mod agent_tools;
+pub mod agents;
 pub mod auth_oidc;
 pub mod auth_sso;
 pub mod channels;
@@ -59,7 +61,7 @@ use axum::extract::{DefaultBodyLimit, Request};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::{delete, get, post};
-use openbot_application::ApplicationService;
+use openbot_application::{ApplicationService, RemoteCallbackAuthenticator};
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_infra::auth::oidc::{OidcLoginCoordinator, PreAuthSurface};
 use openbot_infra::auth::sso::DynamicSsoService;
@@ -93,6 +95,7 @@ struct StateInner {
     login_origins: Option<TrustedOrigins>,
     secure_session_cookie: bool,
     dynamic_sso: Option<Arc<DynamicSsoService>>,
+    remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
 }
 
 impl ServerState {
@@ -161,6 +164,12 @@ impl ServerState {
         self.inner.dynamic_sso.as_deref()
     }
 
+    /// Remote machine-to-machine callback verifier; absent means the public route returns 503.
+    #[must_use]
+    pub fn remote_callback_authenticator(&self) -> Option<&dyn RemoteCallbackAuthenticator> {
+        self.inner.remote_callback_auth.as_deref()
+    }
+
     /// 敏感写 guard；未注入时 fail-closed 503，不给 handler 任何“暂时跳过”路径。
     pub async fn authorize_sensitive_write(
         &self,
@@ -191,6 +200,21 @@ impl ServerState {
         security.authorize_origin(origin)?;
         self.inner.auth.touch(resolved).await
     }
+
+    /// Fresh same-origin write whose per-resource authorization remains in application/infra.
+    pub async fn authorize_fresh_origin_write(
+        &self,
+        resolved: &ResolvedAuth,
+        origin: Option<&str>,
+    ) -> Result<(), openbot_contracts::error::AppError> {
+        let Some(security) = &self.inner.sensitive_write else {
+            return Err(openbot_contracts::error::AppError::DependencyUnavailable {
+                dependency: "sensitive_write_security",
+            });
+        };
+        security.authorize_fresh_origin(resolved, origin)?;
+        self.inner.auth.touch(resolved).await
+    }
 }
 
 /// [`ServerState`] 的构造器。
@@ -211,6 +235,7 @@ pub struct ServerBuilder {
     login_origins: Option<TrustedOrigins>,
     secure_session_cookie: bool,
     dynamic_sso: Option<Arc<DynamicSsoService>>,
+    remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
 }
 
 impl ServerBuilder {
@@ -229,6 +254,7 @@ impl ServerBuilder {
             login_origins: None,
             secure_session_cookie: false,
             dynamic_sso: None,
+            remote_callback_auth: None,
         }
     }
 
@@ -303,6 +329,16 @@ impl ServerBuilder {
         self
     }
 
+    /// Attach the production per-Agent token + signed-run callback verifier.
+    #[must_use]
+    pub fn with_remote_callback_authenticator(
+        mut self,
+        authenticator: Arc<dyn RemoteCallbackAuthenticator>,
+    ) -> Self {
+        self.remote_callback_auth = Some(authenticator);
+        self
+    }
+
     /// 收口成 [`ServerState`]。
     #[must_use]
     pub fn build(self) -> ServerState {
@@ -319,6 +355,7 @@ impl ServerBuilder {
                 login_origins: self.login_origins,
                 secure_session_cookie: self.secure_session_cookie,
                 dynamic_sso: self.dynamic_sso,
+                remote_callback_auth: self.remote_callback_auth,
             }),
         }
     }
@@ -412,6 +449,11 @@ pub fn router(state: ServerState) -> Router {
             delete(auth_sso::remove_admin),
         )
         .route("/api/admin/people", get(admin::people_list))
+        .route("/api/agent-tools/call", post(agent_tools::call))
+        .route(
+            "/api/agents/{agent_id}/callback-token",
+            post(agents::callback_token_post).delete(agents::callback_token_delete),
+        )
         .route("/api/admin/audit-events", get(admin::audit_events))
         .route(
             "/api/computers/policy",

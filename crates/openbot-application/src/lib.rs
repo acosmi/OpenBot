@@ -71,6 +71,7 @@
 // 淹没，只有 clippy 的 `-D warnings` 拦得住，那是半道闸门。
 #![deny(missing_docs)]
 
+pub mod agent_admin;
 mod app;
 pub mod builtin_tools;
 pub mod chunk;
@@ -87,6 +88,11 @@ pub mod use_cases;
 #[cfg(test)]
 mod fakes;
 
+pub use agent_admin::{
+    AgentCallbackTokenAdministration, AgentCallbackTokenError, NoAgentCallbackTokenAdministration,
+    RemoteCallbackAuthError, RemoteCallbackAuthenticator, RemoteCallbackAuthorization,
+    issue_agent_callback_token, revoke_agent_callback_token,
+};
 pub use app::OpenBotApplication;
 pub use builtin_tools::{
     BUILTIN_TOOL_CATALOG_GENERATION, REMEMBER_TOOL_NAME, RememberToolArguments, RememberToolMemory,

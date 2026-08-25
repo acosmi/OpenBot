@@ -21,8 +21,12 @@ use openbot_application::{
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
 use openbot_domain::identity::session::TrustedOrigins;
+use openbot_domain::remote_callback::RemoteRunAssertionSigner;
 use openbot_domain::vault::{KeyVersion, WrappingKey};
 use openbot_infra::agent_audit::PostgresAgentAudit;
+use openbot_infra::agent_callback::{
+    PostgresAgentCallbackTokens, PostgresRemoteCallbackAuthenticator,
+};
 use openbot_infra::agent_tools::{
     PostgresAgentAuthorizationSource, PostgresBuiltInToolControlPlane,
 };
@@ -110,6 +114,7 @@ struct BuiltInAgentAssemblyInput {
     credential_vault: CredentialRecordVault,
     tools: Arc<dyn AgentToolInvoker>,
     audit: Arc<dyn AgentAudit>,
+    remote_assertions: Arc<RemoteRunAssertionSigner>,
     budgets: AgentBudgets,
 }
 
@@ -182,6 +187,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let raw_master = openbot_server::config::env::optional(&env, "KEY_ENCRYPTION_KEY")
         .ok_or_else(|| startup_error("key_encryption_key_missing"))?;
     let audit_key = derive_audit_key(raw_master.as_bytes());
+    let remote_assertions = Arc::new(RemoteRunAssertionSigner::new(
+        raw_master.as_bytes().to_vec(),
+    )?);
 
     let has_dynamic_provider = database_has_dynamic_provider(&pool).await?;
     let public_url = server.public_url.as_ref().map(|url| url.as_str());
@@ -323,6 +331,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Arc::new(memory.clone()),
     );
     let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.to_vec())?;
+    let callback_tokens = PostgresAgentCallbackTokens::new(
+        pool.clone(),
+        deployment.clone(),
+        tenant.clone(),
+        audit_key.to_vec(),
+    )?;
+    let remote_callback_auth = Arc::new(PostgresRemoteCallbackAuthenticator::new(
+        pool.clone(),
+        deployment.clone(),
+        tenant.clone(),
+        single_user,
+        remote_assertions.clone(),
+        audit_key.to_vec(),
+    )?);
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(ChannelRepo::new(pool.clone()))
             .with_people(people)
@@ -330,7 +352,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_policy(policy_store)
             .with_tools(tool_control, tool_journal)
             .with_threads(thread_directory)
-            .with_memory(memory),
+            .with_memory(memory)
+            .with_agent_callback_tokens(callback_tokens),
     );
     let agent_tools: Arc<dyn AgentToolInvoker> = Arc::new(AuthorizedAgentToolGateway::new(
         application.clone(),
@@ -358,6 +381,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         credential_vault: model_credential_vault,
         tools: agent_tools,
         audit: agent_audit,
+        remote_assertions: remote_assertions.clone(),
         budgets: server.agent_budgets,
     })?;
     let built_in_agent_ready = built_in_agent.is_some() || !requires_agent_runtime;
@@ -388,6 +412,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_sensitive_write_security(sensitive)
         .with_metrics_handle(metrics)
         .with_insecure_transport(server.public_transport().insecure_transport())
+        .with_remote_callback_authenticator(remote_callback_auth)
         .with_readiness_probe(Arc::new(db_probe));
     if let Some((coordinator, dynamic_sso, preauth, origins, secure_cookie)) = oidc_login {
         builder = builder.with_login_security(origins, secure_cookie);
@@ -447,6 +472,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         credential_vault,
         tools,
         audit,
+        remote_assertions,
         budgets,
     } = input;
     if !required {
@@ -515,7 +541,8 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
     )?);
     let context = Arc::new(
         PostgresAgentContextSource::new(pool, deployment, tenant, Some(budgets.max_output_tokens))?
-            .with_tools(vec![remember_provider_tool()]),
+            .with_tools(vec![remember_provider_tool()])
+            .with_remote_assertions(remote_assertions),
     );
     let agent = BuiltInAgentRuntime::start(
         runtime,

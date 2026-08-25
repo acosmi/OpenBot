@@ -21,6 +21,10 @@ use openbot_contracts::command::{AppCommand, AppReply, SubscriptionRequest};
 use openbot_contracts::error::AppError;
 use tracing::Span;
 
+use crate::agent_admin::{
+    AgentCallbackTokenAdministration, NoAgentCallbackTokenAdministration,
+    issue_agent_callback_token, revoke_agent_callback_token,
+};
 use crate::ports::{
     AuditReader, ChannelReader, MemoryAdministration, NoAuditReader, NoMemoryAdministration,
     NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory, PeopleAdministration,
@@ -50,6 +54,7 @@ pub struct OpenBotApplication<
     J = NoToolJournal,
     T = NoThreadDirectory,
     M = NoMemoryAdministration,
+    B = NoAgentCallbackTokenAdministration,
 > {
     channels: R,
     people: P,
@@ -59,6 +64,7 @@ pub struct OpenBotApplication<
     tool_journal: J,
     threads: T,
     memory: M,
+    callback_tokens: B,
     heartbeat_period: Duration,
 }
 
@@ -72,6 +78,7 @@ impl<R>
         NoToolJournal,
         NoThreadDirectory,
         NoMemoryAdministration,
+        NoAgentCallbackTokenAdministration,
     >
 {
     /// 注入端口实现。
@@ -85,15 +92,16 @@ impl<R>
             tool_journal: NoToolJournal,
             threads: NoThreadDirectory,
             memory: NoMemoryAdministration,
+            callback_tokens: NoAgentCallbackTokenAdministration,
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
 }
 
-impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
+impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
     /// 注入 people/auth 原子端口。
     #[must_use]
-    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, K, C, J, T, M> {
+    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, K, C, J, T, M, B> {
         OpenBotApplication {
             channels: self.channels,
             people,
@@ -103,13 +111,14 @@ impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
             tool_journal: self.tool_journal,
             threads: self.threads,
             memory: self.memory,
+            callback_tokens: self.callback_tokens,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入管理员 audit keyset reader。
     #[must_use]
-    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, K, C, J, T, M> {
+    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, K, C, J, T, M, B> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -119,13 +128,14 @@ impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
             tool_journal: self.tool_journal,
             threads: self.threads,
             memory: self.memory,
+            callback_tokens: self.callback_tokens,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入 deployment-wide action policy 管理端口。
     #[must_use]
-    pub fn with_policy<Q>(self, policies: Q) -> OpenBotApplication<R, P, A, Q, C, J, T, M> {
+    pub fn with_policy<Q>(self, policies: Q) -> OpenBotApplication<R, P, A, Q, C, J, T, M, B> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -135,6 +145,7 @@ impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
             tool_journal: self.tool_journal,
             threads: self.threads,
             memory: self.memory,
+            callback_tokens: self.callback_tokens,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -145,7 +156,7 @@ impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
         self,
         control: Q,
         journal: L,
-    ) -> OpenBotApplication<R, P, A, K, Q, L, T, M> {
+    ) -> OpenBotApplication<R, P, A, K, Q, L, T, M, B> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -155,13 +166,14 @@ impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
             tool_journal: journal,
             threads: self.threads,
             memory: self.memory,
+            callback_tokens: self.callback_tokens,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入 native thread ID / scope-aware directory；未注入时绝不回退 Intelligence。
     #[must_use]
-    pub fn with_threads<Q>(self, threads: Q) -> OpenBotApplication<R, P, A, K, C, J, Q, M> {
+    pub fn with_threads<Q>(self, threads: Q) -> OpenBotApplication<R, P, A, K, C, J, Q, M, B> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -171,13 +183,14 @@ impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
             tool_journal: self.tool_journal,
             threads,
             memory: self.memory,
+            callback_tokens: self.callback_tokens,
             heartbeat_period: self.heartbeat_period,
         }
     }
 
     /// 注入 explicit memory administration；未注入时 fail-closed。
     #[must_use]
-    pub fn with_memory<Q>(self, memory: Q) -> OpenBotApplication<R, P, A, K, C, J, T, Q> {
+    pub fn with_memory<Q>(self, memory: Q) -> OpenBotApplication<R, P, A, K, C, J, T, Q, B> {
         OpenBotApplication {
             channels: self.channels,
             people: self.people,
@@ -187,6 +200,27 @@ impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
             tool_journal: self.tool_journal,
             threads: self.threads,
             memory,
+            callback_tokens: self.callback_tokens,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// Inject callback-token administration; absence remains fail-closed.
+    #[must_use]
+    pub fn with_agent_callback_tokens<Q>(
+        self,
+        callback_tokens: Q,
+    ) -> OpenBotApplication<R, P, A, K, C, J, T, M, Q> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit: self.audit,
+            policies: self.policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            threads: self.threads,
+            memory: self.memory,
+            callback_tokens,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -202,7 +236,7 @@ impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M> {
     }
 }
 
-impl<R, P, A, K, C, J, T, M> OpenBotApplication<R, P, A, K, C, J, T, M>
+impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B>
 where
     R: ChannelReader,
     P: PeopleAdministration,
@@ -212,6 +246,7 @@ where
     J: ToolJournal,
     T: ThreadDirectory,
     M: MemoryAdministration,
+    B: AgentCallbackTokenAdministration,
 {
     /// 命令派发。**穷举 match 无通配** —— 新增 `AppCommand` 变体会在这里编译失败，
     /// 而不是落进一个 `_ => Err(unknown_method)` 分支。那个分支正是 §5.2 逐字禁止的
@@ -311,12 +346,20 @@ where
             AppCommand::RecallMemories(input) => Ok(AppReply::MemoryRecall(
                 recall_memories(&self.memory, auth, input).await?,
             )),
+            AppCommand::IssueAgentCallbackToken { agent_id } => Ok(AppReply::AgentCallbackToken(
+                issue_agent_callback_token(&self.callback_tokens, auth, &agent_id).await?,
+            )),
+            AppCommand::RevokeAgentCallbackToken { agent_id } => {
+                Ok(AppReply::AgentCallbackTokenRevoked(
+                    revoke_agent_callback_token(&self.callback_tokens, auth, &agent_id).await?,
+                ))
+            }
         }
     }
 }
 
 #[async_trait]
-impl<R, P, A, K, C, J, T, M> ApplicationService for OpenBotApplication<R, P, A, K, C, J, T, M>
+impl<R, P, A, K, C, J, T, M, B> ApplicationService for OpenBotApplication<R, P, A, K, C, J, T, M, B>
 where
     R: ChannelReader + 'static,
     P: PeopleAdministration + 'static,
@@ -326,6 +369,7 @@ where
     J: ToolJournal + 'static,
     T: ThreadDirectory + 'static,
     M: MemoryAdministration + 'static,
+    B: AgentCallbackTokenAdministration + 'static,
 {
     #[tracing::instrument(
         name = "application.execute",
@@ -688,6 +732,23 @@ mod tests {
                 reply,
                 Err(AppError::DependencyUnavailable {
                     dependency: "memory_store"
+                })
+            ));
+        }
+
+        for command in [
+            AppCommand::IssueAgentCallbackToken {
+                agent_id: BotId::new("remote-1"),
+            },
+            AppCommand::RevokeAgentCallbackToken {
+                agent_id: BotId::new("remote-1"),
+            },
+        ] {
+            let (reply, _) = capture(service.execute(auth.clone(), command));
+            assert!(matches!(
+                reply,
+                Err(AppError::DependencyUnavailable {
+                    dependency: "agent_callback_tokens"
                 })
             ));
         }

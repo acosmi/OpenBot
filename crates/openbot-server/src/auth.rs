@@ -48,7 +48,7 @@ use openbot_domain::identity::roles::resolve_effective_role;
 use openbot_domain::identity::session::{
     LiveSession, SensitiveWriteApproved, SensitiveWriteRejection, SensitiveWriteRequest,
     SessionHashKey, SessionLifetimePolicy, SessionState, SessionToken, SessionTokenHash,
-    TrustedOrigins, authorize_sensitive_write, evaluate_session,
+    TrustedOrigins, authorize_fresh_origin_write, authorize_sensitive_write, evaluate_session,
 };
 use time::OffsetDateTime;
 use tracing::Span;
@@ -283,6 +283,35 @@ impl SensitiveWriteSecurity {
             });
         }
         Ok(())
+    }
+
+    /// Fresh same-origin credential write; resource ownership/admin is checked in application/DB.
+    pub fn authorize_fresh_origin(
+        &self,
+        resolved: &ResolvedAuth,
+        origin: Option<&str>,
+    ) -> Result<(), AppError> {
+        let Some(session) = resolved.live_session() else {
+            return Err(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        };
+        authorize_fresh_origin_write(self.lifetime, &self.trusted_origins, session, origin)
+            .map(|_| ())
+            .map_err(|rejection| AppError::SensitiveWriteRefused {
+                reason: match rejection {
+                    SensitiveWriteRejection::RoleInsufficient => {
+                        SensitiveWriteReason::RoleInsufficient
+                    }
+                    SensitiveWriteRejection::OriginMissing => SensitiveWriteReason::OriginMissing,
+                    SensitiveWriteRejection::OriginUntrusted => {
+                        SensitiveWriteReason::OriginUntrusted
+                    }
+                    SensitiveWriteRejection::SessionNotFresh => {
+                        SensitiveWriteReason::SessionNotFresh
+                    }
+                },
+            })
     }
 }
 

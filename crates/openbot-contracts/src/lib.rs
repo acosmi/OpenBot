@@ -68,6 +68,7 @@
 // 的输出里会被淹没，只有 clippy 的 `-D warnings` 拦得住，那是半道闸门。
 #![deny(missing_docs)]
 
+pub mod agent;
 pub mod audit;
 pub mod auth;
 pub mod command;

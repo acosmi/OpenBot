@@ -55,6 +55,7 @@ pub mod audit;
 pub mod identity;
 pub mod memory;
 pub mod policy;
+pub mod remote_callback;
 pub mod run;
 pub mod text;
 pub mod thread;

@@ -8,6 +8,7 @@ use openbot_application::{
     ProviderRoute, ProviderToolCall, ProviderToolDefinition, RemoteAguiRoute, RunExecutionLease,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
+use openbot_domain::remote_callback::{RemoteRunAssertionSigner, RemoteRunScope, RemoteToolSet};
 use serde_json::Value;
 
 // SPDX-License-Identifier: MIT
@@ -43,6 +44,7 @@ pub struct PostgresAgentContextSource {
     tenant: TenantId,
     max_output_tokens: Option<u32>,
     tools: Vec<ProviderToolDefinition>,
+    remote_assertions: Option<std::sync::Arc<RemoteRunAssertionSigner>>,
 }
 
 impl PostgresAgentContextSource {
@@ -64,6 +66,7 @@ impl PostgresAgentContextSource {
             tenant,
             max_output_tokens,
             tools: Vec::new(),
+            remote_assertions: None,
         })
     }
 
@@ -71,6 +74,16 @@ impl PostgresAgentContextSource {
     #[must_use]
     pub fn with_tools(mut self, tools: Vec<ProviderToolDefinition>) -> Self {
         self.tools = tools;
+        self
+    }
+
+    /// Attach the deployment run-assertion signer. A remote route without it fails closed.
+    #[must_use]
+    pub fn with_remote_assertions(
+        mut self,
+        signer: std::sync::Arc<RemoteRunAssertionSigner>,
+    ) -> Self {
+        self.remote_assertions = Some(signer);
         self
     }
 }
@@ -85,7 +98,9 @@ impl AgentContextSource for PostgresAgentContextSource {
             .map_err(|_| AgentContextError::Unavailable)?;
         let visible = client
             .query_opt(
-                "SELECT a.type::text AS agent_type,a.name,a.configuration,p.title,p.role_description \
+                "SELECT a.type::text AS agent_type,a.name,a.configuration,p.title,p.role_description, \
+                        floor(extract(epoch FROM clock_timestamp())*1000)::bigint \
+                          AS assertion_issued_at_millis \
                    FROM public.runs r \
                    JOIN public.threads t ON t.thread_id=r.thread_id \
                    JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id \
@@ -160,13 +175,40 @@ impl AgentContextSource for PostgresAgentContextSource {
                             field: "role_description",
                         }
                     })?;
+                let issued_at_millis: i64 =
+                    visible.try_get("assertion_issued_at_millis").map_err(|_| {
+                        AgentContextError::Corrupt {
+                            field: "assertion_issued_at_millis",
+                        }
+                    })?;
+                // RMCP/Drive grants are not connected yet. An empty authoritative set is signed,
+                // rather than exposing a tool that the callback path cannot execute.
+                let remote_tools = RemoteToolSet::empty();
+                let assertion = self
+                    .remote_assertions
+                    .as_ref()
+                    .ok_or(AgentContextError::Unavailable)?
+                    .mint(
+                        RemoteRunScope {
+                            deployment: self.deployment.clone(),
+                            tenant: self.tenant.clone(),
+                            bot: lease.bot_id().clone(),
+                            actor: lease.actor_id().clone(),
+                            run: lease.run_id().clone(),
+                        },
+                        &remote_tools,
+                        issued_at_millis,
+                    )
+                    .map_err(|_| AgentContextError::Corrupt {
+                        field: "remote_run_assertion",
+                    })?;
                 (
                     ProviderRoute::RemoteAgUi(RemoteAguiRoute::new(
                         endpoint,
                         lease.thread_id().as_str().to_owned(),
                         lease.run_id().as_str().to_owned(),
                         lease.bot_id().as_str().to_owned(),
-                        None,
+                        Some(assertion),
                     )?),
                     remote_standing_prompt(&name, &title, &role_description)?,
                     Vec::new(),

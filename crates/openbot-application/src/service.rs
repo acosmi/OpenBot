@@ -119,6 +119,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::CorrectMemory { .. } => "correct_memory",
         AppCommand::MutateMemory { .. } => "mutate_memory",
         AppCommand::RecallMemories(_) => "recall_memories",
+        AppCommand::IssueAgentCallbackToken { .. } => "issue_agent_callback_token",
+        AppCommand::RevokeAgentCallbackToken { .. } => "revoke_agent_callback_token",
     }
 }
 
@@ -312,6 +314,18 @@ mod tests {
                     limit: None,
                 }),
                 "recall_memories",
+            ),
+            (
+                AppCommand::IssueAgentCallbackToken {
+                    agent_id: BotId::new("remote"),
+                },
+                "issue_agent_callback_token",
+            ),
+            (
+                AppCommand::RevokeAgentCallbackToken {
+                    agent_id: BotId::new("remote"),
+                },
+                "revoke_agent_callback_token",
             ),
         ];
         for (command, expected) in commands {

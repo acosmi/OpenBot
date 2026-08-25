@@ -27,6 +27,7 @@ use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
 use openbot_contracts::memory::MemoryRecord;
 use openbot_domain::policy::{ActionPolicy, PolicyMode};
+use openbot_domain::remote_callback::{RemoteRunAssertionSigner, RemoteToolSet};
 use openbot_domain::thread::FencingToken;
 use openbot_domain::vault::{KeyVersion, SecretBytes, SecretKind, SecretPrincipal, WrappingKey};
 use openbot_infra::agent_audit::PostgresAgentAudit;
@@ -862,6 +863,11 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 .map_err(|error| error.to_string())?;
             drop(client);
 
+            let assertion_signer = Arc::new(
+                RemoteRunAssertionSigner::new(b"remote-test-master".to_vec())
+                    .map_err(|error| error.to_string())?,
+            );
+            let assertion_verifier = assertion_signer.clone();
             let remote_server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.map_err(|error| error.to_string())?;
                 let request = read_http_request(&mut stream).await?;
@@ -884,6 +890,23 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                         .is_some_and(|value| value.starts_with("You are Remote Risk, Risk Analyst."))
                 {
                     return Err(format!("remote RunAgentInput 漂移：{body:?}"));
+                }
+                let assertion = body["forwardedProps"]["openbotRun"]
+                    .as_str()
+                    .ok_or_else(|| "signed openbotRun missing".to_owned())?;
+                let now_millis = i64::try_from(
+                    time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000,
+                )
+                .map_err(|_| "current time outside i64".to_owned())?;
+                let verified = assertion_verifier
+                    .verify(assertion, now_millis)
+                    .map_err(|error| error.to_string())?;
+                if verified.scope().bot.as_str() != "bot-remote"
+                    || verified.scope().actor.as_str() != "actor-a"
+                    || verified.scope().run.as_str() != "run-remote"
+                    || verified.tool_set_digest() != RemoteToolSet::empty().digest()
+                {
+                    return Err("remote signed scope/tool-set drift".to_owned());
                 }
                 let thread_id = body["threadId"]
                     .as_str()
@@ -979,7 +1002,8 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                     Some(64),
                 )
                 .map_err(|error| error.to_string())?
-                .with_tools(vec![remember_provider_tool()]),
+                .with_tools(vec![remember_provider_tool()])
+                .with_remote_assertions(assertion_signer),
             );
             let agent = BuiltInAgentRuntime::start(
                 runtime.clone(),
