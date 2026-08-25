@@ -58,7 +58,13 @@ pub(crate) fn design_lint(root: &Path) -> Result<()> {
 
     let mut violations = Vec::new();
     for (path, source) in &sources {
-        for (index, line) in source.lines().enumerate() {
+        let is_guarded_design_gallery_module = path.ends_with("design_gallery.rs")
+            && source
+                .lines()
+                .next()
+                .is_some_and(|line| line == "#![cfg(feature = \"design-gallery\")]");
+        let source_lines = source.lines().collect::<Vec<_>>();
+        for (index, line) in source_lines.iter().enumerate() {
             let line_no = index + 1;
             if line.contains("dark:") {
                 violations.push(format!("{}:{line_no}: forbidden `dark:`", path.display()));
@@ -84,7 +90,16 @@ pub(crate) fn design_lint(root: &Path) -> Result<()> {
                     ));
                 }
             }
-            if line.contains("/_design") {
+            let is_guarded_app_route = path.ends_with("app.rs")
+                && source_lines[..index]
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .any(|previous| *previous == "    #[cfg(feature = \"design-gallery\")]");
+            if line.contains("/_design")
+                && !is_guarded_design_gallery_module
+                && !is_guarded_app_route
+            {
                 violations.push(format!(
                     "{}:{line_no}: production source contains design-gallery route",
                     path.display()
@@ -145,6 +160,12 @@ pub(crate) fn bundle_budget(root: &Path, args: &[String]) -> Result<()> {
     let css = unique_file_with_extension(&dist, "css")?;
     let external_scripts = check_dist_script_policy(&dist)?;
     let wasm_bytes = fs::read(&wasm).with_context(|| format!("read {}", wasm.display()))?;
+    if wasm_bytes
+        .windows(b"_design".len())
+        .any(|window| window == b"_design")
+    {
+        bail!("production WASM contains the design-gallery route literal");
+    }
     let mut encoder = GzBuilder::new()
         .mtime(0)
         .write(Vec::new(), Compression::best());

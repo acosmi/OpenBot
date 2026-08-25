@@ -55,12 +55,32 @@ fn AppShell() -> impl IntoView {
                 </div>
             </aside>
             <main id="main-content" class="ob-main" tabindex="-1">
-                <Routes fallback=NotFound>
-                    <Route path=path!("/") view=ApprovalPage />
-                    <Route path=path!("/approvals") view=ApprovalPage />
-                </Routes>
+                <AppRoutes />
             </main>
         </div>
+    }
+}
+
+#[component]
+fn AppRoutes() -> impl IntoView {
+    #[cfg(feature = "design-gallery")]
+    {
+        view! {
+            <Routes fallback=NotFound>
+                <Route path=path!("/_design") view=crate::design_gallery::DesignGallery />
+                <Route path=path!("/") view=ApprovalPage />
+                <Route path=path!("/approvals") view=ApprovalPage />
+            </Routes>
+        }
+    }
+    #[cfg(not(feature = "design-gallery"))]
+    {
+        view! {
+            <Routes fallback=NotFound>
+                <Route path=path!("/") view=ApprovalPage />
+                <Route path=path!("/approvals") view=ApprovalPage />
+            </Routes>
+        }
     }
 }
 

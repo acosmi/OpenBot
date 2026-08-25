@@ -51,7 +51,7 @@ pub fn ApprovalPage() -> impl IntoView {
                     size=ButtonSize::Medium
                     disabled=loading
                     loading=loading
-                    on_click=refresh
+                    on_activate=refresh
                 >
                     <IconView icon=Icon::RefreshCw size=IconSize::Inline />
                     {move || t!(i18n, common.refresh)}
@@ -262,7 +262,7 @@ fn ApprovalCard(
                     size=ButtonSize::Medium
                     disabled=unavailable
                     loading=is_loading
-                    on_click=deny
+                    on_activate=deny
                 >
                     <IconView icon=Icon::X size=IconSize::Inline />
                     {move || t!(i18n, admin.approval_reject)}
@@ -272,7 +272,7 @@ fn ApprovalCard(
                     size=ButtonSize::Medium
                     disabled=unavailable
                     loading=is_loading
-                    on_click=grant
+                    on_activate=grant
                 >
                     <IconView icon=Icon::Check size=IconSize::Inline />
                     {move || t!(i18n, admin.approval_approve)}

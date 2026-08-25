@@ -34,6 +34,8 @@
 
 pub mod api;
 pub mod app;
+#[cfg(feature = "design-gallery")]
+pub mod design_gallery;
 pub mod features;
 pub mod preferences;
 pub mod primitives;

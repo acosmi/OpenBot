@@ -408,8 +408,10 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
             }
             Some(uri)
         }
-        // People 与 audit 的 HTTP 腿由同目录专项 transport parity 覆盖；本文件只维护 channel
-        // 专项矩阵。InvokeTool 尚无公开 HTTP 路由。
+        // People/audit/policy/thread/MCP/approval/UI preference 的 HTTP 腿由同目录专项
+        // transport parity 或各自 handler framing 测试覆盖；本文件只维护 channel 专项矩阵。
+        // InvokeTool 尚无公开 HTTP 路由。仍逐变体列出且无 wildcard：新增命令必须在这里明确
+        // 选择“channel 矩阵有 route”或“由哪一份专项证据承担”。
         AppCommand::GetCurrentUser
         | AppCommand::AdminStatus
         | AppCommand::ListPeople { .. }
@@ -429,7 +431,17 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::MutateMemory { .. }
         | AppCommand::RecallMemories(_)
         | AppCommand::IssueAgentCallbackToken { .. }
-        | AppCommand::RevokeAgentCallbackToken { .. } => None,
+        | AppCommand::RevokeAgentCallbackToken { .. }
+        | AppCommand::ListMcpConnections
+        | AppCommand::BeginMcpOAuth { .. }
+        | AppCommand::DisconnectMcpConnection { .. }
+        | AppCommand::RegisterMcpOAuthClient { .. }
+        | AppCommand::AddCuratedMcpServer { .. }
+        | AppCommand::RefreshMcpServer { .. }
+        | AppCommand::ListPendingToolApprovals
+        | AppCommand::DecideToolApproval { .. }
+        | AppCommand::GetUiPreferences
+        | AppCommand::UpdateUiPreferences(_) => None,
     }
 }
 

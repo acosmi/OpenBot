@@ -79,6 +79,18 @@ fn generated_icons_and_array_table_tokens_are_complete() {
     assert!(include_str!("../design/tokens.css").starts_with("/* @generated"));
 }
 
+#[test]
+fn reduced_motion_constructively_stops_skeleton_and_control_motion() {
+    let css = include_str!("../design/app.css");
+    assert!(css.contains("animation: ob-skeleton-pulse"));
+    let reduced = css
+        .split_once("@media (prefers-reduced-motion: reduce)")
+        .expect("reduced-motion media query")
+        .1;
+    assert!(reduced.contains("transition-duration: 0ms !important"));
+    assert!(reduced.contains("animation: none !important"));
+}
+
 fn tokens() -> Value {
     toml::from_str(include_str!("../design/tokens.toml")).expect("tokens.toml must parse")
 }

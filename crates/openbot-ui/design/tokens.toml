@@ -248,6 +248,7 @@ css_prefix = "size"
 control_sm = 28
 control_md = 32          # 默认
 control_lg = 36
+textarea_max = 218       # 10 × base line-height 20 + block padding 16 + borders 2
 table_row = 36
 sidebar_item = 32
 topbar = 44

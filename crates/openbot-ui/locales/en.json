@@ -264,6 +264,21 @@
     "source": "Source",
     "delete_entry": "Delete entry"
   },
+  "design_gallery": {
+    "eyebrow": "Development only",
+    "title": "Design gallery",
+    "intro": "Deterministic primitive states for keyboard, accessibility and visual review.",
+    "buttons": "Buttons",
+    "activate": "Activate",
+    "fields": "Fields",
+    "name_label": "Display name",
+    "name_description": "This description is wired by Field.",
+    "notes_label": "Notes",
+    "items": "Items",
+    "item_description": "Selected navigation row",
+    "switch_label": "Enable setting",
+    "feedback": "Separators and loading states"
+  },
   "errors": {
     "code_label": "Error code",
     "generic_title": "Something went wrong",

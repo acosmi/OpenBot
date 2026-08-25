@@ -264,6 +264,21 @@
     "source": "来源",
     "delete_entry": "删除这条记忆"
   },
+  "design_gallery": {
+    "eyebrow": "仅开发环境",
+    "title": "设计画廊",
+    "intro": "用于键盘、无障碍和视觉复核的确定性原语状态。",
+    "buttons": "按钮",
+    "activate": "触发",
+    "fields": "表单项",
+    "name_label": "显示名称",
+    "name_description": "这段说明由 Field 自动接线。",
+    "notes_label": "备注",
+    "items": "列表项",
+    "item_description": "已选中的导航行",
+    "switch_label": "启用设置",
+    "feedback": "分隔线与加载状态"
+  },
   "errors": {
     "code_label": "错误码",
     "generic_title": "出了点问题",

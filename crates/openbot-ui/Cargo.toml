@@ -22,6 +22,12 @@ generated-assets = ["design/tokens.css"]
 [lints]
 workspace = true
 
+[features]
+default = []
+# Compile-time-only primitive gallery from GUI first source §10.3. Production Trunk builds do not
+# enable it, and bundle-budget rejects the route literal if it ever appears in the release WASM.
+design-gallery = []
+
 [dependencies]
 openbot-contracts.workspace = true
 serde_json.workspace = true

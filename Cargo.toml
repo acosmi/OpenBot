@@ -138,7 +138,7 @@ toml = "=0.9.8"
 gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json"] }
 js-sys = "=0.3.104"
 wasm-bindgen-futures = "=0.4.77"
-web-sys = { version = "=0.3.104", features = ["Document", "DomTokenList", "Element", "HtmlElement", "Window"] }
+web-sys = { version = "=0.3.104", features = ["CssStyleDeclaration", "Document", "DomTokenList", "Element", "Event", "HtmlElement", "HtmlInputElement", "HtmlTextAreaElement", "Window"] }
 
 # Axum transport（v3 §5.2：transport 只做认证 / framing / 大小限制 / 错误映射）
 axum = { version = "0.8.9", features = ["macros", "ws"] }
