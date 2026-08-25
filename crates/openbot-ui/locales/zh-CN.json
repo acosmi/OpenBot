@@ -277,7 +277,31 @@
     "items": "列表项",
     "item_description": "已选中的导航行",
     "switch_label": "启用设置",
-    "feedback": "分隔线与加载状态"
+    "feedback": "分隔线与加载状态",
+    "messages": "消息与身份",
+    "assistant_message": "一条简洁的同事回复。",
+    "user_message": "一条靠末端对齐的用户消息。",
+    "feedback_primitives": "反馈与提示",
+    "toast_preview": "已保存，不会打断当前操作。",
+    "toast_auto": "这条状态会在五秒后消失。",
+    "show_toast": "显示状态",
+    "tooltip_preview": "强制显示的提示",
+    "tooltip_trigger": "聚焦后延迟显示提示",
+    "tooltip_content": "这条提示在 400 毫秒后显示。",
+    "avatar_ada": "Ada Lovelace",
+    "avatar_zhang": "张三"
+  },
+  "keyboard": {
+    "command": "Command",
+    "control": "Control",
+    "option": "Option",
+    "alt": "Alt",
+    "shift": "Shift",
+    "enter": "回车",
+    "enter_short": "回车",
+    "escape": "退出键",
+    "escape_short": "Esc",
+    "slash": "斜杠"
   },
   "errors": {
     "code_label": "错误码",

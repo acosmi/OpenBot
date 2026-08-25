@@ -91,6 +91,18 @@ fn reduced_motion_constructively_stops_skeleton_and_control_motion() {
     assert!(reduced.contains("animation: none !important"));
 }
 
+#[test]
+fn all_avatar_palettes_keep_initials_wcag_aa_in_both_themes() {
+    let tokens = tokens();
+    let color = table(&tokens, "color");
+    for theme in ["light", "dark"] {
+        let colors = child_table(color, theme);
+        for index in 0..8 {
+            assert_contrast(colors, "fg", &format!("avatar_{index}"), 4.5, theme);
+        }
+    }
+}
+
 fn tokens() -> Value {
     toml::from_str(include_str!("../design/tokens.toml")).expect("tokens.toml must parse")
 }

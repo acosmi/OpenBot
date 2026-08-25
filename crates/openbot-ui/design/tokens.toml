@@ -111,6 +111,14 @@ chart_5 = "#868E96"
 shadow_popover = "0 4px 16px rgb(0 0 0 / .10)"
 shadow_dialog = "0 12px 40px rgb(0 0 0 / .18)"
 image_dim = "1"             # 暗色下内容图片 filter: brightness()
+avatar_0 = "#E8E8EA"
+avatar_1 = "#E8ECEB"
+avatar_2 = "#E9EBE4"
+avatar_3 = "#EEE9E3"
+avatar_4 = "#ECE7EA"
+avatar_5 = "#E7E9EE"
+avatar_6 = "#ECEBE5"
+avatar_7 = "#E5ECEC"
 
 [color.dark]
 bg = "#141415"
@@ -137,6 +145,14 @@ chart_5 = "#ADB5BD"
 shadow_popover = "0 4px 16px rgb(0 0 0 / .45)"
 shadow_dialog = "0 12px 40px rgb(0 0 0 / .60)"
 image_dim = ".88"
+avatar_0 = "#2A2A2E"
+avatar_1 = "#26302E"
+avatar_2 = "#303027"
+avatar_3 = "#312B27"
+avatar_4 = "#30282E"
+avatar_5 = "#282C34"
+avatar_6 = "#302F28"
+avatar_7 = "#263132"
 
 # ---------------------------------------------------------------------------
 # §4.3 字体与排版
@@ -249,6 +265,11 @@ control_sm = 28
 control_md = 32          # 默认
 control_lg = 36
 textarea_max = 218       # 10 × base line-height 20 + block padding 16 + borders 2
+avatar_sm = 24
+avatar_md = 32
+avatar_lg = 40
+kbd = 22
+toast_viewport_gutter = 32
 table_row = 36
 sidebar_item = 32
 topbar = 44

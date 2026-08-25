@@ -6,10 +6,13 @@ use leptos::prelude::*;
 use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
 use crate::primitives::{
-    Button, ButtonPreviewState, ButtonSize, ButtonVariant, Field, IconSize, IconView, Input,
-    InputGroup, InputGroupAffix, InputGroupAffixPosition, InputPreviewState, InputType, Item,
-    ItemAction, ItemActions, ItemDescription, ItemMedia, ItemTitle, Separator,
-    SeparatorOrientation, Skeleton, SkeletonShape, Switch, Textarea, TextareaPreviewState,
+    Avatar, AvatarSize, Bubble, BubbleKind, Button, ButtonPreviewState, ButtonSize, ButtonVariant,
+    Field, IconSize, IconView, Input, InputGroup, InputGroupAffix, InputGroupAffixPosition,
+    InputPreviewState, InputType, Item, ItemAction, ItemActions, ItemDescription, ItemMedia,
+    ItemTitle, Kbd, KbdKey, KbdModifier, Message, MessageAlign, MessageAvatar, MessageContent,
+    MessageFooter, MessageGroup, MessageHeader, Separator, SeparatorOrientation, Skeleton,
+    SkeletonShape, Switch, Textarea, TextareaPreviewState, Toast, ToastPreviewState, Tooltip,
+    TooltipTrigger, TooltipTriggerAction,
 };
 
 /// Render the first Batch 17 primitive states for golden, keyboard and AX inspection.
@@ -23,6 +26,10 @@ pub fn DesignGallery() -> impl IntoView {
     let notes = RwSignal::new(String::new());
     let enabled = RwSignal::new(false);
     let disabled_checked = RwSignal::new(true);
+    let toast_preview_visible = RwSignal::new(true);
+    let toast_auto_visible = RwSignal::new(true);
+    let toast_dismiss_count = RwSignal::new(0_u32);
+    let tooltip_activation_count = RwSignal::new(0_u32);
 
     view! {
         <section class="ob-page ob-design-gallery" aria-labelledby="design-gallery-title">
@@ -130,7 +137,7 @@ pub fn DesignGallery() -> impl IntoView {
                                 preview_state=InputPreviewState::Focus
                             />
                             <InputGroupAffix position=InputGroupAffixPosition::Suffix>
-                                <span>"⌘K"</span>
+                                <Kbd modifier=KbdModifier::Primary key=KbdKey::Character('K') />
                             </InputGroupAffix>
                         </InputGroup>
                     </div>
@@ -189,6 +196,120 @@ pub fn DesignGallery() -> impl IntoView {
                         <Skeleton shape=SkeletonShape::Block />
                         <Separator orientation=SeparatorOrientation::Horizontal />
                         <Separator orientation=SeparatorOrientation::Vertical />
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-messages-title">
+                    <h2 id="design-messages-title">{move || t!(i18n, design_gallery.messages)}</h2>
+                    <div class="ob-design-stack" id="design-messages">
+                        <MessageGroup>
+                            <Message
+                                align=MessageAlign::Start
+                                aria_label=move || t_string!(i18n, design_gallery.avatar_ada).to_owned()
+                            >
+                                <MessageAvatar>
+                                    <Avatar
+                                        principal_id="principal-ada"
+                                        name=move || t_string!(i18n, design_gallery.avatar_ada).to_owned()
+                                        size=AvatarSize::Medium
+                                    />
+                                </MessageAvatar>
+                                <MessageContent>
+                                    <MessageHeader>{move || t!(i18n, design_gallery.avatar_ada)}</MessageHeader>
+                                    <Bubble kind=BubbleKind::Assistant preview_hover=true>
+                                        {move || t!(i18n, design_gallery.assistant_message)}
+                                    </Bubble>
+                                    <MessageFooter><Kbd key=KbdKey::Enter /></MessageFooter>
+                                </MessageContent>
+                            </Message>
+                            <Message
+                                align=MessageAlign::End
+                                aria_label=move || t_string!(i18n, design_gallery.avatar_zhang).to_owned()
+                            >
+                                <MessageAvatar>
+                                    <Avatar
+                                        principal_id="principal-zhang"
+                                        name=move || t_string!(i18n, design_gallery.avatar_zhang).to_owned()
+                                        size=AvatarSize::Small
+                                    />
+                                </MessageAvatar>
+                                <MessageContent>
+                                    <MessageHeader>{move || t!(i18n, design_gallery.avatar_zhang)}</MessageHeader>
+                                    <Bubble kind=BubbleKind::User>
+                                        {move || t!(i18n, design_gallery.user_message)}
+                                    </Bubble>
+                                    <MessageFooter>
+                                        <Kbd modifier=KbdModifier::Shift key=KbdKey::Enter />
+                                    </MessageFooter>
+                                </MessageContent>
+                            </Message>
+                        </MessageGroup>
+                        <div class="ob-design-row" id="design-avatar-repeat">
+                            <Avatar
+                                principal_id="principal-ada"
+                                name=move || t_string!(i18n, design_gallery.avatar_ada).to_owned()
+                                size=AvatarSize::Large
+                            />
+                            <Kbd key=KbdKey::Escape />
+                            <Kbd key=KbdKey::Slash />
+                        </div>
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-feedback-primitives-title">
+                    <h2 id="design-feedback-primitives-title">
+                        {move || t!(i18n, design_gallery.feedback_primitives)}
+                    </h2>
+                    <div class="ob-design-stack" id="design-feedback-primitives">
+                        <Toast
+                            id="design-toast-preview"
+                            visible=toast_preview_visible
+                            message=move || t_string!(i18n, design_gallery.toast_preview).to_owned()
+                            preview_state=ToastPreviewState::Open
+                        />
+                        <Toast
+                            id="design-toast-auto"
+                            visible=toast_auto_visible
+                            message=move || t_string!(i18n, design_gallery.toast_auto).to_owned()
+                            on_dismiss=UnsyncCallback::new(move |_| toast_dismiss_count.update(|count| *count += 1))
+                        />
+                        <Button
+                            variant=ButtonVariant::Chip
+                            on_activate=move |_| toast_auto_visible.set(true)
+                        >
+                            {move || t!(i18n, design_gallery.show_toast)}
+                        </Button>
+                        <output id="design-toast-dismiss-count" aria-live="polite">
+                            {toast_dismiss_count}
+                        </output>
+                        <div class="ob-design-row">
+                            <Tooltip
+                                id="design-tooltip-preview"
+                                content=move || t_string!(i18n, design_gallery.tooltip_preview).to_owned()
+                                preview_open=true
+                            >
+                                <TooltipTrigger
+                                    id="design-tooltip-preview-trigger"
+                                    action=TooltipTriggerAction::Button(UnsyncCallback::new(move |_| {}))
+                                >
+                                    {move || t!(i18n, design_gallery.tooltip_preview)}
+                                </TooltipTrigger>
+                            </Tooltip>
+                            <Tooltip
+                                id="design-tooltip-live"
+                                content=move || t_string!(i18n, design_gallery.tooltip_content).to_owned()
+                            >
+                                <TooltipTrigger
+                                    id="design-tooltip-live-trigger"
+                                    action=TooltipTriggerAction::Button(UnsyncCallback::new(move |_| tooltip_activation_count.update(|count| *count += 1)))
+                                >
+                                    {move || t!(i18n, design_gallery.tooltip_trigger)}
+                                </TooltipTrigger>
+                            </Tooltip>
+                        </div>
+                        <output id="design-tooltip-count" aria-live="polite">
+                            {tooltip_activation_count}
+                        </output>
                     </div>
                 </section>
             </div>

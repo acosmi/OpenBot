@@ -277,7 +277,31 @@
     "items": "Items",
     "item_description": "Selected navigation row",
     "switch_label": "Enable setting",
-    "feedback": "Separators and loading states"
+    "feedback": "Separators and loading states",
+    "messages": "Messages and identity",
+    "assistant_message": "A concise coworker response.",
+    "user_message": "A user message aligned to the end.",
+    "feedback_primitives": "Feedback and hints",
+    "toast_preview": "Saved without interrupting your work.",
+    "toast_auto": "This status disappears after five seconds.",
+    "show_toast": "Show status",
+    "tooltip_preview": "Forced tooltip state",
+    "tooltip_trigger": "Focus for a delayed hint",
+    "tooltip_content": "This hint opened after 400 milliseconds.",
+    "avatar_ada": "Ada Lovelace",
+    "avatar_zhang": "张三"
+  },
+  "keyboard": {
+    "command": "Command",
+    "control": "Control",
+    "option": "Option",
+    "alt": "Alt",
+    "shift": "Shift",
+    "enter": "Enter",
+    "enter_short": "Enter",
+    "escape": "Escape",
+    "escape_short": "Esc",
+    "slash": "Slash"
   },
   "errors": {
     "code_label": "Error code",
