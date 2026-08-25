@@ -30,22 +30,19 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# 本仓此刻零 GUI 实现代码（`crates/openbot-ui/src` 不存在），因此全部 152 条 status: todo，
-# 零条 done。`done_evidence` 键按 schema v1 规则 4 一律不出现。
+# Batch 15 已有真实 Leptos/Trunk/WASM 实现，但只对机器证据闭合的 EmptyState、Badge 与
+# ThemeToggle 三条打勾；其余即使已有部分源码也保持 todo，不能用一张 Approval 竖切冒充
+# 21 原语、45 业务组件或 27 页 golden 全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）
 # ---------------------------------------------------------------------------
 #
-#   U1. Lucide 1.33.0 的 46 个目标图标名是否真的存在于该版本 SVG 集 —— 本轮**未验证**。
-#       缺 `lucide-icons-1.33.0.zip`（设计系统文档 §4.6.1 记的 sha256
-#       53831c8def65621f88cae315cdb38ac70db1d937062df35c93546efb00260a98），本机无该文件、
-#       且本任务禁网。解除条件 = 下载并校验该 zip 后跑
-#       `for n in <46 名>; do test -f icons/$n.svg || echo MISSING $n; done`。
-#       (c) 组每条的 evidence 只覆盖"上游确实用了这个 Tabler 图标"，不覆盖"Lucide 侧确实有这个名"。
-#   U2. 28 个新增图标同上，本 ledger 不逐条登记（设计系统文档 §4.6.2 说 `icons.toml` 是真源，
-#       本表是快照）。首版 allowlist = 46 + 28 = 74 个，该数只在设计系统文档 §4.6.2 与
-#       crates/openbot-ui/design/icons.toml 里，本 ledger 的 (c) 组只登记 46 Lucide + 1 品牌标。
+#   U1. Lucide 1.33.0 zip/许可已在 Phase 0 以精确 size/SHA 记录到 provenance/NOTICE；Batch 15
+#       的 design-lint 与 build.rs 又证明 74 个 manifest/SVG 两向相等且形状安全。但 (c) 组
+#       暂不批量打勾：46 个映射仍需 ledger→icons.toml 的机械逐条 join，品牌标仍缺原件。
+#   U2. 28 个新增图标已进入同一 74 项 allowlist 并由 design-lint 实证；本 ledger 本来就不
+#       逐条登记它们。该事实不能替代 U1 剩余的 46 条映射 join 与 Google Drive 品牌标。
 #   U3. golden PNG 一张都还不存在（`fixtures/ui/` 目录未建），(e) 组的 evidence 只覆盖
 #       "上游确实有这个 route 文件"，不覆盖"golden 已生成"。
 
@@ -139,10 +136,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # 全部 152 条 status=todo，零条 done（本仓此刻零 GUI 实现代码）
+  # Batch 15 精确完成 3 条；其余部分实现或完全未实现均保持 todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 152
+    expect: 149
+  - command: "grep -c '    status: \"done\"' parity/ui.yaml"
+    cwd: "repo"
+    expect: 3
+  - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
+    cwd: "repo"
+    expect: 3
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -208,7 +211,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0005"
     migration_rule: "rename: empty → EmptyState"
-    status: "todo"
+    status: "done"
+    done_evidence: "openbot_ui::primitives::empty_state::EmptyState 为纯展示 section+h2+p，调用方必须给 stable heading id，避免原语级重复 ID；真实浏览器审批清空后呈现命名 region，DOM audit 重复 ID=0、标题跳级=0。UI 定向测试 19/0/0、WASM/Clippy 绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：纯展示，无键盘交互。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。改名理由：`empty` 在 Rust 里作模块名太泛；能力不变，label 仍是 parity。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -410,7 +414,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0023"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "BadgeTone 封闭 neutral/caution/success/info/danger 五值，渲染 visible text + aria-hidden 状态点，语义色只落文字/currentColor、背景/边框保持中性；tone 单测 + tokens.toml 84 对 WCAG AA 对比度测试通过，Approval 浏览器卡片实显 caution。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1"
     notes: "键盘 / ARIA：纯展示，无键盘交互。 纯文字状态；语义色（danger / caution / success / info）只落文字与状态点，永不落背景与边框（GUI 裁决）。这条与 §4.2 的对比度单测绑定：文字色对 bg / bg-chip 必须 ≥ 4.5:1。"
 
@@ -443,7 +448,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0026"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "真实 Chromium/WASM：APG radiogroup 名称经 i18n；system/light/dark 的 aria-checked 显式 true/false、roving tabindex 0/-1；Arrow 四向循环、Home/End 均即时切换 html class 并把焦点移到选项。Trunk strict-CSP bundle 外部脚本 1/内联 0。偏好持久化不归本新增 control 条目，仍由 T-UI-0072 theme 模块保持 todo。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1；另 grep -E 'prefers-color-scheme' app/src/lib/theme.ts app/src/components/theme-provider.tsx app/src/styles.css | wc -l = 0，正向对照 grep -c 'prefers-reduced-motion' app/src/styles.css = 1"
     notes: "键盘 / ARIA：APG radiogroup 或 menu button（三选一）；`aria-label` 经 i18n。 §7 三态 `system` / `light` / `dark`。上游只有手动 light/dark（`lib/theme.ts::THEME_STORAGE_KEY = \"openbot-theme\"` + `<html class=\"dark\">`），`prefers-color-scheme` 在 lib/theme.ts / theme-provider.tsx / styles.css 三处合计 0 命中（recount 第 14 条），正向对照 prefers-reduced-motion 在 styles.css 命中 1（recount 第 15 条）⇒ 命令确实扫得到 media query。所以 light/dark 两态是 parity（由 T-UI-0072 theme-provider → theme 模块那条承担），`system` 第三态是本条的新增部分。图标 `sun` / `moon` / `sun-moon` 属 §4.6.2 的 28 个新增图标（见头部 U2）。"
 

@@ -8,25 +8,27 @@
 
 - `imports.lock` 锁定 Google 公开的 exact/delta audits；当前机械覆盖 **15** 个依赖
   （W-7b 刷新后新增覆盖 `openssl-macros 0.1.1`）。
-- `config.toml` 的 **400** 条 exemptions 中，350 条是“引入 Cargo Vet 时已存在的精确版本快照”；
+- `config.toml` 的 **435** 条 exemptions 中，350 条是“引入 Cargo Vet 时已存在的精确版本快照”；
   另 20 条是 W-7 TLS delta 的精确版本、逐条带 `owner=security` 与
   `not a full source audit` 说明；W-7b SAML/xmlsec FFI 再增 30 条同口径精确版本，
-  **不是安全审计结论**。
+  G3 WebSocket 再增 3 条、G4 RMCP/schema 再增 32 条；全部**不是安全审计结论**。
 - CI 不运行 `init` / `regenerate`。Cargo.lock 新增或升级一个未覆盖版本时，
   `cargo vet --locked` 直接判红，不会自动添加 exemption。
+- G6 Batch 15 正是该负向对照：GUI/static 依赖图实得 **185 unvetted**。未获用户对这批
+  精确版本豁免的明确授权，`config.toml` 保持 435 条不变，当前 vet 预期红。
 
 复算：
 
 ```bash
 cargo vet --version                                                   # cargo-vet 0.10.0
-cargo vet --locked                                                    # 15 fully audited, 400 exempted
-python3 -c 'import tomllib;d=tomllib.load(open("supply-chain/config.toml","rb"));print(sum(len(v) for v in d.get("exemptions",{}).values()))'  # 400
+cargo vet --locked                                                    # 当前 Vetting Failed: 185 unvetted
+python3 -c 'import tomllib;d=tomllib.load(open("supply-chain/config.toml","rb"));print(sum(len(v) for v in d.get("exemptions",{}).values()))'  # 435
 ```
 
 ## 直接信任源裁决
 
 本轮只导入 Cargo Vet 官方 registry 登记的 Google 审计集。它在 0.10.0 下可完整
-解析，且对当前图实际提供 14 条 `safe-to-deploy` exact/delta 证据。
+解析，且对当前图实际提供 15 条 `safe-to-deploy` exact/delta 证据。
 
 本轮不导入 Mozilla / Bytecode Alliance：前者的当前集合混合 publisher/wildcard 动态
 信任，后者在 0.10.0 下实得 80 条无效审计告警。在工具和映射边界未单独审查
@@ -46,3 +48,5 @@ W-7 加 TLS 依赖、写 exemption 前同一闸门又精确列出新增 **20/20*
 刷新后仍全缺，未用“导入过”冒充“覆盖了”。
 W-7b 加 SAML 图时先得 **31/31** unvetted；刷新 Google imports 后只有
 `openssl-macros 0.1.1` 获 exact+delta 覆盖，其余 **30/31** 仍逐项明示非审计 exemption。
+G6 Batch 15 加真实 Leptos/ICU/static 图后列出 **185/185** unvetted；自动生成 exemption 的
+动作被拒绝且未绕过，证明棘轮仍有效。

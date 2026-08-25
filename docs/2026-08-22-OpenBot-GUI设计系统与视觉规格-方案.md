@@ -160,7 +160,7 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 
 #### 4.6.1 图标集
 
-- **Lucide 1.33.0**（ISC；`lucide-icons-1.33.0.zip` sha256 `53831c8def65621f88cae315cdb38ac70db1d937062df35c93546efb00260a98`，1,776 个 SVG）。
+- **Lucide 1.33.0**（ISC AND MIT：其 LICENSE 点名的 Feather 衍生子集另受 MIT；`lucide-icons-1.33.0.zip` sha256 `53831c8def65621f88cae315cdb38ac70db1d937062df35c93546efb00260a98`，1,776 个 SVG）。
 - **只随包用到的图标**：`crates/openbot-ui/design/icons/<name>.svg` + allowlist `design/icons.toml`；`build.rs` 生成 `Icon` 枚举与 `view!` 片段。闸门：源码里每个 `Icon::X` 必在 allowlist；目录里每个 SVG 必被引用；两向皆零漂移。许可证文本进 `NOTICE`。
 - 尺寸 16（行内 / 文字旁）与 20（导航 / 按钮）；`stroke-width` 1.75（生成时改写 Lucide 默认的 2）；颜色 `currentColor`。
 
@@ -622,7 +622,7 @@ G6 重写后的文本（替换 v3 原四条）：
 - Tailwind CSS standalone CLI release v4.3.3：<https://github.com/tailwindlabs/tailwindcss/releases/tag/v4.3.3>
 - trunk v0.21.14 源码（`src/tools.rs` 工具查找、`src/pipelines/tailwind_css.rs` 调用参数、`src/config/models/build.rs` offline）：<https://github.com/trunk-rs/trunk/tree/v0.21.14>
 - leptos_i18n 0.6.2 与文档（配置 / 文件结构 / locale 解析）：<https://github.com/Baptistemontan/leptos_i18n>
-- Lucide 1.33.0（ISC）：<https://github.com/lucide-icons/lucide/releases/tag/1.33.0>
+- Lucide 1.33.0（ISC AND MIT，Feather 衍生子集）：<https://github.com/lucide-icons/lucide/releases/tag/1.33.0>
 - Inter 4.1（OFL-1.1）：<https://github.com/rsms/inter/releases/tag/v4.1>
 - WAI-ARIA Authoring Practices Guide（键盘模式）：<https://www.w3.org/WAI/ARIA/apg/patterns/>
 - WCAG 2.2 对比度（1.4.3 / 1.4.11）：<https://www.w3.org/TR/WCAG22/#contrast-minimum>

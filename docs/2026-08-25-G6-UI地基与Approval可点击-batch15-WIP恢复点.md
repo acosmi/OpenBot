@@ -1,7 +1,18 @@
-# Batch 15 WIP 恢复点：G6 UI 地基与可点击 Approval
+# Batch 15 WIP 恢复点：G6 UI 地基与可点击 Approval（已接续）
 
 > 日期：2026-08-25。当前分支：`codex/2026-08-25-G6-ui-foundation-approval`；基线
 > `55cccc49603fc2945a857834b6f64ce200c9c737`。本文件是断电前 checkpoint，**不是完成证书**。
+
+## 接续结果（2026-08-25）
+
+本恢复点已由实现提交 `6c595660758542969cce37f87f3637fe6c9fdf59` 接续。正式、可复核的
+Batch 15 证据在 [G6 UI 地基与可点击 Approval](2026-08-25-G6-UI地基与Approval可点击-batch15.md)，
+供应链证据在 [UI 供应链 delta 审计](2026-08-25-G6-UI供应链delta审计-batch15.md)。
+
+恢复清单中工具安装、真实 offline/locked Trunk、Axum static/CSP/首帧、浏览器 AX/键盘/
+Approval click、定向测试、ledger 与 R78 均已执行；`cargo xtask ci` 未运行，Actions 未派发。
+G6 仍不勾：Desktop/Tauri、偏好持久化、全 route/component/golden/a11y 与 cargo-vet 185 条
+未覆盖依赖仍缺。下文保留为断电时的历史快照，不再作为当前进度口径。
 
 ## 已落源码
 
