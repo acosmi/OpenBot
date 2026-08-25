@@ -335,13 +335,15 @@ impl AguiDecoder {
         let object = value.as_object().ok_or(AguiProtocolError::InvalidEvent)?;
         if object
             .get("timestamp")
-            .is_some_and(|value| !value.is_number() && !value.is_null())
+            .is_some_and(|value| !value.is_number())
         {
             return Err(AguiProtocolError::InvalidEvent);
         }
         let event_type = required_string(object, "type")?;
         let mut output = Vec::new();
-        self.close_convenience_before(event_type, &mut output)?;
+        if event_type != "RUN_ERROR" {
+            self.close_convenience_before(event_type, &mut output)?;
+        }
         if !self.started && event_type != "RUN_STARTED" {
             return Err(AguiProtocolError::InvalidSequence);
         }
@@ -379,10 +381,7 @@ impl AguiDecoder {
                 let message = required_bounded_string_allow_empty(object, "message")?;
                 let code = optional_bounded_string(object, "code")?;
                 self.terminal = true;
-                self.open_text.clear();
-                self.reasoning_messages.clear();
-                self.reasoning_runs.clear();
-                self.open_steps.clear();
+                self.abort_open_streams();
                 output.push(AguiEvent::RunError { message, code });
             }
             "STEP_STARTED" => {
@@ -643,6 +642,17 @@ impl AguiDecoder {
         }
     }
 
+    fn abort_open_streams(&mut self) {
+        self.open_text.clear();
+        self.tools.clear();
+        self.open_steps.clear();
+        self.reasoning_runs.clear();
+        self.reasoning_messages.clear();
+        self.text_chunk_id = None;
+        self.tool_chunk_id = None;
+        self.reasoning_chunk_id = None;
+    }
+
     fn text_start(
         &mut self,
         object: &Map<String, Value>,
@@ -862,7 +872,7 @@ impl AguiDecoder {
         let call_id = required_bounded_string(object, "toolCallId")?;
         if object
             .get("role")
-            .is_some_and(|value| !value.is_null() && value.as_str() != Some("tool"))
+            .is_some_and(|value| value.as_str() != Some("tool"))
         {
             return Err(AguiProtocolError::InvalidEvent);
         }
@@ -1125,7 +1135,7 @@ fn optional_bounded_string(
     field: &'static str,
 ) -> Result<Option<String>, AguiProtocolError> {
     match object.get(field) {
-        None | Some(Value::Null) => Ok(None),
+        None => Ok(None),
         Some(Value::String(value)) if !value.is_empty() => bounded_string(value).map(Some),
         _ => Err(AguiProtocolError::InvalidEvent),
     }
@@ -1136,7 +1146,7 @@ fn optional_bounded_string_allow_empty(
     field: &'static str,
 ) -> Result<Option<String>, AguiProtocolError> {
     match object.get(field) {
-        None | Some(Value::Null) => Ok(None),
+        None => Ok(None),
         Some(Value::String(value)) => bounded_string(value).map(Some),
         _ => Err(AguiProtocolError::InvalidEvent),
     }
@@ -1147,7 +1157,7 @@ fn optional_bool(
     field: &'static str,
 ) -> Result<Option<bool>, AguiProtocolError> {
     match object.get(field) {
-        None | Some(Value::Null) => Ok(None),
+        None => Ok(None),
         Some(Value::Bool(value)) => Ok(Some(*value)),
         _ => Err(AguiProtocolError::InvalidEvent),
     }
@@ -1178,7 +1188,12 @@ fn ensure_value_bound(value: &Value) -> Result<(), AguiProtocolError> {
 }
 
 fn parse_text_role(value: Option<&Value>) -> Result<AguiRole, AguiProtocolError> {
-    match value.and_then(Value::as_str).unwrap_or("assistant") {
+    let value = match value {
+        None => "assistant",
+        Some(Value::String(value)) => value.as_str(),
+        Some(_) => return Err(AguiProtocolError::InvalidEvent),
+    };
+    match value {
         "developer" => Ok(AguiRole::Developer),
         "system" => Ok(AguiRole::System),
         "assistant" => Ok(AguiRole::Assistant),
@@ -1189,7 +1204,6 @@ fn parse_text_role(value: Option<&Value>) -> Result<AguiRole, AguiProtocolError>
 
 fn reasoning_id(object: &Map<String, Value>) -> Result<String, AguiProtocolError> {
     required_bounded_string(object, "messageId")
-        .or_else(|_| required_bounded_string(object, "thinkingId"))
 }
 
 fn patch_array(
@@ -1217,6 +1231,12 @@ fn validate_interrupts(value: Option<&Value>) -> Result<Vec<Value>, AguiProtocol
         required_bounded_string(object, "reason")?;
         optional_bounded_string(object, "message")?;
         optional_bounded_string(object, "toolCallId")?;
+        optional_bounded_string(object, "expiresAt")?;
+        for field in ["responseSchema", "metadata"] {
+            if object.get(field).is_some_and(|value| !value.is_object()) {
+                return Err(AguiProtocolError::InvalidEvent);
+            }
+        }
     }
     Ok(values.clone())
 }
@@ -1231,12 +1251,20 @@ fn validate_messages(value: Option<&Value>) -> Result<Vec<Value>, AguiProtocolEr
         required_bounded_string(object, "id")?;
         let role = required_string(object, "role")?;
         match role {
-            "developer" | "system" | "user" | "reasoning" => {
+            "developer" | "system" | "user" => {
+                optional_bounded_string(object, "name")?;
+                optional_bounded_string(object, "encryptedValue")?;
+                required_bounded_string_allow_empty(object, "content")?;
+            }
+            "reasoning" => {
+                optional_bounded_string(object, "encryptedValue")?;
                 required_bounded_string_allow_empty(object, "content")?;
             }
             "assistant" => {
+                optional_bounded_string(object, "name")?;
+                optional_bounded_string(object, "encryptedValue")?;
                 if let Some(content) = object.get("content") {
-                    content.as_str().ok_or(AguiProtocolError::InvalidEvent)?;
+                    bounded_string(content.as_str().ok_or(AguiProtocolError::InvalidEvent)?)?;
                 }
                 if let Some(calls) = object.get("toolCalls") {
                     let calls = calls
@@ -1265,6 +1293,8 @@ fn validate_messages(value: Option<&Value>) -> Result<Vec<Value>, AguiProtocolEr
             "tool" => {
                 required_bounded_string_allow_empty(object, "content")?;
                 required_bounded_string(object, "toolCallId")?;
+                optional_bounded_string(object, "error")?;
+                optional_bounded_string(object, "encryptedValue")?;
             }
             "activity" => {
                 required_bounded_string(object, "activityType")?;
@@ -1393,10 +1423,7 @@ fn get_value<'a>(target: &'a Value, path: &str) -> Result<&'a Value, AguiProtoco
     for token in tokens {
         current = match current {
             Value::Object(object) => object.get(&token),
-            Value::Array(array) => token
-                .parse::<usize>()
-                .ok()
-                .and_then(|index| array.get(index)),
+            Value::Array(array) => array_index(&token).and_then(|index| array.get(index)),
             _ => None,
         }
         .ok_or(AguiProtocolError::InvalidPatch)?;
@@ -1413,10 +1440,7 @@ fn parent_mut<'a>(
     for token in parents {
         current = match current {
             Value::Object(object) => object.get_mut(token),
-            Value::Array(array) => token
-                .parse::<usize>()
-                .ok()
-                .and_then(|index| array.get_mut(index)),
+            Value::Array(array) => array_index(token).and_then(|index| array.get_mut(index)),
             _ => None,
         }
         .ok_or(AguiProtocolError::InvalidPatch)?;
@@ -1441,9 +1465,7 @@ fn add_value(target: &mut Value, path: &str, value: Value) -> Result<(), AguiPro
             Ok(())
         }
         Value::Array(array) => {
-            let index = token
-                .parse::<usize>()
-                .ok()
+            let index = array_index(&token)
                 .filter(|index| *index <= array.len())
                 .ok_or(AguiProtocolError::InvalidPatch)?;
             array.insert(index, value);
@@ -1461,13 +1483,23 @@ fn remove_value(target: &mut Value, path: &str) -> Result<Value, AguiProtocolErr
     let (parent, token) = parent_mut(target, &tokens)?;
     match parent {
         Value::Object(object) => object.remove(&token).ok_or(AguiProtocolError::InvalidPatch),
-        Value::Array(array) => token
-            .parse::<usize>()
-            .ok()
+        Value::Array(array) => array_index(&token)
             .filter(|index| *index < array.len())
             .map(|index| array.remove(index))
             .ok_or(AguiProtocolError::InvalidPatch),
         _ => Err(AguiProtocolError::InvalidPatch),
+    }
+}
+
+fn array_index(token: &str) -> Option<usize> {
+    if token == "0"
+        || (!token.is_empty()
+            && !token.starts_with('0')
+            && token.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        token.parse().ok()
+    } else {
+        None
     }
 }
 
@@ -1589,11 +1621,33 @@ mod tests {
             Some(AguiEvent::RunInterrupted { .. })
         ));
         assert_eq!(decoder.finish(), Ok(Vec::new()));
+
+        let mut malformed = AguiDecoder::new("t", "r", json!({})).unwrap();
+        event(
+            &mut malformed,
+            json!({"type":"RUN_STARTED","threadId":"t","runId":"r"}),
+        );
+        assert_eq!(
+            malformed.ingest(
+                &json!({
+                    "type":"RUN_FINISHED","threadId":"t","runId":"r",
+                    "outcome":{"type":"interrupt","interrupts":[{
+                        "id":"i1","reason":"approval","metadata":[]
+                    }]}
+                })
+                .to_string()
+            ),
+            Err(AguiProtocolError::InvalidEvent)
+        );
     }
 
     #[test]
     fn malformed_order_identity_patch_and_partial_tool_json_fail_closed() {
         let mut decoder = AguiDecoder::new("t", "r", json!({"a":1})).unwrap();
+        assert_eq!(
+            decoder.ingest(r#"{"type":"RUN_STARTED","threadId":"t","runId":"r","timestamp":null}"#),
+            Err(AguiProtocolError::InvalidEvent)
+        );
         assert_eq!(
             decoder.ingest(r#"{"type":"TEXT_MESSAGE_CONTENT","messageId":"m","delta":"x"}"#),
             Err(AguiProtocolError::InvalidSequence)
@@ -1605,6 +1659,12 @@ mod tests {
         event(
             &mut decoder,
             json!({"type":"RUN_STARTED","threadId":"t","runId":"r"}),
+        );
+        assert_eq!(
+            decoder.ingest(
+                &json!({"type":"TEXT_MESSAGE_START","messageId":"m","role":null}).to_string()
+            ),
+            Err(AguiProtocolError::InvalidEvent)
         );
         assert_eq!(
             decoder.ingest(
@@ -1637,6 +1697,10 @@ mod tests {
         event(
             &mut decoder,
             json!({"type":"TEXT_MESSAGE_START","messageId":"m"}),
+        );
+        event(
+            &mut decoder,
+            json!({"type":"TOOL_CALL_CHUNK","toolCallId":"partial","toolCallName":"x","delta":"{"}),
         );
         assert_eq!(
             event(
@@ -1690,6 +1754,18 @@ mod tests {
                 AguiEvent::RunFinished
             ]
         );
+
+        let mut malformed = AguiDecoder::new("t", "r", json!({})).unwrap();
+        event(
+            &mut malformed,
+            json!({"type":"RUN_STARTED","threadId":"t","runId":"r"}),
+        );
+        assert_eq!(
+            malformed.ingest(
+                &json!({"type":"REASONING_START","thinkingId":"not-in-0.0.57"}).to_string()
+            ),
+            Err(AguiProtocolError::InvalidEvent)
+        );
     }
 
     #[test]
@@ -1718,6 +1794,11 @@ mod tests {
             Err(AguiProtocolError::InvalidPatch)
         );
         assert_eq!(value, before, "failed patch must be atomic");
+        assert_eq!(
+            apply_patch(&mut value, &[json!({"op":"remove","path":"/a/01"})]),
+            Err(AguiProtocolError::InvalidPatch)
+        );
+        assert_eq!(value, before, "non-canonical array index must be atomic");
     }
 
     #[test]
