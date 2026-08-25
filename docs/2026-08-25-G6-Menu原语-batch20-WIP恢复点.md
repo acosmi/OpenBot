@@ -1,8 +1,10 @@
 # Batch 20 WIP 恢复点：Menu 原语
 
 > 分支 `codex/2026-08-25-G6-menu-primitive`，base = Batch19 正式 head
-> `b912c286c42c23e2c8d43a2c8d4a1ab0740bc807`。只跑本地定向测试，不运行
-> `cargo xtask ci`，不派发 Actions，不处理 `grok-bot`。
+> `b912c286c42c23e2c8d43a2c8d4a1ab0740bc807`；implementation checkpoint
+> `0de120f3e41cc120f27defdb2c02a6a0ddec9b25`。正式证据文档为
+> `2026-08-25-G6-Menu原语-batch20.md`。只跑本地定向测试，不运行 `cargo xtask ci`，
+> 不派发 Actions，不处理 `grok-bot`。
 
 ## 本批范围
 
@@ -35,8 +37,9 @@ Combobox/Select、MessageScroller/Sidebar；Menu 完成不冒充三者或任何�
 - Tab/Shift+Tab 先保留浏览器原生移动；仅当引擎仍把焦点留在即将隐藏的 menu/body 时做方向性
   恢复。本机真实 CUA 实得 Tab→`design-menu-after`，Shift+Tab→root trigger，根/子层均只关闭
   一次且焦点不落 body；
-- 最终 Chromium 断言集=`25/25`；AX 树为命名 root/sub `menu`、命名 `menuitem`、disabled 与
-  separator exact；duplicate ID/unnamed/nested interactive/remote resource/overflow=
+- Chromium 行为断言集=`25/25`；data-state delta 后又实得 closed/open/disabled/sub-open=
+  `null/open/disabled/open`、Tab→after；AX 树为命名 root/sub `menu`、命名 `menuitem`、disabled
+  与 separator exact；duplicate ID/unnamed/nested interactive/remote resource/overflow=
   `0/0/0/0/0`，console error=0；
 - 最终 gallery WASM SHA-256
   `42183490ba04c802f6006fac00779bd65e4fded0bc9b479bb9039ab6df0daf8f`；Cargo.lock
