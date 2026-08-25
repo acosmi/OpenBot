@@ -7,6 +7,7 @@ use http::header::RETRY_AFTER;
 use openbot_application::{
     ProviderEvent, ProviderMessageRole, ProviderPortError, ProviderRequest, ProviderSession,
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::SystemTime;
 
 use crate::net::safe_http::{SafeHttpError, SafeHttpStreamResponse};
@@ -25,16 +26,69 @@ pub(crate) fn validate_request(request: &ProviderRequest) -> Result<(), Provider
             field: "provider_request",
         });
     }
+    let mut pending_tool_calls = BTreeMap::<String, String>::new();
     for message in &request.messages {
         if message.content.len() > MAX_PROVIDER_FIELD_BYTES
             || message.content.as_bytes().contains(&0)
             || (message.role == ProviderMessageRole::Tool) != message.tool_call_id.is_some()
             || (message.role == ProviderMessageRole::Tool) != message.tool_name.is_some()
+            || (message.role != ProviderMessageRole::Assistant && !message.tool_calls.is_empty())
         {
             return Err(ProviderPortError::InvalidRequest {
                 field: "provider_message",
             });
         }
+        let mut call_ids = BTreeSet::new();
+        for call in &message.tool_calls {
+            if call.call_id.is_empty()
+                || call.call_id.len() > MAX_PROVIDER_FIELD_BYTES
+                || call.call_id.as_bytes().contains(&0)
+                || call.name.is_empty()
+                || call.name.len() > 256
+                || call.name.as_bytes().contains(&0)
+                || !call.arguments.is_object()
+                || serde_json::to_vec(&call.arguments)
+                    .map_or(true, |value| value.len() > MAX_PROVIDER_FIELD_BYTES)
+                || !call_ids.insert(call.call_id.as_str())
+            {
+                return Err(ProviderPortError::InvalidRequest {
+                    field: "provider_tool_call",
+                });
+            }
+        }
+        if message.role == ProviderMessageRole::Assistant {
+            if !pending_tool_calls.is_empty() {
+                return Err(ProviderPortError::InvalidRequest {
+                    field: "provider_tool_pair",
+                });
+            }
+            for call in &message.tool_calls {
+                pending_tool_calls.insert(call.call_id.clone(), call.name.clone());
+            }
+        } else if message.role == ProviderMessageRole::Tool {
+            let (Some(call_id), Some(name)) = (
+                message.tool_call_id.as_deref(),
+                message.tool_name.as_deref(),
+            ) else {
+                return Err(ProviderPortError::InvalidRequest {
+                    field: "provider_tool_pair",
+                });
+            };
+            if pending_tool_calls.remove(call_id).as_deref() != Some(name) {
+                return Err(ProviderPortError::InvalidRequest {
+                    field: "provider_tool_pair",
+                });
+            }
+        } else if !pending_tool_calls.is_empty() {
+            return Err(ProviderPortError::InvalidRequest {
+                field: "provider_tool_pair",
+            });
+        }
+    }
+    if !pending_tool_calls.is_empty() {
+        return Err(ProviderPortError::InvalidRequest {
+            field: "provider_tool_pair",
+        });
     }
     for tool in &request.tools {
         if tool.name.is_empty()
@@ -145,5 +199,41 @@ mod tests {
             map_start_error(SafeHttpError::DestinationDenied),
             ProviderPortError::InvalidRequest { .. }
         ));
+    }
+
+    #[test]
+    fn assistant_tool_calls_and_results_must_form_an_exact_closed_pair() {
+        let request = ProviderRequest {
+            route: openbot_application::ProviderRoute::Managed,
+            messages: vec![
+                openbot_application::ProviderMessage {
+                    role: ProviderMessageRole::Assistant,
+                    content: String::new(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_calls: vec![openbot_application::ProviderToolCall {
+                        call_id: "call-1".to_owned(),
+                        name: "remember".to_owned(),
+                        arguments: serde_json::json!({}),
+                    }],
+                },
+                openbot_application::ProviderMessage {
+                    role: ProviderMessageRole::Tool,
+                    content: "done".to_owned(),
+                    tool_call_id: Some("call-1".to_owned()),
+                    tool_name: Some("remember".to_owned()),
+                    tool_calls: Vec::new(),
+                },
+            ],
+            tools: Vec::new(),
+            max_output_tokens: Some(1),
+        };
+        assert_eq!(validate_request(&request), Ok(()));
+        let mut mismatched = request.clone();
+        mismatched.messages[1].tool_name = Some("other".to_owned());
+        assert!(validate_request(&mismatched).is_err());
+        let mut unfinished = request;
+        unfinished.messages.pop();
+        assert!(validate_request(&unfinished).is_err());
     }
 }

@@ -44,8 +44,8 @@ use super::payload::{AuditIdentifier, AuditLabel, AuditPayload};
 /// | grep -cE '^\s+"'`，在 commit `891df72f1827454d8b353d108fe5dd2313b7e30d` 上得 57）。
 /// 这些字面量是**跨系统契约**：它们进数据库、进管理页的筛选下拉、进上游既有数据。把它们
 /// 搬成 57 个 Rust 变体会得到一张两侧都要人工维护的映射表，而映射表漂了没有任何东西会红。
-/// 本项目新增的 `agent.run_deadline_exceeded` 单列在目录尾部相邻 Agent 项后，并在 parity/events
-/// 标为新增；它不冒充上游第 58 项。
+/// 本项目新增的 deadline 与 explicit-memory tool 三事件单列在相邻项后，并在 parity/events
+/// 标为新增；它们不冒充上游目录成员。
 ///
 /// 所以取值集合直接由 [`AUDIT_EVENT_TYPES`] 承载，类型本身只保证**封闭性**：
 /// [`AuditEventType::parse`] 只接受目录里的字面量，没有从任意 `String` 构造的入口。
@@ -60,6 +60,12 @@ impl AuditEventType {
     pub const AGENT_STREAM_STALLED: Self = Self("agent.stream_stalled");
     /// 新增 absolute run deadline 到点且 child 已停止。
     pub const AGENT_RUN_DEADLINE_EXCEEDED: Self = Self("agent.run_deadline_exceeded");
+    /// Explicit remember tool was refused before execution.
+    pub const MEMORY_REMEMBER_REFUSED: Self = Self("memory.remember_refused");
+    /// Explicit remember tool committed a memory record.
+    pub const MEMORY_REMEMBER_SUCCEEDED: Self = Self("memory.remember_succeeded");
+    /// Explicit remember tool finished with a definite non-success outcome.
+    pub const MEMORY_REMEMBER_FAILED: Self = Self("memory.remember_failed");
     /// Bot 在其 computer 上执行的动作被放行。
     pub const COMPUTER_ACTION_ALLOWED: Self = Self("computer.action_allowed");
     /// Bot 在其 computer 上执行的动作被策略拒绝。
@@ -108,7 +114,7 @@ impl fmt::Display for AuditEventType {
     }
 }
 
-/// 事件类型全集：上游 57 项 + 本项目新增 deadline 1 项。
+/// 事件类型全集：上游 57 项 + 本项目新增 deadline/memory 4 项。
 ///
 /// 顺序也照抄上游，方便逐行对拍。
 pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
@@ -123,6 +129,9 @@ pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
     AuditEventType("agent.invoked"),
     AuditEventType("agent.stream_stalled"),
     AuditEventType("agent.run_deadline_exceeded"),
+    AuditEventType("memory.remember_refused"),
+    AuditEventType("memory.remember_succeeded"),
+    AuditEventType("memory.remember_failed"),
     AuditEventType("mcp.call_succeeded"),
     AuditEventType("mcp.call_rejected"),
     AuditEventType("mcp.call_failed"),
@@ -230,10 +239,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn catalog_is_upstream_fifty_seven_plus_one_new_and_has_no_duplicates() {
-        assert_eq!(AUDIT_EVENT_TYPES.len(), 58);
+    fn catalog_is_upstream_fifty_seven_plus_four_new_and_has_no_duplicates() {
+        assert_eq!(AUDIT_EVENT_TYPES.len(), 61);
         let unique: BTreeSet<&str> = AUDIT_EVENT_TYPES.iter().map(|t| t.0).collect();
-        assert_eq!(unique.len(), 58, "目录里有重复的事件类型");
+        assert_eq!(unique.len(), 61, "目录里有重复的事件类型");
     }
 
     #[test]
@@ -255,6 +264,12 @@ mod tests {
     #[test]
     fn associated_constants_are_all_catalog_members() {
         for constant in [
+            AuditEventType::AGENT_INVOKED,
+            AuditEventType::AGENT_STREAM_STALLED,
+            AuditEventType::AGENT_RUN_DEADLINE_EXCEEDED,
+            AuditEventType::MEMORY_REMEMBER_REFUSED,
+            AuditEventType::MEMORY_REMEMBER_SUCCEEDED,
+            AuditEventType::MEMORY_REMEMBER_FAILED,
             AuditEventType::COMPUTER_ACTION_ALLOWED,
             AuditEventType::COMPUTER_ACTION_REFUSED,
             AuditEventType::COMPUTER_ACTION_FAILED,

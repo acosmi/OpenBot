@@ -231,13 +231,27 @@ fn build_request_body(
                 )?;
             }
             ProviderMessageRole::Assistant => {
-                push_message_block(
-                    &mut messages,
-                    "assistant",
-                    json!({
-                        "type":"text","text":message.content
-                    }),
-                )?;
+                if !message.content.is_empty() {
+                    push_message_block(
+                        &mut messages,
+                        "assistant",
+                        json!({
+                            "type":"text","text":message.content
+                        }),
+                    )?;
+                }
+                for call in &message.tool_calls {
+                    push_message_block(
+                        &mut messages,
+                        "assistant",
+                        json!({
+                            "type":"tool_use",
+                            "id":call.call_id,
+                            "name":call.name,
+                            "input":call.arguments,
+                        }),
+                    )?;
+                }
             }
             ProviderMessageRole::Tool => {
                 push_message_block(
@@ -822,18 +836,39 @@ mod tests {
                     content: "standing".to_owned(),
                     tool_call_id: None,
                     tool_name: None,
+                    tool_calls: Vec::new(),
                 },
                 openbot_application::ProviderMessage {
                     role: ProviderMessageRole::User,
                     content: "one".to_owned(),
                     tool_call_id: None,
                     tool_name: None,
+                    tool_calls: Vec::new(),
                 },
                 openbot_application::ProviderMessage {
                     role: ProviderMessageRole::User,
                     content: "two".to_owned(),
                     tool_call_id: None,
                     tool_name: None,
+                    tool_calls: Vec::new(),
+                },
+                openbot_application::ProviderMessage {
+                    role: ProviderMessageRole::Assistant,
+                    content: String::new(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_calls: vec![openbot_application::ProviderToolCall {
+                        call_id: "call-1".to_owned(),
+                        name: "remember".to_owned(),
+                        arguments: json!({"content":"tea"}),
+                    }],
+                },
+                openbot_application::ProviderMessage {
+                    role: ProviderMessageRole::Tool,
+                    content: "remembered".to_owned(),
+                    tool_call_id: Some("call-1".to_owned()),
+                    tool_name: Some("remember".to_owned()),
+                    tool_calls: Vec::new(),
                 },
             ],
             tools: vec![openbot_application::ProviderToolDefinition {
@@ -847,8 +882,10 @@ mod tests {
             serde_json::from_slice(&build_request_body("claude-sonnet-4-5", &request).unwrap())
                 .unwrap();
         assert_eq!(body["system"], "standing");
-        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(body["messages"].as_array().unwrap().len(), 3);
         assert_eq!(body["messages"][0]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(body["messages"][1]["content"][0]["type"], "tool_use");
+        assert_eq!(body["messages"][2]["content"][0]["type"], "tool_result");
         assert_eq!(body["max_tokens"], 16_384);
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
     }
@@ -902,6 +939,7 @@ mod tests {
                     content: "hello".to_owned(),
                     tool_call_id: None,
                     tool_name: None,
+                    tool_calls: Vec::new(),
                 }],
                 tools: Vec::new(),
                 max_output_tokens: Some(16),

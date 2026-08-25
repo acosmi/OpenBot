@@ -71,6 +71,7 @@
 //! 接上；真实 Agent consumer/provider producer、remember tool/Memory GUI 仍归后续 G3/G4/G6。
 
 pub mod agent_audit;
+pub mod agent_tools;
 pub mod auth;
 pub mod db;
 pub mod intelligence_bundle;

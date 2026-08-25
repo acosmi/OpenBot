@@ -472,6 +472,8 @@ async fn append_tool_audit(
 fn refusal_event_type(target_kind: &str) -> AuditEventType {
     if target_kind.starts_with("mcp") {
         AuditEventType::MCP_CALL_REJECTED
+    } else if target_kind.starts_with("memory") {
+        AuditEventType::MEMORY_REMEMBER_REFUSED
     } else {
         AuditEventType::COMPUTER_ACTION_REFUSED
     }
@@ -486,6 +488,10 @@ fn outcome_event_type(draft: &ToolOutcomeDraft) -> AuditEventType {
         } else {
             AuditEventType::MCP_CALL_FAILED
         }
+    } else if draft.decision.target.kind.starts_with("memory") && succeeded {
+        AuditEventType::MEMORY_REMEMBER_SUCCEEDED
+    } else if draft.decision.target.kind.starts_with("memory") {
+        AuditEventType::MEMORY_REMEMBER_FAILED
     } else if succeeded {
         AuditEventType::COMPUTER_ACTION_ALLOWED
     } else {

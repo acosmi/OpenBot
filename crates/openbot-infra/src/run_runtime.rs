@@ -6,10 +6,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use openbot_application::{
     ClaimedRunDispatch, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease,
-    RunFailureCode, RunRuntime, RunRuntimeError, RunSemanticChannel, RunTerminal, RunWriteReceipt,
-    SEMANTIC_CHUNK_MAX_BYTES,
+    RunFailureCode, RunRuntime, RunRuntimeError, RunSemanticChannel, RunTerminal, RunToolExchange,
+    RunWriteReceipt, SEMANTIC_CHUNK_MAX_BYTES,
 };
 use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId};
+use openbot_domain::audit::hash::Sha256Digest;
 use openbot_domain::thread::FencingToken;
 use serde_json::{Value, json};
 use time::{Duration, OffsetDateTime};
@@ -217,6 +218,28 @@ impl RunRuntime for PostgresRunRuntime {
             expected_sequence,
             channel,
             chunk,
+        )
+        .await;
+        finish_transaction(transaction, result).await
+    }
+
+    async fn append_tool_exchange(
+        &self,
+        lease: &RunExecutionLease,
+        expected_sequence: u64,
+        exchange: &RunToolExchange,
+    ) -> Result<RunWriteReceipt, RunRuntimeError> {
+        let mut client = self.client().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|error| unavailable("开始 tool exchange 事务", error))?;
+        let result = append_tool_exchange_in_transaction(
+            &transaction,
+            &self.owner_id,
+            lease,
+            expected_sequence,
+            exchange,
         )
         .await;
         finish_transaction(transaction, result).await
@@ -718,6 +741,218 @@ async fn append_chunk_in_transaction(
     })
 }
 
+async fn append_tool_exchange_in_transaction(
+    transaction: &Transaction<'_>,
+    owner: &str,
+    lease: &RunExecutionLease,
+    expected_sequence: u64,
+    exchange: &RunToolExchange,
+) -> Result<RunWriteReceipt, RunRuntimeError> {
+    let arguments =
+        serde_json::to_vec(exchange.arguments()).map_err(|_| RunRuntimeError::InvalidInput {
+            field: "tool_arguments",
+        })?;
+    if exchange.provider_call_id().len() > 1024 * 1024
+        || exchange.name().len() > 256
+        || arguments.len() > 1024 * 1024
+        || exchange.result().len() > 1024 * 1024
+        || exchange.error_code().is_some_and(|value| value.len() > 256)
+    {
+        return Err(RunRuntimeError::InvalidInput {
+            field: "tool_exchange",
+        });
+    }
+    let expected = sequence_i64(expected_sequence)?;
+    let payload = json!({
+        "kind":"tool_exchange",
+        "toolCallId":exchange.internal_call_id().as_str(),
+        "providerCallIdHash":Sha256Digest::of(exchange.provider_call_id().as_bytes()).to_hex(),
+        "toolName":exchange.name(),
+        "argumentsHash":Sha256Digest::of(&arguments).to_hex(),
+        "resultHash":Sha256Digest::of(exchange.result().as_bytes()).to_hex(),
+        "errorCode":exchange.error_code(),
+    });
+    let Some(locked) = lock_run(transaction, lease.run_id().as_str()).await? else {
+        return Err(RunRuntimeError::StaleLease);
+    };
+    validate_lease_identity(&locked, lease)?;
+    if locked.next_event_seq > expected {
+        let mut receipt = replay_event(transaction, lease, expected, "checkpoint", &payload, false)
+            .await?
+            .ok_or(RunRuntimeError::Conflict)?;
+        receipt.message_sequence = replay_tool_messages(transaction, lease, exchange).await?;
+        return Ok(receipt);
+    }
+    if locked.next_event_seq != expected || locked.status != "running" {
+        return Err(RunRuntimeError::Conflict);
+    }
+    let now = database_now(transaction).await?;
+    validate_active_lease(&locked, owner, lease, now)?;
+    let assistant_text = aggregate_text_chunks(transaction, lease.run_id()).await?;
+    let assistant_sequence = locked.thread_next_message_seq;
+    let tool_sequence = checked_increment(assistant_sequence, "tool_message_sequence")?;
+    let next_message = checked_increment(tool_sequence, "next_message_sequence")?;
+    let assistant_id =
+        tool_assistant_message_id(lease.run_id(), exchange.internal_call_id().as_str());
+    let result_id = tool_result_message_id(lease.run_id(), exchange.internal_call_id().as_str());
+    let assistant_content = json!({
+        "text":assistant_text,
+        "toolCalls":[{
+            "id":exchange.provider_call_id(),
+            "type":"function",
+            "function":{
+                "name":exchange.name(),
+                "arguments":exchange.arguments(),
+            }
+        }]
+    });
+    let result_content = json!({
+        "text":exchange.result(),
+        "toolCallId":exchange.provider_call_id(),
+        "toolName":exchange.name(),
+        "errorCode":exchange.error_code(),
+    });
+    transaction
+        .execute(
+            "INSERT INTO public.messages( \
+               message_id,thread_id,seq,role,content,search_text,run_id,actor_id,created_at \
+             ) VALUES($1,$2,$3,'assistant',$4,$5,$6,NULL,$7), \
+                     ($8,$2,$9,'tool',$10,$11,$6,NULL,$7)",
+            &[
+                &assistant_id,
+                &lease.thread_id().as_str(),
+                &assistant_sequence,
+                &assistant_content,
+                &assistant_text,
+                &lease.run_id().as_str(),
+                &now,
+                &result_id,
+                &tool_sequence,
+                &result_content,
+                &exchange.result(),
+            ],
+        )
+        .await
+        .map_err(|error| write_error("写 durable tool pair", error))?;
+    let thread_event = locked.thread_next_event_seq;
+    let next_run = checked_increment(expected, "next_event_sequence")?;
+    let next_thread = checked_increment(thread_event, "thread_next_event_sequence")?;
+    transaction
+        .execute(
+            "INSERT INTO public.run_events( \
+               run_id,seq,thread_id,event_seq,event_type,payload,terminal,created_at \
+             ) VALUES($1,$2,$3,$4,'checkpoint',$5,false,$6)",
+            &[
+                &lease.run_id().as_str(),
+                &expected,
+                &lease.thread_id().as_str(),
+                &thread_event,
+                &payload,
+                &now,
+            ],
+        )
+        .await
+        .map_err(|error| write_error("写 tool exchange checkpoint", error))?;
+    transaction
+        .execute(
+            "UPDATE public.runs SET next_event_seq=$2 WHERE run_id=$1",
+            &[&lease.run_id().as_str(), &next_run],
+        )
+        .await
+        .map_err(|error| write_error("推进 tool exchange run sequence", error))?;
+    transaction
+        .execute(
+            "UPDATE public.threads SET next_event_seq=$2,next_message_seq=$3,updated_at=$4 \
+             WHERE thread_id=$1",
+            &[
+                &lease.thread_id().as_str(),
+                &next_thread,
+                &next_message,
+                &now,
+            ],
+        )
+        .await
+        .map_err(|error| write_error("推进 tool exchange thread sequence", error))?;
+    notify_thread(transaction).await?;
+    Ok(RunWriteReceipt {
+        run_event_sequence: expected_sequence,
+        thread_event_sequence: sequence_u64(thread_event, "thread_event_sequence")?,
+        message_sequence: Some(sequence_u64(
+            assistant_sequence,
+            "assistant_message_sequence",
+        )?),
+        replayed: false,
+    })
+}
+
+async fn replay_tool_messages(
+    transaction: &Transaction<'_>,
+    lease: &RunExecutionLease,
+    exchange: &RunToolExchange,
+) -> Result<Option<u64>, RunRuntimeError> {
+    let assistant_id =
+        tool_assistant_message_id(lease.run_id(), exchange.internal_call_id().as_str());
+    let result_id = tool_result_message_id(lease.run_id(), exchange.internal_call_id().as_str());
+    let message_ids = vec![assistant_id.clone(), result_id.clone()];
+    let rows = transaction
+        .query(
+            "SELECT message_id,seq,role,content FROM public.messages \
+             WHERE thread_id=$1 AND run_id=$2 AND message_id=ANY($3) ORDER BY seq",
+            &[
+                &lease.thread_id().as_str(),
+                &lease.run_id().as_str(),
+                &message_ids,
+            ],
+        )
+        .await
+        .map_err(|error| unavailable("核对 durable tool pair", error))?;
+    if rows.len() != 2 {
+        return Err(RunRuntimeError::Corrupt {
+            field: "tool_messages",
+        });
+    }
+    let first_id: String = decode(&rows[0], "message_id")?;
+    let first_role: String = decode(&rows[0], "role")?;
+    let first_content: Value = decode(&rows[0], "content")?;
+    let second_id: String = decode(&rows[1], "message_id")?;
+    let second_role: String = decode(&rows[1], "role")?;
+    let second_content: Value = decode(&rows[1], "content")?;
+    let first_call = first_content
+        .get("toolCalls")
+        .and_then(Value::as_array)
+        .filter(|calls| calls.len() == 1)
+        .and_then(|calls| calls.first());
+    if first_id != assistant_id
+        || first_role != "assistant"
+        || second_id != result_id
+        || second_role != "tool"
+        || first_call
+            .and_then(|call| call.get("id"))
+            .and_then(Value::as_str)
+            != Some(exchange.provider_call_id())
+        || first_call
+            .and_then(|call| call.get("function"))
+            .and_then(|function| function.get("name"))
+            .and_then(Value::as_str)
+            != Some(exchange.name())
+        || first_call
+            .and_then(|call| call.get("function"))
+            .and_then(|function| function.get("arguments"))
+            != Some(exchange.arguments())
+        || second_content.get("toolCallId").and_then(Value::as_str)
+            != Some(exchange.provider_call_id())
+        || second_content.get("toolName").and_then(Value::as_str) != Some(exchange.name())
+        || second_content.get("text").and_then(Value::as_str) != Some(exchange.result())
+        || second_content.get("errorCode").and_then(Value::as_str) != exchange.error_code()
+    {
+        return Err(RunRuntimeError::Corrupt {
+            field: "tool_messages",
+        });
+    }
+    let sequence: i64 = decode(&rows[0], "seq")?;
+    Ok(Some(sequence_u64(sequence, "assistant_message_sequence")?))
+}
+
 #[derive(Clone, Copy)]
 enum LeaseCheck {
     Active,
@@ -1120,7 +1355,11 @@ async fn aggregate_text_chunks(
 ) -> Result<String, RunRuntimeError> {
     let rows = transaction
         .query(
-            "SELECT payload FROM public.run_events WHERE run_id=$1 AND event_type='semantic_chunk' \
+            "SELECT payload FROM public.run_events \
+             WHERE run_id=$1 AND event_type='semantic_chunk' \
+               AND seq>coalesce((SELECT max(seq) FROM public.run_events \
+                                 WHERE run_id=$1 AND event_type='checkpoint' \
+                                   AND payload->>'kind'='tool_exchange'),-1) \
              ORDER BY seq",
             &[&run_id.as_str()],
         )
@@ -1142,6 +1381,14 @@ async fn aggregate_text_chunks(
         text.push_str(delta);
     }
     Ok(text)
+}
+
+fn tool_assistant_message_id(run_id: &RunId, call_id: &str) -> String {
+    format!("{}:tool:{call_id}:assistant", run_id.as_str())
+}
+
+fn tool_result_message_id(run_id: &RunId, call_id: &str) -> String {
+    format!("{}:tool:{call_id}:result", run_id.as_str())
 }
 
 async fn release_lease(

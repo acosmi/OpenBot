@@ -186,7 +186,7 @@ fn validate_remember(input: &RememberMemory) -> Result<(), AppError> {
     Ok(())
 }
 
-fn validate_content(content: &str) -> Result<(), AppError> {
+pub(crate) fn validate_content(content: &str) -> Result<(), AppError> {
     if content.is_empty()
         || content.as_bytes().contains(&0)
         || content.len() > MAX_MEMORY_CONTENT_BYTES
@@ -197,7 +197,7 @@ fn validate_content(content: &str) -> Result<(), AppError> {
     }
 }
 
-fn validate_tags(tags: &[String]) -> Result<(), AppError> {
+pub(crate) fn validate_tags(tags: &[String]) -> Result<(), AppError> {
     if tags.len() > MAX_MEMORY_TAGS
         || tags.iter().any(|tag| {
             tag.is_empty() || tag.as_bytes().contains(&0) || tag.len() > MAX_MEMORY_TAG_BYTES

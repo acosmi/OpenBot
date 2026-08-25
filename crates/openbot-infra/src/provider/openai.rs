@@ -293,21 +293,42 @@ fn build_request_body(
 ) -> Result<Vec<u8>, ProviderPortError> {
     let value = match protocol {
         OpenAiProtocol::Responses => {
-            let input = request
-                .messages
-                .iter()
-                .map(|message| match message.role {
-                    ProviderMessageRole::Tool => json!({
+            let mut input = Vec::new();
+            for message in &request.messages {
+                match message.role {
+                    ProviderMessageRole::Tool => input.push(json!({
                         "type":"function_call_output",
                         "call_id":message.tool_call_id,
                         "output":message.content,
-                    }),
-                    role => json!({
+                    })),
+                    ProviderMessageRole::Assistant => {
+                        if !message.content.is_empty() {
+                            input.push(json!({
+                                "role":"assistant",
+                                "content":message.content,
+                            }));
+                        }
+                        for call in &message.tool_calls {
+                            let arguments =
+                                serde_json::to_string(&call.arguments).map_err(|_| {
+                                    ProviderPortError::InvalidRequest {
+                                        field: "provider_tool_call",
+                                    }
+                                })?;
+                            input.push(json!({
+                                "type":"function_call",
+                                "call_id":call.call_id,
+                                "name":call.name,
+                                "arguments":arguments,
+                            }));
+                        }
+                    }
+                    role => input.push(json!({
                         "role":role_literal(role),
                         "content":message.content,
-                    }),
-                })
-                .collect::<Vec<_>>();
+                    })),
+                }
+            }
             let tools = request
                 .tools
                 .iter()
@@ -342,9 +363,30 @@ fn build_request_body(
                     if let Some(call_id) = &message.tool_call_id {
                         value["tool_call_id"] = json!(call_id);
                     }
-                    value
+                    if !message.tool_calls.is_empty() {
+                        value["tool_calls"] = Value::Array(
+                            message
+                                .tool_calls
+                                .iter()
+                                .map(|call| {
+                                    Ok(json!({
+                                        "id":call.call_id,
+                                        "type":"function",
+                                        "function":{
+                                            "name":call.name,
+                                            "arguments":serde_json::to_string(&call.arguments)
+                                                .map_err(|_| ProviderPortError::InvalidRequest {
+                                                    field: "provider_tool_call",
+                                                })?,
+                                        }
+                                    }))
+                                })
+                                .collect::<Result<Vec<_>, ProviderPortError>>()?,
+                        );
+                    }
+                    Ok(value)
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, ProviderPortError>>()?;
             let tools = request
                 .tools
                 .iter()
@@ -1192,12 +1234,33 @@ mod tests {
     fn request_shapes_keep_responses_and_chat_distinct() {
         let request = ProviderRequest {
             route: openbot_application::ProviderRoute::PackageOpenAi,
-            messages: vec![openbot_application::ProviderMessage {
-                role: ProviderMessageRole::User,
-                content: "hello".to_owned(),
-                tool_call_id: None,
-                tool_name: None,
-            }],
+            messages: vec![
+                openbot_application::ProviderMessage {
+                    role: ProviderMessageRole::User,
+                    content: "hello".to_owned(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_calls: Vec::new(),
+                },
+                openbot_application::ProviderMessage {
+                    role: ProviderMessageRole::Assistant,
+                    content: String::new(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_calls: vec![openbot_application::ProviderToolCall {
+                        call_id: "call-1".to_owned(),
+                        name: "remember".to_owned(),
+                        arguments: json!({"content":"tea"}),
+                    }],
+                },
+                openbot_application::ProviderMessage {
+                    role: ProviderMessageRole::Tool,
+                    content: "remembered".to_owned(),
+                    tool_call_id: Some("call-1".to_owned()),
+                    tool_name: Some("remember".to_owned()),
+                    tool_calls: Vec::new(),
+                },
+            ],
             tools: Vec::new(),
             max_output_tokens: Some(32),
         };
@@ -1210,8 +1273,12 @@ mod tests {
         )
         .unwrap();
         assert!(responses.get("input").is_some());
+        assert_eq!(responses["input"][1]["type"], "function_call");
+        assert_eq!(responses["input"][2]["type"], "function_call_output");
         assert_eq!(responses["max_output_tokens"], 32);
         assert!(chat.get("messages").is_some());
+        assert_eq!(chat["messages"][1]["tool_calls"][0]["id"], "call-1");
+        assert_eq!(chat["messages"][2]["tool_call_id"], "call-1");
         assert_eq!(chat["max_tokens"], 32);
         assert_eq!(responses["stream"], true);
         assert_eq!(chat["stream_options"]["include_usage"], true);
@@ -1270,6 +1337,7 @@ mod tests {
                     content: "hello".to_owned(),
                     tool_call_id: None,
                     tool_name: None,
+                    tool_calls: Vec::new(),
                 }],
                 tools: Vec::new(),
                 max_output_tokens: Some(16),

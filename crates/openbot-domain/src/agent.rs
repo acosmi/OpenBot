@@ -87,6 +87,27 @@ pub enum AgentTerminal {
     ReconciliationRequired(AgentFailure),
 }
 
+/// One complete provider tool call, ordered by the host's stable output index.
+#[derive(Clone, PartialEq)]
+pub struct AgentToolCall {
+    /// Vendor pairing id; never used as the control-plane call id.
+    pub call_id: String,
+    /// Catalog name, revalidated by ApplicationService.
+    pub name: String,
+    /// Parsed object arguments.
+    pub arguments: Value,
+}
+
+impl core::fmt::Debug for AgentToolCall {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AgentToolCall")
+            .field("call_id", &self.call_id)
+            .field("name", &self.name)
+            .field("arguments", &"[redacted]")
+            .finish()
+    }
+}
+
 /// Pure state。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentState {
@@ -140,15 +161,8 @@ pub enum AgentEvent {
     ProviderTextDelta(String),
     /// Provider reasoning delta。
     ProviderReasoningDelta(String),
-    /// Provider produced a complete tool call。
-    ProviderToolCall {
-        /// Provider call id。
-        call_id: String,
-        /// Authoritative catalog name still revalidated by application。
-        name: String,
-        /// Parsed arguments。
-        arguments: Value,
-    },
+    /// Provider completed one sampling turn with an ordered non-empty tool-call batch.
+    ProviderToolCalls(Vec<AgentToolCall>),
     /// Provider normal terminal。
     ProviderCompleted,
     /// Provider normalized failure。
@@ -193,11 +207,9 @@ impl core::fmt::Debug for AgentEvent {
                 .debug_tuple("ProviderReasoningDelta")
                 .field(&format_args!("{} bytes", value.len()))
                 .finish(),
-            Self::ProviderToolCall { call_id, name, .. } => f
-                .debug_struct("ProviderToolCall")
-                .field("call_id", call_id)
-                .field("name", name)
-                .field("arguments", &"[redacted]")
+            Self::ProviderToolCalls(calls) => f
+                .debug_tuple("ProviderToolCalls")
+                .field(&format_args!("{} calls", calls.len()))
                 .finish(),
             Self::ProviderCompleted => f.write_str("ProviderCompleted"),
             Self::ProviderFailed(value) => f.debug_tuple("ProviderFailed").field(value).finish(),
@@ -228,15 +240,8 @@ pub enum AgentEffect {
     PersistText(String),
     /// Persist normalized reasoning semantic event。
     PersistReasoning(String),
-    /// Invoke the unique application tool pipeline。
-    InvokeTool {
-        /// Provider call id。
-        call_id: String,
-        /// Tool name。
-        name: String,
-        /// Parsed arguments。
-        arguments: Value,
-    },
+    /// Invoke an ordered batch through the unique application tool pipeline.
+    InvokeTools(Vec<AgentToolCall>),
     /// Ask UI/human approval surface。
     AwaitApproval,
     /// Suspend for human handover。
@@ -260,11 +265,9 @@ impl core::fmt::Debug for AgentEffect {
                 .debug_tuple("PersistReasoning")
                 .field(&format_args!("{} bytes", value.len()))
                 .finish(),
-            Self::InvokeTool { call_id, name, .. } => f
-                .debug_struct("InvokeTool")
-                .field("call_id", call_id)
-                .field("name", name)
-                .field("arguments", &"[redacted]")
+            Self::InvokeTools(calls) => f
+                .debug_tuple("InvokeTools")
+                .field(&format_args!("{} calls", calls.len()))
                 .finish(),
             Self::AwaitApproval => f.write_str("AwaitApproval"),
             Self::AwaitHuman => f.write_str("AwaitHuman"),
@@ -306,27 +309,31 @@ pub fn reduce(
         (AgentPhase::Sampling, AgentEvent::ProviderReasoningDelta(delta)) if !delta.is_empty() => {
             vec![AgentEffect::PersistReasoning(delta)]
         }
-        (
-            AgentPhase::Sampling,
-            AgentEvent::ProviderToolCall {
-                call_id,
-                name,
-                arguments,
-            },
-        ) if !call_id.is_empty() && !name.is_empty() && arguments.is_object() => {
-            if state.tool_steps >= 8 {
+        (AgentPhase::Sampling, AgentEvent::ProviderToolCalls(calls))
+            if !calls.is_empty()
+                && calls.iter().all(|call| {
+                    !call.call_id.is_empty() && !call.name.is_empty() && call.arguments.is_object()
+                })
+                && calls.iter().enumerate().all(|(index, call)| {
+                    calls[..index]
+                        .iter()
+                        .all(|prior| prior.call_id != call.call_id)
+                }) =>
+        {
+            let count = u8::try_from(calls.len()).map_err(|_| AgentInvariantViolation)?;
+            if state
+                .tool_steps
+                .checked_add(count)
+                .is_none_or(|steps| steps > 8)
+            {
                 begin_terminal(
                     &mut next,
                     AgentTerminal::Failed(AgentFailure::ToolStepLimit),
                 )
             } else {
-                next.tool_steps += 1;
+                next.tool_steps += count;
                 next.phase = AgentPhase::ExecutingTools;
-                vec![AgentEffect::InvokeTool {
-                    call_id,
-                    name,
-                    arguments,
-                }]
+                vec![AgentEffect::InvokeTools(calls)]
             }
         }
         (AgentPhase::ExecutingTools, AgentEvent::ApprovalRequired) => {
@@ -341,8 +348,8 @@ pub fn reduce(
             begin_terminal(&mut next, AgentTerminal::Failed(AgentFailure::ToolDenied))
         }
         (AgentPhase::ExecutingTools, AgentEvent::ToolResultCommitted) => {
-            next.phase = AgentPhase::Sampling;
-            vec![AgentEffect::StartProvider]
+            next.phase = AgentPhase::Preparing;
+            vec![AgentEffect::LoadContext]
         }
         (AgentPhase::ExecutingTools, AgentEvent::ToolRuntimeUnavailable) => begin_terminal(
             &mut next,
@@ -503,26 +510,24 @@ mod tests {
         for index in 0..8 {
             let (next, effects) = step(
                 &state,
-                AgentEvent::ProviderToolCall {
+                AgentEvent::ProviderToolCalls(vec![AgentToolCall {
                     call_id: format!("call-{index}"),
                     name: "tool".to_owned(),
                     arguments: serde_json::json!({}),
-                },
+                }]),
             );
-            assert!(matches!(
-                effects.as_slice(),
-                [AgentEffect::InvokeTool { .. }]
-            ));
-            let (next, _) = step(&next, AgentEvent::ToolResultCommitted);
-            state = next;
+            assert!(matches!(effects.as_slice(), [AgentEffect::InvokeTools(_)]));
+            let (next, effects) = step(&next, AgentEvent::ToolResultCommitted);
+            assert_eq!(effects, [AgentEffect::LoadContext]);
+            (state, _) = step(&next, AgentEvent::ContextPrepared);
         }
         let (state, effects) = step(
             &state,
-            AgentEvent::ProviderToolCall {
+            AgentEvent::ProviderToolCalls(vec![AgentToolCall {
                 call_id: "call-9".to_owned(),
                 name: "tool".to_owned(),
                 arguments: serde_json::json!({}),
-            },
+            }]),
         );
         assert_eq!(state.phase(), AgentPhase::CommittingResults);
         assert_eq!(

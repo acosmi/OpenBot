@@ -224,7 +224,22 @@ fn build_request_body(request: &ProviderRequest) -> Result<Vec<u8>, ProviderPort
                 push_content_part(&mut contents, "user", json!({"text":message.content}))?
             }
             ProviderMessageRole::Assistant => {
-                push_content_part(&mut contents, "model", json!({"text":message.content}))?
+                if !message.content.is_empty() {
+                    push_content_part(&mut contents, "model", json!({"text":message.content}))?;
+                }
+                for call in &message.tool_calls {
+                    push_content_part(
+                        &mut contents,
+                        "model",
+                        json!({
+                            "functionCall":{
+                                "id":call.call_id,
+                                "name":call.name,
+                                "args":call.arguments,
+                            }
+                        }),
+                    )?;
+                }
             }
             ProviderMessageRole::Tool => push_content_part(
                 &mut contents,
@@ -779,18 +794,32 @@ mod tests {
                         content: "standing".to_owned(),
                         tool_call_id: None,
                         tool_name: None,
+                        tool_calls: Vec::new(),
                     },
                     openbot_application::ProviderMessage {
                         role: ProviderMessageRole::User,
                         content: "hello".to_owned(),
                         tool_call_id: None,
                         tool_name: None,
+                        tool_calls: Vec::new(),
+                    },
+                    openbot_application::ProviderMessage {
+                        role: ProviderMessageRole::Assistant,
+                        content: String::new(),
+                        tool_call_id: None,
+                        tool_name: None,
+                        tool_calls: vec![openbot_application::ProviderToolCall {
+                            call_id: "call-1".to_owned(),
+                            name: "weather".to_owned(),
+                            arguments: json!({"city":"Paris"}),
+                        }],
                     },
                     openbot_application::ProviderMessage {
                         role: ProviderMessageRole::Tool,
                         content: "sunny".to_owned(),
                         tool_call_id: Some("call-1".to_owned()),
                         tool_name: Some("weather".to_owned()),
+                        tool_calls: Vec::new(),
                     },
                 ],
                 tools: vec![openbot_application::ProviderToolDefinition {
@@ -804,10 +833,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body["systemInstruction"]["role"], "system");
-        assert_eq!(body["contents"].as_array().unwrap().len(), 1);
-        assert_eq!(body["contents"][0]["parts"].as_array().unwrap().len(), 2);
+        assert_eq!(body["contents"].as_array().unwrap().len(), 3);
         assert_eq!(
-            body["contents"][0]["parts"][1]["functionResponse"]["name"],
+            body["contents"][1]["parts"][0]["functionCall"]["name"],
+            "weather"
+        );
+        assert_eq!(
+            body["contents"][2]["parts"][0]["functionResponse"]["name"],
             "weather"
         );
         assert_eq!(
@@ -885,6 +917,7 @@ mod tests {
                     content: "hello".to_owned(),
                     tool_call_id: None,
                     tool_name: None,
+                    tool_calls: Vec::new(),
                 }],
                 tools: Vec::new(),
                 max_output_tokens: None,

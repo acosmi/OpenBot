@@ -14,7 +14,7 @@
 #       identity_provider.registered / knowledge.searched）在 server/src 无任何发出点。
 #       owner 判据（机械）：发出点是进程启动顶层代码或传输层看门狗（无 use case）=> openbot-infra，
 #       其余 => openbot-application（铸造）；落库一律 openbot-infra，见 §8.6 的 DB role 分离。
-#   (c) 新增语义事件 6 条，label=新增，upstream=-。
+#   (c) 新增语义事件 9 条，label=新增，upstream=-。
 #
 # target 统一写事件名的 Rust 符号落点；audit 的名字是契约层封闭枚举（§5.1 openbot-contracts
 # 的职责原文 = "native/wasm-safe ID、DTO、event、error、schema"），owner 写的是谁负责铸造它。
@@ -43,22 +43,27 @@ recount:
   - command: |-
       grep -c '^  - id: ' parity/events.yaml
     cwd: repo
-    expect: 74
-  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，6 新增）
+    expect: 77
+  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，9 新增）
   - command: |-
       printf 'parity=%s 新增=%s 替代=%s\n' "$(grep -c "^    label: 'parity'$" parity/events.yaml)" "$(grep -c "^    label: '新增'$" parity/events.yaml)" "$(grep -c "^    label: '替代'$" parity/events.yaml)"
     cwd: repo
-    expect: 'parity=68 新增=6 替代=0'
-  # owner 分布（openbot-agent 11 = AG-UI 11；openbot-infra 3 = 启动顶层 2 + 传输层看门狗 1；其余 openbot-application 60 = audit 54 + 新增 6）
+    expect: 'parity=68 新增=9 替代=0'
+  # owner 分布（openbot-agent 11 = AG-UI 11；openbot-infra 3 = 启动顶层 2 + 传输层看门狗 1；其余 openbot-application 63 = audit 54 + 新增 9）
   - command: |-
       grep -oE "^    owner: 'openbot-[a-z]+'" parity/events.yaml | tr -d "'" | sort | uniq -c | awk '{print $3"="$1}' | paste -sd' ' -
     cwd: repo
-    expect: 'openbot-agent=11 openbot-application=60 openbot-infra=3'
+    expect: 'openbot-agent=11 openbot-application=63 openbot-infra=3'
   # 新增 absolute deadline audit 在固定上游零命中；同形命令对既有 stall audit 命中 5 个文件。
   - command: |-
       printf 'deadline=%s stalled=%s\n' "$(git grep -l 'agent.run_deadline_exceeded' | wc -l | tr -d ' ')" "$(git grep -l 'agent.stream_stalled' | wc -l | tr -d ' ')"
     cwd: upstream
     expect: 'deadline=0 stalled=5'
+  # Explicit memory audit 三事件在固定上游零命中；同形命令对既有 computer outcome audit 命中 5 个文件。
+  - command: |-
+      printf 'remember=%s computer=%s\n' "$(git grep -l 'memory.remember_' | wc -l | tr -d ' ')" "$(git grep -l 'computer.action_allowed' | wc -l | tr -d ' ')"
+    cwd: upstream
+    expect: 'remember=0 computer=5'
 
 entries:
   - id: 'agui-lifecycle'
@@ -204,6 +209,39 @@ entries:
     done_evidence: 'absolute deadline 从 activation 前起算并覆盖 context/connect/retry/stream；到点先 drop child/session，随后追加 `agent.run_deadline_exceeded`，最后才提交 Cancelling→Cancelled。audit 写失败转 reconciliation。Agent host=16/0/0；PG17.11 真 HoldingContext 实得 invoked→run_deadline_exceeded 两行 hash chain、allowlisted `run_deadline_exceeded` payload 与 cancelled terminal。'
     evidence: 'git grep -l ''agent.run_deadline_exceeded'' | wc -l => 0；正向对照同形命令对 agent.stream_stalled 命中 5 个文件'
     notes: '§7.2/R1 明确 absolute run deadline 是新增，不得冒充 parity。事件只证明 deadline 到点且子任务已停止；它不记录 prompt、provider body、secret 或任意错误文本。'
+  - id: 'audit-memory-remember-refused'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::AuditEventType::MEMORY_REMEMBER_REFUSED + openbot-infra::repo::tools::PostgresToolJournal'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0075'
+    migration_rule: 'n/a: 固定上游没有 explicit memory/remember tool'
+    status: 'done'
+    done_evidence: 'production `PostgresBuiltInToolControlPlane` 用同一 PolicyStore 的 deny-first CEL 结论；policy deny 经唯一 application pipeline 先写 `memory.remember_refused`，不创建 decision/attempt、不调用 memory writer，再以稳定 `policy_refused` tool result 回注下一次 sampling。PG17.11 remember 竖切精确得到 succeeded→failed→refused 三事件，writer call 数仍为 2 而 provider tool pair 为 3。'
+    evidence: 'git grep -l ''memory.remember_'' | wc -l => 0；正向对照同形命令对 computer.action_allowed 命中 5 个文件'
+    notes: '拒绝 audit payload 只含权威 actor/run/Bot/tool/target、args hash、policy/catalog metadata 与稳定 rule/code，不含 memory content 或 provider arguments。'
+  - id: 'audit-memory-remember-succeeded'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::AuditEventType::MEMORY_REMEMBER_SUCCEEDED + openbot-infra::repo::tools::PostgresToolJournal'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0076'
+    migration_rule: 'n/a: 固定上游没有 explicit memory/remember tool'
+    status: 'done'
+    done_evidence: '真实 PG17.11 run 从 provider `remember` call 依次通过 fresh ACL、metadata/schema、CEL、decision+attempt、capability CAS、`origin=remember_tool` fact INSERT、outcome+hash-chain audit；source message/thread、owner/scope 与 Bot 全由 DB/run 决定。随后 durable assistant/tool pair 重载并第二次 sampling，最终 completed；exact exchange replay 返回 replayed，tampered replay conflict。'
+    evidence: 'git grep -l ''memory.remember_'' | wc -l => 0；正向对照同形命令对 computer.action_allowed 命中 5 个文件'
+    notes: 'success 只表示一次显式记忆已经 committed；没有后台抽取 job，也不把模型自报 owner/source/target 当权威。模型可见 outcome 只回 memory id/status，原始 content 不进入 audit。'
+  - id: 'audit-memory-remember-failed'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::AuditEventType::MEMORY_REMEMBER_FAILED + openbot-infra::repo::tools::PostgresToolJournal'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0077'
+    migration_rule: 'n/a: 固定上游没有 explicit memory/remember tool'
+    status: 'done'
+    done_evidence: 'PG17.11 故障注入在 capability mint 后推进 `users.auth_generation`；remember writer 在同一 INSERT 事务再次比较 generation/revoked/role，返回 definite not-committed，memory 行仍只有第一次成功的 1 条。tool attempt 以 `not_committed` 完成并写 `memory.remember_failed`，稳定 error 回注，run 可继续；unknown/timeout 分支仍由 application 转 reconciliation，不冒充本事件。'
+    evidence: 'git grep -l ''memory.remember_'' | wc -l => 0；正向对照同形命令对 computer.action_allowed 命中 5 个文件'
+    notes: 'failed 与 refused 分开：前者已有 durable decision+attempt/capability 并得到确定非成功 outcome；后者在执行前停止且没有 attempt。commit unknown 不进 failed，而是 run reconciliation。'
   - id: 'audit-bot-callback-token-issued'
     upstream: 'server/src/agents/routes.ts::createAgentRoutes'
     label: 'parity'

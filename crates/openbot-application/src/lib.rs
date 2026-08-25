@@ -72,6 +72,7 @@
 #![deny(missing_docs)]
 
 mod app;
+pub mod builtin_tools;
 pub mod chunk;
 pub mod cursor;
 pub mod intelligence_import;
@@ -87,6 +88,11 @@ pub mod use_cases;
 mod fakes;
 
 pub use app::OpenBotApplication;
+pub use builtin_tools::{
+    BUILTIN_TOOL_CATALOG_GENERATION, REMEMBER_TOOL_NAME, RememberToolArguments, RememberToolMemory,
+    RememberToolMemoryRequest, RememberToolScope, parse_remember_tool_arguments,
+    remember_provider_tool, remember_tool_metadata,
+};
 pub use chunk::{SEMANTIC_CHUNK_MAX_BYTES, SEMANTIC_CHUNK_MAX_DELAY, SemanticChunkAccumulator};
 pub use cursor::{ChannelCursor, channel_recency};
 pub use intelligence_import::{
@@ -107,15 +113,16 @@ pub use ports::{
     ThreadHistoryRequest,
 };
 pub use provider::{
-    AgentAudit, AgentAuditError, AgentAuditKind, AgentContextError, AgentContextSource,
-    NoAgentAudit, ProviderAdapter, ProviderEvent, ProviderFailure, ProviderMessage,
-    ProviderMessageRole, ProviderOutputKind, ProviderPortError, ProviderRequest, ProviderRoute,
-    ProviderSession, ProviderToolDefinition, ProviderUsage,
+    AgentAudit, AgentAuditError, AgentAuditKind, AgentAuthorizationError, AgentAuthorizationSource,
+    AgentContextError, AgentContextSource, NoAgentAudit, ProviderAdapter, ProviderEvent,
+    ProviderFailure, ProviderMessage, ProviderMessageRole, ProviderOutputKind, ProviderPortError,
+    ProviderRequest, ProviderRoute, ProviderSession, ProviderToolCall, ProviderToolDefinition,
+    ProviderUsage,
 };
 pub use run_runtime::{
     ClaimedRunDispatch, DurableTextRun, NoRunDispatchConsumer, RunDispatchConsumer,
     RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError,
-    RunSemanticChannel, RunTerminal, RunWriteReceipt,
+    RunSemanticChannel, RunTerminal, RunToolExchange, RunWriteReceipt,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,
