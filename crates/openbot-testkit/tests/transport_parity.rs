@@ -299,7 +299,7 @@ impl ChannelReader for FakeChannels {
 ///
 /// 它的字段表本身就是"比什么"的定义：没有状态码、没有头部、没有 JSON 文本的位置，
 /// 所以那三样**不可能**被偷偷比进来。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum Outcome {
     /// 成功：typed 应答。
     Reply(Box<AppReply>),
@@ -427,7 +427,9 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::ListMemories { .. }
         | AppCommand::CorrectMemory { .. }
         | AppCommand::MutateMemory { .. }
-        | AppCommand::RecallMemories(_) => None,
+        | AppCommand::RecallMemories(_)
+        | AppCommand::IssueAgentCallbackToken { .. }
+        | AppCommand::RevokeAgentCallbackToken { .. } => None,
     }
 }
 

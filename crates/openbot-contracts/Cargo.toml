@@ -35,3 +35,6 @@ serde_json = { workspace = true }
 # ThreadIdentity 的 deployment fingerprint 是纯 SHA-256；不读随机数、不做 I/O，mint 所需的
 # 16 字节 entropy 由 infra 注入，因此继续满足 WASM-safe contracts 边界。
 sha2 = { workspace = true }
+# One-time callback response allocations are cleared on drop and compared without prefix timing.
+zeroize = { workspace = true }
+subtle = { workspace = true }

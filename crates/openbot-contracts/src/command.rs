@@ -30,6 +30,7 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::agent::{CallbackTokenIssued, CallbackTokenRevoked};
 use crate::audit::AuditPage;
 use crate::auth::Role;
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
@@ -205,10 +206,22 @@ pub enum AppCommand {
 
     /// Scope-aware FTS recall；owner 只取 AuthContext。
     RecallMemories(RecallMemories),
+
+    /// Issue/rotate one remote Agent's callback credential; cleartext is returned once.
+    IssueAgentCallbackToken {
+        /// Agent id; visibility/manageability is resolved authoritatively.
+        agent_id: BotId,
+    },
+
+    /// Revoke one remote Agent's callback credential.
+    RevokeAgentCallbackToken {
+        /// Agent id; visibility/manageability is resolved authoritatively.
+        agent_id: BotId,
+    },
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AppReply {
     /// [`AppCommand::Health`] 的应答。
@@ -246,6 +259,10 @@ pub enum AppReply {
     Memories(MemoryPage),
     /// [`AppCommand::RecallMemories`] 的结果。
     MemoryRecall(MemoryRecall),
+    /// [`AppCommand::IssueAgentCallbackToken`] 的一次性明文结果。
+    AgentCallbackToken(CallbackTokenIssued),
+    /// [`AppCommand::RevokeAgentCallbackToken`] 的无 secret acknowledgement。
+    AgentCallbackTokenRevoked(CallbackTokenRevoked),
 }
 
 /// 探活结果。

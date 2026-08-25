@@ -77,7 +77,7 @@ recount:
     expect: 234
   - command: "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]'"
     cwd: repo
-    expect: done=149 todo=85 in_progress=0 total=234
+    expect: done=150 todo=84 in_progress=0 total=234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229
@@ -104,16 +104,16 @@ recount:
     expect: 0
   - command: "grep -c '^    notes: \"ported ' parity/tests.yaml"
     cwd: repo
-    expect: 1012
+    expect: 1011
   - command: "grep -c '^    notes: \"covered-by-golden ' parity/tests.yaml"
     cwd: repo
     expect: 34
   - command: "grep -c '^    notes: \"not-applicable-with-proof ' parity/tests.yaml"
     cwd: repo
-    expect: 1
+    expect: 2
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 863
+    expect: 841
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -2709,201 +2709,221 @@ entries:
   - id: "server-tests-agent-callback-token--an-agent-s-callback-token--is-recognisable-and-different-every-time"
     upstream: "server/tests/agent-callback-token.test.ts::an agent's callback token"
     label: parity
-    target: "openbot_agent::callback::token::tests::is_recognisable_and_different_every_time"
+    target: "openbot_domain::remote_callback + openbot_infra::agent_callback"
     owner: openbot-agent
     test_id: T-TEST-0249
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "`callback_token_from_entropy` 固定 `obot_agt_` + 32-byte base64url-no-pad 精确长度；domain 正负形状/两份 entropy 不同，PG17.11 OS CSPRNG 连续 issue/rotate 实得明文不同、库内只存各自 SHA-256。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[303]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「is recognisable, and different every time」。"
   - id: "server-tests-agent-callback-token--an-agent-s-callback-token--does-not-accept-something-that-is-not-one-of-ours"
     upstream: "server/tests/agent-callback-token.test.ts::an agent's callback token"
     label: parity
-    target: "openbot_agent::callback::token::tests::does_not_accept_something_that_is_not_one_of_ours"
+    target: "openbot_domain::remote_callback + openbot_infra::agent_callback"
     owner: openbot-agent
     test_id: T-TEST-0250
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "shape verifier 要求 exact prefix/length/base64url 解回 32 bytes；Bearer、空前缀、短伪 token 均在数据库查询前拒绝，HTTP 缺 header 最终 401 且无凭据回显。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[304]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「does not accept something that is not one of ours」。"
   - id: "server-tests-agent-callback-token--an-agent-s-callback-token--matches-only-its-own-hash"
     upstream: "server/tests/agent-callback-token.test.ts::an agent's callback token"
     label: parity
-    target: "openbot_agent::callback::token::tests::matches_only_its_own_hash"
+    target: "openbot_domain::remote_callback + openbot_infra::agent_callback"
     owner: openbot-agent
     test_id: T-TEST-0251
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "domain SHA-256 正/负对照 + constant-time digest comparison；PG token lookup 以 computed hex 精确选行后再次常量时间比较，rotate 后旧 hash 不再命中。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[305]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「matches only its own hash」。"
   - id: "server-tests-agent-callback-token--the-run-assertion--survives-a-round-trip"
     upstream: "server/tests/agent-callback-token.test.ts::the run assertion"
     label: parity
-    target: "openbot_agent::callback::token::tests::survives_a_round_trip"
+    target: "openbot_domain::remote_callback::RemoteRunAssertionSigner"
     owner: openbot-agent
     test_id: T-TEST-0252
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Rust mint→verify 保留 deployment/tenant/bot/actor/run/tool-set/iat/exp；同一固定向量又由固定上游 `callback-token.ts::readRunAssertion` 在 Bun 1.3.14 实读回 bot/actor/run，HMAC/base64url 双语闭合。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[307]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「survives a round trip」。"
   - id: "server-tests-agent-callback-token--the-run-assertion--is-refused-when-signed-with-another-key"
     upstream: "server/tests/agent-callback-token.test.ts::the run assertion"
     label: parity
-    target: "openbot_agent::callback::token::tests::is_refused_when_signed_with_another_key"
+    target: "openbot_domain::remote_callback::RemoteRunAssertionSigner"
     owner: openbot-agent
     test_id: T-TEST-0253
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "run-only key 以 HMAC(master, `openbot:agent-run`) 域分离；另一 master 验同 assertion 得 `InvalidAssertion`。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[308]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「is refused when signed with another key」。"
   - id: "server-tests-agent-callback-token--the-run-assertion--is-refused-when-the-bot-is-edited"
     upstream: "server/tests/agent-callback-token.test.ts::the run assertion"
     label: parity
-    target: "openbot_agent::callback::token::tests::is_refused_when_the_bot_is_edited"
+    target: "openbot_domain::remote_callback::RemoteRunAssertionSigner"
     owner: openbot-agent
     test_id: T-TEST-0254
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "测试解 payload 把 botId 改成另一个 Agent、保留原 signature，Rust HMAC verifier 明确拒绝；PG 另证 token owner 与签名 Bot 不等返回 403-class 且不进入工具。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[309]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「is refused when the Bot is edited」。"
   - id: "server-tests-agent-callback-token--the-run-assertion--is-refused-once-it-has-expired"
     upstream: "server/tests/agent-callback-token.test.ts::the run assertion"
     label: parity
-    target: "openbot_agent::callback::token::tests::is_refused_once_it_has_expired"
+    target: "openbot_domain::remote_callback::RemoteRunAssertionSigner"
     owner: openbot-agent
     test_id: T-TEST-0255
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "payload 强制 `exp-iat=600000`；`now=exp-1` 通过、`now=exp` 拒绝，PG17.11 以数据库 clock 对过期 assertion 实得 401-class + refusal audit。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[310]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「is refused once it has expired」。"
   - id: "server-tests-agent-callback-token--the-run-assertion--is-refused-when-it-is-missing-empty-or-not-a-string"
     upstream: "server/tests/agent-callback-token.test.ts::the run assertion"
     label: parity
-    target: "openbot_agent::callback::token::tests::is_refused_when_it_is_missing_empty_or_not_a_string"
+    target: "openbot_domain::remote_callback + openbot-server::http::agent_tools"
     owner: openbot-agent
     test_id: T-TEST-0256
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "domain 拒绝 empty/unsigned/multi-dot/bad-base64；HTTP body.run 保留为 untrusted JSON，missing/null/non-string 与坏签名共用 `Unauthenticated` 401，不把哪一半正确告诉调用方。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[311]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「is refused when it is missing, empty or not a string」。"
   - id: "server-tests-agent-callback-token--who-may-call-a-tool-back-and-as-whom--allows-an-agent-to-act-as-the-bot-its-token-was-issued-f"
     upstream: "server/tests/agent-callback-token.test.ts::who may call a tool back, and as whom"
     label: parity
-    target: "openbot_agent::callback::token::tests::allows_an_agent_to_act_as_the_bot_its_token_was_issued_f"
+    target: "openbot_infra::agent_callback::PostgresRemoteCallbackAuthenticator"
     owner: openbot-agent
     test_id: T-TEST-0257
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "PG17.11 真实 token owner + Rust/Node-compatible signed assertion + active run/lease/member/role 全部匹配时通过 credential pair，随后仅因 authoritative tool-set 为空得到 `ToolNotVisible`，证明不是 auth 失败也没有 fake executor。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[313]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「allows an agent to act as the Bot its token was issued for」。"
   - id: "server-tests-agent-callback-token--who-may-call-a-tool-back-and-as-whom--refuses-another-agent-presenting-a-valid-assertion-it-di"
     upstream: "server/tests/agent-callback-token.test.ts::who may call a tool back, and as whom"
     label: parity
-    target: "openbot_agent::callback::token::tests::refuses_another_agent_presenting_a_valid_assertion_it_di"
+    target: "openbot_infra::agent_callback::PostgresRemoteCallbackAuthenticator"
     owner: openbot-agent
     test_id: T-TEST-0258
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "为 package remote Agent B 真签发 token，再携带 Agent A 的合法 assertion；constant-time token lookup 成功但 owner≠signed bot，实得 BotMismatch/HTTP 403，executor=0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[314]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「refuses another agent presenting a valid assertion it did not earn」。"
   - id: "server-tests-agent-callback-token--who-may-call-a-tool-back-and-as-whom--refuses-a-token-with-no-assertion-at-all"
     upstream: "server/tests/agent-callback-token.test.ts::who may call a tool back, and as whom"
     label: parity
-    target: "openbot_agent::callback::token::tests::refuses_a_token_with_no_assertion_at_all"
+    target: "openbot_infra::agent_callback::PostgresRemoteCallbackAuthenticator"
     owner: openbot-agent
     test_id: T-TEST-0259
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "真已签发 token + body.run null 经生产 authenticator 得 `Unauthenticated`；同事务写 `mcp.callback_refused`，不查 grant/不执行。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[315]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「refuses a token with no assertion at all」。"
   - id: "server-tests-agent-callback-token--who-may-call-a-tool-back-and-as-whom--refuses-an-unknown-token"
     upstream: "server/tests/agent-callback-token.test.ts::who may call a tool back, and as whom"
     label: parity
-    target: "openbot_agent::callback::token::tests::refuses_an_unknown_token"
+    target: "openbot_infra::agent_callback::PostgresRemoteCallbackAuthenticator"
     owner: openbot-agent
     test_id: T-TEST-0260
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "32-byte 正确形状但数据库从未签发的 token + 合法 assertion 实得 401；真实 Axum/PG 复跑同答并写无 actor/Bot 的 refusal audit。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[316]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「refuses an unknown token」。"
   - id: "server-tests-agent-callback-token--who-may-call-a-tool-back-and-as-whom--refuses-an-empty-token"
     upstream: "server/tests/agent-callback-token.test.ts::who may call a tool back, and as whom"
     label: parity
-    target: "openbot_agent::callback::token::tests::refuses_an_empty_token"
+    target: "openbot_domain::remote_callback + openbot-server::http::agent_tools"
     owner: openbot-agent
     test_id: T-TEST-0261
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "empty/header missing 在 exact token-shape gate 拒绝；HTTP mapper 返回 401，response/log Debug 均不回显 assertion/args/token。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[317]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「refuses an empty token」。"
   - id: "server-tests-agent-callback-token--who-may-call-a-tool-back-and-as-whom--says-the-same-thing-whichever-half-was-wrong"
     upstream: "server/tests/agent-callback-token.test.ts::who may call a tool back, and as whom"
     label: parity
-    target: "openbot_agent::callback::token::tests::says_the_same_thing_whichever_half_was_wrong"
+    target: "openbot_infra::agent_callback::PostgresRemoteCallbackAuthenticator"
     owner: openbot-agent
     test_id: T-TEST-0262
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "PG 矩阵 unknown token、missing assertion、expired assertion、revoked token 均收敛到同一 `Unauthenticated`/401；只在双方各自有效但 Bot 不同才保留 upstream 403。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[318]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「says the same thing whichever half was wrong」。"
   - id: "server-tests-agent-callback-token--who-may-call-a-tool-back-and-as-whom--accepts-the-deployment-wide-token-and-still-takes-identi"
     upstream: "server/tests/agent-callback-token.test.ts::who may call a tool back, and as whom"
     label: parity
-    target: "openbot_agent::callback::token::tests::accepts_the_deployment_wide_token_and_still_takes_identi"
+    target: "not-applicable-with-proof: v3 §3.4 removes deployment-wide AGENT_TOOL_TOKEN"
     owner: openbot-agent
     test_id: T-TEST-0263
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "n/a: not-applicable-with-proof; shared callback token is a removed privilege path"
+    status: done
+    done_evidence: "第一真源 §3.4/R9 明确删除共享 token；production config 不读取 `AGENT_TOOL_TOKEN`，authenticator 只接受 exact `obot_agt_` per-Agent token hash。反向 grep 除 migration preflight/ledger/docs 外生产回调面零 shared-token 分支。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[319]（cargo xtask test-inventory，oxc_parser 0.146.0）"
-    notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「accepts the deployment-wide token, and still takes identity from the assertion」。"
+    notes: "not-applicable-with-proof —— v3 §3.4/R9 明确删除 deployment-wide `AGENT_TOOL_TOKEN` 旧路径；Rust built-in Agent 进程内执行，外部 remote Agent 只认 per-Agent token + signed run assertion。保留共享 token 会重新引入跨 Bot 凭据面，故该“接受”判据按第一真源删除而非移植。上游用例标题：「accepts the deployment-wide token, and still takes identity from the assertion」。"
   - id: "server-tests-agent-callback-token--who-may-call-a-tool-back-and-as-whom--refuses-the-deployment-wide-token-when-it-is-not-configu"
     upstream: "server/tests/agent-callback-token.test.ts::who may call a tool back, and as whom"
     label: parity
-    target: "openbot_agent::callback::token::tests::refuses_the_deployment_wide_token_when_it_is_not_configu"
+    target: "openbot_domain::remote_callback + openbot_infra::agent_callback"
     owner: openbot-agent
     test_id: T-TEST-0264
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "production 永不存在 legacy-token 配置槽；任何非 `obot_agt_` exact shape 的共享字符串在 DB lookup 前拒绝，故此负向判据构造性恒成立。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[320]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「refuses the deployment-wide token when it is not configured」。"
   - id: "server-tests-agent-callback-token--who-may-call-a-tool-back-and-as-whom--refuses-the-deployment-wide-token-with-no-assertion-whic"
     upstream: "server/tests/agent-callback-token.test.ts::who may call a tool back, and as whom"
     label: parity
-    target: "openbot_agent::callback::token::tests::refuses_the_deployment_wide_token_with_no_assertion_whic"
+    target: "openbot_domain::remote_callback + openbot_infra::agent_callback"
     owner: openbot-agent
     test_id: T-TEST-0265
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "共享 token 分支已构造性删除；且 body.run missing/null 在 token lookup 前同样返回 401 + refusal audit，旧 body 自报 Bot/actor 没有任何输入字段。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[321]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「refuses the deployment-wide token with no assertion, which is what the old hole was」。"
   - id: "server-tests-agent-callback-token--a-callback-that-cannot-prove-which-bot-i--is-refused-with-a-reason-and-a-status-to-record"
     upstream: "server/tests/agent-callback-token.test.ts::a callback that cannot prove which Bot it is"
     label: parity
-    target: "openbot_agent::callback::token::tests::is_refused_with_a_reason_and_a_status_to_record"
+    target: "openbot_infra::agent_callback::PostgresRemoteCallbackAuthenticator + openbot-server::http::agent_tools"
     owner: openbot-agent
     test_id: T-TEST-0266
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "production authenticator 的封闭错误映射为 401/403/404/400；所有 credential/run/grant refusal 先写 allowlisted stable error_code 的 `mcp.callback_refused`，audit 写/commit 失败则 503 且仍不执行。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[323]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「is refused, with a reason and a status to record」。"
   - id: "server-tests-agent-callback-token--a-callback-that-cannot-prove-which-bot-i--is-refused-when-the-token-is-right-and-the-run-assertion"
     upstream: "server/tests/agent-callback-token.test.ts::a callback that cannot prove which Bot it is"
     label: parity
-    target: "openbot_agent::callback::token::tests::is_refused_when_the_token_is_right_and_the_run_assertion"
+    target: "openbot_infra::agent_callback::PostgresRemoteCallbackAuthenticator"
     owner: openbot-agent
     test_id: T-TEST-0267
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "真已签发 token 分别配 missing/expired/wrong-key assertion 均在 active run/tool 查询前 401；PG refusal audit 次数逐项增长。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[324]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「is refused when the token is right and the run assertion is not」。"
   - id: "server-tests-agent-callback-token--a-callback-that-cannot-prove-which-bot-i--carries-no-bot-or-actor-to-record-which-is-why-the-row-n"
     upstream: "server/tests/agent-callback-token.test.ts::a callback that cannot prove which Bot it is"
     label: parity
-    target: "openbot_agent::callback::token::tests::carries_no_bot_or_actor_to_record_which_is_why_the_row_n"
+    target: "openbot_infra::agent_callback::PostgresRemoteCallbackAuthenticator"
     owner: openbot-agent
     test_id: T-TEST-0268
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "PG17.11 六条 callback refusal 全部实得 `actor_user_id IS NULL`、`target_id IS NULL`，payload 只含 stable error_code；token/run/tool/args canary 命中 0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[325]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：回调 token 的铸造、run 断言与调用者身份判据逐条移植。注意 v3 §28.4 复算记录上游共享 token 旧路径仍在（server/src/agents/callback-token.ts 的 legacyToken && sameToken），移植该分支前须单列裁决，不得默认照译。上游用例标题：「carries no Bot or actor to record, which is why the row names neither」。"
   # ---------------------------------------------------------------------------
@@ -4005,11 +4025,12 @@ entries:
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--issuing-a-callback-token-records-that-never-the-token"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::what a Bot is, on the trail"
     label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::issuing_a_callback_token_records_that_never_the_token"
+    target: "openbot_infra::agent_callback::PostgresAgentCallbackTokens"
     owner: openbot-application
     test_id: T-TEST-0375
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "issue/rotate 在同一 PostgreSQL transaction 更新 profile hash 并 append `bot.callback_token_issued` hash-chain row；audit payload/target 对 clear token canary 命中 0，强制 audit trigger 失败时 hash/issued_at 全回滚。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[453]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「issuing a callback token records that, never the token」。"
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--s-writes-s"
@@ -9623,11 +9644,12 @@ entries:
   - id: "server-tests-schema--openbot-database-schema--adds-the-callback-token-columns-in-their-own-migration"
     upstream: "server/tests/schema.test.ts::OpenBot database schema"
     label: parity
-    target: "openbot_infra::db::schema::tests::adds_the_callback_token_columns_in_their_own_migration"
+    target: "openbot_infra::db::schema + openbot_infra::agent_callback"
     owner: openbot-infra
     test_id: T-TEST-0912
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "baseline migration/schema fixture 已逐字段证明 `agent_profiles.callback_token_hash text NULL` 与 `callback_token_issued_at timestamptz NULL`；本批 PG17.11 又实际 issue/rotate/revoke 两列并验证 null/hash/time 状态。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1105]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.2 28 表 parity ledger + §21.1 条 3：schema 断言逐条移植，并与 parity/tables.yaml 同一批 28 张表交叉。上游用例标题：「adds the callback token columns in their own migration」。"
   - id: "server-tests-schema--openbot-database-schema--keeps-the-agent-profile-migration-aligned-with-the-schem"

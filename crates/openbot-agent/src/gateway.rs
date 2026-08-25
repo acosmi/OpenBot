@@ -208,7 +208,9 @@ impl AgentToolGateway {
                 | AppReply::ThreadHistory(_)
                 | AppReply::Memory(_)
                 | AppReply::Memories(_)
-                | AppReply::MemoryRecall(_),
+                | AppReply::MemoryRecall(_)
+                | AppReply::AgentCallbackToken(_)
+                | AppReply::AgentCallbackTokenRevoked(_),
             ) => Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }),
