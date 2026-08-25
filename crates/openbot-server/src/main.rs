@@ -48,6 +48,9 @@ use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{native, pool};
 use openbot_infra::mcp::SafeRmcpClient;
 use openbot_infra::mcp_catalog::PostgresMcpCatalog;
+use openbot_infra::mcp_connections::{McpRevocationReconciler, PostgresMcpConnections};
+use openbot_infra::mcp_credentials::PostgresMcpCredentialBroker;
+use openbot_infra::mcp_oauth::McpOAuthClient;
 use openbot_infra::memory_admin::PostgresMemoryAdministration;
 use openbot_infra::net::safe_http::{
     CidrAllowlist, EgressPolicy, SafeDialer, SafeHttpBudget, SchemePolicy,
@@ -339,9 +342,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         mcp_client.clone(),
         audit_key.to_vec(),
     )?);
+    let mcp_credentials = Arc::new(
+        PostgresMcpCredentialBroker::new(pool.clone(), model_credential_vault.clone())
+            .with_user_oauth(
+                SafeDialer::new(EgressPolicy::default()),
+                SchemePolicy::HttpsOnly,
+                audit_key.to_vec(),
+            )?,
+    );
     match tokio::time::timeout(
         Duration::from_secs(30),
-        mcp_catalog.refresh_unauthenticated_servers(),
+        mcp_catalog.refresh_startup_servers(&mcp_credentials),
     )
     .await
     {
@@ -357,6 +368,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "MCP startup catalog sweep 超过新增 30s 总预算；Server 继续且未刷新项保持不可见"
         ),
     }
+    let oauth_public_url = server
+        .public_url
+        .as_ref()
+        .filter(|url| Url::parse(url.as_str()).is_ok_and(|parsed| parsed.scheme() == "https"));
+    if server.public_url.is_some() && oauth_public_url.is_none() {
+        tracing::warn!(
+            code = "mcp_oauth_https_callback_required",
+            "MCP OAuth Server callback 要求 HTTPS public URL；connect 保持不可用"
+        );
+    }
+    let mcp_connections = Arc::new(PostgresMcpConnections::new(
+        pool.clone(),
+        model_credential_vault.clone(),
+        McpOAuthClient::new(
+            SafeDialer::new(EgressPolicy::default()),
+            SchemePolicy::HttpsOnly,
+        ),
+        mcp_catalog.clone(),
+        deployment.clone(),
+        tenant.clone(),
+        derive_mcp_oauth_state_key(raw_master.as_bytes()).to_vec(),
+        audit_key.to_vec(),
+        oauth_public_url.map(|url| url.as_str()),
+        server.app_url.as_deref(),
+        SchemePolicy::HttpsOnly,
+    )?);
     let tool_control = PostgresBuiltInToolControlPlane::new(
         pool.clone(),
         deployment.clone(),
@@ -364,7 +401,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         policy_store.clone(),
         Arc::new(memory.clone()),
     )
-    .with_mcp(mcp_catalog.clone(), mcp_client);
+    .with_mcp(mcp_catalog.clone(), mcp_client)
+    .with_mcp_credentials(mcp_credentials);
     let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.to_vec())?;
     let callback_tokens = PostgresAgentCallbackTokens::new(
         pool.clone(),
@@ -383,16 +421,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )?
         .with_mcp_catalog(mcp_catalog.clone()),
     );
-    let application: Arc<dyn ApplicationService> = Arc::new(
-        OpenBotApplication::new(ChannelRepo::new(pool.clone()))
-            .with_people(people)
-            .with_audit(PostgresAuditReader::new(pool.clone()))
-            .with_policy(policy_store)
-            .with_tools(tool_control, tool_journal)
-            .with_threads(thread_directory)
-            .with_memory(memory)
-            .with_agent_callback_tokens(callback_tokens),
-    );
+    let application = OpenBotApplication::new(ChannelRepo::new(pool.clone()))
+        .with_people(people)
+        .with_audit(PostgresAuditReader::new(pool.clone()))
+        .with_policy(policy_store)
+        .with_tools(tool_control, tool_journal)
+        .with_threads(thread_directory)
+        .with_memory(memory)
+        .with_agent_callback_tokens(callback_tokens);
+    let application = application.with_mcp_connections(mcp_connections.clone());
+    let mcp_revocation_reconciler = McpRevocationReconciler::start(mcp_connections.clone());
+    let application: Arc<dyn ApplicationService> = Arc::new(application);
     let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence(
         application.clone(),
         Arc::new(PostgresAgentAuthorizationSource::new(
@@ -457,6 +496,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_remote_callback_authenticator(remote_callback_auth)
         .with_remote_callback_tools(remote_callback_tools)
         .with_readiness_probe(Arc::new(db_probe));
+    builder = builder.with_mcp_oauth_callback(mcp_connections);
     if let Some((coordinator, dynamic_sso, preauth, origins, secure_cookie)) = oidc_login {
         builder = builder.with_login_security(origins, secure_cookie);
         builder = builder.with_oidc_login(coordinator, preauth);
@@ -494,6 +534,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let Some(agent) = built_in_agent {
         agent.stop().await;
     }
+    mcp_revocation_reconciler.stop().await;
     policy_listener.stop().await;
     serve_result?;
     pool.close();
@@ -865,6 +906,12 @@ fn derive_audit_key(master: &[u8]) -> [u8; 32] {
     hmac.finalize().into_bytes().into()
 }
 
+fn derive_mcp_oauth_state_key(master: &[u8]) -> [u8; 32] {
+    let mut hmac = HmacSha256::new_from_slice(master).expect("HMAC 接受任意非空长度");
+    hmac.update(b"openbot:mcp-oauth-state:v1");
+    hmac.finalize().into_bytes().into()
+}
+
 fn deployment_id_for_startup(value: Option<&str>, package_tenant_id: &str) -> DeploymentId {
     DeploymentId::new(value.unwrap_or(package_tenant_id))
 }
@@ -899,9 +946,14 @@ mod tests {
     #[test]
     fn audit_key_is_domain_separated_and_deterministic() {
         let first = derive_audit_key(b"master-key");
+        let oauth = derive_mcp_oauth_state_key(b"master-key");
         assert_eq!(first, derive_audit_key(b"master-key"));
+        assert_eq!(oauth, derive_mcp_oauth_state_key(b"master-key"));
         assert_ne!(first, derive_audit_key(b"other-key"));
+        assert_ne!(oauth, derive_mcp_oauth_state_key(b"other-key"));
+        assert_ne!(first, oauth);
         assert_ne!(first, [0; 32]);
+        assert_ne!(oauth, [0; 32]);
     }
 
     #[test]

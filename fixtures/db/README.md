@@ -192,6 +192,27 @@ endpoint+vendor+provenance transport fingerprint 只有真实 RMCP refresh 才�
 complete-projection CHECK 拒绝半套状态，transport/provenance 改变会立即使旧 grant 不可读，并在
 refresh 时转为 suspended_missing；重新出现也不自动启用。
 
+## schema-0018.json：MCP credential generation
+
+schema-0018.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0018.sql → schema_facts.sql
+由 native_0018 的显式 regeneration guard 机械生成，SHA-256
+3226eefb20d536c206b5d75522a77f6f82981f820fd5a414086871c21be75ebe。
+
+| 项 | 0018 数量 | 相对 0017 |
+| --- | ---: | ---: |
+| public 表 | 41 | 0 |
+| 列 | 368 | +2 |
+| NOT NULL 列 | 268 | 0 |
+| 约束 | 199 | +2 |
+| 索引 | 80 | 0 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+两列均 nullable、无回填：legacy `NULL` 在读取时等价 generation 0。管理员登记/轮换 OAuth
+client 时，事务先把所有既有 MCP grant 固定到旧 generation，再推进 server generation；因此旧
+grant 当场不可见，下一次真实 catalog refresh 只能把它写成 `suspended_missing`，不得自动复活。
+
 ## 复算命令
 
 ```bash
@@ -218,6 +239,9 @@ python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0016.json',en
 
 # post-0017
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0017.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 366 268 197 80 4
+
+# post-0018
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0018.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 368 268 199 80 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

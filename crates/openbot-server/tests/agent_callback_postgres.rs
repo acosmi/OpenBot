@@ -4,9 +4,13 @@ mod harness {
     include!("../../../test-support/postgres_harness.rs");
 }
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::body::{Body, to_bytes};
+use axum::extract::State;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use harness::{admin_config, with_temp_database};
 use http::{Method, Request, StatusCode};
 use openbot_agent::{AuthorizedAgentToolGateway, RemoteAgentToolInvoker};
@@ -22,6 +26,9 @@ use openbot_domain::remote_callback::{
     RemoteRunAssertionSigner, RemoteRunScope, RemoteToolSet, callback_token_hash,
 };
 use openbot_domain::thread::FencingToken;
+use openbot_domain::vault::{
+    KeyVersion, SecretBytes, SecretKind, SecretPrincipal, ServiceId, WrappingKey,
+};
 use openbot_infra::agent_callback::{
     PostgresAgentCallbackTokens, PostgresRemoteCallbackAuthenticator,
 };
@@ -30,14 +37,16 @@ use openbot_infra::agent_tools::{
 };
 use openbot_infra::auth::config::default_session_lifetime;
 use openbot_infra::db::{baseline, native, pool};
-use openbot_infra::mcp::SafeRmcpClient;
+use openbot_infra::mcp::{McpClientError, SafeRmcpClient};
 use openbot_infra::mcp_catalog::PostgresMcpCatalog;
+use openbot_infra::mcp_credentials::{McpCredentialError, PostgresMcpCredentialBroker};
 use openbot_infra::memory_admin::PostgresMemoryAdministration;
 use openbot_infra::net::safe_http::{CidrAllowlist, EgressPolicy, SafeDialer, SchemePolicy};
 use openbot_infra::policy::PolicyStore;
 use openbot_infra::provider::context::PostgresAgentContextSource;
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::tools::PostgresToolJournal;
+use openbot_infra::vault::CredentialRecordVault;
 use openbot_server::{PostgresSessionAuthResolver, SensitiveWriteSecurity, ServerBuilder, router};
 use time::{Duration, OffsetDateTime};
 use tower::ServiceExt as _;
@@ -57,6 +66,35 @@ const RAW_SESSION: &str = "callback-http-session-token-with-enough-entropy";
 const SESSION_KEY: &[u8] = b"callback-http-session-hash-key";
 const AUDIT_KEY: &[u8] = b"callback-http-audit-checkpoint-key";
 const ORIGIN: &str = "https://app.example.test";
+const CALLBACK_MCP_BEARER: &str = "callback-mcp-bearer-with-test-entropy";
+
+#[derive(Clone)]
+struct CallbackMcpHttpAuth {
+    rejected: Arc<AtomicUsize>,
+    challenge: Arc<str>,
+}
+
+async fn require_callback_mcp_bearer(
+    State(state): State<CallbackMcpHttpAuth>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let expected = format!("Bearer {CALLBACK_MCP_BEARER}");
+    if request
+        .headers()
+        .get(http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        != Some(expected.as_str())
+    {
+        state.rejected.fetch_add(1, Ordering::SeqCst);
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(http::header::WWW_AUTHENTICATE, state.challenge.as_ref())],
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
 
 #[derive(Clone)]
 struct CallbackMcpServer {
@@ -113,11 +151,13 @@ async fn spawn_callback_mcp_server() -> Result<
     (
         String,
         Arc<Mutex<Vec<serde_json::Value>>>,
+        Arc<AtomicUsize>,
         tokio::task::JoinHandle<()>,
     ),
     String,
 > {
     let received = Arc::new(Mutex::new(Vec::new()));
+    let rejected = Arc::new(AtomicUsize::new(0));
     let server = CallbackMcpServer {
         received: received.clone(),
     };
@@ -130,10 +170,22 @@ async fn spawn_callback_mcp_server() -> Result<
         .await
         .map_err(|error| error.to_string())?;
     let address = listener.local_addr().map_err(|error| error.to_string())?;
+    let rejected_server = rejected.clone();
     let handle = tokio::spawn(async move {
-        let _ = axum::serve(listener, axum::Router::new().nest_service("/mcp", service)).await;
+        let router = axum::Router::new().nest_service("/mcp", service).layer(
+            axum::middleware::from_fn_with_state(
+                CallbackMcpHttpAuth {
+                    rejected: rejected_server,
+                    challenge: Arc::from(format!(
+                        "Bearer resource_metadata=\"http://{address}/.well-known/oauth-protected-resource/mcp\""
+                    )),
+                },
+                require_callback_mcp_bearer,
+            ),
+        );
+        let _ = axum::serve(listener, router).await;
     });
-    Ok((format!("http://{address}/mcp"), received, handle))
+    Ok((format!("http://{address}/mcp"), received, rejected, handle))
 }
 
 fn callback_mcp_client() -> SafeRmcpClient {
@@ -484,12 +536,37 @@ async fn production_callback_http_reaches_governed_real_rmcp_with_durable_sequen
             .map_err(|error| error.to_string())?;
         let result = async {
             provision(&pool).await?;
-            let (mcp_url, received, mcp_server) = spawn_callback_mcp_server().await?;
+            let (mcp_url, received, rejected_http, mcp_server) =
+                spawn_callback_mcp_server().await?;
+            let credential_vault = CredentialRecordVault::single_key(
+                TenantId::new("tenant-a"),
+                KeyVersion::new(1),
+                WrappingKey::from_bytes(vec![0x62; 32]).map_err(|error| error.to_string())?,
+            );
+            let credential_id = uuid::Uuid::now_v7();
+            let encrypted_bearer = credential_vault
+                .seal(
+                    &credential_id,
+                    SecretKind::Mcp,
+                    SecretPrincipal::Deployment,
+                    SecretPrincipal::Service(ServiceId::new("notes")),
+                    &SecretBytes::new(CALLBACK_MCP_BEARER.as_bytes().to_vec()),
+                )
+                .map_err(|error| error.to_string())?;
             let pg = pool.get().await.map_err(|error| error.to_string())?;
             pg.execute(
-                "INSERT INTO public.mcp_servers(id,title,vendor,url,provenance)
-                   VALUES('notes','Notes','notes',$1,'custom')",
-                &[&mcp_url],
+                "INSERT INTO public.credentials(
+                   id,kind,provider,encrypted_value,key_id,metadata
+                 ) VALUES($1,'mcp','notes',$2,'deployment-mcp-test','{}')",
+                &[&credential_id, &encrypted_bearer],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            pg.execute(
+                "INSERT INTO public.mcp_servers(
+                   id,title,vendor,url,provenance,credential_id
+                 ) VALUES('notes','Notes','notes',$1,'custom',$2)",
+                &[&mcp_url, &credential_id],
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -520,12 +597,27 @@ async fn production_callback_http_reaches_governed_real_rmcp_with_durable_sequen
             drop(pg);
 
             let rmcp = callback_mcp_client();
+            if rmcp.list_tools(&mcp_url, None).await != Err(McpClientError::AuthRequired) {
+                return Err("protected RMCP 401 was not classified as AuthRequired".to_owned());
+            }
+            let credential_broker = Arc::new(PostgresMcpCredentialBroker::new(
+                pool.clone(),
+                credential_vault,
+            ));
             let catalog = Arc::new(
                 PostgresMcpCatalog::new(pool.clone(), rmcp.clone(), AUDIT_KEY.to_vec())
                     .map_err(|error| error.to_string())?,
             );
+            if catalog.refresh("notes", None).await.is_ok() {
+                return Err("protected RMCP catalog refreshed without bearer".to_owned());
+            }
+            let bearer = credential_broker
+                .bearer_for("notes", &ActorId::new("owner-a"))
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "deployment bearer resolved as anonymous".to_owned())?;
             catalog
-                .refresh("notes", None)
+                .refresh("notes", Some(bearer))
                 .await
                 .map_err(|error| error.to_string())?;
             let pg = pool.get().await.map_err(|error| error.to_string())?;
@@ -537,8 +629,13 @@ async fn production_callback_http_reaches_governed_real_rmcp_with_durable_sequen
             .await
             .map_err(|error| error.to_string())?;
             drop(pg);
+            let bearer = credential_broker
+                .bearer_for("notes", &ActorId::new("owner-a"))
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "deployment bearer disappeared".to_owned())?;
             catalog
-                .refresh("notes", None)
+                .refresh("notes", Some(bearer))
                 .await
                 .map_err(|error| error.to_string())?;
             let pg = pool.get().await.map_err(|error| error.to_string())?;
@@ -623,7 +720,8 @@ async fn production_callback_http_reaches_governed_real_rmcp_with_durable_sequen
                 policy.clone(),
                 Arc::new(memory.clone()),
             )
-            .with_mcp(catalog.clone(), rmcp);
+            .with_mcp(catalog.clone(), rmcp)
+            .with_mcp_credentials(credential_broker.clone());
             let callback_tokens = PostgresAgentCallbackTokens::new(
                 pool.clone(),
                 deployment.clone(),
@@ -660,7 +758,7 @@ async fn production_callback_http_reaches_governed_real_rmcp_with_durable_sequen
                     AUDIT_KEY.to_vec(),
                 )
                 .map_err(|error| error.to_string())?
-                .with_mcp_catalog(catalog),
+                .with_mcp_catalog(catalog.clone()),
             );
             let governed = Arc::new(AuthorizedAgentToolGateway::with_sequence(
                 application.clone(),
@@ -725,6 +823,7 @@ async fn production_callback_http_reaches_governed_real_rmcp_with_durable_sequen
                     .as_str()
                     .is_some_and(|text| text.contains("Found one note about invoices"))
                 || received.lock().unwrap().as_slice() != [serde_json::json!({"query":"invoices"})]
+                || rejected_http.load(Ordering::SeqCst) == 0
             {
                 return Err(format!("real callback result drift: {status}/{body}"));
             }
@@ -752,6 +851,26 @@ async fn production_callback_http_reaches_governed_real_rmcp_with_durable_sequen
                 return Err(format!(
                     "callback durable evidence drift: {sequence:?}/{calls}/{audits}"
                 ));
+            }
+            pg.execute(
+                "UPDATE public.credentials SET revoked_at=clock_timestamp() WHERE id=$1",
+                &[&credential_id],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            if !matches!(
+                credential_broker
+                    .bearer_for("notes", &ActorId::new("owner-a"))
+                    .await,
+                Err(McpCredentialError::AuthRequired)
+            ) || !catalog
+                .granted_tools(&BotId::new("remote-owner"), &ActorId::new("owner-a"))
+                .await
+                .map_err(|error| error.to_string())?
+                .is_empty()
+            {
+                return Err("revoked deployment bearer remained usable/visible".to_owned());
             }
             mcp_server.abort();
             Ok(())

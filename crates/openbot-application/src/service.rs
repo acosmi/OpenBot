@@ -121,6 +121,10 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::RecallMemories(_) => "recall_memories",
         AppCommand::IssueAgentCallbackToken { .. } => "issue_agent_callback_token",
         AppCommand::RevokeAgentCallbackToken { .. } => "revoke_agent_callback_token",
+        AppCommand::ListMcpConnections => "list_mcp_connections",
+        AppCommand::BeginMcpOAuth { .. } => "begin_mcp_oauth",
+        AppCommand::DisconnectMcpConnection { .. } => "disconnect_mcp_connection",
+        AppCommand::RegisterMcpOAuthClient { .. } => "register_mcp_oauth_client",
     }
 }
 
@@ -326,6 +330,34 @@ mod tests {
                     agent_id: BotId::new("remote"),
                 },
                 "revoke_agent_callback_token",
+            ),
+            (AppCommand::ListMcpConnections, "list_mcp_connections"),
+            (
+                AppCommand::BeginMcpOAuth {
+                    server_id: "notes".to_owned(),
+                    return_to: openbot_contracts::mcp::McpOAuthReturnTo::Settings,
+                },
+                "begin_mcp_oauth",
+            ),
+            (
+                AppCommand::DisconnectMcpConnection {
+                    server_id: "notes".to_owned(),
+                },
+                "disconnect_mcp_connection",
+            ),
+            (
+                AppCommand::RegisterMcpOAuthClient {
+                    server_id: "notes".to_owned(),
+                    registration: openbot_contracts::mcp::McpOAuthClientRegistration::new(
+                        "client".to_owned(),
+                        "secret".to_owned(),
+                        "https://issuer.example".to_owned(),
+                        openbot_contracts::mcp::McpOAuthClientAuthMethod::ClientSecretBasic,
+                        None,
+                    )
+                    .unwrap(),
+                },
+                "register_mcp_oauth_client",
             ),
         ];
         for (command, expected) in commands {

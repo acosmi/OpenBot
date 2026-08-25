@@ -78,6 +78,12 @@ pub enum McpClientError {
     /// Requested tool still exists but its live schema no longer matches the reviewed catalog.
     #[error("mcp_catalog_changed")]
     CatalogChanged,
+    /// Resource server returned an OAuth Bearer 401 challenge.
+    #[error("mcp_auth_required")]
+    AuthRequired,
+    /// Resource server returned an OAuth insufficient-scope 403 challenge.
+    #[error("mcp_insufficient_scope")]
+    InsufficientScope,
     /// Protocol result could not be safely normalized.
     #[error("mcp_result_invalid")]
     InvalidResult,
@@ -135,12 +141,18 @@ pub struct McpBearerToken(Arc<openbot_domain::vault::SecretBytes>);
 impl McpBearerToken {
     /// Construct from an already decrypted vendor token.
     pub fn new(token: String) -> Result<Self, McpClientError> {
-        if token.is_empty() || token.len() > 16 * 1024 || token.as_bytes().contains(&0) {
+        Self::from_secret(openbot_domain::vault::SecretBytes::new(token.into_bytes()))
+    }
+
+    /// Take ownership of an already-zeroizing credential without creating a plaintext String copy.
+    pub(crate) fn from_secret(
+        token: openbot_domain::vault::SecretBytes,
+    ) -> Result<Self, McpClientError> {
+        if token.is_empty() || token.len() > 16 * 1024 || token.expose().contains(&0) {
             return Err(McpClientError::Transport);
         }
-        Ok(Self(Arc::new(openbot_domain::vault::SecretBytes::new(
-            token.into_bytes(),
-        ))))
+        core::str::from_utf8(token.expose()).map_err(|_| McpClientError::Transport)?;
+        Ok(Self(Arc::new(token)))
     }
 
     fn expose(&self) -> Result<&str, McpClientError> {
@@ -284,9 +296,14 @@ impl SafeRmcpClient {
                     normalize_result(&result.content, result.is_error == Some(true))
                         .map_err(|_| McpClientError::CommitUnknown)
                 }
-                Ok(_) | Err(_) => Err(McpClientError::CommitUnknown),
+                Ok(_) => Err(McpClientError::CommitUnknown),
+                Err(error) => match map_service_error(error) {
+                    McpClientError::AuthRequired => Err(McpClientError::AuthRequired),
+                    McpClientError::InsufficientScope => Err(McpClientError::InsufficientScope),
+                    _ => Err(McpClientError::CommitUnknown),
+                },
             },
-            Err(_) => Err(McpClientError::Transport),
+            Err(error) => Err(map_service_error(error)),
         };
         let _ = client.close_with_timeout(MCP_CLOSE_TIMEOUT).await;
         result
@@ -320,7 +337,7 @@ impl SafeRmcpClient {
         tokio::time::timeout(MCP_LIST_TIMEOUT, client_info.serve(transport))
             .await
             .map_err(|_| McpClientError::Timeout)?
-            .map_err(|_| McpClientError::Transport)
+            .map_err(map_initialize_error)
     }
 }
 
@@ -345,7 +362,7 @@ async fn list_all_tools(client: &RunningRmcpClient) -> Result<Vec<McpListedTool>
                     .map(|value| PaginatedRequestParams::default().with_cursor(Some(value))),
             )
             .await
-            .map_err(|_| McpClientError::Transport)?;
+            .map_err(map_service_error)?;
         for tool in page.tools {
             if output.len() >= MAX_MCP_TOOLS {
                 return Err(McpClientError::InvalidCatalog);
@@ -381,6 +398,35 @@ async fn list_all_tools(client: &RunningRmcpClient) -> Result<Vec<McpListedTool>
         }
     }
     Ok(output)
+}
+
+fn map_service_error(error: rmcp::service::ServiceError) -> McpClientError {
+    if let rmcp::service::ServiceError::TransportSend(dynamic) = &error
+        && let Some(error) = dynamic
+            .error
+            .downcast_ref::<StreamableHttpError<SafeRmcpHttpError>>()
+    {
+        return match error {
+            StreamableHttpError::AuthRequired(_) => McpClientError::AuthRequired,
+            StreamableHttpError::InsufficientScope(_) => McpClientError::InsufficientScope,
+            _ => McpClientError::Transport,
+        };
+    }
+    McpClientError::Transport
+}
+
+fn map_initialize_error(error: rmcp::service::ClientInitializeError) -> McpClientError {
+    if error.auth_challenge().is_some_and(|challenge| {
+        challenge
+            .to_ascii_lowercase()
+            .contains("insufficient_scope")
+    }) {
+        McpClientError::InsufficientScope
+    } else if error.is_authorization_required() {
+        McpClientError::AuthRequired
+    } else {
+        McpClientError::Transport
+    }
 }
 
 /// Pure model-visible projection of RMCP content blocks.
