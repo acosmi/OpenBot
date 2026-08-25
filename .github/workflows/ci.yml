@@ -147,6 +147,12 @@ jobs:
       - name: W-7b SAML / xmlsec / OpenSSL / libxml2 FFI guard
         run: bash tools/check-saml-dependencies.sh
 
+      - name: 获取 RustSec advisory database（供 GUI waiver guard 判 patched 状态）
+        run: cargo audit fetch
+
+      - name: G6 Leptos GUI dependency / license / build-script guard
+        run: bash tools/check-ui-dependencies.sh
+
       - name: cargo deny（licenses / bans / advisories / sources 四段）
         # 配置 = 仓根 deny.toml；RUSTSEC-2023-0071 的书面裁决与触发器同样在该文件。
         run: cargo deny check
@@ -155,7 +161,7 @@ jobs:
         # 与 cargo deny 的 advisories 段判据重叠但不等价（audit 直读 Cargo.lock，
         # deny 走依赖图）。v3 §16.3 把两者并列，这里照列，不合并。
         # cargo-audit 不读 deny.toml，同一条裁决必须显式传入；其余 advisory 仍全部判红。
-        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0173
 
       - name: cargo vet（锁定 imports 与 exemptions 棘轮）
         # --locked 不拉取漂移的远程 audits；只读入库 imports.lock。

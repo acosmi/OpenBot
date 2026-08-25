@@ -52,6 +52,7 @@ pub mod health;
 pub mod memories;
 pub mod metrics;
 pub mod plugins;
+pub mod static_app;
 pub mod threads;
 
 use std::sync::Arc;
@@ -75,6 +76,8 @@ use crate::limits::REQUEST_BODY_LIMIT_BYTES;
 use crate::metrics::MetricsHandle;
 use crate::readiness::ReadinessProbe;
 use crate::telemetry::trace_request;
+
+use self::static_app::StaticApp;
 
 /// router 的共享状态。
 ///
@@ -101,6 +104,7 @@ struct StateInner {
     remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
     remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
     mcp_oauth_callback: Option<Arc<dyn McpOAuthCallback>>,
+    static_app: Option<StaticApp>,
 }
 
 impl ServerState {
@@ -187,6 +191,12 @@ impl ServerState {
         self.inner.mcp_oauth_callback.as_deref()
     }
 
+    /// Validated static GUI bundle, when `APP_DIST_DIR` is configured.
+    #[must_use]
+    pub fn static_app(&self) -> Option<&StaticApp> {
+        self.inner.static_app.as_ref()
+    }
+
     /// 敏感写 guard；未注入时 fail-closed 503，不给 handler 任何“暂时跳过”路径。
     pub async fn authorize_sensitive_write(
         &self,
@@ -255,6 +265,7 @@ pub struct ServerBuilder {
     remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
     remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
     mcp_oauth_callback: Option<Arc<dyn McpOAuthCallback>>,
+    static_app: Option<StaticApp>,
 }
 
 impl ServerBuilder {
@@ -276,6 +287,7 @@ impl ServerBuilder {
             remote_callback_auth: None,
             remote_callback_tools: None,
             mcp_oauth_callback: None,
+            static_app: None,
         }
     }
 
@@ -374,6 +386,13 @@ impl ServerBuilder {
         self
     }
 
+    /// Attach a validated static Leptos bundle.
+    #[must_use]
+    pub fn with_static_app(mut self, app: StaticApp) -> Self {
+        self.static_app = Some(app);
+        self
+    }
+
     /// 收口成 [`ServerState`]。
     #[must_use]
     pub fn build(self) -> ServerState {
@@ -393,6 +412,7 @@ impl ServerBuilder {
                 remote_callback_auth: self.remote_callback_auth,
                 remote_callback_tools: self.remote_callback_tools,
                 mcp_oauth_callback: self.mcp_oauth_callback,
+                static_app: self.static_app,
             }),
         }
     }
@@ -433,7 +453,8 @@ async fn record_http_metrics(request: Request, next: Next) -> Response {
 /// 事。把两者渲染成同一个 `not_visible`，会让客户端把"接口拼错了"读成"这条资源你看不
 /// 到"，也会让防枚举那条判据的含义变得含混。
 pub fn router(state: ServerState) -> Router {
-    Router::new()
+    let static_app = state.static_app().cloned();
+    let router = Router::new()
         .route("/health", get(health::health))
         .route("/readiness", get(health::readiness))
         .route("/metrics", get(metrics::render))
@@ -528,13 +549,21 @@ pub fn router(state: ServerState) -> Router {
             "/api/admin/people/{user_id}/access",
             post(admin::people_access),
         )
+        .with_state(state);
+    let router = match static_app {
+        Some(app) => static_app::mount(router, app),
+        None => router,
+    };
+    // Static routes are mounted before these layers so GUI HTML/assets and their 404/405 paths
+    // retain the same request-id, tracing, metrics and bounded-body transport contract as APIs.
+    // Axum only applies `Router::layer` to routes already present at the call site.
+    router
         // Axum 自带一个 2 MiB 的默认上限，且只对消费 body 的提取器生效。关掉它，让
         // `REQUEST_BODY_LIMIT_BYTES` 成为唯一真源 —— 两个上限就是两个答案。
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(axum::middleware::from_fn(record_http_metrics))
         .layer(axum::middleware::from_fn(trace_request))
-        .with_state(state)
 }
 
 #[cfg(test)]

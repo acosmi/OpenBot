@@ -66,6 +66,16 @@ allow = [
     #   Zlib 许可的 crate，那是另一次决定，不由这一行背书。
     "Zlib",
 
+    # G6 Batch 15 / Leptos 0.8.19 的两个新传递许可，均在放行前逐字读取原件并锁定消费者：
+    # - base16 0.2.1 → wasm_split_macros：CC0 1.0 最大范围放弃著作权，fallback 许可允许
+    #   商业使用/修改/分发，无 copyleft；只在 Leptos wasm split 宏链。
+    # - xxhash-rust 0.8.18 → server_fn：Boost 1.0 是 OSI/FSF 认可宽松许可；源代码分发保留
+    #   声明，纯机器目标码可不附，仍统一进入 NOTICE/provenance。
+    # 精确版本、license 原件 hash 与反向依赖由 tools/check-ui-dependencies.sh 锁定；完整
+    # delta 见 docs/2026-08-25-G6-UI供应链delta审计-batch15.md。
+    "CC0-1.0",
+    "BSL-1.0",
+
     # W-7 safe dialer 的锁定 Mozilla 根证书数据：webpki-roots 1.0.9 唯一使用。
     # 在加本行前 `cargo deny check licenses` 精确判红该 crate（负向对照）。这是数据许可，
     # 允许使用/修改/分享；分享时须随数据提供协议文本。原件 2,371 B、SHA-256
@@ -294,6 +304,49 @@ allow-build-scripts = [
     "ref-cast",
     "rmcp",
     "unicode-general-category",
+    # 2026-08-25 G6 Batch 15 Leptos/ICU/static GUI delta。以下 30 份在加入名单前均由
+    # cargo-deny 精确判红，并逐文件通读；精确版本、行数、SHA-256、分类与消费者见
+    # docs/2026-08-25-G6-UI供应链delta审计-batch15.md，机器 guard 锁全部脚本 hash。
+    #
+    # - 10 份只有环境/cfg/警告：crossbeam-deque、6 份 ICU4X data、leptos-use、
+    #   rayon-core、zip；零文件、零进程、零网络。
+    # - 17 份只做 rustc 版本/cfg/试编：camino、cookie、erased-serde、leptos 与 6 份
+    #   同 hash 的 Leptos family、matrixmultiply、paste、proc-macro2-diagnostics、rustix、
+    #   slotmap、typeid、wasmparser；只有 rustc/version_check/autocfg，rustix 试编输出仅在
+    #   OUT_DIR，零第三方程序、零网络。
+    # - mime_guess 只把包内静态 MIME 表生成到 OUT_DIR。
+    # - 两份 windows_x86_64 target 脚本只把同 crate 的 lib/ 加入 link-search；包内 .a/.lib
+    #   是真实 Windows 构建输入，精确 hash 与窄 bypass 在下方，不能称为纯源码依赖。
+    "camino",
+    "cookie",
+    "crossbeam-deque",
+    "erased-serde",
+    "icu_calendar_data",
+    "icu_datetime_data",
+    "icu_decimal_data",
+    "icu_locale_data",
+    "icu_plurals_data",
+    "icu_time_data",
+    "leptos",
+    "leptos-use",
+    "leptos_macro",
+    "leptos_router",
+    "matrixmultiply",
+    "mime_guess",
+    "paste",
+    "proc-macro2-diagnostics",
+    "rayon-core",
+    "reactive_graph",
+    "rustix",
+    "server_fn",
+    "server_fn_macro",
+    "slotmap",
+    "tachys",
+    "typeid",
+    "wasmparser",
+    "windows_x86_64_gnu",
+    "windows_x86_64_msvc",
+    "zip",
 ]
 # 依赖里夹带的可执行文件 / 解释型脚本一律拒绝：供应链攻击最常见的载荷形态。
 executables = "deny"
@@ -374,6 +427,29 @@ crate = "samael@0.0.22"
 # 只放这一条精确路径；新增脚本或改版本仍判红。
 allow-globs = ["test_vectors/multi_saml_response.sh"]
 
+[[bans.build.bypass]]
+crate = "windows_x86_64_gnu@0.52.6"
+# windows-targets 的 GNU import archive，Windows x64 目标真实链接；脚本只把这个 lib/
+# 加入 search path。包 checksum 由 Cargo.lock、archive hash 由 UI dependency guard 锁定。
+allow-globs = ["lib/libwindows.0.52.0.a"]
+
+[[bans.build.bypass]]
+crate = "windows_x86_64_msvc@0.52.6"
+# 与上一条同一 windows-targets 0.52.6 族的 MSVC import library；只放行一个精确路径。
+allow-globs = ["lib/windows.0.52.0.lib"]
+
+[[bans.build.bypass]]
+crate = "cookie@0.18.2"
+# 上游 CI 维护脚本，只被 crate 自己的 .travis.yml 引用；build.rs/src/Cargo.toml 零引用，
+# 依赖构建不会执行。完整内容与 SHA 由 UI dependency guard 锁定。
+allow-globs = ["scripts/test.sh"]
+
+[[bans.build.bypass]]
+crate = "leptos-use@0.18.3"
+# 上游贡献者手动运行的 ffizer scaffold；README 明示手跑，build.rs/src 零引用，且本仓
+# 不安装/调用 ffizer。只放这一个入口，template 里新增其它可执行文件仍会判红。
+allow-globs = ["template/createfn.sh"]
+
 [bans.workspace-dependencies]
 # 同一个依赖在多个 crate 里写不同版本 = 版本真源分裂。workspace 根的
 # [workspace.dependencies] 是唯一钉版点，成员 crate 只能 `{ workspace = true }`。
@@ -412,7 +488,16 @@ unmaintained = "all"
 # - 以下任一变化必须先重审并在同 PR 删除或修订豁免：`rsa`/`openidconnect`
 #   版本或 feature 变化；新增反向消费者；引入 private-key JWT/RSA 签名/解密；RustSec 出现
 #   patched 版本；OIDC token endpoint 或动态 provider 能力扩大。
-ignore = ["RUSTSEC-2023-0071"]
+#
+# RUSTSEC-2024-0436 / RUSTSEC-2026-0173（owner: security，G6 Batch 15 窄裁决）：
+# - 两条均只有 `informational = "unmaintained"` 且 `patched = []`，不是已知漏洞；前者
+#   paste 1.0.15 自身是 proc-macro，后者 proc-macro-error2 2.0.1 的全部直接消费者恰为
+#   四个 proc-macro crate，二者只在编译期可达，不进入最终 WASM/Server 运行时。
+# - 由第一真源精确钉定的 Leptos 0.8.19 传递引入；擅自换 fork/patch 会偏离钉版并扩大
+#   未审源码。tools/check-ui-dependencies.sh 锁版本、proc-macro 边界与 `patched=[]`；任一
+#   版本/消费者/advisory 修复状态变化即先红。该豁免不代表维护性风险已消失，G6 整关仍受
+#   cargo-vet 185 条未覆盖阻塞。完整依据见 UI 供应链 delta 文档。
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2026-0173"]
 
 # ---------------------------------------------------------------------------
 # sources —— 来源

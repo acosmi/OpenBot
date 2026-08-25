@@ -88,8 +88,10 @@
   box-sizing: border-box;
 }
 
+/* §5.3's 1024px minimum is a supported-viewport/Desktop-window contract. A DOM `min-width`
+ * of 1024px would overflow the exact 1024px Web golden whenever a classic vertical scrollbar
+ * consumes its gutter, so the bundle must size to the actual layout viewport. */
 html {
-  min-width: var(--size-min-viewport-w);
   min-height: var(--size-min-viewport-h);
   color-scheme: light dark;
   background: var(--bg);
@@ -104,7 +106,6 @@ html.dark {
 }
 
 body {
-  min-width: var(--size-min-viewport-w);
   min-height: var(--size-min-viewport-h);
   margin: 0;
   overflow-wrap: anywhere;
@@ -370,6 +371,7 @@ a:focus-visible,
 
 .ob-badge[data-tone="caution"] { color: var(--caution); }
 .ob-badge[data-tone="success"] { color: var(--success); }
+.ob-badge[data-tone="info"] { color: var(--info); }
 .ob-badge[data-tone="danger"] { color: var(--danger); }
 
 .ob-segmented {
@@ -396,6 +398,60 @@ a:focus-visible,
 .ob-segmented-button:is(:hover, [aria-pressed="true"], [aria-checked="true"]) {
   color: var(--fg);
   background: var(--bg-popover);
+}
+
+.ob-locale-switch {
+  position: relative;
+}
+
+.ob-locale-trigger,
+.ob-locale-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--size-control-md);
+  gap: calc(var(--spacing) * 2);
+  padding-inline: calc(var(--spacing) * 2);
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--fg-secondary);
+  background: var(--bg-chip);
+  cursor: pointer;
+}
+
+.ob-locale-trigger > :nth-child(2) {
+  margin-inline-end: auto;
+}
+
+.ob-locale-trigger:is(:hover, [aria-expanded="true"]) {
+  color: var(--fg);
+}
+
+.ob-locale-menu {
+  position: absolute;
+  inset-block-end: calc(100% + var(--spacing));
+  inset-inline: 0;
+  z-index: var(--z-menu);
+  display: grid;
+  gap: var(--spacing);
+  padding: var(--spacing);
+  border-radius: var(--radius-lg);
+  background: var(--bg-popover);
+  box-shadow: var(--elevation-popover);
+}
+
+.ob-locale-option {
+  justify-content: space-between;
+  background: transparent;
+}
+
+.ob-locale-option:hover {
+  color: var(--fg);
+  background: var(--bg-subtle);
+}
+
+.ob-locale-option[aria-checked="true"] {
+  color: var(--fg);
 }
 
 .ob-alert,

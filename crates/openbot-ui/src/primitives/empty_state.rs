@@ -5,6 +5,9 @@ use leptos::prelude::*;
 /// Render a titled empty state without inventing a disabled action.
 #[component]
 pub fn EmptyState(
+    /// Caller-owned stable heading id; required so multiple empty states cannot share a hidden
+    /// primitive-global id.
+    heading_id: &'static str,
     /// Empty-state heading.
     #[prop(into)]
     title: String,
@@ -13,8 +16,8 @@ pub fn EmptyState(
     body: String,
 ) -> impl IntoView {
     view! {
-        <section class="ob-empty-state" aria-labelledby="approval-empty-title">
-            <h2 id="approval-empty-title" class="ob-empty-title">{title}</h2>
+        <section class="ob-empty-state" aria-labelledby=heading_id>
+            <h2 id=heading_id class="ob-empty-title">{title}</h2>
             <p class="ob-empty-body">{body}</p>
         </section>
     }

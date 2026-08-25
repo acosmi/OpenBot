@@ -105,6 +105,7 @@ pub fn ApprovalPage() -> impl IntoView {
                 } else if approvals.with(Vec::is_empty) {
                     view! {
                         <EmptyState
+                            heading_id="approval-empty-title"
                             title=t_string!(i18n, admin.approval_empty_title)
                             body=t_string!(i18n, admin.approval_empty_body)
                         />
@@ -225,7 +226,7 @@ fn ApprovalCard(
                 <div class="ob-approval-fact">
                     <dt>
                         <IconView icon=Icon::Clock size=IconSize::Inline />
-                        <span class="ob-visually-hidden">{move || t!(i18n, admin.approval_expired)}</span>
+                        <span class="ob-visually-hidden">{move || t!(i18n, admin.approval_expiry)}</span>
                     </dt>
                     <dd>
                         <time datetime=expires_datetime>

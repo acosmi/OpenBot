@@ -132,11 +132,11 @@ cksum_source = "index.crates.io 稀疏索引 `.cksum` 字段（即 cargo 自己�
 install_command = "cargo install --locked trunk --version 0.21.14"
 repo = "https://github.com/trunk-rs/trunk/tree/v0.21.14"
 status = "done"
-done_evidence = "index.crates.io/tr/un/trunk 中 vers=0.21.14 的 cksum 本轮取回；crates.io API 返回该版本 license"
+done_evidence = "index checksum/license 已核；2026-08-25 macOS arm64 经 xtask cargo install --locked 真安装，stdout=`trunk 0.21.14`"
 notes = """
 GUI §12.1 只写了"由 xtask 执行并校验 `trunk --version`"，没有给期望串。
-本轮**未安装 trunk**（会拉整棵依赖树），所以 verify.expect_regex 是按 `--version`
-的常规形态写的、未经本机实证，status_verify = "todo"。
+2026-08-25 已在 macOS arm64 真安装；上游 lock 含 yanked `crossbeam-channel 0.5.14` 与
+`zip 2.6.1`，`--locked` 仍可重现，但该事实必须保留在 Batch 15 供应链证据中。
 构建口径：`PATH=target/tools/bin:$PATH trunk build --release --offline --locked`。
 """
 
@@ -145,9 +145,8 @@ GUI §12.1 只写了"由 xtask 执行并校验 `trunk --version`"，没有给期
   stream = "stdout"
   expect_regex = "0\\.21\\.14"
   expect_exit_code = 0
-  verified_on = "none"
-  status_verify = "todo"
-  blocked_by = "本轮未安装 trunk；解除条件 = 在 openbot-ui 起 Leptos 依赖那个 PR 里跑一次 `cargo install --locked trunk --version 0.21.14 && trunk --version`，把真实 stdout 逐字抄回 expect_regex 并把 status_verify 改 done"
+  verified_on = "macos-arm64"
+  status_verify = "done"
 
 # ===========================================================================
 # wasm-opt（binaryen）
@@ -166,8 +165,8 @@ done_evidence = "五个平台的 sha256 取自同 release 的 `.sha256` 边车�
 notes = """
 GUI §12.1 的表格里 binaryen 那一行**没有列出任何 sha256**（正向对照：同一表格的
 Tailwind 行列了五个），因此本文件的五个摘要是本轮新取的，不是抄表。
-资产是 tar.gz，`xtask tools fetch` 需解包后取 `binaryen-version_132/bin/wasm-opt{,.exe}`；
-tar 内路径本轮**未实证**（未下载 100+ MB 的包），见 unpack.status。
+资产是 tar.gz；macOS 包的 `wasm-opt` 动态依赖同包 `lib/libbinaryen.dylib`，xtask 同时抽取
+到 `target/tools/{bin,lib}`。只抽 binary 的真实负向是 dyld exit 134。
 trunk 侧对应 `[tools] wasm_opt = "version_132"`。
 """
 
@@ -175,17 +174,17 @@ trunk 侧对应 `[tools] wasm_opt = "version_132"`。
   archive_format = "tar.gz"
   expected_member = "binaryen-version_132/bin/wasm-opt"
   expected_member_windows = "binaryen-version_132/bin/wasm-opt.exe"
-  status = "todo"
-  blocked_by = "本轮只下载了 `.sha256` 边车（100 B 级），未下载 7.6 MB–117 MB 的 tar.gz，因此 tar 内路径未实证；解除条件 = `xtask tools fetch` 首次真跑后把 `tar -tzf` 的真实首层目录名抄回来"
+  expected_library_macos = "binaryen-version_132/lib/libbinaryen.dylib"
+  status = "done"
+  done_evidence = "2026-08-25 macOS arm64 校摘要后真列 archive：wasm-opt 位于 bin/，LC_RPATH 指向 ../lib，所需 libbinaryen.dylib 位于 lib/；仅抽 binary 会被 dyld 以 Library not loaded 终止"
 
   [tools.wasm-opt.verify]
   args = ["--version"]
   stream = "stdout"
-  expect_regex = "132"
+  expect_regex = "^wasm-opt version 132 \\(version_132\\)\\r?\\n?$"
   expect_exit_code = 0
-  verified_on = "none"
-  status_verify = "todo"
-  blocked_by = "未下载二进制；`expect_regex = \"132\"` 是弱判据（会被 1320 之类误中），解除条件 = 真跑一次 `wasm-opt --version` 后换成逐字全串比对"
+  verified_on = "macos-arm64"
+  status_verify = "done"
 
   [[tools.wasm-opt.artifacts]]
   platform = "linux-x64"
@@ -238,12 +237,12 @@ trunk 侧对应 `[tools] wasm_opt = "version_132"`。
 [tools.wasm-bindgen-cli]
 version = "0.2.127"
 version_source = "Cargo.lock 里 `wasm-bindgen` crate 的版本（GUI §12.1：以 lock 为准）"
-license = "NOASSERTION"
+license = "MIT OR Apache-2.0"
 install = "cargo-install"
 crate = "wasm-bindgen-cli"
 install_command = "cargo install --locked wasm-bindgen-cli --version <从 Cargo.lock 读出的版本>"
-status = "in_progress"
-evidence = "Cargo.lock 当前唯一 wasm-bindgen package = 0.2.127；安装/版本实证完成后才改 done"
+status = "done"
+done_evidence = "Cargo.lock 唯一 wasm-bindgen=0.2.127；2026-08-25 macOS arm64 cargo install --locked，crate manifest license=MIT OR Apache-2.0，stdout=`wasm-bindgen 0.2.127`"
 notes = "trunk 自身也按 lock 校验 wasm-bindgen 版本（GUI §12.1），所以这里版本漂移会被两处同时照出。"
 
   [tools.wasm-bindgen-cli.verify]
@@ -251,8 +250,8 @@ notes = "trunk 自身也按 lock 校验 wasm-bindgen 版本（GUI §12.1），�
   stream = "stdout"
   expect_regex = "^wasm-bindgen 0\\.2\\.127\\r?\\n?$"
   expect_exit_code = 0
-  status_verify = "in_progress"
-  blocked_by = "等待本机首次 cargo xtask tools fetch/verify 的真实 stdout 复核"
+  status_verify = "done"
+  verified_on = "macos-arm64"
 
 # ===========================================================================
 # 复算命令

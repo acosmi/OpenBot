@@ -87,7 +87,7 @@ use openbot_server::readiness::ReadinessVerdict;
 use openbot_server::telemetry::{self, LogFormat};
 use openbot_server::{
     AuthResolver, FnReadinessProbe, PostgresSessionAuthResolver, SINGLE_USER_ACTOR_ID,
-    SensitiveWriteSecurity, ServerBuilder, SingleUserAuthResolver, install_recorder,
+    SensitiveWriteSecurity, ServerBuilder, SingleUserAuthResolver, StaticApp, install_recorder,
 };
 use sha2::Sha256;
 use url::Url;
@@ -515,6 +515,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_remote_callback_authenticator(remote_callback_auth)
         .with_remote_callback_tools(remote_callback_tools)
         .with_readiness_probe(Arc::new(db_probe));
+    if let Some(dist) = server.app_dist_dir.as_deref() {
+        builder = builder.with_static_app(StaticApp::open(dist)?);
+    }
     builder = builder.with_mcp_oauth_callback(mcp_connections);
     if let Some((coordinator, dynamic_sso, preauth, origins, secure_cookie)) = oidc_login {
         builder = builder.with_login_security(origins, secure_cookie);

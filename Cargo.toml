@@ -144,7 +144,7 @@ axum = { version = "0.8.9", features = ["macros", "ws"] }
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "async-await", "std"] }
 tower = { version = "0.5.3", features = ["timeout", "limit"] }
-tower-http = { version = "0.6", features = ["trace", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "limit", "fs"] }
 http = "1.5.0"
 httpdate = "1.0.3"
 

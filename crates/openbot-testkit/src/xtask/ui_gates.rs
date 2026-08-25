@@ -96,6 +96,11 @@ pub(crate) fn design_lint(root: &Path) -> Result<()> {
         bail!("design-lint violations:\n{}", violations.join("\n"));
     }
 
+    let index = fs::read_to_string(ui.join("index.html"))?;
+    if Regex::new(r"(?i)<script\b")?.is_match(&index) {
+        bail!("source index.html must contain zero script tags; Trunk emits the external loader");
+    }
+
     let icon_count = check_icons(&ui, &sources)?;
     println!(
         "design-lint: ok ({} Rust files; {icon_count} manifest/SVG icons; reverse rules clean)",
@@ -138,6 +143,7 @@ pub(crate) fn bundle_budget(root: &Path, args: &[String]) -> Result<()> {
     let dist = parse_path_option(root, args, "--dist")?.unwrap_or_else(|| ui.join("dist"));
     let wasm = unique_file_with_extension(&dist, "wasm")?;
     let css = unique_file_with_extension(&dist, "css")?;
+    let external_scripts = check_dist_script_policy(&dist)?;
     let wasm_bytes = fs::read(&wasm).with_context(|| format!("read {}", wasm.display()))?;
     let mut encoder = GzBuilder::new()
         .mtime(0)
@@ -176,9 +182,47 @@ pub(crate) fn bundle_budget(root: &Path, args: &[String]) -> Result<()> {
         bail!("bundle budget exceeded:\n{}", failures.join("\n"));
     }
     println!(
-        "bundle-budget: ok (wasm gzip={wasm_gzip}/{WASM_GZIP_LIMIT}; css={css_bytes}/{CSS_LIMIT}; fonts={font_bytes}/{FONT_LIMIT})"
+        "bundle-budget: ok (wasm gzip={wasm_gzip}/{WASM_GZIP_LIMIT}; css={css_bytes}/{CSS_LIMIT}; fonts={font_bytes}/{FONT_LIMIT}; external scripts={external_scripts}, inline=0)"
     );
     Ok(())
+}
+
+fn check_dist_script_policy(dist: &Path) -> Result<usize> {
+    let index_path = dist.join("index.html");
+    let index = fs::read_to_string(&index_path)
+        .with_context(|| format!("read {}", index_path.display()))?;
+    let script = Regex::new(r"(?is)<script\b([^>]*)>")?;
+    let src = Regex::new(r#"(?i)\bsrc\s*=\s*["'][^"']+["']"#)?;
+    let mut count = 0;
+    for capture in script.captures_iter(&index) {
+        count += 1;
+        let attributes = capture.get(1).expect("capture exists").as_str();
+        if !src.is_match(attributes) {
+            bail!("compiled index.html contains an inline script");
+        }
+    }
+    if count != 1 || !index.contains("src=\"/openbot-bootstrap.mjs\"") {
+        bail!("compiled index.html must contain exactly one external OpenBot bootstrap script");
+    }
+    let bootstrap_path = dist.join("openbot-bootstrap.mjs");
+    let bootstrap = fs::read_to_string(&bootstrap_path)
+        .with_context(|| format!("read {}", bootstrap_path.display()))?;
+    for forbidden in [
+        "http:",
+        "https:",
+        "eval(",
+        "Function(",
+        "document.cookie",
+        "localStorage",
+    ] {
+        if bootstrap.contains(forbidden) {
+            bail!("external bootstrap contains forbidden token `{forbidden}`");
+        }
+    }
+    if !bootstrap.contains("import init from \"./") || !bootstrap.contains("module_or_path: \"./") {
+        bail!("external bootstrap does not use the closed relative wasm-bindgen pair");
+    }
+    Ok(count)
 }
 
 fn read_locale(path: &Path) -> Result<BTreeMap<String, String>> {
@@ -373,8 +417,8 @@ fn icon_variant(name: &str) -> String {
 }
 
 fn source_class_literals(sources: &[(PathBuf, String)]) -> Result<BTreeSet<String>> {
-    let literal = Regex::new(r#"class\s*=\s*"([^"]*)""#)?;
-    let assignment = Regex::new(r"class\s*=")?;
+    let literal = Regex::new(r#"\bclass\s*=\s*"([^"]*)""#)?;
+    let assignment = Regex::new(r"\bclass\s*=")?;
     let mut classes = BTreeSet::new();
     for (path, source) in sources {
         for found in assignment.find_iter(source) {

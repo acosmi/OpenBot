@@ -18,6 +18,11 @@ default = []
 # 的唯一测试入口 `AuthContext::for_test` 住在那边同名 feature 下。
 testkit = ["openbot-contracts/testkit"]
 
+[[bin]]
+name = "openbot-ui-fixture"
+path = "src/bin/openbot-ui-fixture.rs"
+required-features = ["testkit"]
+
 [dependencies]
 # 穿越边界的类型：AuthContext / AppCommand / AppReply / AppError / ChannelPage。
 openbot-contracts.workspace = true

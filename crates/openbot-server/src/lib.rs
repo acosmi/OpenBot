@@ -72,8 +72,8 @@
 //! - **OTel exporter**：§16.4 明说 exporter「只在管理员显式配置 collector 地址时才建连」，
 //!   而配置面是 G2（§15.4）。此刻引入只会得到一个零调用点的依赖，所以刻意不引入。
 //!   **本 crate 没有任何默认外发的遥测端点**（§16.4「零 phone-home」）。
-//! - **WebSocket / 静态 GUI bundle**：SSE 已落；固定上游 channel WebSocket parity 与 GUI
-//!   bundle 仍分别是 G3/G6 的工作。
+//! - **完整 GUI route/components**：Server 可托管经校验的同源静态 bundle；31+1 route 与其余
+//!   components/golden 仍是 G6 工作，不能由静态托管存在推导为完成。
 //! - credentials/computer（含 policy 管理写面）等其余 HTTP 路由仍未落地。W-7 已接环境/动态 OIDC、SAML
 //!   routing/metadata/ACS、动态 IdP 管理与 keyed session/group refresh；外部 SAML/XSW 审计、
 //!   KMS/HSM 与跨平台原生发行未完成，不能据此宣称 G2。
@@ -95,6 +95,7 @@ pub use auth::{
     SensitiveWriteSecurity, SingleUserAuthResolver,
 };
 pub use error::HttpError;
+pub use http::static_app::StaticApp;
 pub use http::{ServerBuilder, ServerState, router};
 pub use limits::REQUEST_BODY_LIMIT_BYTES;
 pub use metrics::{MetricsHandle, install_recorder};

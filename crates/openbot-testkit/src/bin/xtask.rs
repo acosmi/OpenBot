@@ -46,6 +46,12 @@ mod test_inventory;
 #[path = "../xtask/ui_gates.rs"]
 mod ui_gates;
 
+#[path = "../xtask/ui_assets.rs"]
+mod ui_assets;
+
+#[path = "../xtask/ui_finalize.rs"]
+mod ui_finalize;
+
 #[path = "../xtask/tools.rs"]
 mod tools;
 
@@ -196,6 +202,8 @@ fn main() -> ExitCode {
         Some("bundle-budget") => {
             workspace_root().and_then(|root| ui_gates::bundle_budget(&root, &args[1..]))
         }
+        Some("ui-assets") => workspace_root().and_then(|root| ui_assets::run(&root)),
+        Some("ui-finalize") => ui_finalize::run(),
         Some("tools") => workspace_root().and_then(|root| tools::run(&root, &args[1..])),
         Some("ci") => cmd_ci(),
         Some("help") | Some("--help") | Some("-h") | None => {
@@ -240,6 +248,8 @@ xtask —— OpenBot 仓库闸门驱动器
                                       断言每个 Rust class 字面量都出现在编译 CSS
   cargo xtask bundle-budget [--dist <Trunk dist 目录>]
                                       检查 app.wasm gzip、CSS 与随包字体预算
+  cargo xtask ui-assets               用与 openbot-ui build.rs 同一生成器物化 ignored tokens.css
+  cargo xtask ui-finalize             仅供 Trunk post-build 生成外部 WASM bootstrap
   cargo xtask tools fetch            获取当前平台的钉版 Tailwind/wasm-opt，并按 lock 安装
                                       trunk/wasm-bindgen CLI 到 target/tools/bin
   cargo xtask tools verify           校验四个工具的 sha256（下载件）、版本输出与退出码

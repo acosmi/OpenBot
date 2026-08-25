@@ -23,8 +23,10 @@ fn fetch(root: &Path) -> Result<()> {
     let platform = current_platform()?;
     let tools_dir = root.join("target/tools");
     let bin_dir = tools_dir.join("bin");
+    let lib_dir = tools_dir.join("lib");
     let downloads = tools_dir.join("downloads");
     fs::create_dir_all(&bin_dir)?;
+    fs::create_dir_all(&lib_dir)?;
     fs::create_dir_all(&downloads)?;
 
     let tailwind = tool(&pins, "tailwindcss")?;
@@ -48,6 +50,11 @@ fn fetch(root: &Path) -> Result<()> {
     };
     let wasm_opt_bytes = archive_member(&wasm_opt_archive, member)?;
     install_bytes(&wasm_opt_bytes, &bin_dir.join(executable("wasm-opt")))?;
+    if cfg!(target_os = "macos") {
+        let library_member = string(tool_table(wasm_opt, "unpack")?, "expected_library_macos")?;
+        let library = archive_member(&wasm_opt_archive, library_member)?;
+        install_data_bytes(&library, &lib_dir.join("libbinaryen.dylib"))?;
+    }
 
     let trunk = tool(&pins, "trunk")?;
     cargo_install(
@@ -79,6 +86,7 @@ fn verify(root: &Path) -> Result<()> {
     let platform = current_platform()?;
     let tools_dir = root.join("target/tools");
     let bin_dir = tools_dir.join("bin");
+    let lib_dir = tools_dir.join("lib");
     let downloads = tools_dir.join("downloads");
 
     let tailwind = tool(&pins, "tailwindcss")?;
@@ -102,6 +110,14 @@ fn verify(root: &Path) -> Result<()> {
     let installed_wasm_opt = fs::read(bin_dir.join(executable("wasm-opt")))?;
     if expected_wasm_opt != installed_wasm_opt {
         bail!("installed wasm-opt differs from the checksum-verified archive member");
+    }
+    if cfg!(target_os = "macos") {
+        let library_member = string(tool_table(wasm_opt, "unpack")?, "expected_library_macos")?;
+        let expected_library = archive_member(&archive, library_member)?;
+        let installed_library = fs::read(lib_dir.join("libbinaryen.dylib"))?;
+        if expected_library != installed_library {
+            bail!("installed libbinaryen.dylib differs from the checksum-verified archive member");
+        }
     }
     verify_version(&bin_dir.join(executable("wasm-opt")), wasm_opt)?;
 
@@ -433,12 +449,22 @@ fn install_file(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn install_bytes(bytes: &[u8], destination: &Path) -> Result<()> {
+    install_bytes_with_mode(bytes, destination, true)
+}
+
+fn install_data_bytes(bytes: &[u8], destination: &Path) -> Result<()> {
+    install_bytes_with_mode(bytes, destination, false)
+}
+
+fn install_bytes_with_mode(bytes: &[u8], destination: &Path, executable: bool) -> Result<()> {
     let partial = destination.with_extension("part");
     if partial.exists() {
         fs::remove_file(&partial)?;
     }
     fs::write(&partial, bytes)?;
-    make_executable(&partial)?;
+    if executable {
+        make_executable(&partial)?;
+    }
     if destination.exists() {
         fs::remove_file(destination)?;
     }

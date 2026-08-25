@@ -12,6 +12,8 @@ pub enum BadgeTone {
     Caution,
     /// Success status.
     Success,
+    /// Informational status.
+    Info,
     /// Danger status.
     Danger,
 }
@@ -22,6 +24,7 @@ impl BadgeTone {
             Self::Neutral => "neutral",
             Self::Caution => "caution",
             Self::Success => "success",
+            Self::Info => "info",
             Self::Danger => "danger",
         }
     }
@@ -41,5 +44,24 @@ pub fn Badge(
             <span class="ob-badge-dot" aria-hidden="true"></span>
             {children()}
         </span>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BadgeTone;
+
+    #[test]
+    fn every_declared_semantic_tone_has_a_closed_css_value() {
+        assert_eq!(
+            [
+                BadgeTone::Neutral.as_str(),
+                BadgeTone::Caution.as_str(),
+                BadgeTone::Success.as_str(),
+                BadgeTone::Info.as_str(),
+                BadgeTone::Danger.as_str(),
+            ],
+            ["neutral", "caution", "success", "info", "danger"]
+        );
     }
 }

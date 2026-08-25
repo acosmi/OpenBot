@@ -1,6 +1,7 @@
 //! Three-state token theme switch.
 
 use leptos::prelude::*;
+use leptos::{ev::KeyboardEvent, html};
 
 use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
@@ -24,6 +25,9 @@ pub enum Theme {
 pub fn ThemeToggle() -> impl IntoView {
     let i18n = use_i18n();
     let theme = RwSignal::new(current_theme());
+    let system_ref = NodeRef::<html::Button>::new();
+    let light_ref = NodeRef::<html::Button>::new();
+    let dark_ref = NodeRef::<html::Button>::new();
     let select = move |next: Theme| {
         apply_theme(next);
         theme.set(next);
@@ -37,9 +41,21 @@ pub fn ThemeToggle() -> impl IntoView {
             <button
                 type="button"
                 class="ob-segmented-button"
+                node_ref=system_ref
                 role="radio"
-                aria-checked=move || theme.get() == Theme::System
+                aria-checked=move || if theme.get() == Theme::System { "true" } else { "false" }
+                tabindex=move || -i32::from(theme.get() != Theme::System)
                 on:click=move |_| select(Theme::System)
+                on:keydown=move |event| {
+                    handle_radio_key(
+                        event,
+                        Theme::System,
+                        select,
+                        system_ref,
+                        light_ref,
+                        dark_ref,
+                    );
+                }
             >
                 <IconView icon=Icon::SunMoon size=IconSize::Inline />
                 {move || t!(i18n, shell.theme_system)}
@@ -47,9 +63,21 @@ pub fn ThemeToggle() -> impl IntoView {
             <button
                 type="button"
                 class="ob-segmented-button"
+                node_ref=light_ref
                 role="radio"
-                aria-checked=move || theme.get() == Theme::Light
+                aria-checked=move || if theme.get() == Theme::Light { "true" } else { "false" }
+                tabindex=move || -i32::from(theme.get() != Theme::Light)
                 on:click=move |_| select(Theme::Light)
+                on:keydown=move |event| {
+                    handle_radio_key(
+                        event,
+                        Theme::Light,
+                        select,
+                        system_ref,
+                        light_ref,
+                        dark_ref,
+                    );
+                }
             >
                 <IconView icon=Icon::Sun size=IconSize::Inline />
                 {move || t!(i18n, shell.theme_light)}
@@ -57,15 +85,76 @@ pub fn ThemeToggle() -> impl IntoView {
             <button
                 type="button"
                 class="ob-segmented-button"
+                node_ref=dark_ref
                 role="radio"
-                aria-checked=move || theme.get() == Theme::Dark
+                aria-checked=move || if theme.get() == Theme::Dark { "true" } else { "false" }
+                tabindex=move || -i32::from(theme.get() != Theme::Dark)
                 on:click=move |_| select(Theme::Dark)
+                on:keydown=move |event| {
+                    handle_radio_key(
+                        event,
+                        Theme::Dark,
+                        select,
+                        system_ref,
+                        light_ref,
+                        dark_ref,
+                    );
+                }
             >
                 <IconView icon=Icon::Moon size=IconSize::Inline />
                 {move || t!(i18n, shell.theme_dark)}
             </button>
         </div>
     }
+}
+
+fn handle_radio_key(
+    event: KeyboardEvent,
+    current: Theme,
+    select: impl Fn(Theme) + Copy,
+    system_ref: NodeRef<html::Button>,
+    light_ref: NodeRef<html::Button>,
+    dark_ref: NodeRef<html::Button>,
+) {
+    let next = match event.key().as_str() {
+        "ArrowRight" | "ArrowDown" => match current {
+            Theme::System => Theme::Light,
+            Theme::Light => Theme::Dark,
+            Theme::Dark => Theme::System,
+        },
+        "ArrowLeft" | "ArrowUp" => match current {
+            Theme::System => Theme::Dark,
+            Theme::Light => Theme::System,
+            Theme::Dark => Theme::Light,
+        },
+        "Home" => Theme::System,
+        "End" => Theme::Dark,
+        _ => return,
+    };
+    event.prevent_default();
+    select(next);
+    focus_theme(next, system_ref, light_ref, dark_ref);
+}
+
+fn focus_theme(
+    theme: Theme,
+    system_ref: NodeRef<html::Button>,
+    light_ref: NodeRef<html::Button>,
+    dark_ref: NodeRef<html::Button>,
+) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let target = match theme {
+            Theme::System => system_ref.get(),
+            Theme::Light => light_ref.get(),
+            Theme::Dark => dark_ref.get(),
+        };
+        if let Some(target) = target {
+            _ = target.focus();
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (theme, system_ref, light_ref, dark_ref);
 }
 
 #[cfg(target_arch = "wasm32")]
