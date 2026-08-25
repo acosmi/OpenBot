@@ -59,17 +59,21 @@
 //!   user+exact Bot/thread FTS + structured-tag recall；无 background extraction（R66）。
 //! - [`run_runtime`] —— replay-safe dispatch claim、fencing renew/takeover、semantic chunk/terminal、
 //!   stale delivered run reconciliation 与 production relay（R67）。
+//! - [`intelligence_bundle`] / [`intelligence_import`] —— one-shot signed+encrypted bundle verifier、
+//!   target mapping、逐 thread 原子 import、四 cursor、DB 重算 checksum 与 staged FK finalize（R68）。
 //!
 //! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
 //! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
 //! Server KMS/HSM、多平台原生发行，以及 G4 的真实 browser/file/shell/MCP/Drive executor。
 //! 0016 已把 `thread/run/outbox/memory/import` 的 10 个 repo 与对应物理表同批实现；R64/R65
 //! 又接 mint/status、transactional begin 与 SSE live，R66 接 history 与 explicit memory backend。
-//! Thread WebSocket 与 terminal/outbox/lease recovery 已由 R67 接上；真实 Agent consumer、provider
-//! producer、remember tool/Memory GUI/importer 仍归后续 G3/G4/G6。
+//! Thread WebSocket 与 terminal/outbox/lease recovery 已由 R67 接上，Intelligence importer 由 R68
+//! 接上；真实 Agent consumer/provider producer、remember tool/Memory GUI 仍归后续 G3/G4/G6。
 
 pub mod auth;
 pub mod db;
+pub mod intelligence_bundle;
+pub mod intelligence_import;
 pub mod memory_admin;
 pub mod net;
 pub mod policy;

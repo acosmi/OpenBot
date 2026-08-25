@@ -42,7 +42,11 @@ chrono.workspace = true
 quick-xml.workspace = true
 openssl.workspace = true
 hmac.workspace = true
+hkdf.workspace = true
 sha2.workspace = true
+aes-gcm.workspace = true
+ed25519-dalek.workspace = true
+zeroize.workspace = true
 getrandom.workspace = true
 
 # `ChannelReader` 是 `#[async_trait]` trait，实现侧必须同样标注。
