@@ -45,6 +45,9 @@ allow = [
     "BSD-2-Clause",                    # §23.1 条 6 "Steel Browser/CDP 参考代码……Apache/BSD 等"
     "BSD-3-Clause",                    # 同上
     "0BSD",                            # BSD 系里最宽松的一支，Rust 生态常见（如 adler2）
+    # G4 Batch 11 的 fluent-uri → borrow-or-share 0.2.4 唯一使用。MIT-0 是 OSI 批准的
+    # MIT 无署名变体，无 copyleft/闭源冲突；精确消费者与版本由 RMCP guard 锁定。
+    "MIT-0",
 
     # 下面这条不在 §23.1 的枚举里，但**当前依赖图已经必须要它**，不是预留：
     #   `cargo metadata --all-features | jq '.packages[].license'` 实测 `unicode-ident` 的
@@ -280,6 +283,17 @@ allow-build-scripts = [
     "openssl-sys",
     "prettyplease",
     "samael",
+    # 2026-08-25 G4 Batch 11 RMCP/schema delta；四份在放行前均由 cargo-deny 精确判红。
+    # ahash 0.8.12（22 行）只做 rustc specialize 与 target arch cfg 探测；
+    # ref-cast 1.0.27（50 行）执行 RUSTC --version，并只向 OUT_DIR 写 private.rs；
+    # unicode-general-category 1.1.0（201 行）只从包内静态 Unicode 表生成 OUT_DIR/category.rs；
+    # rmcp 3.1.4（23 行）有条件执行 git config，但 crates.io source 的两级 parent 没有
+    # .git/.githooks，故当前构建分支不可达；guard 锁其 VCS commit、脚本 hash 与不可达前提。
+    # 四份均无 socket/HTTP/download；精确 SHA/行数见 tools/check-rmcp-dependencies.sh。
+    "ahash",
+    "ref-cast",
+    "rmcp",
+    "unicode-general-category",
 ]
 # 依赖里夹带的可执行文件 / 解释型脚本一律拒绝：供应链攻击最常见的载荷形态。
 executables = "deny"

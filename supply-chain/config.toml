@@ -24,6 +24,11 @@ criteria = "safe-to-deploy"
 version = "0.10.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.ahash]]
+version = "0.8.12"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.aho-corasick]]
 version = "1.1.5"
 criteria = "safe-to-deploy"
@@ -76,6 +81,11 @@ criteria = "safe-to-deploy"
 version = "0.21.7"
 criteria = "safe-to-deploy"
 
+[[exemptions.base64]]
+version = "0.23.1"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.base64ct]]
 version = "1.8.3"
 criteria = "safe-to-deploy"
@@ -108,6 +118,11 @@ criteria = "safe-to-deploy"
 [[exemptions.block-buffer]]
 version = "0.12.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.borrow-or-share]]
+version = "0.2.4"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
 [[exemptions.bs58]]
 version = "0.5.1"
@@ -351,6 +366,11 @@ criteria = "safe-to-deploy"
 version = "0.13.8"
 criteria = "safe-to-deploy"
 
+[[exemptions.email_address]]
+version = "0.2.9"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.errno]]
 version = "0.3.14"
 criteria = "safe-to-deploy"
@@ -362,6 +382,11 @@ criteria = "safe-to-deploy"
 [[exemptions.fallible-iterator]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.fancy-regex]]
+version = "0.19.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 schema delta reviewed, not a full source audit; runtime explicitly selects the linear regex engine; exact version only; G2 external security audit remains required"
 
 [[exemptions.fastrand]]
 version = "2.5.0"
@@ -383,6 +408,11 @@ criteria = "safe-to-deploy"
 version = "1.1.9"
 criteria = "safe-to-deploy"
 notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full source audit; exact version only; G2 external SAML/XSW audit remains required"
+
+[[exemptions.fluent-uri]]
+version = "0.4.1"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
 [[exemptions.fnv]]
 version = "1.0.7"
@@ -407,6 +437,16 @@ notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full sou
 version = "1.2.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.fraction]]
+version = "0.16.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
+[[exemptions.futures]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.futures-channel]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
@@ -414,6 +454,21 @@ criteria = "safe-to-deploy"
 [[exemptions.futures-core]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
+
+[[exemptions.futures-executor]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
+[[exemptions.futures-io]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
+[[exemptions.futures-macro]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
 [[exemptions.futures-sink]]
 version = "0.3.34"
@@ -625,6 +680,21 @@ criteria = "safe-to-deploy"
 version = "0.3.104"
 criteria = "safe-to-deploy"
 
+[[exemptions.jsonschema]]
+version = "0.51.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 schema delta reviewed, not a full source audit; HTTP/file resolver features disabled and linear regex selected; exact version only; G2 external security audit remains required"
+
+[[exemptions.jsonschema-regex]]
+version = "0.51.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
+[[exemptions.jsonschema-value]]
+version = "0.51.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.left-right]]
 version = "0.11.8"
 criteria = "safe-to-deploy"
@@ -695,6 +765,11 @@ criteria = "safe-to-deploy"
 version = "0.20.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.micromap]]
+version = "0.3.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.mime]]
 version = "0.3.17"
 criteria = "safe-to-deploy"
@@ -724,6 +799,16 @@ criteria = "safe-to-deploy"
 version = "0.50.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.num]]
+version = "0.4.3"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
+[[exemptions.num-bigint]]
+version = "0.4.8"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.num-bigint]]
 version = "0.5.1"
 criteria = "safe-to-deploy"
@@ -731,6 +816,16 @@ criteria = "safe-to-deploy"
 [[exemptions.num-bigint-dig]]
 version = "0.8.6"
 criteria = "safe-to-deploy"
+
+[[exemptions.num-cmp]]
+version = "0.1.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
+[[exemptions.num-complex]]
+version = "0.4.6"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
 [[exemptions.num-conv]]
 version = "0.2.2"
@@ -743,6 +838,11 @@ criteria = "safe-to-deploy"
 [[exemptions.num-iter]]
 version = "0.1.46"
 criteria = "safe-to-deploy"
+
+[[exemptions.num-rational]]
+version = "0.4.2"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
 [[exemptions.num_cpus]]
 version = "1.17.0"
@@ -790,6 +890,11 @@ notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full sou
 [[exemptions.ordered-float]]
 version = "2.10.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.outref]]
+version = "0.5.2"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
 [[exemptions.owo-colors]]
 version = "4.3.0"
@@ -1038,6 +1143,11 @@ criteria = "safe-to-deploy"
 version = "1.0.27"
 criteria = "safe-to-deploy"
 
+[[exemptions.referencing]]
+version = "0.51.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 schema delta reviewed, not a full source audit; no HTTP/file retriever feature; exact version only; G2 external security audit remains required"
+
 [[exemptions.regex]]
 version = "1.13.1"
 criteria = "safe-to-deploy"
@@ -1058,6 +1168,11 @@ criteria = "safe-to-deploy"
 version = "0.17.14"
 criteria = "safe-to-deploy"
 notes = "owner=security; W-7 R29 delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
+[[exemptions.rmcp]]
+version = "3.1.4"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 pinned tag/commit client delta reviewed, not a full source audit; production enables client Streamable HTTP only and injects SafeDialer; exact version only; G2 external security audit remains required"
 
 [[exemptions.rsa]]
 version = "0.9.10"
@@ -1111,6 +1226,11 @@ criteria = "safe-to-deploy"
 version = "1.2.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.schemars_derive]]
+version = "1.2.2"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.scoped-tls]]
 version = "1.0.1"
 criteria = "safe-to-deploy"
@@ -1146,6 +1266,11 @@ criteria = "safe-to-deploy"
 [[exemptions.serde_derive]]
 version = "1.0.229"
 criteria = "safe-to-deploy"
+
+[[exemptions.serde_derive_internals]]
+version = "0.30.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
 [[exemptions.serde_json]]
 version = "1.0.151"
@@ -1246,6 +1371,11 @@ criteria = "safe-to-deploy"
 version = "0.7.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.sse-stream]]
+version = "0.2.4"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 bounded SafeDialer SSE parser delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.stable_deref_trait]]
 version = "1.2.1"
 criteria = "safe-to-deploy"
@@ -1257,6 +1387,16 @@ criteria = "safe-to-deploy"
 [[exemptions.strsim]]
 version = "0.11.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.strum]]
+version = "0.28.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
+[[exemptions.strum_macros]]
+version = "0.28.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP/schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
 [[exemptions.subtle]]
 version = "2.6.1"
@@ -1343,6 +1483,11 @@ version = "0.26.4"
 criteria = "safe-to-deploy"
 notes = "owner=security; W-7 R29 delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
+[[exemptions.tokio-stream]]
+version = "0.1.19"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 RMCP delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.tokio-tungstenite]]
 version = "0.29.0"
 criteria = "safe-to-deploy"
@@ -1410,6 +1555,11 @@ criteria = "safe-to-deploy"
 version = "1.20.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.unicode-general-category]]
+version = "1.1.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.unicode-id-start]]
 version = "1.4.0"
 criteria = "safe-to-deploy"
@@ -1459,6 +1609,11 @@ criteria = "safe-to-deploy"
 version = "1.25.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.uuid-simd]]
+version = "0.8.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
+
 [[exemptions.valuable]]
 version = "0.1.1"
 criteria = "safe-to-deploy"
@@ -1471,6 +1626,11 @@ notes = "owner=security; W-7b R50 SAML/xmlsec FFI delta reviewed, not a full sou
 [[exemptions.version_check]]
 version = "0.9.5"
 criteria = "safe-to-deploy"
+
+[[exemptions.vsimd]]
+version = "0.8.0"
+criteria = "safe-to-deploy"
+notes = "owner=security; G4 Batch 11 schema delta reviewed, not a full source audit; exact version only; G2 external security audit remains required"
 
 [[exemptions.walkdir]]
 version = "2.5.0"

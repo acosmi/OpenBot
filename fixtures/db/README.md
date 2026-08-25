@@ -169,6 +169,29 @@ event exactly-once、fencing takeover、replay、outbox replay-safe/claim/delive
 删除清空与新 tool FK；双 replica 仍实得 `Applied + AlreadyApplied`。40 个具名 repository 由
 `all_forty_current_repositories_touch_their_real_tables` 逐个触表，不以空 struct 占名。
 
+## schema-0017.json：RMCP catalog identity 与 durable tool sequence
+
+schema-0017.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0017.sql → schema_facts.sql
+由 native_0017 的显式 regeneration guard 机械生成，SHA-256
+c2e85542c72a623ad7b0b3f8dc165317dfbcb91119b19a7d836ac7b711607000。
+
+| 项 | 0017 数量 | 相对 0016 |
+| --- | ---: | ---: |
+| public 表 | 41 | 0 |
+| 列 | 366 | +15 |
+| NOT NULL 列 | 268 | 0 |
+| 约束 | 197 | +16 |
+| 索引 | 80 | 0 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增列全部 nullable，兼容期不回填：runs.next_tool_call_seq 只由 PostgreSQL 原子 allocator
+推进；MCP server/tool/grant 的 generation、schema/effect、可用态及
+endpoint+vendor+provenance transport fingerprint 只有真实 RMCP refresh 才成组写入。
+complete-projection CHECK 拒绝半套状态，transport/provenance 改变会立即使旧 grant 不可读，并在
+refresh 时转为 suspended_missing；重新出现也不自动启用。
+
 ## 复算命令
 
 ```bash
@@ -192,6 +215,9 @@ python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0015.json',en
 
 # post-0016
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0016.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 351 268 181 80 4
+
+# post-0017
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0017.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 366 268 197 80 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

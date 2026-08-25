@@ -44,8 +44,8 @@ use super::payload::{AuditIdentifier, AuditLabel, AuditPayload};
 /// | grep -cE '^\s+"'`，在 commit `891df72f1827454d8b353d108fe5dd2313b7e30d` 上得 57）。
 /// 这些字面量是**跨系统契约**：它们进数据库、进管理页的筛选下拉、进上游既有数据。把它们
 /// 搬成 57 个 Rust 变体会得到一张两侧都要人工维护的映射表，而映射表漂了没有任何东西会红。
-/// 本项目新增的 deadline 与 explicit-memory tool 三事件单列在相邻项后，并在 parity/events
-/// 标为新增；它们不冒充上游目录成员。
+/// 本项目新增的 deadline、explicit-memory tool 三事件与 MCP stale-grant suspension 单列在
+/// 相邻项后，并在 parity/events 标为新增；它们不冒充上游目录成员。
 ///
 /// 所以取值集合直接由 [`AUDIT_EVENT_TYPES`] 承载，类型本身只保证**封闭性**：
 /// [`AuditEventType::parse`] 只接受目录里的字面量，没有从任意 `String` 构造的入口。
@@ -88,6 +88,8 @@ impl AuditEventType {
     pub const MCP_CALL_SUCCEEDED: Self = Self("mcp.call_succeeded");
     /// MCP 调用被放行但 vendor 没完成。
     pub const MCP_CALL_FAILED: Self = Self("mcp.call_failed");
+    /// Catalog refresh suspended a stale/missing/changed MCP grant.
+    pub const MCP_TOOL_SUSPENDED_MISSING: Self = Self("mcp.tool_suspended_missing");
 
     /// 从字符串解析。**只接受 [`AUDIT_EVENT_TYPES`] 里的字面量。**
     ///
@@ -114,7 +116,7 @@ impl fmt::Display for AuditEventType {
     }
 }
 
-/// 事件类型全集：上游 57 项 + 本项目新增 deadline/memory 4 项。
+/// 事件类型全集：上游 57 项 + 本项目新增 deadline/memory/catalog 5 项。
 ///
 /// 顺序也照抄上游，方便逐行对拍。
 pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
@@ -139,6 +141,7 @@ pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
     AuditEventType("mcp.oauth_client_registered"),
     AuditEventType("mcp.account_connected"),
     AuditEventType("mcp.account_disconnected"),
+    AuditEventType("mcp.tool_suspended_missing"),
     AuditEventType("computer.action_allowed"),
     AuditEventType("computer.action_refused"),
     AuditEventType("computer.action_failed"),
@@ -239,10 +242,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn catalog_is_upstream_fifty_seven_plus_four_new_and_has_no_duplicates() {
-        assert_eq!(AUDIT_EVENT_TYPES.len(), 61);
+    fn catalog_is_upstream_fifty_seven_plus_five_new_and_has_no_duplicates() {
+        assert_eq!(AUDIT_EVENT_TYPES.len(), 62);
         let unique: BTreeSet<&str> = AUDIT_EVENT_TYPES.iter().map(|t| t.0).collect();
-        assert_eq!(unique.len(), 61, "目录里有重复的事件类型");
+        assert_eq!(unique.len(), 62, "目录里有重复的事件类型");
     }
 
     #[test]

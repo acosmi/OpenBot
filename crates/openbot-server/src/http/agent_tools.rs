@@ -1,13 +1,13 @@
 //! Remote Agent tool-callback framing and credential boundary.
 //!
-//! RMCP/Drive executors are not connected yet. The route is nevertheless production-authenticated:
-//! malformed/unknown credentials are audited and refused, while a correctly signed empty tool set
-//! yields 404. It never substitutes a test executor to manufacture success.
+//! The handler authenticates both callback credentials, then delegates to the same governed Agent
+//! gateway and ApplicationService pipeline used by built-in runs. It owns no alternate executor.
 
 use axum::Json;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use http::HeaderMap;
+use openbot_agent::AgentToolInvokeError;
 use openbot_contracts::error::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -70,17 +70,31 @@ pub async fn call(
     let null = Value::Null;
     let run = body.run.as_ref().unwrap_or(&null);
     let tool_name = body.name.as_deref().unwrap_or("");
-    let _authorization = authenticator
+    let authorization = authenticator
         .authorize(token, run, tool_name)
         .await
         .map_err(|error| error.into_app_error())?;
-
-    // No production callback executor is reachable until RMCP/Drive grants and a durable
-    // cross-replica call-sequence issuer land. An impossible success here must fail closed.
-    Err(AppError::DependencyUnavailable {
-        dependency: "remote_callback_executor",
-    }
-    .into())
+    let tools = state
+        .remote_callback_tools()
+        .ok_or(AppError::DependencyUnavailable {
+            dependency: "remote_callback_executor",
+        })?;
+    let arguments = body.args.unwrap_or_else(|| serde_json::json!({}));
+    let reply = tools
+        .invoke_callback(authorization, tool_name, arguments)
+        .await
+        .map_err(|error| match error {
+            AgentToolInvokeError::Unavailable => AppError::DependencyUnavailable {
+                dependency: "remote_callback_executor",
+            },
+            AgentToolInvokeError::ReconciliationRequired => {
+                AppError::ReconciliationRequired { accepted: true }
+            }
+        })?;
+    Ok(Json(CallbackResult {
+        text: reply.content().to_owned(),
+        is_error: reply.error_code().is_some(),
+    }))
 }
 
 #[cfg(test)]

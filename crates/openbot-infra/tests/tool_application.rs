@@ -98,6 +98,7 @@ impl ToolControlPlane for FakeControl {
             },
             policy_context: policy_context(auth.actor(), &invocation.bot_id),
             idempotency_key: None,
+            preflight_refusal: None,
         })
     }
 

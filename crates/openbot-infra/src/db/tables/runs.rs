@@ -10,6 +10,7 @@ crate::db::tables::define_table! {
     status: String = ("status", "text", true),
     fencing_token: i64 = ("fencing_token", "bigint", true),
     next_event_seq: i64 = ("next_event_seq", "bigint", true),
+    next_tool_call_seq: Option<i64> = ("next_tool_call_seq", "bigint", false),
     terminal_event_seq: Option<i64> = ("terminal_event_seq", "bigint", false),
     error_code: Option<String> = ("error_code", "text", false),
     created_at: time::OffsetDateTime = ("created_at", "timestamp with time zone", true),

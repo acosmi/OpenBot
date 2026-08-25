@@ -60,7 +60,7 @@ async fn post_0016_is_exact_expand_only_and_tool_fk_is_staged_not_validated() {
             if before != facts(POST_0015) {
                 return Err("0016 前提事实漂移".to_owned());
             }
-            if native::apply(&mut client)
+            if native::apply_through(&mut client, native::NATIVE_0016_VERSION)
                 .await
                 .map_err(|error| error.to_string())?
                 != ApplyOutcome::Applied
@@ -226,6 +226,7 @@ async fn native_constraints_and_repositories_enforce_fencing_replay_outbox_and_m
                 status: "running".to_owned(),
                 fencing_token: 1,
                 next_event_seq: 2,
+                next_tool_call_seq: None,
                 terminal_event_seq: None,
                 error_code: None,
                 created_at: now,

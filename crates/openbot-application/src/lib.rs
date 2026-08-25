@@ -137,9 +137,9 @@ pub use service::{
 };
 pub use tool::{
     AuthorizedToolCall, ExecutableToolCall, NoToolControlPlane, NoToolJournal, ResolvedToolScope,
-    ToolApprovalRequest, ToolAuditDraftError, ToolControlPlane, ToolDecisionDraft,
-    ToolExecutionReport, ToolJournal, ToolOutcomeDraft, ToolPolicyEvaluation, ToolPortError,
-    ToolRefusalDraft, invoke_tool,
+    ToolApprovalRequest, ToolAuditDraftError, ToolCallSequence, ToolCallSequenceError,
+    ToolControlPlane, ToolDecisionDraft, ToolExecutionReport, ToolJournal, ToolOutcomeDraft,
+    ToolPolicyEvaluation, ToolPortError, ToolPreflightRefusal, ToolRefusalDraft, invoke_tool,
 };
 pub use use_cases::{
     DEFAULT_AUDIT_PAGE, DEFAULT_CHANNEL_PAGE, DEFAULT_MEMORY_PAGE, DEFAULT_PEOPLE_PAGE,

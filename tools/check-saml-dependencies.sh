@@ -158,7 +158,7 @@ expected={
 }
 seen={p["SPDXID"]:(p.get("versionInfo"),p.get("licenseConcluded")) for p in d["packages"] if p["SPDXID"] in expected}
 assert seen==expected,(seen,expected)
-assert len(d["packages"])==54,len(d["packages"])
+assert len(d["packages"])==55,len(d["packages"])  # G4 Batch 11 adds jsonschema direct dependency
 ' || fail 'SAML/native SPDX package 集合、版本、许可或总数漂移'
 
 case "$(uname -s)" in

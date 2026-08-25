@@ -11,6 +11,8 @@ use openbot_contracts::ids::{DeploymentId, TenantId};
 use openbot_domain::remote_callback::{RemoteRunAssertionSigner, RemoteRunScope, RemoteToolSet};
 use serde_json::Value;
 
+use crate::mcp_catalog::{GrantedMcpTool, McpCatalogError, PostgresMcpCatalog};
+
 // SPDX-License-Identifier: MIT
 // Source: CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d
 // File: shared/bot-prompt.ts::PROVENANCE_GUIDANCE; modified into a Rust static string.
@@ -45,6 +47,7 @@ pub struct PostgresAgentContextSource {
     max_output_tokens: Option<u32>,
     tools: Vec<ProviderToolDefinition>,
     remote_assertions: Option<std::sync::Arc<RemoteRunAssertionSigner>>,
+    mcp_catalog: Option<std::sync::Arc<PostgresMcpCatalog>>,
 }
 
 impl PostgresAgentContextSource {
@@ -67,6 +70,7 @@ impl PostgresAgentContextSource {
             max_output_tokens,
             tools: Vec::new(),
             remote_assertions: None,
+            mcp_catalog: None,
         })
     }
 
@@ -84,6 +88,13 @@ impl PostgresAgentContextSource {
         signer: std::sync::Arc<RemoteRunAssertionSigner>,
     ) -> Self {
         self.remote_assertions = Some(signer);
+        self
+    }
+
+    /// Attach the authoritative per-Bot MCP grant/catalog projection.
+    #[must_use]
+    pub fn with_mcp_catalog(mut self, catalog: std::sync::Arc<PostgresMcpCatalog>) -> Self {
+        self.mcp_catalog = Some(catalog);
         self
     }
 }
@@ -139,13 +150,24 @@ impl AgentContextSource for PostgresAgentContextSource {
                 .map_err(|_| AgentContextError::Corrupt {
                     field: "agent_type",
                 })?;
+        let granted_mcp = match &self.mcp_catalog {
+            Some(catalog) => catalog
+                .granted_tools_on_client(&client, lease.bot_id(), lease.actor_id())
+                .await
+                .map_err(map_mcp_catalog_error)?,
+            None => Vec::new(),
+        };
         let (route, standing_prompt, tools, max_output_tokens) = match agent_type.as_str() {
-            "built_in" => (
-                provider_route(&configuration)?,
-                standing_prompt(&configuration)?,
-                self.tools.clone(),
-                self.max_output_tokens,
-            ),
+            "built_in" => {
+                let mut tools = self.tools.clone();
+                tools.extend(granted_mcp.iter().map(|tool| tool.provider_definition()));
+                (
+                    provider_route(&configuration)?,
+                    append_granted_tool_guidance(standing_prompt(&configuration)?, &granted_mcp),
+                    tools,
+                    self.max_output_tokens,
+                )
+            }
             "remote_ag_ui" => {
                 let endpoint = configuration
                     .as_object()
@@ -181,9 +203,11 @@ impl AgentContextSource for PostgresAgentContextSource {
                             field: "assertion_issued_at_millis",
                         }
                     })?;
-                // RMCP/Drive grants are not connected yet. An empty authoritative set is signed,
-                // rather than exposing a tool that the callback path cannot execute.
-                let remote_tools = RemoteToolSet::empty();
+                let remote_tools =
+                    RemoteToolSet::new(granted_mcp.iter().map(|tool| tool.model_name.clone()))
+                        .map_err(|_| AgentContextError::Corrupt {
+                            field: "remote_tool_set",
+                        })?;
                 let assertion = self
                     .remote_assertions
                     .as_ref()
@@ -210,8 +234,14 @@ impl AgentContextSource for PostgresAgentContextSource {
                         lease.bot_id().as_str().to_owned(),
                         Some(assertion),
                     )?),
-                    remote_standing_prompt(&name, &title, &role_description)?,
-                    Vec::new(),
+                    append_granted_tool_guidance(
+                        remote_standing_prompt(&name, &title, &role_description)?,
+                        &granted_mcp,
+                    ),
+                    granted_mcp
+                        .iter()
+                        .map(|tool| tool.provider_definition())
+                        .collect(),
                     None,
                 )
             }
@@ -377,6 +407,52 @@ impl AgentContextSource for PostgresAgentContextSource {
             max_output_tokens,
         })
     }
+}
+
+fn map_mcp_catalog_error(error: McpCatalogError) -> AgentContextError {
+    match error {
+        McpCatalogError::Unavailable => AgentContextError::Unavailable,
+        McpCatalogError::NotVisible => AgentContextError::Stale,
+        McpCatalogError::Corrupt { .. } => AgentContextError::Corrupt {
+            field: "mcp_catalog",
+        },
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// Source: CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d
+// File: server/src/plugins/tools.ts::grantedToolGuidance; translated to validated catalog facts.
+fn append_granted_tool_guidance(mut prompt: String, tools: &[GrantedMcpTool]) -> String {
+    if tools.is_empty() {
+        return prompt;
+    }
+    let mut by_system = BTreeMap::<&str, Vec<&str>>::new();
+    for tool in tools {
+        by_system
+            .entry(tool.server_id.as_str())
+            .or_default()
+            .push(tool.raw_name.as_str());
+    }
+    let mut guidance = vec![
+        "You can reach these systems directly, as the person asking, with their own access:"
+            .to_owned(),
+    ];
+    for (system, names) in by_system {
+        guidance.push(format!("- {system}: {}", names.join(", ")));
+    }
+    guidance.extend([
+        "Use them for anything about those systems. Do NOT browse to one of their websites instead: your".to_owned(),
+        "browser is signed in as nobody, so it sees less than these tools do and will meet a sign-in wall".to_owned(),
+        "that connecting an account has already solved.".to_owned(),
+        "If one of these systems is involved and no tool above covers the part you need, that is a".to_owned(),
+        "missing grant and not something to work around. Say so plainly, name the capability you would".to_owned(),
+        "need, and say an administrator can grant it on that connector. Do not reach for the browser, do".to_owned(),
+        "not ask the person to sign in, and do not ask them to fetch it for you: they already have the".to_owned(),
+        "access, and the thing that is missing is yours, not theirs.".to_owned(),
+    ]);
+    prompt.push_str("\n\n");
+    prompt.push_str(&guidance.join("\n"));
+    prompt
 }
 
 fn provider_tool_calls(content: &Value) -> Result<Vec<ProviderToolCall>, AgentContextError> {

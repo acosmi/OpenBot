@@ -8,7 +8,8 @@ use std::time::Duration;
 use hmac::{Hmac, Mac};
 use openbot_agent::{
     AgentToolInvoker, AuthorizedAgentToolGateway, BuiltInAgentConfig, BuiltInAgentRuntime,
-    ProviderRouter, RemoteAguiProvider, RetryingProvider, RetryingProviderConfig,
+    ProviderRouter, RemoteAgentToolInvoker, RemoteAguiProvider, RetryingProvider,
+    RetryingProviderConfig,
 };
 use openbot_application::tenant::package::{
     BuiltInProviderSource, TenantAgentConfiguration, TenantAgentType, TenantPackageAudienceContext,
@@ -28,7 +29,7 @@ use openbot_infra::agent_callback::{
     PostgresAgentCallbackTokens, PostgresRemoteCallbackAuthenticator,
 };
 use openbot_infra::agent_tools::{
-    PostgresAgentAuthorizationSource, PostgresBuiltInToolControlPlane,
+    PostgresAgentAuthorizationSource, PostgresAgentToolSequence, PostgresBuiltInToolControlPlane,
 };
 use openbot_infra::auth::config::{
     AuthConfig, BindingExposure, ExampleKeyPolicy, KeyEncryptionKey, SingleUserAdmission,
@@ -45,6 +46,8 @@ use openbot_infra::auth::single_user::initialize_single_user;
 use openbot_infra::auth::sso::DynamicSsoService;
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{native, pool};
+use openbot_infra::mcp::SafeRmcpClient;
+use openbot_infra::mcp_catalog::PostgresMcpCatalog;
 use openbot_infra::memory_admin::PostgresMemoryAdministration;
 use openbot_infra::net::safe_http::{
     CidrAllowlist, EgressPolicy, SafeDialer, SafeHttpBudget, SchemePolicy,
@@ -115,6 +118,7 @@ struct BuiltInAgentAssemblyInput {
     tools: Arc<dyn AgentToolInvoker>,
     audit: Arc<dyn AgentAudit>,
     remote_assertions: Arc<RemoteRunAssertionSigner>,
+    mcp_catalog: Arc<PostgresMcpCatalog>,
     budgets: AgentBudgets,
 }
 
@@ -323,13 +327,44 @@ async fn main() -> Result<(), Box<dyn Error>> {
         DEFAULT_THREAD_LEASE_DURATION,
     )?;
     let memory = PostgresMemoryAdministration::new(pool.clone());
+    // MCP defaults to public HTTPS only. Private/reserved endpoints remain fail-closed until an
+    // MCP-specific administrator CIDR configuration is added; provider CIDRs are not reused.
+    let mcp_client = SafeRmcpClient::new(
+        SafeDialer::new(EgressPolicy::default()),
+        SchemePolicy::HttpsOnly,
+        server.agent_budgets.stall_timeout,
+    );
+    let mcp_catalog = Arc::new(PostgresMcpCatalog::new(
+        pool.clone(),
+        mcp_client.clone(),
+        audit_key.to_vec(),
+    )?);
+    match tokio::time::timeout(
+        Duration::from_secs(30),
+        mcp_catalog.refresh_unauthenticated_servers(),
+    )
+    .await
+    {
+        Ok(Ok(mcp_sweep)) => tracing::info!(
+            refreshed = mcp_sweep.refreshed,
+            failed = mcp_sweep.failed,
+            authenticated_deferred = mcp_sweep.authenticated_deferred,
+            "MCP startup catalog sweep 已完成"
+        ),
+        Ok(Err(error)) => return Err(error.into()),
+        Err(_) => tracing::warn!(
+            code = "mcp_startup_sweep_timeout",
+            "MCP startup catalog sweep 超过新增 30s 总预算；Server 继续且未刷新项保持不可见"
+        ),
+    }
     let tool_control = PostgresBuiltInToolControlPlane::new(
         pool.clone(),
         deployment.clone(),
         tenant.clone(),
         policy_store.clone(),
         Arc::new(memory.clone()),
-    );
+    )
+    .with_mcp(mcp_catalog.clone(), mcp_client);
     let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.to_vec())?;
     let callback_tokens = PostgresAgentCallbackTokens::new(
         pool.clone(),
@@ -337,14 +372,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         tenant.clone(),
         audit_key.to_vec(),
     )?;
-    let remote_callback_auth = Arc::new(PostgresRemoteCallbackAuthenticator::new(
-        pool.clone(),
-        deployment.clone(),
-        tenant.clone(),
-        single_user,
-        remote_assertions.clone(),
-        audit_key.to_vec(),
-    )?);
+    let remote_callback_auth = Arc::new(
+        PostgresRemoteCallbackAuthenticator::new(
+            pool.clone(),
+            deployment.clone(),
+            tenant.clone(),
+            single_user,
+            remote_assertions.clone(),
+            audit_key.to_vec(),
+        )?
+        .with_mcp_catalog(mcp_catalog.clone()),
+    );
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(ChannelRepo::new(pool.clone()))
             .with_people(people)
@@ -355,7 +393,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_memory(memory)
             .with_agent_callback_tokens(callback_tokens),
     );
-    let agent_tools: Arc<dyn AgentToolInvoker> = Arc::new(AuthorizedAgentToolGateway::new(
+    let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence(
         application.clone(),
         Arc::new(PostgresAgentAuthorizationSource::new(
             pool.clone(),
@@ -363,7 +401,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             tenant.clone(),
             single_user,
         )),
+        Arc::new(PostgresAgentToolSequence::new(pool.clone())),
     ));
+    let agent_tools: Arc<dyn AgentToolInvoker> = governed_tools.clone();
+    let remote_callback_tools: Arc<dyn RemoteAgentToolInvoker> = governed_tools;
     let managed_provider = managed_provider_for_slot(&server);
     let agent_audit: Arc<dyn AgentAudit> =
         Arc::new(PostgresAgentAudit::new(pool.clone(), audit_key.to_vec())?);
@@ -382,6 +423,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         tools: agent_tools,
         audit: agent_audit,
         remote_assertions: remote_assertions.clone(),
+        mcp_catalog,
         budgets: server.agent_budgets,
     })?;
     let built_in_agent_ready = built_in_agent.is_some() || !requires_agent_runtime;
@@ -413,6 +455,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_metrics_handle(metrics)
         .with_insecure_transport(server.public_transport().insecure_transport())
         .with_remote_callback_authenticator(remote_callback_auth)
+        .with_remote_callback_tools(remote_callback_tools)
         .with_readiness_probe(Arc::new(db_probe));
     if let Some((coordinator, dynamic_sso, preauth, origins, secure_cookie)) = oidc_login {
         builder = builder.with_login_security(origins, secure_cookie);
@@ -473,6 +516,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         tools,
         audit,
         remote_assertions,
+        mcp_catalog,
         budgets,
     } = input;
     if !required {
@@ -542,7 +586,8 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
     let context = Arc::new(
         PostgresAgentContextSource::new(pool, deployment, tenant, Some(budgets.max_output_tokens))?
             .with_tools(vec![remember_provider_tool()])
-            .with_remote_assertions(remote_assertions),
+            .with_remote_assertions(remote_assertions)
+            .with_mcp_catalog(mcp_catalog),
     );
     let agent = BuiltInAgentRuntime::start(
         runtime,

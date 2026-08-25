@@ -43,7 +43,7 @@ pub use agui::{
 };
 pub use gateway::{
     AgentToolGateway, AgentToolInvokeError, AgentToolInvoker, AgentToolReply,
-    AuthorizedAgentToolGateway, NoAgentToolInvoker,
+    AuthorizedAgentToolGateway, NoAgentToolInvoker, RemoteAgentToolInvoker,
 };
 pub use provider_router::ProviderRouter;
 pub use remote_provider::RemoteAguiProvider;

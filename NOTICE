@@ -8,7 +8,7 @@ NOTICE —— 第三方组件声明
 - 本文件只声明**第三方**组件；它们各自按原始条款授权，LICENSE 的「保留一切权利」
   不适用于、也不能收紧它们。
 - 机器可读的完整来源登记（固定 commit、SHA-256、purl、逐条取证记录）在
-  `provenance/sources.spdx.json`（SPDX 2.3，54 个 package）。**那份是真源**，
+  `provenance/sources.spdx.json`（SPDX 2.3，55 个 package）。**那份是真源**，
   本文件是它面向发行包的人类可读投影；两者不一致时以 SPDX 文件与实际取证为准，
   并同 PR 修订本文件。
 - 契约依据：v3 方案 §23.1「代码许可」条 1–7、§23.2、§23.4。
@@ -320,6 +320,22 @@ OFL-1.1 的两条硬约束在本项目的用法下均满足，但改变用法时
      这正是 v3 §23.1 条 4 说的「不能给整个仓库套一个猜测」。
      作为 crate 依赖使用时按 crates.io 声明的 Apache-2.0 处理；
      **复制其中任何源码文件之前**必须逐文件判定该文件此刻的实际许可。
+
+--------------------------------------------------------------------------------
+4.3A jsonschema 0.51.0 —— MIT
+--------------------------------------------------------------------------------
+
+  用途       : MCP vendor input-schema validation（production dependency）
+  crates.io  : jsonschema 0.51.0
+  Cargo 摘要 : 152999731bfbe0bb82d561550be73b0c31a9827d6ebe3fe96ad47563703b5328
+  许可证     : MIT
+  版权行     : Copyright (c) 2020-2026 Dmitry Dygalo
+  取证       : crate LICENSE 1,075 B，SHA-256
+               117829c3ca21efb132d81a44b55363d395ab8eea18526873bc828da4c0e5f038
+
+  许可证全文与本文件 §1 收录的标准 MIT 条款相同；分发时须保留上述版权行与 MIT 条款。
+  Production 关闭该 crate 默认的 HTTP/file resolver features，并显式选择线性 regex engine；
+  这两项是安全配置，不改变 MIT 许可义务。
 
 --------------------------------------------------------------------------------
 4.4 binaryen / wasm-opt（构建期工具，不进发行物）
