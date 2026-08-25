@@ -78,3 +78,11 @@
 G8 仍须取得合同/法务许可后，在 maintenance 对生产规模脱敏快照完成三次真实 export/import/restore，
 记录 count/hash/terminal/sample render、RPO/RTO 与签名 key custody。真实 provider/Agent consumer、
 `remember` tool 与 Memory GUI 同样未完成；G3/G8 整关均不勾。
+
+## 6. Git 恢复点
+
+- 实施提交：`31903eeb89d326800a63e72239c13f1aa52c4661`；
+- 分支：`feat/2026-08-24-G3-intelligence-importer`；
+- 堆叠 PR：**#22**，base=`feat/2026-08-24-G3-run-recovery-terminal`，创建后
+  `OPEN/CLEAN/MERGEABLE`；
+- 实施 head 的 GitHub Actions run 数：**0**。
