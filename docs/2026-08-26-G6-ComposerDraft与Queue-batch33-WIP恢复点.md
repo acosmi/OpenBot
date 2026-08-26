@@ -6,6 +6,16 @@
 > 只跑本地定向测试；不运行`cargo xtask ci`，不派发Actions，不处理`grok-bot`，不修改/
 > 暂存/提交`docs/assets/`。
 
+## 接续结果（2026-08-26）
+
+本恢复点已由实施提交 `a34f68337ecfdc0cbed42637285a56263617520d` 完整接续。正式证据见
+[Composer Draft 与 Queue 纯状态](2026-08-26-G6-ComposerDraft与Queue-batch33.md)。固定上游
+draft10+queue16全部通过；UI=`94/0/0`、WASM/Clippy绿，tests=`360/687/1047`、
+parity=`625/1049/1674`、strict recount=`157/157/0`。release bundle hashed asset与Batch32相同。
+
+本批没有渲染Composer、没有stop/cancel API、没有把queue持久化；下文边界继续有效。以下保留为
+开工历史快照，不再作为当前进度口径。
+
 ## 本批范围
 
 1. 逐条移植`app/src/components/channels/composer/draft.test.ts`固定上游10条：
@@ -27,5 +37,5 @@
 
 ## 预期关闭
 
-- `T-TEST-0130–0139`（draft 10）；
-- `T-TEST-0140–0155`（queue 16）。
+- `T-TEST-0131–0140`（draft 10）；
+- `T-TEST-0141–0156`（queue 16）。

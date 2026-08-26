@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-26，Batch 15–32）
+### 15.1 当前实施勾选（2026-08-26，Batch 15–33）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -675,6 +675,10 @@ G6 重写后的文本（替换 v3 原四条）：
   首发只按create channel→native BeginThreadRun→成功navigate；begin失败同channel/run-id重试，
   create响应未知禁止二次提交。release WASM浏览器实得52→52→53、四视口overflow0、AX/id/
   console绿；未实现的Enter提示已删除，完整Composer仍todo；
+- [x] Composer draft/queue纯状态：固定上游10+16条逐项Rust移植；`Cow`保留no-op identity，
+  single Agent、command prompt/chip/deferred action effect、busy park/settle/remove/一次turn合并与command
+  首次顺序去重均闭合。Queue刻意只活在当前mount，不写PG；release hashed asset与Batch32相同。
+  production owner/DOM/stop/cancel尚未落，故T-UI-0043/0123与channel route继续todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents已接，但skills/settings/admin真实destinations尚未迁移；完整channel route也仍缺
   transcript/composer/stop/steer/screen，不得用data shell冒充journey；
@@ -698,7 +702,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-26-G3-ChannelActivity与WebSocket-batch29.md`、
 `docs/2026-08-26-G3-G6-ChannelDetail与ChannelRow-batch30.md`、
 `docs/2026-08-26-G4-G6-AgentRoster与AgentsRoute-batch31.md`、
-`docs/2026-08-26-G3-G6-ChannelCreate与Routing-batch32.md`；
+`docs/2026-08-26-G3-G6-ChannelCreate与Routing-batch32.md`、
+`docs/2026-08-26-G6-ComposerDraft与Queue-batch33.md`；
 G6 整关继续不勾。
 
 ---
