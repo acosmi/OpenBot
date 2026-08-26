@@ -30,8 +30,9 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–21 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 24 条原语打勾：
-# Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller；
+# Batch 15–22 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 26 条原语打勾：
+# Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
+# Batch22 Combobox/Select；
 # 其余即使已有部分源码也
 # 保持 todo，不能用 Approval/preferences/design-gallery 冒充 27 原语、45 业务组件或 27 页
 # golden 全量完成。
@@ -138,16 +139,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 21 精确完成 24 条；其余部分实现或完全未实现均保持 todo
+  # Batch 22 精确完成 26 条；其余部分实现或完全未实现均保持 todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 128
+    expect: 126
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 24
+    expect: 26
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 24
+    expect: 26
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -181,7 +182,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0002"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Combobox 与 Select 共用唯一 listbox context。Editable Combobox 保留 native 文本编辑，输入 contains filter/empty，Arrow/Home/End、disabled skip、Enter/click exactly once，Escape/outside/Tab cancel 并恢复 committed label；中文张命中张三。owner DOM focus + aria-activedescendant，named listbox/options，Field id/described/invalid exact。当前 Chromium Combobox 13/13 + final smoke 10/10，DOM target/五类/console 0；UI49/0/0、WASM/Clippy/gates绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG combobox + listbox；↑↓ Home End Enter Esc、typeahead。状态子集：default/focus/open/disabled/invalid。替代的无头库 = base-ui Combobox。Composer 的 `@coworker` / `/skill` 弹层复用它（§6.5），键盘模式必须与独立使用时逐条相同。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -324,7 +326,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0014"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Select-only owner 与 Combobox 共用 navigation/selection/dismiss/state 内核。Committed value 与 active suggestion 分离；Arrow/Home/End、disabled skip、Escape retain、Enter/Space/click exactly once、Tab commit；500ms multi-character `p`+`u` 命中 Public，reset 后 p 命中 Private。owner focus/active-descendant、named listbox/option selected、Field disabled exact。当前 Chromium Select 14/14 + final smoke 10/10，UI49/0/0、WASM/Clippy/gates绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG select-only combobox；↑↓ Home End Enter Esc、typeahead。状态子集：default/focus/open/disabled/invalid。替代的无头库 = base-ui Select。上游用 `IconChevronUp` + `IconSelector`（见 T-UI-0086 / T-UI-0109），替代实现用 `chevron-up` + `chevrons-up-down`。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 

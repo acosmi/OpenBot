@@ -1,7 +1,9 @@
 # Batch 22 WIP 恢复点：Combobox 与 Select 共享 listbox 内核
 
 > 分支 `codex/2026-08-25-G6-combobox-select-primitives`，base = Batch21 正式 head
-> `88b4dcf5ca23ae4e4d7d7dbe51f608af04b13033`。只跑本地定向测试，不运行
+> `88b4dcf5ca23ae4e4d7d7dbe51f608af04b13033`；implementation checkpoint
+> `088625c78a97dc83f8a9190d38fdee09b450b3e1`。正式证据文档为
+> `2026-08-25-G6-Combobox与Select原语-batch22.md`。只跑本地定向测试，不运行
 > `cargo xtask ci`，不派发 Actions，不处理 `grok-bot`。
 
 ## 本批范围
