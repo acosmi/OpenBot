@@ -53,6 +53,8 @@
 //!   `openbot-server::http::metrics`。不另开监听端口，见 [`http::metrics`] 模块文档。
 //! - `GET /api/admin/audit-events` —— 台账 `api-admin-audit-events-get`（parity），只做 query
 //!   framing；admin gate、归一与页长在 application，SQL/keyset 在 infra（R56）。
+//! - `GET /api/me/session` / `POST /api/auth/sign-out` —— R91；前者只投影revocable，
+//!   后者经已验session+trusted Origin后只删当前PostgreSQL session并清HttpOnly cookie。
 //! - `POST /api/threads/mint` / `GET /api/threads/{thread_id}` —— R64；只做 auth/path/JSON
 //!   framing，CSPRNG 与 PostgreSQL scope 判定均经 typed ApplicationService。
 //! - `GET /api/threads/{thread_id}/events` —— R65 authenticated SSE；只把 Last-Event-ID 变成

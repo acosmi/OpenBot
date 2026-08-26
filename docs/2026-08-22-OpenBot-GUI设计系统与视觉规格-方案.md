@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-25，Batch 15–27）
+### 15.1 当前实施勾选（2026-08-26，Batch 15–28）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -657,6 +657,9 @@ G6 重写后的文本（替换 v3 原四条）：
   danger环分形，thinking/speaking=1200ms、error=160ms×1，本地化AX，reduce全局静止；
 - [x] `ComputerPlaceholderArt` 是唯一1200×800中性currentColor线稿，无gradient/filter/
   noise/shadow/defs/ID/remote/字面色；`ComputerPlaceholder` 只复用它，两入口均纯装饰AX隐藏；
+- [x] AppSidebar 的sign-out生产依赖：`GET /api/me/session` 只回revocable，
+  `POST /api/auth/sign-out` 以已验session+Origin只撤当前PG行并清cookie；UI helper只接受204；
+  `/api/channels/events`/roster realtime仍缺，故app-sidebar尚不勾；
 - [ ] 31 route journey、其余37 个业务组件、1 brand icon、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
@@ -672,7 +675,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-25-G6-图标映射三向join-batch24.md` 与
 `docs/2026-08-25-G6-布局业务组件-batch25.md`、
 `docs/2026-08-25-G6-AgentPresence-batch26.md`、
-`docs/2026-08-25-G6-ComputerPlaceholderArt-batch27.md`；
+`docs/2026-08-25-G6-ComputerPlaceholderArt-batch27.md` 与
+`docs/2026-08-26-G2-生产SessionSignOut-batch28.md`；
 G6 整关继续不勾。
 
 ---

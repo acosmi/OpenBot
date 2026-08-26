@@ -1,7 +1,9 @@
 # Batch 28 WIP 恢复点：生产 Session Sign-out
 
 > 日期：2026-08-25。分支 `codex/2026-08-25-G2-session-signout`，base =
-> Batch27 正式 head `4fcefca48a0a2928ba872770ac08f28329232078`。只跑本地定向测试；
+> Batch27 正式 head `4fcefca48a0a2928ba872770ac08f28329232078`，implementation =
+> `36be5747da2e5501fe2d5103635dd63df03668d0`。正式文档为
+> `docs/2026-08-26-G2-生产SessionSignOut-batch28.md`。只跑本地定向测试；
 > 不运行 `cargo xtask ci`，不派发 Actions，不处理 `grok-bot`，不修改/暂存/
 > 提交并行出现的 `docs/assets/`。
 
