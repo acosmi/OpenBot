@@ -319,7 +319,22 @@
     "scroller_item": "Message",
     "scroller_user": "User turn",
     "scroller_reply": "Assistant reply",
-    "scroller_stream_line": "A streamed line that increases the measured reply height."
+    "scroller_stream_line": "A streamed line that increases the measured reply height.",
+    "listboxes": "Combobox and select",
+    "combobox_label": "Coworker",
+    "combobox_placeholder": "Choose a coworker…",
+    "combobox_empty": "No coworkers found.",
+    "combobox_ada": "Ada Lovelace",
+    "combobox_grace": "Grace Hopper",
+    "combobox_zhang": "Zhang San",
+    "combobox_invalid": "Invalid coworker",
+    "select_label": "Visibility",
+    "select_placeholder": "Choose visibility",
+    "select_private": "Private",
+    "select_team": "Team only",
+    "select_public": "Public",
+    "select_disabled": "Disabled select",
+    "listbox_after": "After listboxes"
   },
   "keyboard": {
     "command": "Command",

@@ -4,6 +4,7 @@ mod avatar;
 mod badge;
 mod bubble;
 mod button;
+mod combobox;
 mod dialog;
 mod empty_state;
 mod field;
@@ -13,11 +14,13 @@ mod input_group;
 mod item;
 mod kbd;
 mod label;
+mod listbox;
 mod locale_switch;
 mod menu;
 mod message;
 mod message_scroller;
 mod modal;
+mod select;
 mod separator;
 mod sheet;
 mod skeleton;
@@ -32,6 +35,10 @@ pub use avatar::{Avatar, AvatarSize};
 pub use badge::{Badge, BadgeTone};
 pub use bubble::{Bubble, BubbleGroup, BubbleKind};
 pub use button::{Button, ButtonPreviewState, ButtonSize, ButtonVariant};
+pub use combobox::{
+    Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList,
+    ComboboxSeparator,
+};
 pub use dialog::{Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogTrigger};
 pub use empty_state::EmptyState;
 pub use field::Field;
@@ -53,6 +60,9 @@ pub use message_scroller::{
     MessageScrollerViewport, use_message_scroller,
 };
 pub use modal::SheetSide;
+pub use select::{
+    Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger,
+};
 pub use separator::{Separator, SeparatorOrientation};
 pub use sheet::Sheet;
 pub use skeleton::{Skeleton, SkeletonShape};

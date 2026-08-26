@@ -7,15 +7,16 @@ use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
 use crate::primitives::{
     Avatar, AvatarSize, Bubble, BubbleKind, Button, ButtonPreviewState, ButtonSize, ButtonVariant,
-    Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogTrigger, Field, IconSize,
-    IconView, Input, InputGroup, InputGroupAffix, InputGroupAffixPosition, InputPreviewState,
-    InputType, Item, ItemAction, ItemActions, ItemDescription, ItemMedia, ItemTitle, Kbd, KbdKey,
-    KbdModifier, Menu, MenuContent, MenuItem, MenuSeparator, MenuSub, MenuSubTrigger, MenuTrigger,
-    Message, MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageGroup,
-    MessageHeader, MessageScroller, MessageScrollerButton, MessageScrollerContent,
-    MessageScrollerItem, MessageScrollerViewport, Separator, SeparatorOrientation, Sheet,
-    SheetSide, Skeleton, SkeletonShape, Switch, Textarea, TextareaPreviewState, Toast,
-    ToastPreviewState, Tooltip, TooltipTrigger, TooltipTriggerAction,
+    Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList, Dialog,
+    DialogBody, DialogClose, DialogContent, DialogFooter, DialogTrigger, Field, IconSize, IconView,
+    Input, InputGroup, InputGroupAffix, InputGroupAffixPosition, InputPreviewState, InputType,
+    Item, ItemAction, ItemActions, ItemDescription, ItemMedia, ItemTitle, Kbd, KbdKey, KbdModifier,
+    Menu, MenuContent, MenuItem, MenuSeparator, MenuSub, MenuSubTrigger, MenuTrigger, Message,
+    MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageGroup, MessageHeader,
+    MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem,
+    MessageScrollerViewport, Select, SelectContent, SelectGroup, SelectItem, SelectTrigger,
+    Separator, SeparatorOrientation, Sheet, SheetSide, Skeleton, SkeletonShape, Switch, Textarea,
+    TextareaPreviewState, Toast, ToastPreviewState, Tooltip, TooltipTrigger, TooltipTriggerAction,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,6 +47,16 @@ pub fn DesignGallery() -> impl IntoView {
     let menu_open = RwSignal::new(false);
     let menu_select_count = RwSignal::new(0_u32);
     let menu_close_count = RwSignal::new(0_u32);
+    let combobox_open = RwSignal::new(false);
+    let combobox_value = RwSignal::new(None::<String>);
+    let combobox_change_count = RwSignal::new(0_u32);
+    let invalid_combobox_open = RwSignal::new(false);
+    let invalid_combobox_value = RwSignal::new(None::<String>);
+    let select_open = RwSignal::new(false);
+    let select_value = RwSignal::new(Some("private".to_owned()));
+    let select_change_count = RwSignal::new(0_u32);
+    let disabled_select_open = RwSignal::new(false);
+    let disabled_select_value = RwSignal::new(None::<String>);
     let scroller_items = RwSignal::new(
         (1..=10)
             .map(|id| ScrollerGalleryItem {
@@ -167,6 +178,172 @@ pub fn DesignGallery() -> impl IntoView {
                                 <Kbd modifier=KbdModifier::Primary key=KbdKey::Character('K') />
                             </InputGroupAffix>
                         </InputGroup>
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-listboxes-title">
+                    <h2 id="design-listboxes-title">{move || t!(i18n, design_gallery.listboxes)}</h2>
+                    <div class="ob-design-stack" id="design-listboxes">
+                        <Combobox
+                            id="design-combobox"
+                            open=combobox_open
+                            value=combobox_value
+                            on_value_change=UnsyncCallback::new(move |_| {
+                                combobox_change_count.update(|count| *count += 1);
+                            })
+                        >
+                            <ComboboxInput
+                                aria_label=move || t_string!(i18n, design_gallery.combobox_label).to_owned()
+                                placeholder=move || t_string!(i18n, design_gallery.combobox_placeholder).to_owned()
+                            />
+                            <ComboboxContent>
+                                <ComboboxEmpty>
+                                    {move || t!(i18n, design_gallery.combobox_empty)}
+                                </ComboboxEmpty>
+                                <ComboboxList>
+                                    <ComboboxItem
+                                        id="design-combobox-ada"
+                                        value="ada"
+                                        label=move || t_string!(i18n, design_gallery.combobox_ada).to_owned()
+                                    >
+                                        {move || t!(i18n, design_gallery.combobox_ada)}
+                                    </ComboboxItem>
+                                    <ComboboxItem
+                                        id="design-combobox-grace"
+                                        value="grace"
+                                        label=move || t_string!(i18n, design_gallery.combobox_grace).to_owned()
+                                        disabled=true
+                                    >
+                                        {move || t!(i18n, design_gallery.combobox_grace)}
+                                    </ComboboxItem>
+                                    <ComboboxItem
+                                        id="design-combobox-zhang"
+                                        value="zhang"
+                                        label=move || t_string!(i18n, design_gallery.combobox_zhang).to_owned()
+                                    >
+                                        {move || t!(i18n, design_gallery.combobox_zhang)}
+                                    </ComboboxItem>
+                                </ComboboxList>
+                            </ComboboxContent>
+                        </Combobox>
+                        <div class="ob-design-row">
+                            <output id="design-combobox-value" aria-live="polite">
+                                {move || combobox_value.get().unwrap_or_else(|| "—".to_owned())}
+                            </output>
+                            <output id="design-combobox-change-count" aria-live="polite">
+                                {combobox_change_count}
+                            </output>
+                        </div>
+                        <Field
+                            control_id="design-combobox-invalid"
+                            label=move || t_string!(i18n, design_gallery.combobox_invalid).to_owned()
+                            error=move || t_string!(i18n, errors.validation_invalid).to_owned()
+                            invalid=true
+                        >
+                            <Combobox
+                                id="design-combobox-invalid"
+                                open=invalid_combobox_open
+                                value=invalid_combobox_value
+                                preview_focus=true
+                            >
+                                <ComboboxInput
+                                    aria_label=move || t_string!(i18n, design_gallery.combobox_invalid).to_owned()
+                                    placeholder=move || t_string!(i18n, design_gallery.combobox_invalid).to_owned()
+                                />
+                                <ComboboxContent>
+                                    <ComboboxList>
+                                        <ComboboxItem
+                                            id="design-combobox-invalid-option"
+                                            value="invalid"
+                                            label=move || t_string!(i18n, design_gallery.combobox_invalid).to_owned()
+                                        >
+                                            {move || t!(i18n, design_gallery.combobox_invalid)}
+                                        </ComboboxItem>
+                                    </ComboboxList>
+                                </ComboboxContent>
+                            </Combobox>
+                        </Field>
+                        <Select
+                            id="design-select"
+                            open=select_open
+                            value=select_value
+                            on_value_change=UnsyncCallback::new(move |_| {
+                                select_change_count.update(|count| *count += 1);
+                            })
+                        >
+                            <SelectTrigger
+                                aria_label=move || t_string!(i18n, design_gallery.select_label).to_owned()
+                                placeholder=move || t_string!(i18n, design_gallery.select_placeholder).to_owned()
+                            />
+                            <SelectContent>
+                                <SelectGroup>
+                                    <SelectItem
+                                        id="design-select-private"
+                                        value="private"
+                                        label=move || t_string!(i18n, design_gallery.select_private).to_owned()
+                                    >
+                                        {move || t!(i18n, design_gallery.select_private)}
+                                    </SelectItem>
+                                    <SelectItem
+                                        id="design-select-team"
+                                        value="team"
+                                        label=move || t_string!(i18n, design_gallery.select_team).to_owned()
+                                        disabled=true
+                                    >
+                                        {move || t!(i18n, design_gallery.select_team)}
+                                    </SelectItem>
+                                    <SelectItem
+                                        id="design-select-public"
+                                        value="public"
+                                        label=move || t_string!(i18n, design_gallery.select_public).to_owned()
+                                    >
+                                        {move || t!(i18n, design_gallery.select_public)}
+                                    </SelectItem>
+                                </SelectGroup>
+                            </SelectContent>
+                        </Select>
+                        <div class="ob-design-row">
+                            <output id="design-select-value" aria-live="polite">
+                                {move || select_value.get().unwrap_or_else(|| "—".to_owned())}
+                            </output>
+                            <output id="design-select-change-count" aria-live="polite">
+                                {select_change_count}
+                            </output>
+                        </div>
+                        <Field
+                            control_id="design-select-disabled"
+                            label=move || t_string!(i18n, design_gallery.select_disabled).to_owned()
+                            disabled=true
+                        >
+                            <Select
+                                id="design-select-disabled"
+                                open=disabled_select_open
+                                value=disabled_select_value
+                            >
+                                <SelectTrigger
+                                    aria_label=move || t_string!(i18n, design_gallery.select_disabled).to_owned()
+                                    placeholder=move || t_string!(i18n, design_gallery.select_disabled).to_owned()
+                                />
+                                <SelectContent>
+                                    <SelectItem
+                                        id="design-select-disabled-option"
+                                        value="disabled"
+                                        label=move || t_string!(i18n, design_gallery.select_disabled).to_owned()
+                                    >
+                                        {move || t!(i18n, design_gallery.select_disabled)}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </Field>
+                        <button
+                            id="design-listbox-after"
+                            type="button"
+                            class="ob-button"
+                            data-variant="chip"
+                            data-size="md"
+                        >
+                            {move || t!(i18n, design_gallery.listbox_after)}
+                        </button>
                     </div>
                 </section>
 

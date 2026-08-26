@@ -319,7 +319,22 @@
     "scroller_item": "消息",
     "scroller_user": "用户回合",
     "scroller_reply": "助手回复",
-    "scroller_stream_line": "一行会增加回复实测高度的流式内容。"
+    "scroller_stream_line": "一行会增加回复实测高度的流式内容。",
+    "listboxes": "组合框与选择框",
+    "combobox_label": "同事",
+    "combobox_placeholder": "选择一位同事…",
+    "combobox_empty": "没有找到同事。",
+    "combobox_ada": "Ada Lovelace",
+    "combobox_grace": "Grace Hopper",
+    "combobox_zhang": "张三",
+    "combobox_invalid": "无效的同事",
+    "select_label": "可见范围",
+    "select_placeholder": "选择可见范围",
+    "select_private": "仅自己可见",
+    "select_team": "仅团队可见",
+    "select_public": "所有人可见",
+    "select_disabled": "已停用的选择框",
+    "listbox_after": "选择控件之后"
   },
   "keyboard": {
     "command": "Command",
