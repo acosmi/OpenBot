@@ -1746,14 +1746,15 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
-  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 361 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
+  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 362 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
   - [x] Axum `APP_DIST_DIR` 条件挂同一 bundle，唯一同源 external bootstrap、strict CSP/安全头、cookie/Accept-Language 首帧 `<html class lang>` Rust 改写、API/缺失 asset 不被 SPA fallback 隐藏；
   - [x] Approval 页面只展示服务端权威 effect/target/redacted arguments/change，GET poll + fresh POST grant/deny；真实 Chromium 已验证 APG ThemeToggle/LocaleSwitch、批准后 card 消失+status、1440×900 与 1024×640 无横向溢出、landmark/heading/id/name/remote-resource 审计；浏览器数据来自明确 test-only fixture，不冒充生产 PostgreSQL；
   - [x] Server 用户偏好经唯一 typed ApplicationService/PostgreSQL native 0021 持久化并镜像 closed `SameSite=Lax` cookie；Desktop Local closed file 原子写；Leptos startup read + serialized/coalescing partial PUT，失败显示本地化 `role=alert`；
   - [x] opt-in Tauri 2.11.5 production custom protocol：host-bound window label→AuthContext，未绑定连 asset 401；preferences/approval 只经 typed in-process；本地偏好/OS locale 首帧 Rust 改写、strict CSP、canonical asset/closed MIME/8MiB；Linux Server/Web 与 WASM graph 构造性无 Tauri/Wry/GTK；
   - [x] UI ledger 的27条primitive子账全done；46条Tabler→Lucide经第一真源→icons.toml→ledger三向join关闭；
     layout 组 detail-panel/page-shell/row-mark/stagger 四条业务、orb/ai-core→AgentPresence两条又有生产实现与本机证据。
-    当前UI=`79/73/152`；Google Drive brand、其余39业务/runtime/golden保持todo；
+    ComputerPlaceholder/Art两条又共享唯一中性线稿闭合。当前UI=`81/71/152`；
+    Google Drive brand、其余37业务/runtime/golden保持todo；
   - [x] `design-gallery` compile feature 承载 `/_design` 状态/键盘/AX 样本；production feature 关闭且 bundle gate 直接要求 WASM `_design` byte=0。真实 Chromium 已验证十条基础原语的 Enter/Space、Field ARIA、focus-within、Textarea 十行 cap、separator/skeleton AX 与 DOM 五类零缺陷；截图只作目视 QA，不冒充 golden；
   - [x] Message/Bubble compound、platform-aware Kbd、SHA-256 deterministic Avatar、5s generation-safe polite Toast、400ms hover/focus/Escape Tooltip 已过 Rust/WASM/Chromium/AX；Avatar remote image、Item/Tooltip external link 构造性拒绝，Toast 仍不冒充所有 accepted:false 业务 use case 已接线；
   - [x] Dialog/Sheet 共享唯一 modal kernel：explicit ARIA、首焦点、Tab双向环、Escape/close/backdrop、return focus、body scroll lock 与 path-sibling inert/aria-hidden；Sheet top/right/bottom/left 四值不复制安全规则；
@@ -1767,12 +1768,14 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     API不可用时同token CSS fallback、reduce=0ms，完成后卸载并返焦；
   - [x] AgentPresence 按§6.7把上游437+395行orb/shader收为20px四态Signal；完整环/单弧/双弧/danger环分形，
     thinking/speaking=1200ms、error=160ms×1均从token生成，本地化role=img名称，reduced-motion全局静止；
-  - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及其余39业务组件/31route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
+  - [x] ComputerPlaceholderArt 以唯一currentColor中性线稿替代两份彩色噪声SVG；
+    ComputerPlaceholder只复用它，零gradient/filter/defs/ID/remote/字面色，两入口均aria-hidden/focusable=false；
+  - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及其余37业务组件/31route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
   - [ ] Tauri target-aware bans/sources 已绿；macOS/Windows 各仍有 5 个 MPL-2.0、5 个 runtime UNIC unmaintained（无 patched 版），Cargo Vet 为 macOS **270** / Windows **269** unvetted（既有 target 基线 181，净增 89/88）；未改 license/advisory/vet policy，故供应链与 G6 整关均不勾。
 - [ ] **G7**：Screen/Handover 性能、安全票据、human lease 未实施完成。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账：parity **515/1672 done（1157 todo）**，fixtures **15/37 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账：parity **517/1672 done（1155 todo）**，fixtures **15/37 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -1979,6 +1982,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R88 | §4.5 / §5.1–§5.3 / §6.2 / §9.2–§10.4（GUI第一真源）/ §13.1–§13.3 / §16.3 / §21.1 / §24 G6（2026-08-25 layout业务组件 batch25） | R87后primitive/icon地基已闭，但45业务仍全todo，旧Approval又直接手写页框。上游detail=400px、stagger=40ms/12cap与本仓真源token 360px、30ms/8cap冲突，不能照搬。只隐藏detail会跳过尺寸联动且让焦点落body；各写一份像素时长又会分裂tokens.toml。实测还发现精确1024px时经典滚动条占15px，固定两列gallery会在无页面横滚时静默裁360px panel。 | 新建features::layout四模块。PageShell只允许960/1200/768三宽与44px topbar，stable h1/h2、same-origin back、Rows/Empty，并接入production Approval。RowMark收为36px中性vendor tile。StaggerItem只用static class + data-stagger0..8、token 30ms与全局reduce。DetailPanel以present/phase/generation管opening/open/closing/closed，宽度/时长/easing直读生成Rust token，优先WAAPI width/flex-basis/opacity，不可用则同token CSS transition，reduce=0ms；完成后卸载并返焦，Enter/Space preventDefault exactly-once。gallery用sidebar+detail token auto-fit，不增断点。 | UI=`56/0/0`、WASM、UI all-targets Clippy/fmt绿；i18n=`360`、design=`50 Rust/74 icons`、css=`159`，production bundle wasm gzip=`375251`/CSS=`60332`/fonts=`740216`/external-inline=`1/0`。Chromium 1024×640：Approval h1/main/nav=`1/1/1`、960/44px、overflow/duplicate/remote=`0/0/0`；layout panel=360、WAAPI path exit/enter=`160/240`、Enter/Space/click close count=`0→1→2→3`且返焦、named complementary/region/link各1、RowMark=36×36、stagger=`0/ob-list-stagger`、console0。parity=`513/1159/1672`、UI=`77/75/152`、0 violation/warning；strict recount=`157/157/0`。Cargo.lock/package delta0，web-sys只扩MediaQueryList，UI dependency guard绿。implementation `1689471ca65615d6ff332a770f5bfa6f03808666`；未运行CI/Actions。其余41业务/31routes/brand/6runtime/27golden/Tauri release仍缺，G6不勾。详见Batch25文档。 |
 
 | R89 | §4.1 / §4.5 / §6.2 / §6.7 / §9.2–§10.4（GUI第一真源）/ §13.1 / §16.3 / §21.1 / §24 G6（2026-08-25 AgentPresence batch26） | R88后 agents 组仍有两份orb文件todo。照搬437行orb+395行ai-core的canvas/shader/音频会违反§6.7与原则7；只画一个旋转圈又会让thinking/speaking只靠动画区分，reduce后语义消失。1200/160ms若只写CSS会再次分裂tokens.toml。同时app-sidebar虽有channels/me API，但production sign-out仍属Better Auth wildcard todo，roster realtime也未对等；用`/sign`只清界面会冒充session revoke，故本批不勾app-sidebar。 | 新建reactive `AgentPresenceState` 闭集与20px AgentPresence，固定track+primary/secondary arcs DOM；idle完整环、thinking单弧、speaking双弧、error danger完整环，形状+颜色+本地化role=img名称同时传信。tokens.toml新增agent_presence_cycle=1200ms/error=160ms，CSS只消费生成变量；thinking spin infinite、speaking双弧alternate±、error单次位移。全局reduce闸门强制animation:none，静态形状/颜色/名称仍在。compile gallery同屏四态。 | UI=`57/0/0`、WASM、UI all-targets Clippy/fmt绿；i18n=`361`、design=`52 Rust/74 icons`、css=`163`，production bundle wasm gzip=`375421`/CSS=`62691`/fonts=`740216`/external-inline=`1/0`。Chromium 1024×640实得四态均20×20；thinking=`spin/1.2s/infinite`，speaking双弧=`1.2s/infinite/alternate±`，error=`160ms/1`；四个本地化AX name各1，DOM/overflow/remote/console全0。浏览器为no-preference；reduce只记全局CSS+单测构造性证据，不写成media实跑。parity=`515/1157/1672`、UI=`79/73/152`、0 violation/warning；strict recount=`157/157/0`。Cargo.lock/package delta0；implementation `5bb9d1ffe7ca8e0a023a5b07739584deee49cc26`；未运行CI/Actions。motion总项、app-sidebar、其余39业务/31routes/brand/27golden/Tauri release仍缺，G6不勾。详见Batch26文档。 |
+
+| R90 | §4.1–§4.6 / §6.2 / §9.2–§10.4（GUI第一真源）/ §13.1 / §16.3 / §21.1 / §24 G6（2026-08-25 ComputerPlaceholderArt batch27） | R89后computer/placeholder与settings/background仍todo，固定上游两文件却是同职责162行彩色gradient+噪声/filter SVG。照搬会违反中性底色/无彩色背景/无阴影裁决，复制两份又会把defs ID与漂移加倍。装饰图若自报status/live又会伪造运行时语义。 | 新建唯一 `settings::ComputerPlaceholderArt`，保留1200×800/3:2坐标，改为`xMidYMid meet`、fill=none、stroke=currentColor的中性线稿；表面/线条只消费bg-subtle/border/fg-muted/secondary。`computer::ComputerPlaceholder` 只负责3:2 frame并复用Art，wrapper零第二份SVG。零gradient/radial/filter/noise/shadow/defs/DOM ID/style attr/remote/字面fill·stroke色；Art与wrapper均纯装饰AX隐藏，不进Lucide allowlist。 | UI=`59/0/0`、WASM、UI all-targets Clippy/fmt绿；i18n=`362`、design=`56 Rust/74 icons`、css=`168`，production bundle wasm gzip=`375910`/CSS=`63205`/fonts=`740216`/external-inline=`1/0`。源码反向单测实得Art唯一1个`<svg>`、wrapper零`<svg>`，禁止marker全0。Chromium 1024×640：两实例同viewBox/preserve/currentColor、实测约324.5×215.7；defs/gradient/filter/style/id/remote/literal-color=0，AX img/focusable=0，duplicate/nested/overflow/console=0。parity=`517/1155/1672`、UI=`81/71/152`、0 violation/warning；strict recount=`157/157/0`。Cargo.lock/package delta0；implementation `aa2c0a480009c54fd08b9db7210f7e3e483e9a94`；未运行CI/Actions。Computer其余四组件与Screen/G5、其余37业务/31routes/brand/runtime/golden/Tauri release仍缺，G6不勾。详见Batch27文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 

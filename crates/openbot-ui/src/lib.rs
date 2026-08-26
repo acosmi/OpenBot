@@ -33,7 +33,8 @@
 //! MessageScroller，Batch 22 闭合共享 listbox 内核上的 Combobox/Select，Batch 23 闭合
 //! Sidebar；27 条 primitive 子账全 done。Batch 24 关闭46条 Lucide mapping，Batch 25 闭合
 //! layout 组四条业务组件并把 PageShell 接入 production Approval，Batch 26 以同一
-//! AgentPresence 关闭orb/ai-core两条。完整 route/其余39业务组件/
+//! AgentPresence 关闭orb/ai-core两条，Batch 27 以唯一中性线稿关闭ComputerPlaceholder/Art两条。
+//! 完整 route/其余37业务组件/
 //! golden 与可发布 Tauri 宿主仍按台账保持未完成，不能由本 crate 存在而推导为 G6 整关通过。
 
 #![deny(missing_docs)]

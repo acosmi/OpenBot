@@ -1,7 +1,9 @@
 # Batch 27 WIP 恢复点：ComputerPlaceholderArt
 
 > 日期：2026-08-25。分支 `codex/2026-08-25-G6-computer-placeholder-art`，base =
-> Batch26 正式 head `3f97bc2e3c8894f0fe553d59ebafcf2a9e7caef0`。只跑本地定向测试；
+> Batch26 正式 head `3f97bc2e3c8894f0fe553d59ebafcf2a9e7caef0`，implementation =
+> `aa2c0a480009c54fd08b9db7210f7e3e483e9a94`。正式文档为
+> `2026-08-25-G6-ComputerPlaceholderArt-batch27.md`。只跑本地定向测试；
 > 不运行 `cargo xtask ci`，不派发 Actions，不处理 `grok-bot`，不修改/暂存/
 > 提交并行出现的 `docs/assets/`。
 
