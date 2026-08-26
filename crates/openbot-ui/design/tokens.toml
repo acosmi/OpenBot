@@ -280,6 +280,7 @@ menu_min = 180
 message_scroller_preview = 320
 listbox_min = 180
 listbox_max = 288
+sidebar_preview = 360
 table_row = 36
 sidebar_item = 32
 topbar = 44

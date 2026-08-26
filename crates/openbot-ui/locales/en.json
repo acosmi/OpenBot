@@ -334,7 +334,15 @@
     "select_team": "Team only",
     "select_public": "Public",
     "select_disabled": "Disabled select",
-    "listbox_after": "After listboxes"
+    "listbox_after": "After listboxes",
+    "sidebar": "Sidebar",
+    "sidebar_label": "Primary navigation",
+    "sidebar_mobile_title": "Navigation",
+    "sidebar_mobile_description": "Choose an OpenBot destination.",
+    "sidebar_toggle": "Toggle sidebar",
+    "sidebar_group": "Workspace",
+    "sidebar_content": "Responsive shell content",
+    "sidebar_user": "Test user"
   },
   "keyboard": {
     "command": "Command",

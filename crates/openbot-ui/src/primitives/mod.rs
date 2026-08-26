@@ -23,6 +23,7 @@ mod modal;
 mod select;
 mod separator;
 mod sheet;
+mod sidebar;
 mod skeleton;
 mod switch;
 mod textarea;
@@ -65,6 +66,11 @@ pub use select::{
 };
 pub use separator::{Separator, SeparatorOrientation};
 pub use sheet::Sheet;
+pub use sidebar::{
+    SIDEBAR_LARGE_BREAKPOINT_PX, SIDEBAR_MEDIUM_BREAKPOINT_PX, Sidebar, SidebarContent,
+    SidebarController, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader,
+    SidebarNavLink, SidebarNavList, SidebarProvider, SidebarTrigger, SidebarViewport, use_sidebar,
+};
 pub use skeleton::{Skeleton, SkeletonShape};
 pub use switch::Switch;
 pub use textarea::{Textarea, TextareaPreviewState};

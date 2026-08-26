@@ -15,7 +15,9 @@ use crate::primitives::{
     MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageGroup, MessageHeader,
     MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem,
     MessageScrollerViewport, Select, SelectContent, SelectGroup, SelectItem, SelectTrigger,
-    Separator, SeparatorOrientation, Sheet, SheetSide, Skeleton, SkeletonShape, Switch, Textarea,
+    Separator, SeparatorOrientation, Sheet, SheetSide, Sidebar, SidebarContent, SidebarFooter,
+    SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarNavLink, SidebarNavList,
+    SidebarProvider, SidebarTrigger, Skeleton, SkeletonShape, Switch, Textarea,
     TextareaPreviewState, Toast, ToastPreviewState, Tooltip, TooltipTrigger, TooltipTriggerAction,
 };
 
@@ -57,6 +59,8 @@ pub fn DesignGallery() -> impl IntoView {
     let select_change_count = RwSignal::new(0_u32);
     let disabled_select_open = RwSignal::new(false);
     let disabled_select_value = RwSignal::new(None::<String>);
+    let sidebar_collapsed = RwSignal::new(false);
+    let sidebar_change_count = RwSignal::new(0_u32);
     let scroller_items = RwSignal::new(
         (1..=10)
             .map(|id| ScrollerGalleryItem {
@@ -345,6 +349,70 @@ pub fn DesignGallery() -> impl IntoView {
                             {move || t!(i18n, design_gallery.listbox_after)}
                         </button>
                     </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-sidebar-title">
+                    <h2 id="design-sidebar-title">{move || t!(i18n, design_gallery.sidebar)}</h2>
+                    <SidebarProvider
+                        id="design-sidebar"
+                        collapsed=sidebar_collapsed
+                        aria_label=move || t_string!(i18n, design_gallery.sidebar_label).to_owned()
+                        mobile_title=move || t_string!(i18n, design_gallery.sidebar_mobile_title).to_owned()
+                        mobile_description=move || t_string!(i18n, design_gallery.sidebar_mobile_description).to_owned()
+                        on_collapsed_change=UnsyncCallback::new(move |_| {
+                            sidebar_change_count.update(|count| *count += 1);
+                        })
+                    >
+                        <div class="ob-design-sidebar-shell" id="design-sidebar-shell">
+                            <Sidebar>
+                                <SidebarHeader>
+                                    <IconView icon=Icon::Bot size=IconSize::Navigation />
+                                    <span class="ob-sidebar-link-label">{move || t!(i18n, common.app_name)}</span>
+                                </SidebarHeader>
+                                <SidebarContent>
+                                    <SidebarGroup>
+                                        <SidebarGroupLabel>
+                                            {move || t!(i18n, design_gallery.sidebar_group)}
+                                        </SidebarGroupLabel>
+                                        <SidebarNavList>
+                                            <SidebarNavLink
+                                                href="/approvals"
+                                                icon=Icon::ListChecks
+                                                label=move || t_string!(i18n, admin.nav_approvals).to_owned()
+                                                current=true
+                                            />
+                                            <SidebarNavLink
+                                                href="/agents"
+                                                icon=Icon::Users
+                                                label=move || t_string!(i18n, shell.nav_agents).to_owned()
+                                            />
+                                            <SidebarNavLink
+                                                href="/settings"
+                                                icon=Icon::Settings
+                                                label=move || t_string!(i18n, shell.nav_settings).to_owned()
+                                            />
+                                        </SidebarNavList>
+                                    </SidebarGroup>
+                                </SidebarContent>
+                                <SidebarFooter>
+                                    <IconView icon=Icon::User size=IconSize::Navigation />
+                                    <span class="ob-sidebar-link-label">
+                                        {move || t!(i18n, design_gallery.sidebar_user)}
+                                    </span>
+                                </SidebarFooter>
+                            </Sidebar>
+                            <div class="ob-design-sidebar-main">
+                                <SidebarTrigger
+                                    id="design-sidebar-trigger"
+                                    aria_label=move || t_string!(i18n, design_gallery.sidebar_toggle).to_owned()
+                                />
+                                <p>{move || t!(i18n, design_gallery.sidebar_content)}</p>
+                                <output id="design-sidebar-change-count" aria-live="polite">
+                                    {sidebar_change_count}
+                                </output>
+                            </div>
+                        </div>
+                    </SidebarProvider>
                 </section>
 
                 <section class="ob-design-section" aria-labelledby="design-items-title">

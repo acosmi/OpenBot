@@ -334,7 +334,15 @@
     "select_team": "仅团队可见",
     "select_public": "所有人可见",
     "select_disabled": "已停用的选择框",
-    "listbox_after": "选择控件之后"
+    "listbox_after": "选择控件之后",
+    "sidebar": "侧栏",
+    "sidebar_label": "主导航",
+    "sidebar_mobile_title": "导航",
+    "sidebar_mobile_description": "选择一个 OpenBot 目标位置。",
+    "sidebar_toggle": "切换侧栏",
+    "sidebar_group": "工作区",
+    "sidebar_content": "响应式壳内容",
+    "sidebar_user": "测试用户"
   },
   "keyboard": {
     "command": "Command",
