@@ -131,8 +131,8 @@ pub use ports::{
     NoMemoryAdministration, NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory,
     OwnedCredentialRetirementError, OwnedCredentialRetirer, PeopleAdministration,
     PeoplePageRequest, PeoplePortError, PolicyAdministration, PolicyAdministrationError, PortError,
-    RecallMemoriesRequest, RememberMemoryRequest, RoutingAuditRecord, ThreadDirectory,
-    ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
+    RecallMemoriesRequest, RememberMemoryRequest, RoutingAuditRecord, ThreadConversationRequest,
+    ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
 };
 pub use provider::{
     AgentAudit, AgentAuditError, AgentAuditKind, AgentAuthorizationError, AgentAuthorizationSource,
@@ -167,8 +167,8 @@ pub use use_cases::{
     MAX_AUDIT_PAGE, MAX_MEMORY_CONTENT_BYTES, MAX_MEMORY_QUERY_BYTES, MAX_MEMORY_TAG_BYTES,
     MAX_MEMORY_TAGS, MAX_PEOPLE_PAGE, MAX_ROUTING_CANDIDATES, admin_status, begin_thread_run,
     change_person_access, change_person_role, correct_memory, create_channel, current_user,
-    get_action_policy, get_thread_history, get_thread_status, get_visible_agent,
-    get_visible_channel, health, list_audit_events, list_memories, list_people,
+    get_action_policy, get_thread_conversation, get_thread_history, get_thread_status,
+    get_visible_agent, get_visible_channel, health, list_audit_events, list_memories, list_people,
     list_visible_agents, list_visible_channels, mint_thread_id, mutate_memory, recall_memories,
     remember_memory, route_channel_message, set_action_policy, subscribe_channel_activity,
     subscribe_thread_events,

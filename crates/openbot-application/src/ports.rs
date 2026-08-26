@@ -503,6 +503,19 @@ pub struct ThreadHistoryRequest {
     pub thread: ThreadId,
 }
 
+/// Authority-scoped atomic conversation snapshot request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreadConversationRequest {
+    /// Verified deployment.
+    pub deployment: DeploymentId,
+    /// Verified tenant.
+    pub tenant: TenantId,
+    /// Verified actor.
+    pub actor: ActorId,
+    /// Native thread.
+    pub thread: ThreadId,
+}
+
 /// Native thread ID 铸造与 scope-aware 可见性查询。
 ///
 /// 查询同时接收 deployment、tenant 与 actor，三者都来自权威 [`AuthContext`](openbot_contracts::auth::AuthContext)，
@@ -555,6 +568,14 @@ pub trait ThreadDirectory: Send + Sync {
         &self,
         _request: ThreadHistoryRequest,
     ) -> Result<ThreadHistory, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
+
+    /// Read messages, current foreground run, and last event cursor from one database statement.
+    async fn thread_conversation(
+        &self,
+        _request: ThreadConversationRequest,
+    ) -> Result<openbot_contracts::command::ThreadConversationSnapshot, ThreadDirectoryError> {
         Err(ThreadDirectoryError::Unavailable)
     }
 }

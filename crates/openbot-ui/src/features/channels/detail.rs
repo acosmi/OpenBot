@@ -6,11 +6,10 @@ use openbot_contracts::command::ChannelDetail;
 
 #[cfg(target_arch = "wasm32")]
 use crate::api::load_channel;
-use crate::features::layout::{
-    PageBackLink, PageHeader, PageSection, PageShell, PageTopbar, PageWidth,
-};
+use crate::features::layout::{PageBackLink, PageHeader, PageShell, PageTopbar, PageWidth};
 use crate::i18n::{t, t_string, use_i18n};
-use crate::primitives::EmptyState;
+
+use super::ChannelConversation;
 
 /// Authenticated `/channel/:channel_id` destination backed by real channel detail data.
 #[component]
@@ -44,21 +43,7 @@ pub fn ChannelDetailPage() -> impl IntoView {
                             t_string!(i18n, channels.detail_inactive).to_owned()
                         }
                     />
-                    <PageSection
-                        heading_id="channel-conversation-status".to_owned()
-                        title=move || t_string!(i18n, channels.thread).to_owned()
-                    >
-                        <Show when=move || detail.thread_id.is_none()>
-                            <p class="ob-page-empty">
-                                {move || t!(i18n, channels.detail_no_thread)}
-                            </p>
-                        </Show>
-                        <EmptyState
-                            heading_id="channel-journey-pending"
-                            title=t_string!(i18n, channels.detail_unavailable_title)
-                            body=t_string!(i18n, channels.detail_unavailable_body)
-                        />
-                    </PageSection>
+                    <ChannelConversation channel=detail />
                 })}
             </Show>
         </PageShell>

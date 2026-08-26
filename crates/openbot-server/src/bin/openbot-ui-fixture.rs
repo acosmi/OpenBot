@@ -1,5 +1,6 @@
 //! Local-only deterministic GUI fixture host required by the GUI first-source golden workflow.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -13,13 +14,16 @@ use openbot_application::{
     AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, BeginThreadRunRequest,
     ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
     ChannelReader, OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError,
-    PortError, ThreadDirectory, ThreadDirectoryError, ToolApprovalAdministration,
+    PortError, ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError,
+    ThreadEventSubscription, ThreadHistoryRequest, ToolApprovalAdministration,
     ToolApprovalAdministrationError, UiPreferenceAdministration, UiPreferenceAdministrationError,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
 use openbot_contracts::command::{
-    AppEvent, ChannelActivityEvent, ChannelDetail, ChannelSummary, ThreadRunStarted,
+    AppEvent, ChannelActivityEvent, ChannelDetail, ChannelSummary, ThreadConversationSnapshot,
+    ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole, ThreadRunEvent, ThreadRunEventKind,
+    ThreadRunStarted,
 };
 use openbot_contracts::ids::{
     ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
@@ -36,6 +40,8 @@ use openbot_server::{
     AuthResolver, ResolvedAuth, SensitiveWriteSecurity, ServerBuilder, StaticApp,
 };
 use time::{Duration, OffsetDateTime};
+
+const FIXTURE_EXISTING_THREAD: &str = "550e8400-e29b-81d4-a716-446655440000";
 
 #[derive(Clone)]
 struct FixtureChannels {
@@ -62,7 +68,7 @@ impl FixtureChannels {
                 last_message_at: Some(now - Duration::minutes(i64::from(index))),
                 last_message_agent_id: Some(BotId::new(format!("bot-{}", index % 4))),
                 created_at: now - Duration::days(2) - Duration::minutes(i64::from(index)),
-                thread_id: (index == 0).then(|| ThreadId::new("fixture-thread-0")),
+                thread_id: (index == 0).then(|| ThreadId::new(FIXTURE_EXISTING_THREAD)),
                 active: index != 3,
             })
             .collect();
@@ -321,8 +327,80 @@ impl PeopleAdministration for FixturePeople {
     }
 }
 
-#[derive(Clone, Copy)]
-struct FixtureThreads;
+#[derive(Clone)]
+struct FixtureThreads {
+    inner: Arc<FixtureThreadsInner>,
+    channels: FixtureChannels,
+}
+
+struct FixtureThreadsInner {
+    snapshots: Mutex<HashMap<String, ThreadConversationSnapshot>>,
+    events: Mutex<HashMap<String, Vec<ThreadRunEvent>>>,
+    subscribers: Mutex<HashMap<String, Vec<tokio::sync::mpsc::Sender<AppEvent>>>>,
+    receipts: Mutex<HashMap<String, ThreadRunStarted>>,
+}
+
+impl FixtureThreads {
+    fn new(channels: FixtureChannels) -> Self {
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            FIXTURE_EXISTING_THREAD.to_owned(),
+            ThreadConversationSnapshot {
+                messages: vec![
+                    ThreadHistoryMessage {
+                        id: "fixture-user-message".to_owned(),
+                        role: ThreadHistoryRole::User,
+                        content: "Categorize these expenses.".to_owned(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-assistant-message".to_owned(),
+                        role: ThreadHistoryRole::Assistant,
+                        content: "Categorized three expenses.".to_owned(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                    },
+                ],
+                active_run_id: None,
+                active_run_text: String::new(),
+                last_event_sequence: None,
+            },
+        );
+        Self {
+            inner: Arc::new(FixtureThreadsInner {
+                snapshots: Mutex::new(snapshots),
+                events: Mutex::new(HashMap::new()),
+                subscribers: Mutex::new(HashMap::new()),
+                receipts: Mutex::new(HashMap::new()),
+            }),
+            channels,
+        }
+    }
+
+    fn publish(&self, thread: &ThreadId, event: ThreadRunEvent) {
+        self.inner
+            .events
+            .lock()
+            .expect("fixture events lock")
+            .entry(thread.as_str().to_owned())
+            .or_default()
+            .push(event.clone());
+        if let Some(subscribers) = self
+            .inner
+            .subscribers
+            .lock()
+            .expect("fixture subscribers lock")
+            .get_mut(thread.as_str())
+        {
+            subscribers.retain(|sender| {
+                sender
+                    .try_send(AppEvent::ThreadRunEvent(event.clone()))
+                    .is_ok()
+            });
+        }
+    }
+}
 
 #[async_trait]
 impl ThreadDirectory for FixtureThreads {
@@ -330,7 +408,7 @@ impl ThreadDirectory for FixtureThreads {
         &self,
         _deployment: &DeploymentId,
     ) -> Result<ThreadId, ThreadDirectoryError> {
-        Err(ThreadDirectoryError::Unavailable)
+        Ok(ThreadId::new(uuid::Uuid::now_v7().to_string()))
     }
 
     async fn thread_known(
@@ -338,22 +416,207 @@ impl ThreadDirectory for FixtureThreads {
         _deployment: &DeploymentId,
         _tenant: &TenantId,
         _actor: &ActorId,
-        _thread: &ThreadId,
+        thread: &ThreadId,
     ) -> Result<bool, ThreadDirectoryError> {
-        Err(ThreadDirectoryError::Unavailable)
+        Ok(self
+            .inner
+            .snapshots
+            .lock()
+            .map_err(|_| ThreadDirectoryError::Unavailable)?
+            .contains_key(thread.as_str()))
     }
 
     async fn begin_thread_run(
         &self,
         request: BeginThreadRunRequest,
     ) -> Result<ThreadRunStarted, ThreadDirectoryError> {
-        Ok(ThreadRunStarted {
-            thread_id: request.command.thread_id,
-            run_id: request.command.run_id,
-            message_sequence: 1,
-            event_sequence: 1,
+        if let Some(receipt) = self
+            .inner
+            .receipts
+            .lock()
+            .map_err(|_| ThreadDirectoryError::Unavailable)?
+            .get(request.command.run_id.as_str())
+            .cloned()
+        {
+            return Ok(ThreadRunStarted {
+                replayed: true,
+                ..receipt
+            });
+        }
+        let thread = request.command.thread_id.clone();
+        let run = request.command.run_id.clone();
+        if let openbot_contracts::command::ThreadRunAnchor::Channel { channel_id } =
+            &request.command.anchor
+            && let Ok(mut channels) = self.channels.rows.lock()
+            && let Some(channel) = channels
+                .iter_mut()
+                .find(|channel| channel.id == *channel_id)
+        {
+            channel.thread_id = Some(thread.clone());
+        }
+        let (message_sequence, event_sequence) = {
+            let mut snapshots = self
+                .inner
+                .snapshots
+                .lock()
+                .map_err(|_| ThreadDirectoryError::Unavailable)?;
+            let snapshot = snapshots.entry(thread.as_str().to_owned()).or_default();
+            let message_sequence = u64::try_from(snapshot.messages.len()).map_err(|_| {
+                ThreadDirectoryError::Corrupt {
+                    field: "fixture_sequence",
+                }
+            })?;
+            let event_sequence = snapshot
+                .last_event_sequence
+                .map_or(0, |value| value.saturating_add(1));
+            snapshot.messages.push(ThreadHistoryMessage {
+                id: format!("{}:user", run.as_str()),
+                role: ThreadHistoryRole::User,
+                content: request.command.message.clone(),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+            snapshot.active_run_id = Some(run.clone());
+            snapshot.active_run_text.clear();
+            snapshot.last_event_sequence = Some(event_sequence);
+            (message_sequence, event_sequence)
+        };
+        let started = ThreadRunStarted {
+            thread_id: thread.clone(),
+            run_id: run.clone(),
+            message_sequence,
+            event_sequence,
             replayed: false,
+        };
+        self.inner
+            .receipts
+            .lock()
+            .map_err(|_| ThreadDirectoryError::Unavailable)?
+            .insert(run.as_str().to_owned(), started.clone());
+        self.publish(
+            &thread,
+            ThreadRunEvent {
+                thread_id: thread.clone(),
+                run_id: run.clone(),
+                event_sequence,
+                event_type: ThreadRunEventKind::Started,
+                payload: serde_json::json!({"runId":run,"messageId":format!("{}:user",run.as_str()),"botId":request.command.bot_id}),
+                terminal: false,
+                created_at: OffsetDateTime::now_utc(),
+            },
+        );
+        let runtime = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            let chunk_sequence = event_sequence.saturating_add(1);
+            if let Ok(mut snapshots) = runtime.inner.snapshots.lock()
+                && let Some(snapshot) = snapshots.get_mut(thread.as_str())
+            {
+                snapshot.active_run_text = "Fixture reply".to_owned();
+                snapshot.last_event_sequence = Some(chunk_sequence);
+            }
+            runtime.publish(
+                &thread,
+                ThreadRunEvent {
+                    thread_id: thread.clone(),
+                    run_id: run.clone(),
+                    event_sequence: chunk_sequence,
+                    event_type: ThreadRunEventKind::SemanticChunk,
+                    payload: serde_json::json!({"channel":"text","delta":"Fixture reply"}),
+                    terminal: false,
+                    created_at: OffsetDateTime::now_utc(),
+                },
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            let terminal_sequence = chunk_sequence.saturating_add(1);
+            if let Ok(mut snapshots) = runtime.inner.snapshots.lock()
+                && let Some(snapshot) = snapshots.get_mut(thread.as_str())
+            {
+                snapshot.messages.push(ThreadHistoryMessage {
+                    id: format!("{}:assistant", run.as_str()),
+                    role: ThreadHistoryRole::Assistant,
+                    content: "Fixture reply".to_owned(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                });
+                snapshot.active_run_id = None;
+                snapshot.active_run_text.clear();
+                snapshot.last_event_sequence = Some(terminal_sequence);
+            }
+            runtime.publish(
+                &thread,
+                ThreadRunEvent {
+                    thread_id: thread.clone(),
+                    run_id: run,
+                    event_sequence: terminal_sequence,
+                    event_type: ThreadRunEventKind::Completed,
+                    payload: serde_json::json!({"status":"completed"}),
+                    terminal: true,
+                    created_at: OffsetDateTime::now_utc(),
+                },
+            );
+        });
+        Ok(started)
+    }
+
+    async fn thread_history(
+        &self,
+        request: ThreadHistoryRequest,
+    ) -> Result<ThreadHistory, ThreadDirectoryError> {
+        Ok(ThreadHistory {
+            messages: self
+                .inner
+                .snapshots
+                .lock()
+                .map_err(|_| ThreadDirectoryError::Unavailable)?
+                .get(request.thread.as_str())
+                .map(|snapshot| snapshot.messages.clone())
+                .unwrap_or_default(),
         })
+    }
+
+    async fn thread_conversation(
+        &self,
+        request: ThreadConversationRequest,
+    ) -> Result<ThreadConversationSnapshot, ThreadDirectoryError> {
+        Ok(self
+            .inner
+            .snapshots
+            .lock()
+            .map_err(|_| ThreadDirectoryError::Unavailable)?
+            .get(request.thread.as_str())
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn subscribe_thread_events(
+        &self,
+        request: ThreadEventSubscription,
+    ) -> Result<AppEventStream, ThreadDirectoryError> {
+        let (sender, receiver) = tokio::sync::mpsc::channel(64);
+        let cursor = request.after_event_sequence;
+        for event in self
+            .inner
+            .events
+            .lock()
+            .map_err(|_| ThreadDirectoryError::Unavailable)?
+            .get(request.thread.as_str())
+            .into_iter()
+            .flatten()
+            .filter(|event| cursor.is_none_or(|cursor| event.event_sequence > cursor))
+        {
+            sender
+                .try_send(AppEvent::ThreadRunEvent(event.clone()))
+                .map_err(|_| ThreadDirectoryError::Unavailable)?;
+        }
+        self.inner
+            .subscribers
+            .lock()
+            .map_err(|_| ThreadDirectoryError::Unavailable)?
+            .entry(request.thread.as_str().to_owned())
+            .or_default()
+            .push(sender);
+        Ok(Box::pin(FixtureEventStream { receiver }))
     }
 
     async fn subscribe_channel_activity(
@@ -568,12 +831,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         revoked: AtomicBool::new(false),
     };
     let channels = FixtureChannels::new(now);
+    let threads = FixtureThreads::new(channels.clone());
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
             .with_agent_directory(Arc::new(FixtureAgents::new()))
             .with_people(FixturePeople)
-            .with_threads(FixtureThreads)
+            .with_threads(threads)
             .with_tool_approvals(Arc::new(FixtureApprovals::new(now)))
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );

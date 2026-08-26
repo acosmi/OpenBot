@@ -50,10 +50,11 @@ use crate::ui_preferences::{
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, begin_thread_run, change_person_access,
     change_person_role, correct_memory, create_channel, current_user, get_action_policy,
-    get_thread_history, get_thread_status, get_visible_agent, get_visible_channel, health,
-    health_stream, list_audit_events, list_memories, list_people, list_visible_agents,
-    list_visible_channels, mint_thread_id, mutate_memory, recall_memories, remember_memory,
-    route_channel_message, set_action_policy, subscribe_channel_activity, subscribe_thread_events,
+    get_thread_conversation, get_thread_history, get_thread_status, get_visible_agent,
+    get_visible_channel, health, health_stream, list_audit_events, list_memories, list_people,
+    list_visible_agents, list_visible_channels, mint_thread_id, mutate_memory, recall_memories,
+    remember_memory, route_channel_message, set_action_policy, subscribe_channel_activity,
+    subscribe_thread_events,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -473,6 +474,9 @@ where
             )),
             AppCommand::GetThreadHistory { thread_id } => Ok(AppReply::ThreadHistory(
                 get_thread_history(&self.threads, auth, thread_id).await?,
+            )),
+            AppCommand::GetThreadConversation { thread_id } => Ok(AppReply::ThreadConversation(
+                get_thread_conversation(&self.threads, auth, thread_id).await?,
             )),
             AppCommand::RememberMemory(input) => Ok(AppReply::Memory(
                 remember_memory(&self.memory, auth, input).await?,

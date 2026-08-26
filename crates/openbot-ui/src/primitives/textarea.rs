@@ -1,5 +1,6 @@
 //! Controlled multiline textbox with Rust/WASM autosize capped by CSS at ten lines.
 
+use leptos::ev::KeyboardEvent;
 use leptos::html;
 use leptos::prelude::*;
 
@@ -22,6 +23,9 @@ pub fn Textarea(
     #[prop(optional, into)] aria_label: TextProp,
     #[prop(optional, into)] invalid: MaybeProp<bool>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
+    /// Optional owner submit path: Enter submits, Shift+Enter and IME composition remain text input.
+    #[prop(optional)]
+    on_submit: Option<UnsyncCallback<()>>,
     #[prop(optional)] preview_state: Option<TextareaPreviewState>,
 ) -> impl IntoView {
     let field = field_context();
@@ -42,6 +46,8 @@ pub fn Textarea(
             || field_disabled.as_ref().is_some_and(FieldContext::disabled)
     });
     let node_ref = NodeRef::<html::Textarea>::new();
+    let composing = StoredValue::new(false);
+    let submit = StoredValue::new(on_submit);
     Effect::new(move |_| {
         value.track();
         resize_textarea(node_ref);
@@ -72,8 +78,22 @@ pub fn Textarea(
                 value.set(event_target_value(&event));
                 resize_textarea(node_ref);
             }
+            on:compositionstart=move |_| composing.set_value(true)
+            on:compositionend=move |_| composing.set_value(false)
+            on:keydown=move |event: KeyboardEvent| {
+                if should_submit(&event.key(), event.shift_key(), composing.get_value())
+                    && let Some(callback) = submit.get_value()
+                {
+                    event.prevent_default();
+                    callback.run(());
+                }
+            }
         ></textarea>
     }
+}
+
+fn should_submit(key: &str, shift: bool, composing: bool) -> bool {
+    key == "Enter" && !shift && !composing
 }
 
 fn resolve_control_id(field: Option<&FieldContext>, explicit: Option<String>) -> Option<String> {
@@ -131,5 +151,13 @@ mod tests {
             textarea_state_tokens(Some(TextareaPreviewState::Focus), true, true),
             Some("focus invalid disabled".to_owned())
         );
+    }
+
+    #[test]
+    fn enter_submit_never_steals_shift_newline_or_ime_commit() {
+        assert!(should_submit("Enter", false, false));
+        assert!(!should_submit("Enter", true, false));
+        assert!(!should_submit("Enter", false, true));
+        assert!(!should_submit("a", false, false));
     }
 }

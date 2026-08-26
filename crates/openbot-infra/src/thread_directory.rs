@@ -7,12 +7,13 @@ use std::future::poll_fn;
 use async_trait::async_trait;
 use futures_core::Stream;
 use openbot_application::{
-    AppEventStream, BeginThreadRunRequest, ChannelActivitySubscription, ThreadDirectory,
-    ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
+    AppEventStream, BeginThreadRunRequest, ChannelActivitySubscription, ThreadConversationRequest,
+    ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
 };
 use openbot_contracts::command::{
-    AppEvent, ChannelActivityEvent, ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole,
-    ThreadRunAnchor, ThreadRunEvent, ThreadRunEventKind, ThreadRunStarted,
+    AppEvent, ChannelActivityEvent, ThreadConversationSnapshot, ThreadHistory,
+    ThreadHistoryMessage, ThreadHistoryRole, ThreadRunAnchor, ThreadRunEvent, ThreadRunEventKind,
+    ThreadRunStarted,
 };
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
@@ -277,6 +278,93 @@ impl ThreadDirectory for PostgresThreadDirectory {
             .map(decode_history_message)
             .collect::<Result<_, _>>()?;
         Ok(ThreadHistory { messages })
+    }
+
+    async fn thread_conversation(
+        &self,
+        request: ThreadConversationRequest,
+    ) -> Result<ThreadConversationSnapshot, ThreadDirectoryError> {
+        let client = self.pool.get().await.map_err(|error| {
+            tracing::error!(error = %error, "thread conversation 获取数据库连接失败");
+            ThreadDirectoryError::Unavailable
+        })?;
+        let rows = client
+            .query(
+                "SELECT t.next_event_seq,coalesce(a.run_ids,'{}'::text[]) AS active_run_ids, \
+                        coalesce(a.run_texts,'{}'::text[]) AS active_run_texts, \
+                        m.message_id,m.role,m.content \
+                 FROM public.threads t \
+                 LEFT JOIN public.messages m ON m.thread_id=t.thread_id \
+                 LEFT JOIN LATERAL ( \
+                   SELECT array_agg(r.run_id ORDER BY r.created_at,r.run_id) AS run_ids, \
+                          array_agg(coalesce(( \
+                            SELECT string_agg(e.payload->>'delta','' ORDER BY e.seq) \
+                            FROM public.run_events e WHERE e.run_id=r.run_id \
+                              AND e.event_type='semantic_chunk' \
+                              AND e.payload->>'channel'='text' \
+                              AND e.seq>coalesce(( \
+                                SELECT max(c.seq) FROM public.run_events c \
+                                WHERE c.run_id=r.run_id AND c.event_type='checkpoint' \
+                              ),-1) \
+                          ),'') ORDER BY r.created_at,r.run_id) AS run_texts \
+                   FROM public.runs r WHERE r.thread_id=t.thread_id AND r.foreground \
+                     AND r.status IN ('queued','running','reconciliation_required') \
+                 ) a ON true \
+                 WHERE t.thread_id=$1 AND t.deployment_id=$2 AND t.tenant_id=$3 \
+                   AND t.status<>'deleted' AND ( \
+                     (t.anchor_kind='direct_bot' AND EXISTS( \
+                       SELECT 1 FROM public.thread_memberships tm \
+                       WHERE tm.thread_id=t.thread_id AND tm.user_id=$4 \
+                     )) OR (t.anchor_kind='channel' AND EXISTS( \
+                       SELECT 1 FROM public.channel_memberships cm \
+                       WHERE cm.channel_id=t.anchor_id AND cm.user_id=$4 \
+                     )) \
+                   ) \
+                 ORDER BY m.seq NULLS FIRST",
+                &[
+                    &request.thread.as_str(),
+                    &request.deployment.as_str(),
+                    &request.tenant.as_str(),
+                    &request.actor.as_str(),
+                ],
+            )
+            .await
+            .map_err(|error| unavailable("读取 thread conversation 失败", error))?;
+        let Some(first) = rows.first() else {
+            return Ok(ThreadConversationSnapshot::default());
+        };
+        let next_event_sequence: i64 = decode(first, "next_event_seq")?;
+        if next_event_sequence < 0 {
+            return Err(ThreadDirectoryError::Corrupt {
+                field: "next_event_seq",
+            });
+        }
+        let active: Vec<String> = decode(first, "active_run_ids")?;
+        let active_texts: Vec<String> = decode(first, "active_run_texts")?;
+        if active.len() > 1 || active.len() != active_texts.len() {
+            return Err(ThreadDirectoryError::Corrupt {
+                field: "active_foreground",
+            });
+        }
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let message_id: Option<String> = decode(row, "message_id")?;
+            if message_id.is_some() {
+                messages.push(decode_history_message(row)?);
+            }
+        }
+        Ok(ThreadConversationSnapshot {
+            messages,
+            active_run_id: active
+                .into_iter()
+                .next()
+                .map(openbot_contracts::ids::RunId::new),
+            active_run_text: active_texts.into_iter().next().unwrap_or_default(),
+            last_event_sequence: next_event_sequence
+                .checked_sub(1)
+                .map(|value| checked_sequence(value, "last_event_sequence"))
+                .transpose()?,
+        })
     }
 }
 

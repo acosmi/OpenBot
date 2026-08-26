@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 163
+    expect: 164
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 17
+    expect: 18
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 163
+    expect: 164
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1762,3 +1762,14 @@ entries:
     done_evidence: "Batch32: same-origin auth precedes closed BeginThreadRunBody; path owns threadId, AuthContext owns scope, 201=create/200=exact replay, no-store. Server2/0/0；PG Channel Create bridge proves the newly created native thread materializes membership/message/run/activity through the existing production transaction."
     evidence: "docs/2026-08-26-G3-G6-ChannelCreate与Routing-batch32.md"
     notes: "新增 framing，不新增第二套 run business path；all authority/replay/lease/transaction semantics remain in existing BeginThreadRun ApplicationService + PostgresThreadDirectory."
+  - id: "api-thread-conversation-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::threads::conversation (GET /api/threads/{thread_id}/conversation)"
+    owner: "openbot-server"
+    test_id: "T-API-0164"
+    migration_rule: "n/a: final Leptos needs one atomic PostgreSQL history/foreground/cursor snapshot before durable SSE replay"
+    status: "done"
+    done_evidence: "Batch34: authenticated no-store handler takes only path thread id and AuthContext scope; PostgreSQL one-statement snapshot returns ordered typed messages, at most one foreground run, unmaterialized active text tail and last event cursor. Server2/0/0; PG17.11 SCRAM1/0/0 proves snapshot cursor→SSE live chunk/terminal→materialized history with outsider default-empty."
+    evidence: "docs/2026-08-26-G3-G6-ChannelTranscript与IdleSend-batch34.md"
+    notes: "新增 native DTO；不调用 CopilotKit compatibility URL。The cursor is the initial EventSource query only; standard Last-Event-ID wins on reconnect, and durable PostgreSQL replay remains authoritative."

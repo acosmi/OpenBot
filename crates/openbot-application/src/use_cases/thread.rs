@@ -2,16 +2,16 @@
 
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{
-    BeginThreadRun, MAX_THREAD_MESSAGE_BYTES, ThreadHistory, ThreadMinted, ThreadRunAnchor,
-    ThreadRunStarted, ThreadStatus,
+    BeginThreadRun, MAX_THREAD_MESSAGE_BYTES, ThreadConversationSnapshot, ThreadHistory,
+    ThreadMinted, ThreadRunAnchor, ThreadRunStarted, ThreadStatus,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ThreadId;
 use openbot_contracts::ids::thread::ThreadIdentity;
 
 use crate::ports::{
-    BeginThreadRunRequest, ChannelActivitySubscription, ThreadDirectory, ThreadEventSubscription,
-    ThreadHistoryRequest,
+    BeginThreadRunRequest, ChannelActivitySubscription, ThreadConversationRequest, ThreadDirectory,
+    ThreadEventSubscription, ThreadHistoryRequest,
 };
 use crate::service::AppEventStream;
 
@@ -139,6 +139,26 @@ pub async fn get_thread_history<D: ThreadDirectory>(
     }
     directory
         .thread_history(ThreadHistoryRequest {
+            deployment: auth.deployment().clone(),
+            tenant: auth.tenant().clone(),
+            actor: auth.actor().clone(),
+            thread,
+        })
+        .await
+        .map_err(|error| error.into_app_error())
+}
+
+/// Read an atomic history/foreground/cursor snapshot for gap-free realtime attachment.
+pub async fn get_thread_conversation<D: ThreadDirectory>(
+    directory: &D,
+    auth: &AuthContext,
+    thread: ThreadId,
+) -> Result<ThreadConversationSnapshot, AppError> {
+    if !ThreadIdentity::is_plausible(&thread) {
+        return Err(AppError::MalformedPayload { field: "thread_id" });
+    }
+    directory
+        .thread_conversation(ThreadConversationRequest {
             deployment: auth.deployment().clone(),
             tenant: auth.tenant().clone(),
             actor: auth.actor().clone(),

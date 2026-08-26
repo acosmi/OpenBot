@@ -119,6 +119,7 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::GetThreadStatus { .. } => "get_thread_status",
         AppCommand::BeginThreadRun(_) => "begin_thread_run",
         AppCommand::GetThreadHistory { .. } => "get_thread_history",
+        AppCommand::GetThreadConversation { .. } => "get_thread_conversation",
         AppCommand::RememberMemory(_) => "remember_memory",
         AppCommand::ListMemories { .. } => "list_memories",
         AppCommand::CorrectMemory { .. } => "correct_memory",

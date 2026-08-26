@@ -216,6 +216,12 @@ pub enum AppCommand {
         thread_id: ThreadId,
     },
 
+    /// Read one atomic native conversation snapshot before attaching realtime replay.
+    GetThreadConversation {
+        /// Thread id; authority remains in `AuthContext` and PostgreSQL anchor membership.
+        thread_id: ThreadId,
+    },
+
     /// GUI “记住这条”；application 固定 origin=user_action。
     RememberMemory(RememberMemory),
 
@@ -354,6 +360,8 @@ pub enum AppReply {
     ThreadRunStarted(ThreadRunStarted),
     /// [`AppCommand::GetThreadHistory`] 的应答。
     ThreadHistory(ThreadHistory),
+    /// [`AppCommand::GetThreadConversation`] response.
+    ThreadConversation(ThreadConversationSnapshot),
     /// Remember/correct/mutate 后的记录。
     Memory(MemoryRecord),
     /// [`AppCommand::ListMemories`] 的页。
@@ -509,6 +517,20 @@ pub struct ThreadHistoryMessage {
 pub struct ThreadHistory {
     /// Durable sequence 顺序的 messages。
     pub messages: Vec<ThreadHistoryMessage>,
+}
+
+/// Atomic PostgreSQL snapshot used to join durable history to realtime replay without a gap.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadConversationSnapshot {
+    /// Durable messages ordered by thread-local sequence.
+    pub messages: Vec<ThreadHistoryMessage>,
+    /// Current foreground run that blocks another send, if any.
+    pub active_run_id: Option<RunId>,
+    /// Already committed text chunks for the active run; empty when no text/run exists.
+    pub active_run_text: String,
+    /// Last committed thread-global event cursor; `None` means the thread has no events.
+    pub last_event_sequence: Option<u64>,
 }
 
 /// 一页 channel。
@@ -955,6 +977,32 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<AppCommand>(&wire).unwrap(),
             route_command
+        );
+    }
+
+    #[test]
+    fn native_conversation_snapshot_is_closed_and_cursor_explicit() {
+        let snapshot = ThreadConversationSnapshot {
+            messages: vec![ThreadHistoryMessage {
+                id: "message-1".to_owned(),
+                role: ThreadHistoryRole::User,
+                content: "hello".to_owned(),
+                tool_call_id: None,
+                tool_calls: None,
+            }],
+            active_run_id: Some(RunId::new("run-1")),
+            active_run_text: "partial".to_owned(),
+            last_event_sequence: Some(7),
+        };
+        assert_eq!(
+            serde_json::to_string(&snapshot).unwrap(),
+            r#"{"messages":[{"id":"message-1","role":"user","content":"hello"}],"activeRunId":"run-1","activeRunText":"partial","lastEventSequence":7}"#
+        );
+        assert!(
+            serde_json::from_str::<ThreadConversationSnapshot>(
+                r#"{"messages":[],"activeRunId":null,"activeRunText":"","lastEventSequence":null,"actor":"forged"}"#
+            )
+            .is_err()
         );
     }
 

@@ -21,7 +21,7 @@ use futures_core::Stream;
 use openbot_application::AppEventStream;
 use openbot_contracts::command::{
     AppCommand, AppEvent, AppReply, BeginThreadRun, BeginThreadRunBody, SubscriptionRequest,
-    ThreadHistory, ThreadMinted, ThreadRunStarted, ThreadStatus,
+    ThreadConversationSnapshot, ThreadHistory, ThreadMinted, ThreadRunStarted, ThreadStatus,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ThreadId;
@@ -151,6 +151,31 @@ pub async fn history(
     }
 }
 
+/// `GET /api/threads/{thread_id}/conversation`; atomic native history/run/cursor snapshot.
+pub async fn conversation(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+    Path(thread_id): Path<String>,
+) -> Result<(HeaderMap, Json<ThreadConversationSnapshot>), HttpError> {
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::GetThreadConversation {
+                thread_id: ThreadId::new(thread_id),
+            },
+        )
+        .await?
+    {
+        AppReply::ThreadConversation(snapshot) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            Ok((headers, Json(snapshot)))
+        }
+        _ => Err(application_contract_error()),
+    }
+}
+
 /// WebSocket reconnect query；cursor 是客户端最后完整接收的 thread-global sequence。
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -254,9 +279,15 @@ pub async fn events(
     State(state): State<ServerState>,
     Authenticated(auth): Authenticated,
     Path(thread_id): Path<String>,
+    query: Result<Query<EventWebSocketQuery>, QueryRejection>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, HttpError> {
-    let after_event_sequence = last_event_id(&headers)?;
+    let Query(query) = query.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "thread SSE query 解析失败");
+        AppError::MalformedPayload { field: "query" }
+    })?;
+    // Standard Last-Event-ID on reconnect overrides the one-time native bootstrap cursor.
+    let after_event_sequence = last_event_id(&headers)?.or(query.cursor);
     let stream = state
         .application()
         .subscribe(
@@ -345,8 +376,8 @@ mod tests {
     use futures_util::{SinkExt as _, StreamExt as _};
     use http::{Method, Request, StatusCode};
     use openbot_application::ports::{
-        BeginThreadRunRequest, ChannelReader, PortError, ThreadDirectory, ThreadDirectoryError,
-        ThreadEventSubscription, ThreadHistoryRequest,
+        BeginThreadRunRequest, ChannelReader, PortError, ThreadConversationRequest,
+        ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
     };
     use openbot_application::{ChannelCursor, OpenBotApplication};
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
@@ -407,6 +438,8 @@ mod tests {
         history_calls: Mutex<Vec<ThreadHistoryRequest>>,
         begin: Mutex<Result<ThreadRunStarted, ThreadDirectoryError>>,
         begin_calls: Mutex<Vec<BeginThreadRunRequest>>,
+        conversation: Mutex<Result<ThreadConversationSnapshot, ThreadDirectoryError>>,
+        conversation_calls: Mutex<Vec<ThreadConversationRequest>>,
     }
 
     impl FakeThreadDirectory {
@@ -424,6 +457,8 @@ mod tests {
                     history_calls: Mutex::new(Vec::new()),
                     begin: Mutex::new(Err(ThreadDirectoryError::Unavailable)),
                     begin_calls: Mutex::new(Vec::new()),
+                    conversation: Mutex::new(Ok(ThreadConversationSnapshot::default())),
+                    conversation_calls: Mutex::new(Vec::new()),
                 }),
             }
         }
@@ -445,6 +480,14 @@ mod tests {
 
         fn with_begin(self, begin: Result<ThreadRunStarted, ThreadDirectoryError>) -> Self {
             *self.inner.begin.lock().expect("fake lock") = begin;
+            self
+        }
+
+        fn with_conversation(
+            self,
+            conversation: Result<ThreadConversationSnapshot, ThreadDirectoryError>,
+        ) -> Self {
+            *self.inner.conversation.lock().expect("fake lock") = conversation;
             self
         }
 
@@ -470,6 +513,14 @@ mod tests {
 
         fn begin_calls(&self) -> Vec<BeginThreadRunRequest> {
             self.inner.begin_calls.lock().expect("fake lock").clone()
+        }
+
+        fn conversation_calls(&self) -> Vec<ThreadConversationRequest> {
+            self.inner
+                .conversation_calls
+                .lock()
+                .expect("fake lock")
+                .clone()
         }
     }
 
@@ -516,6 +567,18 @@ mod tests {
                 .expect("fake lock")
                 .push(request);
             self.inner.begin.lock().expect("fake lock").clone()
+        }
+
+        async fn thread_conversation(
+            &self,
+            request: ThreadConversationRequest,
+        ) -> Result<ThreadConversationSnapshot, ThreadDirectoryError> {
+            self.inner
+                .conversation_calls
+                .lock()
+                .expect("fake lock")
+                .push(request);
+            self.inner.conversation.lock().expect("fake lock").clone()
         }
 
         async fn subscribe_thread_events(
@@ -641,6 +704,89 @@ mod tests {
             .expect("begin body");
         let body = serde_json::from_slice(&bytes).expect("begin json");
         (status, headers, body)
+    }
+
+    #[tokio::test]
+    async fn native_conversation_is_one_no_store_snapshot_scoped_only_by_auth_and_path() {
+        let thread = "550e8400-e29b-41d4-a716-446655440000";
+        let directory =
+            FakeThreadDirectory::new(Ok(true)).with_conversation(Ok(ThreadConversationSnapshot {
+                messages: vec![ThreadHistoryMessage {
+                    id: "message-1".to_owned(),
+                    role: ThreadHistoryRole::User,
+                    content: "hello".to_owned(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                }],
+                active_run_id: Some(RunId::new("run-1")),
+                active_run_text: "partial".to_owned(),
+                last_event_sequence: Some(7),
+            }));
+        let visible = directory.clone();
+        let response = app(directory, FixedAuthResolver::granting(auth("u1")))
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/threads/{thread}/conversation"))
+                    .body(Body::empty())
+                    .expect("conversation request"),
+            )
+            .await
+            .expect("conversation response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+        let body: Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .expect("conversation body"),
+        )
+        .expect("conversation JSON");
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "messages":[{"id":"message-1","role":"user","content":"hello"}],
+                "activeRunId":"run-1","activeRunText":"partial","lastEventSequence":7
+            })
+        );
+        assert_eq!(
+            visible.conversation_calls(),
+            [ThreadConversationRequest {
+                deployment: DeploymentId::new("openbot-test"),
+                tenant: TenantId::new("tenant-test"),
+                actor: ActorId::new("u1"),
+                thread: ThreadId::new(thread),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn native_conversation_auth_and_thread_shape_fail_before_the_port() {
+        let thread = "550e8400-e29b-41d4-a716-446655440000";
+        let directory = FakeThreadDirectory::new(Ok(true));
+        let visible = directory.clone();
+        let (status, _) = send(
+            app(
+                directory,
+                FixedAuthResolver::rejecting(AppError::Unauthenticated),
+            ),
+            Method::GET,
+            &format!("/api/threads/{thread}/conversation"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(visible.conversation_calls().is_empty());
+
+        let directory = FakeThreadDirectory::new(Ok(true));
+        let visible = directory.clone();
+        let (status, body) = send(
+            app(directory, FixedAuthResolver::granting(auth("u1"))),
+            Method::GET,
+            "/api/threads/not-a-uuid/conversation",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, serde_json::json!({"code":"malformed_payload"}));
+        assert!(visible.conversation_calls().is_empty());
     }
 
     #[tokio::test]
@@ -973,7 +1119,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
-                    .uri(format!("/api/threads/{thread}/events"))
+                    .uri(format!("/api/threads/{thread}/events?cursor=4"))
                     .header("last-event-id", "6")
                     .body(Body::empty())
                     .expect("request"),

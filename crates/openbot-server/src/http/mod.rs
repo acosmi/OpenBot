@@ -527,6 +527,10 @@ pub fn router(state: ServerState) -> Router {
         )
         .route("/api/memories/{memory_id}/forbid", post(memories::forbid))
         .route("/api/threads/mint", post(threads::mint))
+        .route(
+            "/api/threads/{thread_id}/conversation",
+            get(threads::conversation),
+        )
         .route("/api/threads/{thread_id}/runs", post(threads::begin_run))
         .route("/api/threads/{thread_id}/ws", get(threads::websocket))
         .route("/api/threads/{thread_id}/events", get(threads::events))

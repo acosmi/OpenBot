@@ -95,10 +95,10 @@ recount:
     expect: 105
   - command: "grep -c '^    label: parity$' parity/tests.yaml"
     cwd: repo
-    expect: 771
+    expect: 768
   - command: "grep -c '^    label: 替代$' parity/tests.yaml"
     cwd: repo
-    expect: 276
+    expect: 279
   - command: "grep -c '^    label: 新增$' parity/tests.yaml"
     cwd: repo
     expect: 0
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 687
+    expect: 675
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -2385,32 +2385,35 @@ entries:
   # ---------------------------------------------------------------------------
   - id: "app-tests-stopped-turn--the-reason-a-turn-ended--passes-on-what-ended-the-turn-in-its-own-words"
     upstream: "app/tests/stopped-turn.test.ts::the reason a turn ended"
-    label: parity
-    target: "openbot_ui::features::threads::stopped_turn::tests::passes_on_what_ended_the_turn_in_its_own_words"
+    label: 替代
+    target: "openbot_ui::features::channels::conversation::tests::terminal_notices_are_closed_codes_and_cannot_carry_raw_error_words"
     owner: openbot-ui
     test_id: T-TEST-0217
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "remove: raw provider/watchdog words no longer cross the typed event boundary; closed terminal kind is localized in UI"
+    status: done
+    done_evidence: "ThreadRunEventKind and zero-payload TerminalNotice carry only failed/cancelled/reconciliation codes; UI selects localized text and has no field for remote words. UI conversation6/0/0; Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[263]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.4 Retry、Cancel、Budget 与 Commit：回合结束原因的呈现判据逐条移植。上游用例标题：「passes on what ended the turn, in its own words」。"
   - id: "app-tests-stopped-turn--the-reason-a-turn-ended--reads-an-error-the-same-way-because-a-failed-run-carries"
     upstream: "app/tests/stopped-turn.test.ts::the reason a turn ended"
-    label: parity
-    target: "openbot_ui::features::threads::stopped_turn::tests::reads_an_error_the_same_way_because_a_failed_run_carries"
+    label: 替代
+    target: "openbot_ui::features::channels::conversation::tests::terminal_notices_are_closed_codes_and_cannot_carry_raw_error_words"
     owner: openbot-ui
     test_id: T-TEST-0218
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "remove: a JavaScript Error object cannot enter Rust contracts; failed is a closed typed terminal and UI text is localized"
+    status: done
+    done_evidence: "The WASM boundary deserializes only closed AppEvent/ThreadRunEvent DTOs; TerminalNotice is a one-byte fieldless enum and raw Error/message text is structurally absent. UI conversation6/0/0; Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[264]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.4 Retry、Cancel、Budget 与 Commit：回合结束原因的呈现判据逐条移植。上游用例标题：「reads an Error the same way, because a failed run carries one」。"
   - id: "app-tests-stopped-turn--the-reason-a-turn-ended--says-so-plainly-when-nothing-was-reported-rather-than-in"
     upstream: "app/tests/stopped-turn.test.ts::the reason a turn ended"
-    label: parity
-    target: "openbot_ui::features::threads::stopped_turn::tests::says_so_plainly_when_nothing_was_reported_rather_than_in"
+    label: 替代
+    target: "openbot_ui::features::channels::conversation::tests::terminal_notices_are_closed_codes_and_cannot_carry_raw_error_words"
     owner: openbot-ui
     test_id: T-TEST-0219
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "remove: absence of untrusted prose is normal; closed terminal kind always maps to one explicit localized sentence"
+    status: done
+    done_evidence: "Failed/cancelled/reconciliation each map exhaustively to explicit en/zh-CN text; no guess or empty raw-message branch exists. i18n410 exact; Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[265]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.4 Retry、Cancel、Budget 与 Commit：回合结束原因的呈现判据逐条移植。上游用例标题：「says so plainly when nothing was reported, rather than inventing a cause」。"
   # ---------------------------------------------------------------------------
@@ -2642,91 +2645,100 @@ entries:
   - id: "app-tests-transcript-messages--transcriptmessages--shows-the-seed-while-the-agent-has-nothing"
     upstream: "app/tests/transcript-messages.test.ts::transcriptMessages"
     label: 替代
-    target: "openbot_ui::features::threads::transcript::tests::shows_the_seed_while_the_agent_has_nothing"
+    target: "openbot_ui::features::channels::conversation::tests::snapshot_carries_durable_history_active_text_and_cursor_without_a_seed"
     owner: openbot-ui
     test_id: T-TEST-0240
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Rust does not render an in-memory optimistic seed: BeginRun commits the user message before navigation, and the atomic snapshot returns that durable row plus active tail/cursor. PG1/0/0 + browser hard reload; Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[291]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 2 行（上游 issue #44：malformed AG-UI message.content 可使 transcript 崩溃）明写不得照译 —— Rust 版对所有外部 payload 做结构验证、损坏事件隔离成可展示错误，故 transcript 构造语义换了一个；正常路径判据逐条移植。上游用例标题：「shows the seed while the agent has nothing」。"
   - id: "app-tests-transcript-messages--transcriptmessages--shows-the-agent-s-messages-once-it-has-any-and-drops-the"
     upstream: "app/tests/transcript-messages.test.ts::transcriptMessages"
     label: 替代
-    target: "openbot_ui::features::threads::transcript::tests::shows_the_agent_s_messages_once_it_has_any_and_drops_the"
+    target: "openbot_ui::features::channels::conversation::tests::snapshot_carries_durable_history_active_text_and_cursor_without_a_seed"
     owner: openbot-ui
     test_id: T-TEST-0241
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Conversation state installs PostgreSQL messages directly and terminal refetch replaces streaming tail with materialized assistant history; no duplicate seed exists. PG1/0/0 + UI100/0/0; Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[292]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 2 行（上游 issue #44：malformed AG-UI message.content 可使 transcript 崩溃）明写不得照译 —— Rust 版对所有外部 payload 做结构验证、损坏事件隔离成可展示错误，故 transcript 构造语义换了一个；正常路径判据逐条移植。上游用例标题：「shows the agent's messages once it has any, and drops the seed」。"
   - id: "app-tests-transcript-messages--transcriptmessages--shows-nothing-for-an-empty-channel-with-no-seed"
     upstream: "app/tests/transcript-messages.test.ts::transcriptMessages"
     label: 替代
-    target: "openbot_ui::features::threads::transcript::tests::shows_nothing_for_an_empty_channel_with_no_seed"
+    target: "openbot_ui::features::channels::conversation::tests::snapshot_carries_durable_history_active_text_and_cursor_without_a_seed"
     owner: openbot-ui
     test_id: T-TEST-0242
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Default/visible empty native snapshot projects zero messages and the release browser shows the explicit empty state before first send. UI+browser; Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[293]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 2 行（上游 issue #44：malformed AG-UI message.content 可使 transcript 崩溃）明写不得照译 —— Rust 版对所有外部 payload 做结构验证、损坏事件隔离成可展示错误，故 transcript 构造语义换了一个；正常路径判据逐条移植。上游用例标题：「shows nothing for an empty channel with no seed」。"
   - id: "app-tests-transcript-messages--transcriptmessages--is-unaffected-by-a-seed-on-an-established-channel"
     upstream: "app/tests/transcript-messages.test.ts::transcriptMessages"
     label: 替代
-    target: "openbot_ui::features::threads::transcript::tests::is_unaffected_by_a_seed_on_an_established_channel"
+    target: "openbot_ui::features::channels::conversation::tests::history_projects_user_assistant_tool_activity_but_not_system_prompt"
     owner: openbot-ui
     test_id: T-TEST-0243
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Established channel renders only its ordered durable user/assistant/tool projection; there is no module stash input that can alter it. Browser initial history + UI conversation6/0/0; Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[294]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 2 行（上游 issue #44：malformed AG-UI message.content 可使 transcript 崩溃）明写不得照译 —— Rust 版对所有外部 payload 做结构验证、损坏事件隔离成可展示错误，故 transcript 构造语义换了一个；正常路径判据逐条移植。上游用例标题：「is unaffected by a seed on an established channel」。"
   - id: "app-tests-transcript-messages--seedmessage--is-a-user-message-carrying-the-text"
     upstream: "app/tests/transcript-messages.test.ts::seedMessage"
     label: 替代
-    target: "openbot_ui::features::threads::transcript::tests::is_a_user_message_carrying_the_text"
+    target: "openbot_infra::thread_conversation::atomic_snapshot_bridges_active_text_cursor_live_terminal_and_materialized_history"
     owner: openbot-ui
     test_id: T-TEST-0244
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Production BeginThreadRun materializes the exact user text as a typed role=user history message in the same transaction; snapshot and hard-reload browser read it. PG17.11 SCRAM1/0/0; Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[296]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 2 行（上游 issue #44：malformed AG-UI message.content 可使 transcript 崩溃）明写不得照译 —— Rust 版对所有外部 payload 做结构验证、损坏事件隔离成可展示错误，故 transcript 构造语义换了一个；正常路径判据逐条移植。上游用例标题：「is a user message carrying the text」。"
   - id: "app-tests-transcript-messages--the-first-message-stash--hands-the-message-to-the-channel-that-was-just-created"
     upstream: "app/tests/transcript-messages.test.ts::the first-message stash"
     label: 替代
-    target: "openbot_ui::features::threads::transcript::tests::hands_the_message_to_the_channel_that_was_just_created"
+    target: "openbot_infra::thread_conversation::atomic_snapshot_bridges_active_text_cursor_live_terminal_and_materialized_history"
     owner: openbot-ui
     test_id: T-TEST-0245
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch32 create→BeginRun commits before navigation; Batch34 atomic snapshot reads the same channel thread. Browser no-thread channel mint→begin→hard reload preserves exact text."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[298]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 2 行（上游 issue #44：malformed AG-UI message.content 可使 transcript 崩溃）明写不得照译 —— Rust 版对所有外部 payload 做结构验证、损坏事件隔离成可展示错误，故 transcript 构造语义换了一个；正常路径判据逐条移植。上游用例标题：「hands the message to the channel that was just created」。"
   - id: "app-tests-transcript-messages--the-first-message-stash--gives-it-up-only-once"
     upstream: "app/tests/transcript-messages.test.ts::the first-message stash"
     label: 替代
-    target: "openbot_ui::features::threads::transcript::tests::gives_it_up_only_once"
+    target: "openbot_server::http::threads::tests::begin_run_uses_path_and_authoritative_scope_then_distinguishes_create_from_replay"
     owner: openbot-ui
     test_id: T-TEST-0246
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Take-once module state is replaced by durable run-id idempotency: first begin=201, exact replay=200 and no second message/event. Server2/0/0 plus existing PG replay matrix; Batch32/34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[299]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 2 行（上游 issue #44：malformed AG-UI message.content 可使 transcript 崩溃）明写不得照译 —— Rust 版对所有外部 payload 做结构验证、损坏事件隔离成可展示错误，故 transcript 构造语义换了一个；正常路径判据逐条移植。上游用例标题：「gives it up only once」。"
   - id: "app-tests-transcript-messages--the-first-message-stash--has-nothing-for-a-channel-that-was-opened-normally"
     upstream: "app/tests/transcript-messages.test.ts::the first-message stash"
     label: 替代
-    target: "openbot_ui::features::threads::transcript::tests::has_nothing_for_a_channel_that_was_opened_normally"
+    target: "openbot_ui::features::channels::conversation::tests::snapshot_carries_durable_history_active_text_and_cursor_without_a_seed"
     owner: openbot-ui
     test_id: T-TEST-0247
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "A normally opened empty channel has no stash by construction and projects an empty snapshot; browser displays empty state until a real begin commits. Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[300]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 2 行（上游 issue #44：malformed AG-UI message.content 可使 transcript 崩溃）明写不得照译 —— Rust 版对所有外部 payload 做结构验证、损坏事件隔离成可展示错误，故 transcript 构造语义换了一个；正常路径判据逐条移植。上游用例标题：「has nothing for a channel that was opened normally」。"
   - id: "app-tests-transcript-messages--the-first-message-stash--keeps-two-channels-messages-apart"
     upstream: "app/tests/transcript-messages.test.ts::the first-message stash"
     label: 替代
-    target: "openbot_ui::features::threads::transcript::tests::keeps_two_channels_messages_apart"
+    target: "openbot_infra::thread_conversation::atomic_snapshot_bridges_active_text_cursor_live_terminal_and_materialized_history"
     owner: openbot-ui
     test_id: T-TEST-0248
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Messages are keyed and queried by native thread under channel membership; browser channel-00 and channel-01 retain separate histories across hard reload, while PG outsider receives default-empty. Batch34."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[301]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 2 行（上游 issue #44：malformed AG-UI message.content 可使 transcript 崩溃）明写不得照译 —— Rust 版对所有外部 payload 做结构验证、损坏事件隔离成可展示错误，故 transcript 构造语义换了一个；正常路径判据逐条移植。上游用例标题：「keeps two channels' messages apart」。"
   # ---------------------------------------------------------------------------

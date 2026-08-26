@@ -8,10 +8,11 @@ use openbot_contracts::agent::AgentProfile;
 use openbot_contracts::agent::{AgentProfileResponse, AgentProfilesResponse};
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::command::{
-    BeginThreadRunBody, CreateChannelRequest, RouteChannelRequest, ThreadRunAnchor,
+    BeginThreadRunBody, CreateChannelRequest, RouteChannelRequest, ThreadMinted, ThreadRunAnchor,
 };
 use openbot_contracts::command::{
-    ChannelDetail, ChannelPage, ChannelRoutingDecision, ThreadRunStarted,
+    ChannelDetail, ChannelPage, ChannelRoutingDecision, ThreadConversationSnapshot,
+    ThreadRunStarted,
 };
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::people::CurrentUser;
@@ -185,6 +186,67 @@ pub async fn begin_channel_run(
 #[must_use]
 pub fn mint_run_id() -> RunId {
     RunId::new(uuid::Uuid::now_v7().to_string())
+}
+
+/// Ask the Server to mint a deployment-owned native thread identity.
+pub async fn mint_thread_id() -> Result<ThreadId, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::post("/api/threads/mint")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<ThreadMinted>()
+            .await
+            .map(|minted| minted.thread_id)
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load one atomic durable history/active-run/event-cursor snapshot.
+pub async fn load_thread_conversation(
+    thread_id: &ThreadId,
+) -> Result<ThreadConversationSnapshot, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = thread_conversation_path(thread_id.as_str())?;
+        let response = Request::get(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<ThreadConversationSnapshot>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = thread_id;
+        Err(ApiError::Unavailable)
+    }
 }
 
 /// Load the current actor's authoritative visible or per-user-hidden coworker roster.
@@ -565,6 +627,33 @@ fn thread_run_path(thread_id: &str) -> Result<String, ApiError> {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn thread_conversation_path(thread_id: &str) -> Result<String, ApiError> {
+    validate_thread_id(thread_id)?;
+    Ok(format!(
+        "/api/threads/{}/conversation",
+        encode_url_component(thread_id)
+    ))
+}
+
+/// Build the EventSource URL whose optional cursor is only the initial durable replay boundary.
+#[cfg(any(target_arch = "wasm32", test))]
+pub fn thread_event_stream_path(
+    thread_id: &ThreadId,
+    cursor: Option<u64>,
+) -> Result<String, ApiError> {
+    validate_thread_id(thread_id.as_str())?;
+    let mut path = format!(
+        "/api/threads/{}/events",
+        encode_url_component(thread_id.as_str())
+    );
+    if let Some(cursor) = cursor {
+        path.push_str("?cursor=");
+        path.push_str(&cursor.to_string());
+    }
+    Ok(path)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn agent_detail_path(agent_id: &str) -> Result<String, ApiError> {
     validate_agent_id(agent_id)?;
     Ok(format!("/api/agents/{}", encode_url_component(agent_id)))
@@ -694,6 +783,14 @@ mod tests {
         assert_eq!(
             thread_run_path("thread/one?x=1").unwrap(),
             "/api/threads/thread%2Fone%3Fx%3D1/runs"
+        );
+        assert_eq!(
+            thread_conversation_path("thread/one?x=1").unwrap(),
+            "/api/threads/thread%2Fone%3Fx%3D1/conversation"
+        );
+        assert_eq!(
+            thread_event_stream_path(&ThreadId::new("thread/one?x=1"), Some(7)).unwrap(),
+            "/api/threads/thread%2Fone%3Fx%3D1/events?cursor=7"
         );
         assert_eq!(
             channel_list_path(Some("bad\ncursor")).unwrap_err(),

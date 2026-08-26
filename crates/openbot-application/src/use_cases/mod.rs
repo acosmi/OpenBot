@@ -41,6 +41,6 @@ pub use people::{
 pub use policy::{get_action_policy, set_action_policy};
 pub use routing::{MAX_ROUTING_CANDIDATES, route_channel_message};
 pub use thread::{
-    begin_thread_run, get_thread_history, get_thread_status, mint_thread_id,
-    subscribe_channel_activity, subscribe_thread_events,
+    begin_thread_run, get_thread_conversation, get_thread_history, get_thread_status,
+    mint_thread_id, subscribe_channel_activity, subscribe_thread_events,
 };

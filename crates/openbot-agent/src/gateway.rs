@@ -221,6 +221,7 @@ impl AgentToolGateway {
                 | AppReply::ThreadStatus(_)
                 | AppReply::ThreadRunStarted(_)
                 | AppReply::ThreadHistory(_)
+                | AppReply::ThreadConversation(_)
                 | AppReply::Memory(_)
                 | AppReply::Memories(_)
                 | AppReply::MemoryRecall(_)
