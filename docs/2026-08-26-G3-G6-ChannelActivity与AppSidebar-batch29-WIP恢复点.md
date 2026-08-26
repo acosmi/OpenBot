@@ -5,6 +5,18 @@
 > 只跑本地定向测试；不运行 `cargo xtask ci`，不派发 Actions，不处理
 > `grok-bot`，不修改/暂存/提交并行出现的 `docs/assets/`。
 
+## 接续结果（2026-08-26）
+
+本恢复点中的 backend production closure 已由 implementation
+`572bb3c81e76dd18867b7925f3e947b45dcf7e38` 完成；正式证据见
+[Batch 29 Channel Activity 与 WebSocket](2026-08-26-G3-ChannelActivity与WebSocket-batch29.md)。
+
+原计划第5/6项没有照单全勾：机器复核确认真实 channel destination route/journey 尚未落，
+此时实现 AppSidebar/channel row 会生成断链导航。因此 T-API-0030 与10条精确 upstream tests 已
+关闭，T-UI-0037/0038 继续 todo。当前 parity=`530/1143/1673`、API=`42/120/162`、
+tests=`276/771/1047`、UI=`81/71/152`；strict recount=`157/157/0`。本文件以下内容保留为
+开工快照，不再作为当前完成口径。
+
 ## 本批唯一生产闭环
 
 1. PostgreSQL roster 真源：channel-anchored user message/assistant terminal 在原事务内单调更新
