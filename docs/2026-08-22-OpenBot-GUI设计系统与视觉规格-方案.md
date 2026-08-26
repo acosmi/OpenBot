@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-25，Batch 15–22）
+### 15.1 当前实施勾选（2026-08-25，Batch 15–23）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -627,8 +627,9 @@ G6 重写后的文本（替换 v3 原四条）：
   UI startup read/serialized partial write/reload persistence；
 - [x] Tauri 2.11.5 production custom-protocol adapter：window-label authority、typed in-process、
   本地首帧/CSP/canonical asset；依赖只进入 macOS/Windows Desktop target；
-- [x] 当前 UI ledger 只勾有机器证据的 26 条：Batch18 前20条 + Dialog/Sheet + Menu +
-  MessageScroller + Combobox/Select，=`26/126/152`；其余即使有局部源码也保持 todo；
+- [x] 当前 UI ledger 有机器证据的 27 条 primitive 子账已全 done：Batch18 前20条 +
+  Dialog/Sheet + Menu + MessageScroller + Combobox/Select + Sidebar，=`27/125/152`；
+  业务/icon/runtime/golden 仍按各自证据保持 todo；
 - [x] `design-gallery` compile feature 才有 `/_design`，production bundle WASM `_design` byte=0；
   当前画廊用于状态/键盘/AX/目视 QA，不冒充正式 golden；
 - [x] Message 命名 article、neutral Bubble、跨平台 Kbd、SHA-256 deterministic Avatar、5s
@@ -641,7 +642,9 @@ G6 重写后的文本（替换 v3 原四条）：
   offset、48px user anchor、generation-safe content-change settlement 与命名 log/live/button；
 - [x] Combobox/Select 共用唯一 listbox 内核：editable filter/empty 与 select-only 500ms
   typeahead，committed/active 分离、Field 自动接线、命名 AX、exactly-once selection；
-- [ ] 31 route journey、其余 1 个 primitive ledger 条目、45 个业务组件、compiled gallery、
+- [x] Sidebar：lg240/rail48、md auto rail、compact shared Sheet，Ctrl/Command+B、named nav/
+  current、external trigger返焦与同一 children 单挂载；
+- [ ] 31 route journey、45 个业务组件、47 icon ledger join、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -651,7 +654,8 @@ G6 重写后的文本（替换 v3 原四条）：
 完整证据见 Batch16–18 文档、`docs/2026-08-25-G6-Dialog与Sheet-batch19.md`、
 `docs/2026-08-25-G6-Menu原语-batch20.md` 与
 `docs/2026-08-25-G6-MessageScroller原语-batch21.md`、
-`docs/2026-08-25-G6-Combobox与Select原语-batch22.md`；
+`docs/2026-08-25-G6-Combobox与Select原语-batch22.md` 与
+`docs/2026-08-25-G6-Sidebar原语-batch23.md`；
 G6 整关继续不勾。
 
 ---

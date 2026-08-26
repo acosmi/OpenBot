@@ -1,7 +1,9 @@
 # Batch 23 WIP 恢复点：Sidebar 三形态原语
 
 > 分支 `codex/2026-08-25-G6-sidebar-primitive`，base = Batch22 正式 head
-> `4edbf103a4b143b087d9f3bc47ee1a922b4483ed`。只跑本地定向测试，不运行
+> `4edbf103a4b143b087d9f3bc47ee1a922b4483ed`；implementation checkpoint
+> `d71347b37c6f581bbdf04e3329dbf670d844a45b`。正式证据文档为
+> `2026-08-25-G6-Sidebar原语-batch23.md`。只跑本地定向测试，不运行
 > `cargo xtask ci`，不派发 Actions，不处理 `grok-bot`。
 
 ## 本批范围

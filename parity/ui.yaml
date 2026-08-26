@@ -30,9 +30,9 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–22 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 26 条原语打勾：
+# Batch 15–23 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 27 条原语打勾：
 # Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
-# Batch22 Combobox/Select；
+# Batch22 Combobox/Select + Batch23 Sidebar；27 条 primitive 子账现已全 done；
 # 其余即使已有部分源码也
 # 保持 todo，不能用 Approval/preferences/design-gallery 冒充 27 原语、45 业务组件或 27 页
 # golden 全量完成。
@@ -139,16 +139,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 22 精确完成 26 条；其余部分实现或完全未实现均保持 todo
+  # Batch 23 精确完成 27 条原语；其余业务/icon/runtime/golden 保持 todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 126
+    expect: 125
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 26
+    expect: 27
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 26
+    expect: 27
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -362,7 +362,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0017"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "SidebarProvider 唯一 context 实现 lg≥1024 expanded240/user rail48、md自动rail48、<md同一 children 复用既有 Sheet。Ctrl/Cmd+B、trigger controls/expanded、named nav、same-origin links/current check、header/content/footer compound闭合；mobile Escape/shortcut/resize均清16 inert markers/body lock并返焦外部trigger。Chromium lg/md 8/8 + compact 8/8 + Meta+B；DOM/AX/overflow/errors绿。UI51/0/0、WASM/Clippy/gates绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：`nav` landmark；`aria-current=\"page\"`。状态子集：collapsed。替代的无头库 = shadcn sidebar。折叠 / rail / Sheet 三形态。上游业务层的 `app-sidebar` / `admin-sidebar` / `settings-sidebar` 都往它里面填内容——`app-sidebar` 那条按 §6.2 记 `替代`（见 T-UI-0037），另两条同名记 parity。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
