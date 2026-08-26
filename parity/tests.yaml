@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 782
+    expect: 781
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -7715,8 +7715,9 @@ entries:
     owner: openbot-server
     test_id: T-TEST-0728
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[875]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "Rust不再forward Better Auth；POST /api/auth/sign-out经ResolvedAuth+trusted Origin后只删当前(session_id,actor)并清host-only HttpOnly/Lax cookie。Server framing 2/0/0；PG17.11 SCRAM 1/0/0实得坏Origin零删、正确204、旧cookie401、其他session200。"
     notes: "ported —— v3 §16.1 Server 发行物（health/readiness）：健康端点、运行时能力、认证可用性与 IdP 注册判据逐条移植。上游用例标题：「forwards logout requests to Better Auth」。"
   - id: "server-tests-health--identity-provider-registration--refuses-s-to-a-plain-user"
     upstream: "server/tests/health.test.ts::identity provider registration"

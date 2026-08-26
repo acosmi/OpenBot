@@ -85,6 +85,16 @@ pub trait AuthResolver: Send + Sync {
     async fn touch(&self, _resolved: &ResolvedAuth) -> Result<(), AppError> {
         Ok(())
     }
+
+    /// Revoke exactly the concrete session carried by this resolved request.
+    ///
+    /// Stateless/single-user implementations have no row to revoke and fail explicitly.
+    async fn revoke_session(&self, resolved: &ResolvedAuth) -> Result<(), AppError> {
+        let _ = resolved;
+        Err(AppError::RequestConflict {
+            resource: "session",
+        })
+    }
 }
 
 /// 一次已解析身份，以及敏感写所需的 live-session 证明。
@@ -130,6 +140,12 @@ impl ResolvedAuth {
     #[must_use]
     pub const fn live_session(&self) -> Option<&LiveSession> {
         self.live_session.as_ref()
+    }
+
+    /// Whether this request is backed by one concrete, individually revocable session row.
+    #[must_use]
+    pub const fn has_revocable_session(&self) -> bool {
+        self.session_id.is_some()
     }
 
     /// 交出上下文。
@@ -501,6 +517,33 @@ impl AuthResolver for PostgresSessionAuthResolver {
             .await
             .map_err(|error| {
                 tracing::error!(error = %error, "session touch 失败");
+                AppError::DependencyUnavailable {
+                    dependency: "database",
+                }
+            })?;
+        Ok(())
+    }
+
+    async fn revoke_session(&self, resolved: &ResolvedAuth) -> Result<(), AppError> {
+        let Some(session_id) = resolved.session_id() else {
+            return Err(AppError::RequestConflict {
+                resource: "session",
+            });
+        };
+        let client = self.pool.get().await.map_err(|error| {
+            tracing::error!(error = %error, "session revoke 获取连接失败");
+            AppError::DependencyUnavailable {
+                dependency: "database",
+            }
+        })?;
+        client
+            .execute(
+                "DELETE FROM public.sessions WHERE id=$1 AND user_id=$2",
+                &[&session_id, &resolved.context().actor().as_str()],
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(error = %error, "session revoke 失败");
                 AppError::DependencyUnavailable {
                     dependency: "database",
                 }

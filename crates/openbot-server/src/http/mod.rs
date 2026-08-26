@@ -52,6 +52,7 @@ pub mod health;
 pub mod memories;
 pub mod metrics;
 pub mod plugins;
+pub mod session;
 pub mod static_app;
 pub mod threads;
 pub mod ui_preferences;
@@ -528,6 +529,8 @@ pub fn router(state: ServerState) -> Router {
             get(threads::history),
         )
         .route("/api/me", get(admin::me))
+        .route("/api/me/session", get(session::status))
+        .route("/api/auth/sign-out", post(session::sign_out))
         .route(
             "/api/me/preferences",
             get(ui_preferences::get).put(ui_preferences::put),

@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 161
+    expect: 162
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 15
+    expect: 16
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 161
+    expect: 162
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1298,7 +1298,7 @@ entries:
     migration_rule: "preserve: 端点前缀不变，BETTER_AUTH_SECRET/URL 按 §15.4 rename"
     status: "todo"
     evidence: "grep -rnE 'app\\.on\\(' server/src --include=*.ts | grep -v '\\.test\\.'  # 1"
-    notes: "app.on([\"GET\",\"POST\"], \"/api/auth/*\")，1 处，不计入 95。W-7b 已闭合 /api/auth/sso/register、update-provider、delete-provider 三条管理员写面与 OIDC/SAML start/callback/metadata；真库矩阵证明 admin guard 先于 body 解析，未登录 401、普通用户 403、stale session 401+稳定 code，匿名 SSO start 不受该 guard。整条仍为 todo：Better Auth wildcard 的 sign-out、完整兼容路由与逐条错误矩阵尚未全部移植，不能用本批三条子路由冒充前缀对等完成"
+    notes: "app.on([\"GET\",\"POST\"], \"/api/auth/*\")，1 处，不计入 95。W-7b 已闭合 SSO/OIDC/SAML 子面；Batch28 又闭合 POST /api/auth/sign-out，以生产PG session revoke取代Better Auth forwarding。整条仍为 todo：wildcard 下其余完整兼容路由与逐条错误矩阵尚未全部移植，不能用已完子路由冒充前缀对等完成"
   - id: "copilotkit-info-get"
     upstream: "server/src/copilot.ts::mountCopilotRuntime"
     label: "替代"
@@ -1734,3 +1734,14 @@ entries:
     evidence: "docs/2026-08-25-G6-UI偏好与Tauri协议-batch16-WIP恢复点.md"
     done_evidence: "trusted Origin guard 在 body parse 前；body 只有 independently optional theme/locale，空 update 在 ApplicationService port 前 400，actor/scope/time 无 wire 字段。PG 原子 COALESCE partial merge 并发 theme+locale 不丢更新，commit unknown 不冒充成功；Server 1/0/0、application 1/0/0、PG17/SCRAM runtime 1/0/0。"
     notes: "新增。闭集 system/light/dark 与 en/zh-CN；响应/镜像 cookie 只返回已提交值，no-store。"
+  - id: "api-session-status-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::session::status (GET /api/me/session)"
+    owner: "openbot-server"
+    test_id: "T-API-0162"
+    migration_rule: "n/a: 同一GUI bundle必须区分可撤multi-user session与stateless single-user loopback"
+    status: "done"
+    done_evidence: "closed SessionStatus 只含 revocable bool，零session id/token/hash/scope；GET 已认证且 no-store。Server session framing 2/0/0实得multi-user=true/single-user=false；PG17.11 SCRAM 1/0/0以真keyed cookie实得true。openbot-ui WASM helper只解闭集DTO。"
+    evidence: "docs/2026-08-25-G2-生产SessionSignOut-batch28-WIP恢复点.md"
+    notes: "新增。不改/api/me的上游{user}形状；GUI只在true时显示登出。"

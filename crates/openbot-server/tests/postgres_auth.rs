@@ -23,6 +23,7 @@ use time::{Duration, OffsetDateTime};
 use tower::ServiceExt as _;
 
 const RAW_TOKEN: &str = "raw-session-token-with-enough-entropy-001";
+const SECOND_RAW_TOKEN: &str = "raw-session-token-with-enough-entropy-002";
 const SESSION_KEY: &[u8] = b"postgres-auth-resolver-test-session-key";
 
 async fn provision(pool: &deadpool_postgres::Pool) -> Result<(), String> {
@@ -435,6 +436,184 @@ async fn real_cookie_to_http_application_people_and_audit_is_one_vertical_slice(
                 .map_err(|error| error.to_string())?;
             if facts.get::<_, i64>(0) != 1 || facts.get::<_, i64>(1) != 1 {
                 return Err("HTTP role 写没有同批推进 generation/audit".to_owned());
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        outcome
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn sign_out_deletes_only_the_resolved_session_and_same_cookie_immediately_fails() {
+    let admin = admin_config(
+        "sign_out_deletes_only_the_resolved_session_and_same_cookie_immediately_fails",
+    );
+    with_temp_database(&admin, "server_auth_signout", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let outcome = async {
+            provision(&pool).await?;
+            seed_session(&pool).await?;
+            let now = OffsetDateTime::now_utc();
+            let second_hash = SessionTokenHash::compute(
+                SessionToken::new(SECOND_RAW_TOKEN.as_bytes()),
+                SessionHashKey::new(SESSION_KEY),
+            )
+            .to_column_value();
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "INSERT INTO public.sessions \
+                     (id,user_id,token,expires_at,created_at,updated_at,auth_generation) \
+                     VALUES($1,$2,$3,$4,$5,$5,$6)",
+                    &[
+                        &"session-2",
+                        &"actor-1",
+                        &second_hash,
+                        &(now + Duration::hours(1)),
+                        &(now - Duration::minutes(1)),
+                        &2_i64,
+                    ],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let application: std::sync::Arc<dyn ApplicationService> =
+                std::sync::Arc::new(OpenBotApplication::new(ChannelRepo::new(pool.clone())));
+            let app = router(
+                ServerBuilder::new(application, std::sync::Arc::new(resolver(&pool)))
+                    .with_sensitive_write_security(SensitiveWriteSecurity::new(
+                        default_session_lifetime(),
+                        openbot_domain::identity::session::TrustedOrigins::from_configured([
+                            "https://app.example.test",
+                        ])
+                        .unwrap(),
+                    ))
+                    .build(),
+            );
+            let first_cookie = format!("openbot_session={RAW_TOKEN}");
+            let second_cookie = format!("openbot_session={SECOND_RAW_TOKEN}");
+
+            let status = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/me/session")
+                        .header(http::header::COOKIE, &first_cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if status.status() != http::StatusCode::OK {
+                return Err(format!("session status 非200：{}", status.status()));
+            }
+            let body = to_bytes(status.into_body(), 1024 * 1024)
+                .await
+                .map_err(|error| error.to_string())?;
+            if serde_json::from_slice::<serde_json::Value>(&body)
+                .map_err(|error| error.to_string())?["revocable"]
+                != true
+            {
+                return Err("multi-user session 没投影 revocable=true".to_owned());
+            }
+
+            let rejected = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/auth/sign-out")
+                        .header(http::header::COOKIE, &first_cookie)
+                        .header(http::header::ORIGIN, "https://evil.example.test")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if rejected.status() != http::StatusCode::FORBIDDEN {
+                return Err("坏Origin登出未被拒绝".to_owned());
+            }
+            let before: i64 = client
+                .query_one("SELECT count(*)::bigint FROM public.sessions", &[])
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if before != 2 {
+                return Err("被拒登出删了session".to_owned());
+            }
+
+            let signed_out = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/auth/sign-out")
+                        .header(http::header::COOKIE, &first_cookie)
+                        .header(http::header::ORIGIN, "https://app.example.test")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if signed_out.status() != http::StatusCode::NO_CONTENT {
+                return Err(format!("登出非204：{}", signed_out.status()));
+            }
+            let clear_cookie = signed_out
+                .headers()
+                .get(http::header::SET_COOKIE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("");
+            if clear_cookie != "openbot_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" {
+                return Err(format!("清cookie不精确：{clear_cookie}"));
+            }
+
+            let remaining = client
+                .query("SELECT id FROM public.sessions ORDER BY id", &[])
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|row| {
+                    row.try_get::<_, String>(0)
+                        .map_err(|error| error.to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if remaining != ["session-2"] {
+                return Err(format!("登出删除范围不精确：{remaining:?}"));
+            }
+
+            let old = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/channels")
+                        .header(http::header::COOKIE, &first_cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if old.status() != http::StatusCode::UNAUTHORIZED {
+                return Err("已登出cookie仍能认证".to_owned());
+            }
+            let other = app
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/channels")
+                        .header(http::header::COOKIE, &second_cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if other.status() != http::StatusCode::OK {
+                return Err("登出错误撤了其他session".to_owned());
             }
             Ok(())
         }

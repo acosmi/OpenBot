@@ -2,6 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Whether this authenticated browser request is backed by one revocable database session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionStatus {
+    /// `true` only for a concrete multi-user session row; single-user loopback is `false`.
+    pub revocable: bool,
+}
+
 /// First-release theme preference. Absence in [`UiPreferences`] means “use host fallback”.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -100,5 +108,12 @@ mod tests {
         );
         assert!(serde_json::from_str::<UiTheme>(r#""sepia""#).is_err());
         assert!(serde_json::from_str::<UiLocale>(r#""zh""#).is_err());
+        assert_eq!(
+            serde_json::to_string(&SessionStatus { revocable: true }).unwrap(),
+            r#"{"revocable":true}"#
+        );
+        assert!(
+            serde_json::from_str::<SessionStatus>(r#"{"revocable":true,"sessionId":"x"}"#).is_err()
+        );
     }
 }

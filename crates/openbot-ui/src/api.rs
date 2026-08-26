@@ -4,7 +4,7 @@
 //! decision remain behind `ApplicationService` on the Server.
 
 use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalDecision, ToolApprovalResolved};
-use openbot_contracts::ui::{UiPreferences, UpdateUiPreferences};
+use openbot_contracts::ui::{SessionStatus, UiPreferences, UpdateUiPreferences};
 
 /// Stable, payload-free failure categories suitable for localized presentation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,6 +153,59 @@ pub async fn save_ui_preferences(update: UpdateUiPreferences) -> Result<UiPrefer
             return Err(ApiError::InvalidResponse);
         }
         Ok(stored)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Discover whether the current authenticated host uses one revocable database session.
+pub async fn load_session_status() -> Result<SessionStatus, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/me/session")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<SessionStatus>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Revoke exactly the current database session; navigation happens only after the 204 receipt.
+pub async fn sign_out_current_session() -> Result<(), ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::post("/api/auth/sign-out")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 204 {
+            return Err(status_error(response.status()));
+        }
+        Ok(())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
