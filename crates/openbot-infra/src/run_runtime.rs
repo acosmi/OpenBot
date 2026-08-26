@@ -1067,6 +1067,17 @@ async fn finish_run_in_transaction(
         )
         .await
         .map_err(|error| write_error("推进 terminal thread sequence", error))?;
+    if !assistant_text.is_empty() {
+        crate::channel_activity::record_for_thread(
+            transaction,
+            lease.thread_id(),
+            &assistant_text,
+            Some(lease.bot_id()),
+            now,
+        )
+        .await
+        .map_err(|error| write_error("更新 assistant channel activity", error))?;
+    }
     release_lease(transaction, lease.thread_id(), now).await?;
     notify_thread(transaction).await?;
     Ok(RunWriteReceipt {

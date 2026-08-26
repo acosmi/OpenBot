@@ -10,7 +10,8 @@ use openbot_contracts::ids::ThreadId;
 use openbot_contracts::ids::thread::ThreadIdentity;
 
 use crate::ports::{
-    BeginThreadRunRequest, ThreadDirectory, ThreadEventSubscription, ThreadHistoryRequest,
+    BeginThreadRunRequest, ChannelActivitySubscription, ThreadDirectory, ThreadEventSubscription,
+    ThreadHistoryRequest,
 };
 use crate::service::AppEventStream;
 
@@ -107,6 +108,21 @@ pub async fn subscribe_thread_events<D: ThreadDirectory>(
             actor: auth.actor().clone(),
             thread,
             after_event_sequence,
+        })
+        .await
+        .map_err(|error| error.into_app_error())
+}
+
+/// Establish an authority-scoped channel activity stream.
+pub async fn subscribe_channel_activity<D: ThreadDirectory>(
+    directory: &D,
+    auth: &AuthContext,
+) -> Result<AppEventStream, AppError> {
+    directory
+        .subscribe_channel_activity(ChannelActivitySubscription {
+            deployment: auth.deployment().clone(),
+            tenant: auth.tenant().clone(),
+            actor: auth.actor().clone(),
         })
         .await
         .map_err(|error| error.into_app_error())
@@ -428,7 +444,8 @@ mod tests {
     }
 
     struct SubscriptionDirectory {
-        calls: Mutex<Vec<ThreadEventSubscription>>,
+        thread_calls: Mutex<Vec<ThreadEventSubscription>>,
+        channel_calls: Mutex<Vec<ChannelActivitySubscription>>,
     }
 
     #[async_trait]
@@ -454,7 +471,17 @@ mod tests {
             &self,
             request: ThreadEventSubscription,
         ) -> Result<AppEventStream, ThreadDirectoryError> {
-            self.calls.lock().expect("fake lock").push(request);
+            self.thread_calls.lock().expect("fake lock").push(request);
+            Ok(crate::use_cases::health_stream(
+                core::time::Duration::from_secs(1),
+            ))
+        }
+
+        async fn subscribe_channel_activity(
+            &self,
+            request: ChannelActivitySubscription,
+        ) -> Result<AppEventStream, ThreadDirectoryError> {
+            self.channel_calls.lock().expect("fake lock").push(request);
             Ok(crate::use_cases::health_stream(
                 core::time::Duration::from_secs(1),
             ))
@@ -464,14 +491,15 @@ mod tests {
     #[tokio::test]
     async fn subscribe_injects_scope_and_rejects_unrepresentable_cursor_before_port() {
         let directory = SubscriptionDirectory {
-            calls: Mutex::new(Vec::new()),
+            thread_calls: Mutex::new(Vec::new()),
+            channel_calls: Mutex::new(Vec::new()),
         };
         let thread = ThreadId::new("550e8400-e29b-41d4-a716-446655440000");
         let _stream = subscribe_thread_events(&directory, &auth(), thread.clone(), Some(7))
             .await
             .unwrap();
         assert_eq!(
-            directory.calls.lock().expect("fake lock").as_slice(),
+            directory.thread_calls.lock().expect("fake lock").as_slice(),
             &[ThreadEventSubscription {
                 deployment: DeploymentId::new("dep-authoritative"),
                 tenant: TenantId::new("tenant-authoritative"),
@@ -481,14 +509,17 @@ mod tests {
             }]
         );
 
-        let before = directory.calls.lock().expect("fake lock").len();
+        let before = directory.thread_calls.lock().expect("fake lock").len();
         assert_eq!(
             subscribe_thread_events(&directory, &auth(), ThreadId::new("not-a-uuid"), None,)
                 .await
                 .err(),
             Some(AppError::MalformedPayload { field: "thread_id" })
         );
-        assert_eq!(directory.calls.lock().expect("fake lock").len(), before);
+        assert_eq!(
+            directory.thread_calls.lock().expect("fake lock").len(),
+            before
+        );
 
         if usize::BITS > 32 {
             assert_eq!(
@@ -504,8 +535,27 @@ mod tests {
                     field: "after_event_sequence"
                 })
             );
-            assert_eq!(directory.calls.lock().expect("fake lock").len(), before);
+            assert_eq!(
+                directory.thread_calls.lock().expect("fake lock").len(),
+                before
+            );
         }
+
+        let _stream = subscribe_channel_activity(&directory, &auth())
+            .await
+            .unwrap();
+        assert_eq!(
+            directory
+                .channel_calls
+                .lock()
+                .expect("fake lock")
+                .as_slice(),
+            &[ChannelActivitySubscription {
+                deployment: DeploymentId::new("dep-authoritative"),
+                tenant: TenantId::new("tenant-authoritative"),
+                actor: ActorId::new("actor-authoritative"),
+            }]
+        );
     }
 
     struct HistoryDirectory {

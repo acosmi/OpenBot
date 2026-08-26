@@ -37,14 +37,19 @@
 //! 与上游 `channelSummaryDto` 逐键对齐（v3 §15.1 把 `/api/channels` 的 input/output schema
 //! 纳入 parity 面，所以字段名是契约不是风格）。再包一层 `{"data":…}` 会立刻破 parity。
 
+use std::future::poll_fn;
+
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::extract::{Query, State};
+use axum::response::Response;
 use openbot_contracts::command::{AppCommand, AppReply, ChannelPage};
+use openbot_contracts::command::{AppEvent, SubscriptionRequest};
 use openbot_contracts::error::AppError;
 use serde::Deserialize;
 
-use crate::auth::Authenticated;
+use crate::auth::{Authenticated, OriginAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
 
@@ -55,6 +60,8 @@ use crate::http::ServerState;
 /// 回显进错误"这条路）。猜一个具体键名比给一个诚实的粗粒度名字更糟 —— 它会让客户端去改
 /// 一个根本没错的参数。
 const QUERY_FIELD: &str = "query";
+const CHANNEL_ACTIVITY_PROTOCOL: &str = "openbot.channel-activity.v1";
+const CHANNEL_ACTIVITY_INPUT_LIMIT: usize = 1024;
 
 /// `GET /api/channels` 的查询串。
 ///
@@ -154,5 +161,508 @@ pub async fn list(
             }
             .into())
         }
+    }
+}
+
+/// `GET /api/channels/events`; same-origin, read-only channel activity WebSocket.
+pub async fn events(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    ws: WebSocketUpgrade,
+) -> Result<Response, HttpError> {
+    if !ws
+        .requested_protocols()
+        .any(|protocol| protocol == CHANNEL_ACTIVITY_PROTOCOL)
+    {
+        return Err(AppError::MalformedPayload {
+            field: "websocket_protocol",
+        }
+        .into());
+    }
+    let stream = state
+        .application()
+        .subscribe(auth, SubscriptionRequest::ChannelActivity)
+        .await?;
+    Ok(ws
+        .protocols([CHANNEL_ACTIVITY_PROTOCOL])
+        .max_message_size(CHANNEL_ACTIVITY_INPUT_LIMIT)
+        .max_frame_size(CHANNEL_ACTIVITY_INPUT_LIMIT)
+        .on_failed_upgrade(|error| {
+            tracing::debug!(error = %error, "channel activity websocket upgrade failed");
+        })
+        .on_upgrade(move |socket| drive_channel_websocket(socket, stream)))
+}
+
+async fn drive_channel_websocket(
+    mut socket: WebSocket,
+    mut stream: openbot_application::AppEventStream,
+) {
+    loop {
+        tokio::select! {
+            event = poll_fn(|cx| stream.as_mut().poll_next(cx)) => {
+                let Some(event) = event else {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::NORMAL,
+                        reason: "stream_complete".into(),
+                    }))).await;
+                    return;
+                };
+                let (text, terminal) = match event {
+                    AppEvent::ChannelActivity(event) => match serde_json::to_string(&event) {
+                        Ok(text) => (text, false),
+                        Err(error) => {
+                            tracing::error!(error = %error, "typed channel activity encoding failed");
+                            let _ = socket.send(Message::Close(Some(CloseFrame {
+                                code: close_code::ERROR,
+                                reason: "event_encoding_failed".into(),
+                            }))).await;
+                            return;
+                        }
+                    },
+                    AppEvent::ChannelStreamError { code } => {
+                        (serde_json::json!({"error":{"code":code}}).to_string(), true)
+                    }
+                    AppEvent::Heartbeat { .. }
+                    | AppEvent::ThreadRunEvent(_)
+                    | AppEvent::ThreadStreamError { .. } => {
+                        tracing::error!("channel subscription emitted non-channel event");
+                        let _ = socket.send(Message::Close(Some(CloseFrame {
+                            code: close_code::ERROR,
+                            reason: "application_contract_failed".into(),
+                        }))).await;
+                        return;
+                    }
+                };
+                if socket.send(Message::Text(text.into())).await.is_err() {
+                    return;
+                }
+                if terminal {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::ERROR,
+                        reason: "channel_stream_failed".into(),
+                    }))).await;
+                    return;
+                }
+            }
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(Message::Close(_))) | None => return,
+                Some(Ok(Message::Text(_) | Message::Binary(_))) => {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::POLICY,
+                        reason: "channel_activity_read_only".into(),
+                    }))).await;
+                    return;
+                }
+                Some(Err(error)) => {
+                    tracing::debug!(error = %error, "channel activity websocket input failed");
+                    return;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::pin::Pin;
+    use core::task::{Context, Poll};
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use axum::Router;
+    use futures_core::Stream;
+    use futures_util::{SinkExt as _, StreamExt as _};
+    use http::StatusCode;
+    use openbot_application::ports::{
+        ChannelActivitySubscription, ChannelReader, PortError, ThreadDirectory,
+        ThreadDirectoryError,
+    };
+    use openbot_application::{AppEventStream, ChannelCursor, OpenBotApplication};
+    use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
+    use openbot_contracts::command::{ChannelActivityEvent, ChannelSummary};
+    use openbot_contracts::ids::{ActorId, BotId, ChannelId, DeploymentId, TenantId, ThreadId};
+    use openbot_domain::identity::session::TrustedOrigins;
+    use openbot_infra::auth::config::default_session_lifetime;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+    use tokio_tungstenite::tungstenite::{Error as ClientWebSocketError, Message as ClientMessage};
+
+    use super::*;
+    use crate::auth::{FixedAuthResolver, SensitiveWriteSecurity};
+    use crate::http::ServerBuilder;
+
+    #[derive(Clone, Copy)]
+    struct EmptyChannels;
+
+    #[async_trait]
+    impl ChannelReader for EmptyChannels {
+        async fn list_visible_channels(
+            &self,
+            _actor: &ActorId,
+            _limit: u32,
+            _cursor: Option<ChannelCursor>,
+        ) -> Result<Vec<ChannelSummary>, PortError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Clone)]
+    struct FakeChannelDirectory {
+        inner: Arc<FakeChannelDirectoryInner>,
+    }
+
+    struct FakeChannelDirectoryInner {
+        calls: Mutex<Vec<ChannelActivitySubscription>>,
+        events: Mutex<Vec<AppEvent>>,
+        hold_stream_open: AtomicBool,
+    }
+
+    impl FakeChannelDirectory {
+        fn with_events(events: Vec<AppEvent>) -> Self {
+            Self {
+                inner: Arc::new(FakeChannelDirectoryInner {
+                    calls: Mutex::new(Vec::new()),
+                    events: Mutex::new(events),
+                    hold_stream_open: AtomicBool::new(false),
+                }),
+            }
+        }
+
+        fn holding_stream_open() -> Self {
+            let directory = Self::with_events(Vec::new());
+            directory
+                .inner
+                .hold_stream_open
+                .store(true, Ordering::SeqCst);
+            directory
+        }
+
+        fn calls(&self) -> Vec<ChannelActivitySubscription> {
+            self.inner.calls.lock().expect("fake lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl ThreadDirectory for FakeChannelDirectory {
+        async fn mint_thread_id(
+            &self,
+            _deployment: &DeploymentId,
+        ) -> Result<ThreadId, ThreadDirectoryError> {
+            Err(ThreadDirectoryError::Unavailable)
+        }
+
+        async fn thread_known(
+            &self,
+            _deployment: &DeploymentId,
+            _tenant: &TenantId,
+            _actor: &ActorId,
+            _thread: &ThreadId,
+        ) -> Result<bool, ThreadDirectoryError> {
+            Err(ThreadDirectoryError::Unavailable)
+        }
+
+        async fn subscribe_channel_activity(
+            &self,
+            request: ChannelActivitySubscription,
+        ) -> Result<AppEventStream, ThreadDirectoryError> {
+            self.inner.calls.lock().expect("fake lock").push(request);
+            if self.inner.hold_stream_open.load(Ordering::SeqCst) {
+                Ok(Box::pin(PendingEvents))
+            } else {
+                Ok(Box::pin(FiniteEvents(
+                    self.inner.events.lock().expect("fake lock").clone().into(),
+                )))
+            }
+        }
+    }
+
+    struct FiniteEvents(VecDeque<AppEvent>);
+
+    impl Stream for FiniteEvents {
+        type Item = AppEvent;
+
+        fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Ready(self.0.pop_front())
+        }
+    }
+
+    struct PendingEvents;
+
+    impl Stream for PendingEvents {
+        type Item = AppEvent;
+
+        fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Pending
+        }
+    }
+
+    fn auth(actor: &str) -> AuthContext {
+        AuthContext::for_test(
+            DeploymentId::new("openbot-test"),
+            TenantId::new("tenant-test"),
+            ActorId::new(actor),
+            [Role::User],
+            AuthGeneration::new(1),
+            false,
+        )
+    }
+
+    fn app(directory: FakeChannelDirectory, resolver: FixedAuthResolver) -> Router {
+        let application = Arc::new(OpenBotApplication::new(EmptyChannels).with_threads(directory));
+        ServerBuilder::new(application, Arc::new(resolver))
+            .with_sensitive_write_security(SensitiveWriteSecurity::new(
+                default_session_lifetime(),
+                TrustedOrigins::from_configured(["https://app.example.test"]).unwrap(),
+            ))
+            .into_router()
+    }
+
+    #[tokio::test]
+    async fn websocket_rejects_unauthenticated_before_upgrade_or_subscription() {
+        let directory = FakeChannelDirectory::with_events(Vec::new());
+        let visible = directory.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind channel websocket test");
+        let address = listener.local_addr().expect("test address");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app(
+                    directory,
+                    FixedAuthResolver::rejecting(AppError::Unauthenticated),
+                ),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = stopped.await;
+            })
+            .await
+        });
+        let unauthenticated = websocket_request(
+            address,
+            Some("https://app.example.test"),
+            Some(CHANNEL_ACTIVITY_PROTOCOL),
+        )
+        .await;
+        assert_http_handshake_error(unauthenticated, StatusCode::UNAUTHORIZED);
+        assert!(visible.calls().is_empty());
+        let _ = stop.send(());
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test]
+    async fn websocket_requires_origin_and_protocol_then_streams_only_typed_activity() {
+        let activity = ChannelActivityEvent {
+            channel_id: ChannelId::new("channel-1"),
+            last_message: Some("hello".to_owned()),
+            last_message_at: Some(time::OffsetDateTime::UNIX_EPOCH),
+            last_message_agent_id: Some(BotId::new("bot-1")),
+        };
+        let directory =
+            FakeChannelDirectory::with_events(vec![AppEvent::ChannelActivity(activity.clone())]);
+        let visible = directory.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind channel websocket test");
+        let address = listener.local_addr().expect("test address");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app(directory, FixedAuthResolver::granting(auth("u1"))),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = stopped.await;
+            })
+            .await
+        });
+
+        let untrusted = websocket_request(
+            address,
+            Some("https://evil.example.test"),
+            Some(CHANNEL_ACTIVITY_PROTOCOL),
+        )
+        .await;
+        assert_http_handshake_error(untrusted, StatusCode::FORBIDDEN);
+
+        let missing_protocol =
+            websocket_request(address, Some("https://app.example.test"), None).await;
+        assert_http_handshake_error(missing_protocol, StatusCode::BAD_REQUEST);
+
+        let (mut socket, response) = websocket_request(
+            address,
+            Some("https://app.example.test"),
+            Some(CHANNEL_ACTIVITY_PROTOCOL),
+        )
+        .await
+        .expect("trusted channel websocket handshake");
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+        assert_eq!(
+            response.headers()[http::header::SEC_WEBSOCKET_PROTOCOL],
+            CHANNEL_ACTIVITY_PROTOCOL
+        );
+        let frame = socket
+            .next()
+            .await
+            .expect("activity frame")
+            .expect("valid activity frame");
+        let ClientMessage::Text(text) = frame else {
+            panic!("首帧必须是 channel activity JSON text：{frame:?}");
+        };
+        assert_eq!(
+            serde_json::from_str::<ChannelActivityEvent>(text.as_str())
+                .expect("typed channel activity"),
+            activity
+        );
+        let close = socket
+            .next()
+            .await
+            .expect("close frame")
+            .expect("valid close frame");
+        assert!(
+            matches!(close, ClientMessage::Close(Some(frame)) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal)
+        );
+        assert_eq!(
+            visible.calls(),
+            vec![ChannelActivitySubscription {
+                deployment: DeploymentId::new("openbot-test"),
+                tenant: TenantId::new("tenant-test"),
+                actor: ActorId::new("u1"),
+            }]
+        );
+        let _ = stop.send(());
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test]
+    async fn websocket_is_read_only_and_closes_client_data_with_policy_code() {
+        let directory = FakeChannelDirectory::holding_stream_open();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind channel websocket test");
+        let address = listener.local_addr().expect("test address");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app(directory, FixedAuthResolver::granting(auth("u1"))),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = stopped.await;
+            })
+            .await
+        });
+        let (mut socket, _) = websocket_request(
+            address,
+            Some("https://app.example.test"),
+            Some(CHANNEL_ACTIVITY_PROTOCOL),
+        )
+        .await
+        .expect("trusted channel websocket handshake");
+        socket
+            .send(ClientMessage::Text("forged client event".into()))
+            .await
+            .expect("send policy violation");
+        let close = socket
+            .next()
+            .await
+            .expect("policy close")
+            .expect("valid policy close");
+        assert!(
+            matches!(close, ClientMessage::Close(Some(frame)) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy)
+        );
+        let _ = stop.send(());
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test]
+    async fn post_upgrade_dependency_failure_is_a_stable_frame_then_error_close() {
+        let directory = FakeChannelDirectory::with_events(vec![AppEvent::ChannelStreamError {
+            code: "dependency_unavailable".to_owned(),
+        }]);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind channel websocket test");
+        let address = listener.local_addr().expect("test address");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app(directory, FixedAuthResolver::granting(auth("u1"))),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = stopped.await;
+            })
+            .await
+        });
+        let (mut socket, _) = websocket_request(
+            address,
+            Some("https://app.example.test"),
+            Some(CHANNEL_ACTIVITY_PROTOCOL),
+        )
+        .await
+        .expect("trusted channel websocket handshake");
+        let frame = socket
+            .next()
+            .await
+            .expect("error frame")
+            .expect("valid error frame");
+        let ClientMessage::Text(text) = frame else {
+            panic!("依赖错误必须先发稳定 JSON text：{frame:?}");
+        };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(text.as_str()).expect("error JSON"),
+            serde_json::json!({"error":{"code":"dependency_unavailable"}})
+        );
+        let close = socket
+            .next()
+            .await
+            .expect("error close")
+            .expect("valid error close");
+        assert!(
+            matches!(close, ClientMessage::Close(Some(frame)) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Error)
+        );
+        let _ = stop.send(());
+        server.await.expect("server task").expect("server result");
+    }
+
+    type ClientSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+    type ClientHandshake =
+        Result<(ClientSocket, http::Response<Option<Vec<u8>>>), ClientWebSocketError>;
+
+    async fn websocket_request(
+        address: std::net::SocketAddr,
+        origin: Option<&str>,
+        protocol: Option<&str>,
+    ) -> ClientHandshake {
+        let mut request = format!("ws://{address}/api/channels/events")
+            .into_client_request()
+            .expect("channel websocket request");
+        if let Some(origin) = origin {
+            request.headers_mut().insert(
+                http::header::ORIGIN,
+                http::HeaderValue::from_str(origin).expect("origin"),
+            );
+        }
+        if let Some(protocol) = protocol {
+            request.headers_mut().insert(
+                http::header::SEC_WEBSOCKET_PROTOCOL,
+                http::HeaderValue::from_str(protocol).expect("protocol"),
+            );
+        }
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("connect channel websocket test");
+        tokio_tungstenite::client_async(request, stream).await
+    }
+
+    fn assert_http_handshake_error(result: ClientHandshake, expected: StatusCode) {
+        let Err(ClientWebSocketError::Http(response)) = result else {
+            panic!("应为 HTTP handshake 拒绝，实际：{result:?}");
+        };
+        assert_eq!(response.status(), expected);
     }
 }

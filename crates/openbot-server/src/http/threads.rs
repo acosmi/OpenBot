@@ -271,6 +271,8 @@ fn sse_event(event: AppEvent) -> Event {
         AppEvent::Heartbeat { seq } => ("heartbeat", Some(*seq)),
         AppEvent::ThreadRunEvent(event) => ("thread_run_event", Some(event.event_sequence)),
         AppEvent::ThreadStreamError { .. } => ("thread_stream_error", None),
+        AppEvent::ChannelActivity(_) => ("channel_activity", None),
+        AppEvent::ChannelStreamError { .. } => ("channel_stream_error", None),
     };
     let data = serde_json::to_string(&event).unwrap_or_else(|_| {
         r#"{"kind":"thread_stream_error","code":"dependency_unavailable"}"#.to_owned()

@@ -207,6 +207,17 @@ pub struct ThreadEventSubscription {
     pub after_event_sequence: Option<u64>,
 }
 
+/// Authority-scoped channel activity subscription.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelActivitySubscription {
+    /// Authoritative deployment.
+    pub deployment: DeploymentId,
+    /// Authoritative tenant.
+    pub tenant: TenantId,
+    /// Authoritative actor whose current memberships filter every notification.
+    pub actor: ActorId,
+}
+
 /// 权威 scope 合并后的 thread history 请求。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThreadHistoryRequest {
@@ -255,6 +266,14 @@ pub trait ThreadDirectory: Send + Sync {
     async fn subscribe_thread_events(
         &self,
         _request: ThreadEventSubscription,
+    ) -> Result<AppEventStream, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
+
+    /// Subscribe to committed channel activity, filtering every frame by current membership.
+    async fn subscribe_channel_activity(
+        &self,
+        _request: ChannelActivitySubscription,
     ) -> Result<AppEventStream, ThreadDirectoryError> {
         Err(ThreadDirectoryError::Unavailable)
     }

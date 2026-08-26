@@ -7,12 +7,12 @@ use std::future::poll_fn;
 use async_trait::async_trait;
 use futures_core::Stream;
 use openbot_application::{
-    AppEventStream, BeginThreadRunRequest, ThreadDirectory, ThreadDirectoryError,
-    ThreadEventSubscription, ThreadHistoryRequest,
+    AppEventStream, BeginThreadRunRequest, ChannelActivitySubscription, ThreadDirectory,
+    ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
 };
 use openbot_contracts::command::{
-    AppEvent, ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole, ThreadRunAnchor,
-    ThreadRunEvent, ThreadRunEventKind, ThreadRunStarted,
+    AppEvent, ChannelActivityEvent, ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole,
+    ThreadRunAnchor, ThreadRunEvent, ThreadRunEventKind, ThreadRunStarted,
 };
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
@@ -203,6 +203,27 @@ impl ThreadDirectory for PostgresThreadDirectory {
         tokio::spawn(supervise_thread_stream(
             self.pool.clone(),
             runtime.database.clone(),
+            request,
+            sender,
+            stop_rx,
+            active,
+        ));
+        Ok(Box::pin(ThreadEventReceiver { receiver, stop }))
+    }
+
+    async fn subscribe_channel_activity(
+        &self,
+        request: ChannelActivitySubscription,
+    ) -> Result<AppEventStream, ThreadDirectoryError> {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or(ThreadDirectoryError::Unavailable)?;
+        let (stop, stop_rx) = watch::channel(false);
+        let active = listen_channel_once(&runtime.database, stop_rx.clone()).await?;
+        let (sender, receiver) = mpsc::channel(THREAD_EVENT_CHANNEL_CAPACITY);
+        tokio::spawn(drive_channel_activity(
+            self.pool.clone(),
             request,
             sender,
             stop_rx,
@@ -582,6 +603,147 @@ async fn emit_stream_error(sender: &mpsc::Sender<AppEvent>, error: ThreadDirecto
         .await;
 }
 
+async fn listen_channel_once(
+    database: &DatabaseConfig,
+    mut stop: watch::Receiver<bool>,
+) -> Result<ActiveThreadListener, ThreadDirectoryError> {
+    let (client, mut connection) = database
+        .to_pg_config()
+        .connect(NoTls)
+        .await
+        .map_err(|error| unavailable("建立 channel activity LISTEN 连接失败", error))?;
+    {
+        let listen = client.batch_execute("LISTEN openbot_channel_activity");
+        tokio::pin!(listen);
+        loop {
+            tokio::select! {
+                result = &mut listen => {
+                    result.map_err(|error| unavailable("订阅 channel activity 失败", error))?;
+                    break;
+                }
+                changed = stop.changed() => {
+                    if changed.is_err() || *stop.borrow() {
+                        return Err(ThreadDirectoryError::Unavailable);
+                    }
+                }
+                message = poll_fn(|cx| connection.poll_message(cx)) => match message {
+                    Some(Ok(_)) => {}
+                    Some(Err(error)) => {
+                        return Err(unavailable("建立 channel LISTEN 时连接失败", error));
+                    }
+                    None => return Err(ThreadDirectoryError::Unavailable),
+                }
+            }
+        }
+    }
+    Ok(ActiveThreadListener {
+        _client: client,
+        connection,
+    })
+}
+
+async fn drive_channel_activity(
+    pool: deadpool_postgres::Pool,
+    request: ChannelActivitySubscription,
+    sender: mpsc::Sender<AppEvent>,
+    mut stop: watch::Receiver<bool>,
+    mut active: ActiveThreadListener,
+) {
+    loop {
+        tokio::select! {
+            changed = stop.changed() => {
+                if changed.is_err() || *stop.borrow() {
+                    return;
+                }
+            }
+            () = sender.closed() => return,
+            message = poll_fn(|cx| active.connection.poll_message(cx)) => match message {
+                Some(Ok(AsyncMessage::Notification(notification)))
+                    if notification.channel() == crate::channel_activity::CHANNEL_ACTIVITY_TOPIC =>
+                {
+                    let Ok(event) = serde_json::from_str::<ChannelActivityEvent>(notification.payload()) else {
+                        tracing::warn!("ignored malformed channel activity notification");
+                        continue;
+                    };
+                    if !channel_event_is_bounded(&event) {
+                        tracing::warn!("ignored unbounded channel activity notification");
+                        continue;
+                    }
+                    match channel_visible(&pool, &request, &event).await {
+                        Ok(true) => {
+                            if sender.send(AppEvent::ChannelActivity(event)).await.is_err() {
+                                return;
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            emit_channel_stream_error(&sender, error).await;
+                            return;
+                        }
+                    }
+                }
+                Some(Ok(_)) => {}
+                Some(Err(error)) => {
+                    tracing::error!(error = %error, "channel activity LISTEN connection failed");
+                    emit_channel_stream_error(&sender, ThreadDirectoryError::Unavailable).await;
+                    return;
+                }
+                None => {
+                    tracing::warn!("channel activity LISTEN connection closed");
+                    emit_channel_stream_error(&sender, ThreadDirectoryError::Unavailable).await;
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn channel_event_is_bounded(event: &ChannelActivityEvent) -> bool {
+    !event.channel_id.as_str().is_empty()
+        && event.channel_id.as_str().len() <= 512
+        && !event.channel_id.as_str().chars().any(char::is_control)
+        && event.last_message.as_ref().is_none_or(|message| {
+            message.chars().count() <= 200 && !message.chars().any(char::is_control)
+        })
+        && event
+            .last_message_agent_id
+            .as_ref()
+            .is_none_or(|agent| !agent.as_str().is_empty() && agent.as_str().len() <= 512)
+}
+
+async fn channel_visible(
+    pool: &deadpool_postgres::Pool,
+    request: &ChannelActivitySubscription,
+    event: &ChannelActivityEvent,
+) -> Result<bool, ThreadDirectoryError> {
+    let client = pool.get().await.map_err(|error| {
+        tracing::error!(error = %error, "channel activity membership 获取连接失败");
+        ThreadDirectoryError::Unavailable
+    })?;
+    client
+        .query_one(
+            "SELECT EXISTS( \
+               SELECT 1 FROM public.channel_memberships \
+               WHERE channel_id=$1 AND user_id=$2 \
+             )",
+            &[&event.channel_id.as_str(), &request.actor.as_str()],
+        )
+        .await
+        .map_err(|error| unavailable("验证 channel activity membership 失败", error))?
+        .try_get(0)
+        .map_err(|_| ThreadDirectoryError::Corrupt {
+            field: "channel_activity_visible",
+        })
+}
+
+async fn emit_channel_stream_error(sender: &mpsc::Sender<AppEvent>, error: ThreadDirectoryError) {
+    let _ = sender
+        .send(AppEvent::ChannelStreamError {
+            code: error.into_app_error().code().as_str().to_owned(),
+        })
+        .await;
+}
+
 enum BeginOutcome {
     Replayed(ThreadRunStarted),
     Created(ThreadRunStarted),
@@ -819,6 +981,17 @@ async fn apply_begin(
         )
         .await
         .map_err(|error| write_error("写 replay-safe dispatch outbox 失败", error))?;
+    if let ThreadRunAnchor::Channel { channel_id } = &command.anchor {
+        crate::channel_activity::record_for_channel(
+            transaction,
+            channel_id,
+            &command.message,
+            None,
+            now,
+        )
+        .await
+        .map_err(|error| unavailable("更新 user channel activity 失败", error))?;
+    }
     transaction
         .query_one("SELECT pg_notify('openbot_thread_events','')", &[])
         .await

@@ -29,7 +29,10 @@ async fn next(label: &'static str, stream: &mut AppEventStream) -> Result<AppEve
 fn sequence(event: &AppEvent) -> Option<u64> {
     match event {
         AppEvent::ThreadRunEvent(event) => Some(event.event_sequence),
-        AppEvent::Heartbeat { .. } | AppEvent::ThreadStreamError { .. } => None,
+        AppEvent::Heartbeat { .. }
+        | AppEvent::ThreadStreamError { .. }
+        | AppEvent::ChannelActivity(_)
+        | AppEvent::ChannelStreamError { .. } => None,
     }
 }
 

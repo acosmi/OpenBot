@@ -483,6 +483,7 @@ pub fn router(state: ServerState) -> Router {
             get(auth_sso::saml_metadata),
         )
         .route("/api/channels", get(channels::list))
+        .route("/api/channels/events", get(channels::events))
         .route("/api/tool-approvals", get(approvals::pending_get))
         .route(
             "/api/tool-approvals/{approval_id}",

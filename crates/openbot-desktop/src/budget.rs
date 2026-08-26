@@ -128,9 +128,13 @@ pub enum DeliveryClass {
 pub const fn delivery_class(event: &AppEvent) -> DeliveryClass {
     match event {
         AppEvent::Heartbeat { .. } => DeliveryClass::LatestValue,
-        // Durable semantic events 与显式 stream error 都不能在 broker 内静默丢弃；队列满时
-        // 断开，GUI 用 thread-global cursor 从 PostgreSQL replay。
-        AppEvent::ThreadRunEvent(_) | AppEvent::ThreadStreamError { .. } => DeliveryClass::Critical,
+        // Thread durable event 与显式 stream error 不能在 broker 内静默丢弃；thread 断开后
+        // 用 cursor replay。Channel activity 自身不是 durable 真源，但漏一帧会让 roster UI
+        // 暂时陈旧，所以同样断开；GUI 重连时从 PostgreSQL roster 全量 refetch。
+        AppEvent::ThreadRunEvent(_)
+        | AppEvent::ThreadStreamError { .. }
+        | AppEvent::ChannelActivity(_)
+        | AppEvent::ChannelStreamError { .. } => DeliveryClass::Critical,
     }
 }
 
@@ -197,6 +201,27 @@ mod tests {
             DeliveryClass::Critical
         );
         assert!(!DeliveryClass::Critical.may_shed_under_pressure());
+    }
+
+    #[test]
+    fn channel_activity_is_critical_so_pressure_forces_reconnect_and_roster_refetch() {
+        assert_eq!(
+            delivery_class(&AppEvent::ChannelActivity(
+                openbot_contracts::command::ChannelActivityEvent {
+                    channel_id: openbot_contracts::ids::ChannelId::new("channel-1"),
+                    last_message: Some("hello".to_owned()),
+                    last_message_at: Some(time::OffsetDateTime::UNIX_EPOCH),
+                    last_message_agent_id: None,
+                },
+            )),
+            DeliveryClass::Critical
+        );
+        assert_eq!(
+            delivery_class(&AppEvent::ChannelStreamError {
+                code: "dependency_unavailable".to_owned(),
+            }),
+            DeliveryClass::Critical
+        );
     }
 
     /// 「可丢」这条判据在四档上各给一个答案，而且不是恒真也不是恒假。

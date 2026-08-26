@@ -140,6 +140,7 @@ pub const fn subscription_kind(request: &SubscriptionRequest) -> &'static str {
     match request {
         SubscriptionRequest::Health => "health",
         SubscriptionRequest::ThreadEvents { .. } => "thread_events",
+        SubscriptionRequest::ChannelActivity => "channel_activity",
     }
 }
 
@@ -409,6 +410,10 @@ mod tests {
                 after_event_sequence: Some(3),
             }),
             "thread_events"
+        );
+        assert_eq!(
+            subscription_kind(&SubscriptionRequest::ChannelActivity),
+            "channel_activity"
         );
     }
 

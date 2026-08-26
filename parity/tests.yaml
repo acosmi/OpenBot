@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 781
+    expect: 771
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -4189,51 +4189,56 @@ entries:
   - id: "server-tests-channel-activity-integration--channel-activity--records-the-last-message-and-returns-it-on-the-roster"
     upstream: "server/tests/channel-activity.integration.test.ts::channel activity"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::records_the_last_message_and_returns_it_on_the_roster"
+    target: "openbot_infra::channel_activity + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0391
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "PG17.11 host-SCRAM test drives production BeginThreadRun + PostgresRunRuntime terminal path, then reads the same row through ChannelRepo: assistant preview/at/Bot are byte-for-field equal to the emitted event and authoritative roster. 1/0/0; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[472]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「records the last message and returns it on the roster」。"
   - id: "server-tests-channel-activity-integration--channel-activity--keeps-a-person-s-roster-to-the-channels-they-belong-to"
     upstream: "server/tests/channel-activity.integration.test.ts::channel activity"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::keeps_a_person_s_roster_to_the_channels_they_belong_to"
+    target: "openbot_infra::thread_directory + ChannelRepo + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0392
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Same PG17.11 test proves two members receive, outsider receives nothing, outsider roster is empty, outsider native write returns NotVisible, and a revoked member receives no later assistant activity. 1/0/0; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[473]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「keeps a person's roster to the channels they belong to」。"
   - id: "server-tests-channel-activity-integration--channel-activity--ignores-a-report-older-than-what-is-already-stored"
     upstream: "server/tests/channel-activity.integration.test.ts::channel activity"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::ignores_a_report_older_than_what_is_already_stored"
+    target: "openbot_infra::channel_activity + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0393
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A channel seeded at 2100 receives a real current-clock BeginThreadRun; the native run commits while channels.last_message* remains exactly future wins/null-Bot and the member stream receives no channel notification. PG17.11 SCRAM 1/0/0; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[474]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「ignores a report older than what is already stored」。"
   - id: "server-tests-channel-activity-integration--channel-activity--stores-at-most-200-code-points-without-control-character"
     upstream: "server/tests/channel-activity.integration.test.ts::channel activity"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::stores_at_most_200_code_points_without_control_character"
+    target: "openbot_infra::channel_activity::tests::preview_is_one_line_control_free_and_code_point_bounded + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0394
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Production preview removes C0/C1, collapses whitespace and truncates to 199 code points plus ellipsis. Pure unit 1/0/0 and PG17.11 transaction/event integration asserts exact 200 code points, prefix, and zero control characters; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[475]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「stores at most 200 code points, without control characters」。"
   - id: "server-tests-channel-activity-integration--channel-activity--refuses-an-agent-that-is-not-in-the-channel"
     upstream: "server/tests/channel-activity.integration.test.ts::channel activity"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::refuses_an_agent_that_is_not_in_the_channel"
+    target: "openbot_infra::thread_directory::target_visible + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0395
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "PG fixture contains a public Bot/profile deliberately absent from channel_agents; production BeginThreadRun on that channel returns NotVisible before thread/activity writes. PG17.11 host-SCRAM 1/0/0; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[476]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「refuses an agent that is not in the channel」。"
   - id: "server-tests-channel-activity-integration--channel-activity--puts-a-channel-just-created-above-one-that-has-already-b"
@@ -4262,51 +4267,56 @@ entries:
   - id: "server-tests-channel-events-integration--channel-event-hub--delivers-only-to-the-members-of-the-channel"
     upstream: "server/tests/channel-events.integration.test.ts::channel event hub"
     label: parity
-    target: "openbot_infra::events::channel_hub::tests::delivers_only_to_the_members_of_the_channel"
+    target: "openbot_infra::thread_directory::subscribe_channel_activity + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0398
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Production LISTEN subscribers are established before the write; two current members receive the bounded event while the simultaneously connected outsider times out, and revoked membership filters the next event. PG17.11 SCRAM 1/0/0; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[480]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §4.3 Native thread/realtime：channel 事件枢纽与投递判据逐条移植到 Rust/PostgreSQL 真源。上游用例标题：「delivers only to the members of the channel」。"
   - id: "server-tests-channel-events-integration--channel-event-hub--reaches-every-connection-a-person-has-open"
     upstream: "server/tests/channel-events.integration.test.ts::channel event hub"
     label: parity
-    target: "openbot_infra::events::channel_hub::tests::reaches_every_connection_a_person_has_open"
+    target: "openbot_infra::thread_directory::subscribe_channel_activity + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0399
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "The same actor opens two production subscriptions before one committed user message; both independently receive the same typed event and four dedicated LISTEN sessions are observed. PG17.11 SCRAM 1/0/0; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[481]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §4.3 Native thread/realtime：channel 事件枢纽与投递判据逐条移植到 Rust/PostgreSQL 真源。上游用例标题：「reaches every connection a person has open」。"
   - id: "server-tests-channel-events-integration--channel-event-hub--stops-delivering-once-a-connection-detaches-and-forgets"
     upstream: "server/tests/channel-events.integration.test.ts::channel event hub"
     label: parity
-    target: "openbot_infra::events::channel_hub::tests::stops_delivering_once_a_connection_detaches_and_forgets"
+    target: "openbot_infra::thread_directory::ThreadEventReceiver + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0400
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Dropping one of the actor's streams closes its LISTEN session (pg_stat_activity 4=>3); dropping the remaining stream removes the actor's final session (3=>2), with bounded polling proving cleanup rather than timing assumption. PG17.11 SCRAM 1/0/0; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[482]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §4.3 Native thread/realtime：channel 事件枢纽与投递判据逐条移植到 Rust/PostgreSQL 真源。上游用例标题：「stops delivering once a connection detaches, and forgets the person」。"
   - id: "server-tests-channel-events-integration--channel-event-hub--one-failing-connection-does-not-deny-the-event-to-the-re"
     upstream: "server/tests/channel-events.integration.test.ts::channel event hub"
     label: parity
-    target: "openbot_infra::events::channel_hub::tests::one_failing_connection_does_not_deny_the_event_to_the_re"
+    target: "openbot_infra::thread_directory::drive_channel_activity + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0401
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "After one of two same-actor receivers is dropped and its independent listener is proven gone, the other still receives the committed assistant event; one broken/closing connection has no shared send loop that can deny healthy connections. PG17.11 SCRAM 1/0/0; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[483]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §4.3 Native thread/realtime：channel 事件枢纽与投递判据逐条移植到 Rust/PostgreSQL 真源。上游用例标题：「one failing connection does not deny the event to the rest」。"
   - id: "server-tests-channel-events-integration--channel-activity-delivery--announces-a-recorded-message-to-a-listener-on-its-own-co"
     upstream: "server/tests/channel-events.integration.test.ts::channel activity delivery"
     label: parity
-    target: "openbot_infra::events::channel_hub::tests::announces_a_recorded_message_to_a_listener_on_its_own_co"
+    target: "openbot_infra::channel_activity + openbot_infra::thread_directory::subscribe_channel_activity + channel_activity::committed_user_and_assistant_activity_fan_out_by_current_membership"
     owner: openbot-infra
     test_id: T-TEST-0402
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Writer transaction and listener share no state except PostgreSQL: the listener establishes LISTEN first, BeginThreadRun/RunRuntime commits update+NOTIFY, and the separate connection receives the exact typed projection within the 5s bound. PG17.11 host-SCRAM 1/0/0; Batch29."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[485]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §4.3 Native thread/realtime：channel 事件枢纽与投递判据逐条移植到 Rust/PostgreSQL 真源。上游用例标题：「announces a recorded message to a listener on its own connection」。"
   # ---------------------------------------------------------------------------

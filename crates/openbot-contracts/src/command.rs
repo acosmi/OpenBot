@@ -536,6 +536,21 @@ pub struct ChannelSummary {
     pub active: bool,
 }
 
+/// One committed channel-roster activity projection; membership is never serialized in the frame.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChannelActivityEvent {
+    /// Channel whose authoritative summary changed.
+    pub channel_id: ChannelId,
+    /// Bounded one-line preview, or `None` when cleared.
+    pub last_message: Option<String>,
+    /// Authoritative activity timestamp.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_message_at: Option<OffsetDateTime>,
+    /// Bot that produced the preview; user messages use `None`.
+    pub last_message_agent_id: Option<BotId>,
+}
+
 /// 订阅请求。封闭 enum，理由同 [`AppCommand`]。
 ///
 /// R65 后有探活与 durable thread events 两项；后者必须由 PostgreSQL replay→live producer 承担。
@@ -551,6 +566,8 @@ pub enum SubscriptionRequest {
         /// 客户端最后完整接收的 thread-global cursor；`None` 从第一条开始。
         after_event_sequence: Option<u64>,
     },
+    /// Subscribe to low-latency channel roster activity for the authenticated actor.
+    ChannelActivity,
 }
 
 /// 订阅流上的事件。封闭 enum。
@@ -570,6 +587,13 @@ pub enum AppEvent {
     /// 订阅建立后依赖失败；只携带稳定 code，随后流结束，客户端按 cursor 重连。
     ThreadStreamError {
         /// 稳定错误码；不携带数据库/网络原文。
+        code: String,
+    },
+    /// Committed channel roster activity; clients refetch on every reconnect.
+    ChannelActivity(ChannelActivityEvent),
+    /// Channel LISTEN/membership dependency failed; the socket closes after this frame.
+    ChannelStreamError {
+        /// Stable error code; no database/network text.
         code: String,
     },
 }
@@ -1063,9 +1087,28 @@ mod tests {
             request
         );
 
+        let request = SubscriptionRequest::ChannelActivity;
+        assert_eq!(
+            serde_json::to_string(&request).unwrap(),
+            r#"{"kind":"channel_activity"}"#
+        );
+
         let event = AppEvent::Heartbeat { seq: 7 };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(json, r#"{"kind":"heartbeat","seq":7}"#);
+        assert_eq!(serde_json::from_str::<AppEvent>(&json).unwrap(), event);
+
+        let event = AppEvent::ChannelActivity(ChannelActivityEvent {
+            channel_id: ChannelId::new("channel-1"),
+            last_message: Some("hello".to_owned()),
+            last_message_at: Some(datetime!(2026-08-26 12:00:00 UTC)),
+            last_message_agent_id: Some(BotId::new("bot-1")),
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"channel_activity","channelId":"channel-1","lastMessage":"hello","lastMessageAt":"2026-08-26T12:00:00Z","lastMessageAgentId":"bot-1"}"#
+        );
         assert_eq!(serde_json::from_str::<AppEvent>(&json).unwrap(), event);
 
         let event = AppEvent::ThreadRunEvent(ThreadRunEvent {

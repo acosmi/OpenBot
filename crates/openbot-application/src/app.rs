@@ -50,7 +50,7 @@ use crate::use_cases::{
     change_person_role, correct_memory, current_user, get_action_policy, get_thread_history,
     get_thread_status, health, health_stream, list_audit_events, list_memories, list_people,
     list_visible_channels, mint_thread_id, mutate_memory, recall_memories, remember_memory,
-    set_action_policy, subscribe_thread_events,
+    set_action_policy, subscribe_channel_activity, subscribe_thread_events,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -536,6 +536,9 @@ where
                 after_event_sequence,
             } => {
                 subscribe_thread_events(&self.threads, &auth, thread_id, after_event_sequence).await
+            }
+            SubscriptionRequest::ChannelActivity => {
+                subscribe_channel_activity(&self.threads, &auth).await
             }
         }
     }
@@ -1128,6 +1131,13 @@ mod tests {
         ) -> Result<AppEventStream, crate::ports::ThreadDirectoryError> {
             Ok(health_stream(core::time::Duration::from_secs(1)))
         }
+
+        async fn subscribe_channel_activity(
+            &self,
+            _request: crate::ports::ChannelActivitySubscription,
+        ) -> Result<AppEventStream, crate::ports::ThreadDirectoryError> {
+            Ok(health_stream(core::time::Duration::from_secs(1)))
+        }
     }
 
     #[test]
@@ -1171,6 +1181,16 @@ mod tests {
         ));
         assert!(result.is_ok());
         assert_eq!(captured.value_of("operation"), Some("thread_events"));
+    }
+
+    #[test]
+    fn channel_subscription_reaches_the_port_through_application_service_subscribe() {
+        let service =
+            OpenBotApplication::new(FakeChannelReader::empty()).with_threads(FixedThreadBegin);
+        let (result, captured) =
+            capture(service.subscribe(auth_for("actor-1"), SubscriptionRequest::ChannelActivity));
+        assert!(result.is_ok());
+        assert_eq!(captured.value_of("operation"), Some("channel_activity"));
     }
 
     /// `dyn ApplicationService` 必须可用：transport 持有的是 trait 对象。

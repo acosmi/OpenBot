@@ -36,5 +36,5 @@ pub use people::{
 pub use policy::{get_action_policy, set_action_policy};
 pub use thread::{
     begin_thread_run, get_thread_history, get_thread_status, mint_thread_id,
-    subscribe_thread_events,
+    subscribe_channel_activity, subscribe_thread_events,
 };
