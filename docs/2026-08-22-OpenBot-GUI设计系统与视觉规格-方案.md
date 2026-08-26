@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-26，Batch 15–31）
+### 15.1 当前实施勾选（2026-08-26，Batch 15–32）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -634,8 +634,8 @@ G6 重写后的文本（替换 v3 原四条）：
   UI=`77/75/152`；Batch26又关闭orb/ai-core→AgentPresence两条，当前
   UI=`79/73/152`；Batch27又以唯一中性线稿关computer/placeholder与settings/background
   两条，当时 UI=`81/71/152`；Batch30又关闭独立ChannelRow；Batch31关闭
-  abstract-avatar→Avatar与AgentCard，当前UI=`84/68/152`；
-  AppSidebar总项与其余33业务/brand/runtime/golden仍按各自证据保持 todo；
+  abstract-avatar→Avatar与AgentCard；Batch32关闭RecipientField，当前UI=`85/67/152`；
+  AppSidebar总项与其余32业务/brand/runtime/golden仍按各自证据保持 todo；
 - [x] `design-gallery` compile feature 才有 `/_design`，production bundle WASM `_design` byte=0；
   当前画廊用于状态/键盘/AX/目视 QA，不冒充正式 golden；
 - [x] Message 命名 article、neutral Bubble、跨平台 Kbd、SHA-256 deterministic Avatar、5s
@@ -670,10 +670,15 @@ G6 重写后的文本（替换 v3 原四条）：
   `!mine && public`分组、144×180 AgentCard、URL-owned只读profile、404/error/close返焦；
   AppSidebar Agents destination已接。已有同名文字旁Avatar AX隐藏；Trunk最终CSS以根同源
   `/fonts/*`加载Inter。T-UI-0029/0030已勾，mutation/start与整条route/golden仍不勾；
+- [x] `/channel/new`真实首发：静态route先于dynamic channel id；无recipient发送禁用且刷新零
+  create；URL/hard reload可恢复hidden但有权的Agent；RecipientField复用唯一Combobox键盘模型。
+  首发只按create channel→native BeginThreadRun→成功navigate；begin失败同channel/run-id重试，
+  create响应未知禁止二次提交。release WASM浏览器实得52→52→53、四视口overflow0、AX/id/
+  console绿；未实现的Enter提示已删除，完整Composer仍todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
-  但new-channel/skills/settings/admin真实destinations尚未迁移；完整channel route也仍缺
+  new-channel/Agents已接，但skills/settings/admin真实destinations尚未迁移；完整channel route也仍缺
   transcript/composer/stop/steer/screen，不得用data shell冒充journey；
-- [ ] 31 route journey、AppSidebar总项+其余33个业务组件、1 brand icon、6 runtime替代、compiled gallery、
+- [ ] 其余31个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -692,7 +697,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-26-G2-生产SessionSignOut-batch28.md`、
 `docs/2026-08-26-G3-ChannelActivity与WebSocket-batch29.md`、
 `docs/2026-08-26-G3-G6-ChannelDetail与ChannelRow-batch30.md`、
-`docs/2026-08-26-G4-G6-AgentRoster与AgentsRoute-batch31.md`；
+`docs/2026-08-26-G4-G6-AgentRoster与AgentsRoute-batch31.md`、
+`docs/2026-08-26-G3-G6-ChannelCreate与Routing-batch32.md`；
 G6 整关继续不勾。
 
 ---
