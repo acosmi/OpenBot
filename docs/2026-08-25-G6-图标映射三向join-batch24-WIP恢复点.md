@@ -1,7 +1,9 @@
 # Batch 24 WIP 恢复点：47 图标映射三向 join
 
 > 分支 `codex/2026-08-25-G6-icon-ledger-join`，base = Batch23 正式 head
-> `af7e255b3b9477e81e48ab2f23641862314447ac`。只跑本地定向测试，不运行
+> `af7e255b3b9477e81e48ab2f23641862314447ac`；implementation checkpoint
+> `f23595b0d3b112226167443faee5eec25bfd4f45`。正式证据文档为
+> `2026-08-25-G6-图标映射三向join-batch24.md`。只跑本地定向测试，不运行
 > `cargo xtask ci`，不派发 Actions，不处理 `grok-bot`。
 
 ## 本批范围
