@@ -4686,6 +4686,7 @@ dependencies = [
 name = "openbot-ui"
 version = "0.0.0"
 dependencies = [
+ "futures-util",
  "gloo-net",
  "js-sys",
  "leptos",

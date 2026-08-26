@@ -42,6 +42,7 @@ sha2.workspace = true
 # markdown consumer rather than as zero-call dependencies.
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-util.workspace = true
 gloo-net.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true

@@ -3,13 +3,15 @@
 use leptos::prelude::*;
 use leptos_meta::{Title, provide_meta_context};
 use leptos_router::components::{Route, Router, Routes};
+use leptos_router::hooks::use_location;
 use leptos_router::path;
 
 use crate::features::approvals::ApprovalPage;
+use crate::features::channels::ChannelDetailPage;
 use crate::i18n::{I18nContextProvider, t, t_string, use_i18n};
-use crate::icons::Icon;
-use crate::preferences::{PreferenceSaveStatus, provide_ui_preferences};
-use crate::primitives::{IconSize, IconView, LocaleSwitch, ThemeToggle};
+use crate::preferences::provide_ui_preferences;
+use crate::primitives::{Sidebar, SidebarProvider, SidebarTrigger};
+use crate::shell::AppSidebar;
 
 /// Single CSR application root used by both supported hosts.
 #[component]
@@ -17,7 +19,7 @@ pub fn App() -> impl IntoView {
     provide_meta_context();
     view! {
         <I18nContextProvider set_lang_attr_on_html=true enable_cookie=false>
-            <Title text="Approvals · OpenBot" />
+            <Title text="OpenBot" />
             <Router>
                 <AppShell />
             </Router>
@@ -29,35 +31,62 @@ pub fn App() -> impl IntoView {
 fn AppShell() -> impl IntoView {
     let i18n = use_i18n();
     provide_ui_preferences(i18n);
+    let location = use_location();
+    view! {
+        <Show
+            when=move || location.pathname.get() == "/sign"
+            fallback=AuthenticatedShell
+        >
+            <SignedOutPage />
+        </Show>
+    }
+}
+
+#[component]
+fn AuthenticatedShell() -> impl IntoView {
+    let i18n = use_i18n();
+    let collapsed = RwSignal::new(false);
     view! {
         <a class="ob-skip-link" href="#main-content">
             {move || t!(i18n, shell.skip_to_content)}
         </a>
-        <div class="ob-app-shell">
-            <aside class="ob-sidebar">
-                <div class="ob-brand">
-                    <IconView icon=Icon::Bot size=IconSize::Navigation />
-                    <span>{move || t!(i18n, common.app_name)}</span>
+        <SidebarProvider
+            id="app-sidebar".to_owned()
+            collapsed
+            aria_label=move || t_string!(i18n, shell.nav_channels).to_owned()
+            mobile_title=move || t_string!(i18n, shell.sidebar_mobile_title).to_owned()
+            mobile_description=move || t_string!(i18n, shell.sidebar_mobile_description).to_owned()
+        >
+            <div class="ob-app-shell">
+                <Sidebar>
+                    <AppSidebar />
+                </Sidebar>
+                <div class="ob-app-stage">
+                    <header class="ob-shell-topbar">
+                        <SidebarTrigger aria_label=move || t_string!(i18n, shell.sidebar_toggle).to_owned() />
+                        <span>{move || t!(i18n, common.app_name)}</span>
+                    </header>
+                    <main id="main-content" class="ob-main" tabindex="-1">
+                        <AppRoutes />
+                    </main>
                 </div>
-                <nav
-                    class="ob-nav"
-                    aria-label=move || t_string!(i18n, shell.nav_admin).to_owned()
-                >
-                    <a class="ob-nav-link" href="/approvals" aria-current="page">
-                        <IconView icon=Icon::ListChecks size=IconSize::Navigation />
-                        <span>{move || t!(i18n, admin.nav_approvals)}</span>
-                    </a>
-                </nav>
-                <div class="ob-sidebar-controls">
-                    <ThemeToggle />
-                    <LocaleSwitch />
-                    <PreferenceSaveStatus />
-                </div>
-            </aside>
-            <main id="main-content" class="ob-main" tabindex="-1">
-                <AppRoutes />
-            </main>
-        </div>
+            </div>
+        </SidebarProvider>
+    }
+}
+
+#[component]
+fn SignedOutPage() -> impl IntoView {
+    let i18n = use_i18n();
+    view! {
+        <main id="main-content" class="ob-auth-state" tabindex="-1">
+            <section class="ob-empty-state" aria-labelledby="signed-out-title">
+                <h1 id="signed-out-title" class="ob-page-title">
+                    {move || t!(i18n, auth.signed_out_title)}
+                </h1>
+                <p class="ob-empty-body">{move || t!(i18n, auth.signed_out_body)}</p>
+            </section>
+        </main>
     }
 }
 
@@ -70,6 +99,7 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/_design") view=crate::design_gallery::DesignGallery />
                 <Route path=path!("/") view=ApprovalPage />
                 <Route path=path!("/approvals") view=ApprovalPage />
+                <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
             </Routes>
         }
     }
@@ -79,6 +109,7 @@ fn AppRoutes() -> impl IntoView {
             <Routes fallback=NotFound>
                 <Route path=path!("/") view=ApprovalPage />
                 <Route path=path!("/approvals") view=ApprovalPage />
+                <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
             </Routes>
         }
     }

@@ -48,9 +48,10 @@ use crate::ui_preferences::{
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, begin_thread_run, change_person_access,
     change_person_role, correct_memory, current_user, get_action_policy, get_thread_history,
-    get_thread_status, health, health_stream, list_audit_events, list_memories, list_people,
-    list_visible_channels, mint_thread_id, mutate_memory, recall_memories, remember_memory,
-    set_action_policy, subscribe_channel_activity, subscribe_thread_events,
+    get_thread_status, get_visible_channel, health, health_stream, list_audit_events,
+    list_memories, list_people, list_visible_channels, mint_thread_id, mutate_memory,
+    recall_memories, remember_memory, set_action_policy, subscribe_channel_activity,
+    subscribe_thread_events,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -333,6 +334,9 @@ where
                     list_visible_channels(&self.channels, auth, limit, cursor.as_deref()).await?;
                 Ok(AppReply::Channels(page))
             }
+            AppCommand::GetVisibleChannel { channel_id } => Ok(AppReply::Channel(
+                get_visible_channel(&self.channels, auth, channel_id).await?,
+            )),
             AppCommand::GetCurrentUser => Ok(AppReply::CurrentUser(
                 current_user(&self.people, auth).await?,
             )),
@@ -692,6 +696,14 @@ mod tests {
             }
             other => panic!("命令与应答必须一一对应，拿到 {other:?}"),
         }
+
+        let (channel_reply, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::GetVisibleChannel {
+                channel_id: openbot_contracts::ids::ChannelId::new("c-1"),
+            },
+        ));
+        assert!(matches!(channel_reply, Ok(AppReply::Channel(_))));
 
         let (me, _) = capture(service.execute(auth.clone(), AppCommand::GetCurrentUser));
         assert!(matches!(me, Ok(AppReply::CurrentUser(_))));

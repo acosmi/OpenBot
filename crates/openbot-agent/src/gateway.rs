@@ -207,6 +207,7 @@ impl AgentToolGateway {
             Ok(
                 AppReply::Health(_)
                 | AppReply::Channels(_)
+                | AppReply::Channel(_)
                 | AppReply::CurrentUser(_)
                 | AppReply::AdminStatus(_)
                 | AppReply::People(_)

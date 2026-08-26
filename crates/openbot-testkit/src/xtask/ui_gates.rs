@@ -240,8 +240,11 @@ fn check_dist_script_policy(dist: &Path) -> Result<usize> {
             bail!("external bootstrap contains forbidden token `{forbidden}`");
         }
     }
-    if !bootstrap.contains("import init from \"./") || !bootstrap.contains("module_or_path: \"./") {
-        bail!("external bootstrap does not use the closed relative wasm-bindgen pair");
+    if !bootstrap.contains("import init from \"./")
+        || !bootstrap.contains("module_or_path: \"/")
+        || bootstrap.contains("module_or_path: \"./")
+    {
+        bail!("external bootstrap must use module-relative JS and root-absolute WASM");
     }
     Ok(count)
 }

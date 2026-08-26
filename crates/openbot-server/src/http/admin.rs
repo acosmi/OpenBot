@@ -9,20 +9,15 @@ use openbot_contracts::auth::Role;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ActorId;
-use openbot_contracts::people::{AdminStatus, CurrentUser, PeoplePage, Person};
+#[cfg(test)]
+use openbot_contracts::people::CurrentUser;
+use openbot_contracts::people::{AdminStatus, CurrentUserResponse, PeoplePage, Person};
 use openbot_domain::text::is_ecmascript_whitespace;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{Authenticated, SensitiveAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
-
-/// `/api/me` 上游信封。
-#[derive(Debug, Serialize)]
-pub struct MeResponse {
-    /// 当前用户。
-    pub user: CurrentUser,
-}
 
 /// role/access 上游信封。
 #[derive(Debug, Serialize)]
@@ -85,13 +80,13 @@ pub struct AccessBody {
 pub async fn me(
     State(state): State<ServerState>,
     Authenticated(auth): Authenticated,
-) -> Result<Json<MeResponse>, HttpError> {
+) -> Result<Json<CurrentUserResponse>, HttpError> {
     match state
         .application()
         .execute(auth, AppCommand::GetCurrentUser)
         .await?
     {
-        AppReply::CurrentUser(user) => Ok(Json(MeResponse { user })),
+        AppReply::CurrentUser(user) => Ok(Json(CurrentUserResponse { user })),
         _ => Err(application_contract_error()),
     }
 }

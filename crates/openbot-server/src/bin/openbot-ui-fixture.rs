@@ -1,16 +1,26 @@
 //! Local-only deterministic GUI fixture host required by the GUI first-source golden workflow.
 
 use std::error::Error;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
+use futures_core::Stream;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
-    ApplicationService, ChannelReader, OpenBotApplication, PortError, ToolApprovalAdministration,
-    ToolApprovalAdministrationError, UiPreferenceAdministration, UiPreferenceAdministrationError,
+    AppEventStream, ApplicationService, ChannelReadScope, ChannelReader, OpenBotApplication,
+    PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError, ThreadDirectory,
+    ThreadDirectoryError, ToolApprovalAdministration, ToolApprovalAdministrationError,
+    UiPreferenceAdministration, UiPreferenceAdministrationError,
 };
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
-use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ToolCallId};
+use openbot_contracts::command::{AppEvent, ChannelActivityEvent, ChannelSummary};
+use openbot_contracts::ids::{
+    ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
+};
+use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use openbot_contracts::tool::{
     PendingToolApproval, PendingToolApprovals, ToolApprovalClass, ToolApprovalDecision,
     ToolApprovalEffect, ToolApprovalResolved,
@@ -18,21 +28,221 @@ use openbot_contracts::tool::{
 use openbot_contracts::ui::{UiPreferences, UpdateUiPreferences};
 use openbot_domain::identity::session::{SessionState, TrustedOrigins, evaluate_session};
 use openbot_infra::auth::config::default_session_lifetime;
-use openbot_server::auth::FixedAuthResolver;
-use openbot_server::{ResolvedAuth, SensitiveWriteSecurity, ServerBuilder, StaticApp};
+use openbot_server::{
+    AuthResolver, ResolvedAuth, SensitiveWriteSecurity, ServerBuilder, StaticApp,
+};
 use time::{Duration, OffsetDateTime};
 
-struct EmptyChannels;
+#[derive(Clone)]
+struct FixtureChannels {
+    rows: Arc<Vec<ChannelSummary>>,
+}
+
+impl FixtureChannels {
+    fn new(now: OffsetDateTime) -> Self {
+        let rows = (0..52)
+            .map(|index| ChannelSummary {
+                id: ChannelId::new(format!("channel-{index:02}")),
+                name: if index == 0 {
+                    "Finance Operations".to_owned()
+                } else {
+                    format!("Channel {index:02}")
+                },
+                agent_ids: vec![BotId::new(format!("bot-{}", index % 4))],
+                last_message: Some(if index == 0 {
+                    "Categorized three expenses.".to_owned()
+                } else {
+                    format!("Fixture activity {index:02}")
+                }),
+                last_message_at: Some(now - Duration::minutes(i64::from(index))),
+                last_message_agent_id: Some(BotId::new(format!("bot-{}", index % 4))),
+                created_at: now - Duration::days(2) - Duration::minutes(i64::from(index)),
+                thread_id: (index == 0).then(|| ThreadId::new("fixture-thread-0")),
+                active: index != 3,
+            })
+            .collect();
+        Self {
+            rows: Arc::new(rows),
+        }
+    }
+
+    fn read(&self, limit: u32, cursor: Option<ChannelCursor>) -> Vec<ChannelSummary> {
+        let mut rows = self.rows.as_ref().clone();
+        if let Some(cursor) = cursor {
+            rows.retain(|row| {
+                let recency = row.last_message_at.unwrap_or(row.created_at);
+                (recency, &row.id) < (cursor.recency, &cursor.id)
+            });
+        }
+        rows.truncate(limit as usize);
+        rows
+    }
+}
 
 #[async_trait]
-impl ChannelReader for EmptyChannels {
+impl ChannelReader for FixtureChannels {
     async fn list_visible_channels(
         &self,
         _actor: &ActorId,
-        _limit: u32,
-        _cursor: Option<ChannelCursor>,
-    ) -> Result<Vec<openbot_contracts::command::ChannelSummary>, PortError> {
-        Ok(Vec::new())
+        limit: u32,
+        cursor: Option<ChannelCursor>,
+    ) -> Result<Vec<ChannelSummary>, PortError> {
+        Ok(self.read(limit, cursor))
+    }
+
+    async fn list_visible_channels_scoped(
+        &self,
+        _scope: &ChannelReadScope,
+        limit: u32,
+        cursor: Option<ChannelCursor>,
+    ) -> Result<Vec<ChannelSummary>, PortError> {
+        Ok(self.read(limit, cursor))
+    }
+
+    async fn get_visible_channel(
+        &self,
+        _scope: &ChannelReadScope,
+        channel_id: &ChannelId,
+    ) -> Result<Option<ChannelSummary>, PortError> {
+        Ok(self.rows.iter().find(|row| &row.id == channel_id).cloned())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FixturePeople;
+
+#[async_trait]
+impl PeopleAdministration for FixturePeople {
+    async fn current_user(&self, actor: &ActorId) -> Result<CurrentUser, PeoplePortError> {
+        Ok(CurrentUser {
+            id: actor.clone(),
+            email: "fixture@example.test".to_owned(),
+            name: Some("Fixture User".to_owned()),
+            image: None,
+            role: Role::User,
+        })
+    }
+
+    async fn list_people(
+        &self,
+        _request: PeoplePageRequest,
+    ) -> Result<PeoplePage, PeoplePortError> {
+        Err(PeoplePortError::Unavailable)
+    }
+
+    async fn change_role(
+        &self,
+        _actor: &ActorId,
+        _subject: &ActorId,
+        _desired: Role,
+    ) -> Result<Person, PeoplePortError> {
+        Err(PeoplePortError::Unavailable)
+    }
+
+    async fn change_access(
+        &self,
+        _actor: &ActorId,
+        _subject: &ActorId,
+        _revoked: bool,
+    ) -> Result<Person, PeoplePortError> {
+        Err(PeoplePortError::Unavailable)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FixtureThreads;
+
+#[async_trait]
+impl ThreadDirectory for FixtureThreads {
+    async fn mint_thread_id(
+        &self,
+        _deployment: &DeploymentId,
+    ) -> Result<ThreadId, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
+
+    async fn thread_known(
+        &self,
+        _deployment: &DeploymentId,
+        _tenant: &TenantId,
+        _actor: &ActorId,
+        _thread: &ThreadId,
+    ) -> Result<bool, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
+
+    async fn subscribe_channel_activity(
+        &self,
+        _request: openbot_application::ChannelActivitySubscription,
+    ) -> Result<AppEventStream, ThreadDirectoryError> {
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+            _ = sender
+                .send(AppEvent::ChannelActivity(ChannelActivityEvent {
+                    channel_id: ChannelId::new("channel-00"),
+                    last_message: Some("Categorized three expenses.".to_owned()),
+                    last_message_at: Some(OffsetDateTime::now_utc()),
+                    last_message_agent_id: Some(BotId::new("bot-0")),
+                }))
+                .await;
+        });
+        Ok(Box::pin(FixtureEventStream { receiver }))
+    }
+}
+
+struct FixtureEventStream {
+    receiver: tokio::sync::mpsc::Receiver<AppEvent>,
+}
+
+impl Stream for FixtureEventStream {
+    type Item = AppEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.receiver.poll_recv(cx)
+    }
+}
+
+struct FixtureAuthResolver {
+    resolved: ResolvedAuth,
+    revoked: AtomicBool,
+}
+
+#[async_trait]
+impl AuthResolver for FixtureAuthResolver {
+    async fn resolve(
+        &self,
+        _parts: &axum::http::request::Parts,
+    ) -> Result<AuthContext, openbot_contracts::error::AppError> {
+        if self.revoked.load(Ordering::SeqCst) {
+            Err(openbot_contracts::error::AppError::Unauthenticated)
+        } else {
+            Ok(self.resolved.context().clone())
+        }
+    }
+
+    async fn resolve_with_assurance(
+        &self,
+        _parts: &axum::http::request::Parts,
+    ) -> Result<ResolvedAuth, openbot_contracts::error::AppError> {
+        if self.revoked.load(Ordering::SeqCst) {
+            Err(openbot_contracts::error::AppError::Unauthenticated)
+        } else {
+            Ok(self.resolved.clone())
+        }
+    }
+
+    async fn revoke_session(
+        &self,
+        resolved: &ResolvedAuth,
+    ) -> Result<(), openbot_contracts::error::AppError> {
+        if !resolved.has_revocable_session() {
+            return Err(openbot_contracts::error::AppError::RequestConflict {
+                resource: "session",
+            });
+        }
+        self.revoked.store(true, Ordering::SeqCst);
+        Ok(())
     }
 }
 
@@ -164,10 +374,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         generation,
         now,
     )?;
-    let resolver =
-        FixedAuthResolver::granting_resolved(ResolvedAuth::from_live_session(context, live, None));
+    let resolver = FixtureAuthResolver {
+        resolved: ResolvedAuth::from_live_session(
+            context,
+            live,
+            Some("fixture-session".to_owned()),
+        ),
+        revoked: AtomicBool::new(false),
+    };
     let application: Arc<dyn ApplicationService> = Arc::new(
-        OpenBotApplication::new(EmptyChannels)
+        OpenBotApplication::new(FixtureChannels::new(now))
+            .with_people(FixturePeople)
+            .with_threads(FixtureThreads)
             .with_tool_approvals(Arc::new(FixtureApprovals::new(now)))
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );

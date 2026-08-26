@@ -101,6 +101,7 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
     match command {
         AppCommand::Health => "health",
         AppCommand::ListVisibleChannels { .. } => "list_visible_channels",
+        AppCommand::GetVisibleChannel { .. } => "get_visible_channel",
         AppCommand::GetCurrentUser => "get_current_user",
         AppCommand::AdminStatus => "admin_status",
         AppCommand::ListPeople { .. } => "list_people",
@@ -189,6 +190,12 @@ mod tests {
                     cursor: None,
                 },
                 "list_visible_channels",
+            ),
+            (
+                AppCommand::GetVisibleChannel {
+                    channel_id: openbot_contracts::ids::ChannelId::new("channel-1"),
+                },
+                "get_visible_channel",
             ),
             (AppCommand::GetCurrentUser, "get_current_user"),
             (AppCommand::AdminStatus, "admin_status"),

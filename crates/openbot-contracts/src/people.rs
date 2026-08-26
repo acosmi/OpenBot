@@ -22,6 +22,14 @@ pub struct CurrentUser {
     pub role: Role,
 }
 
+/// Exact `/api/me` response envelope shared by Server and GUI.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CurrentUserResponse {
+    /// Verified public user projection.
+    pub user: CurrentUser,
+}
+
 /// 管理员 people 页的一行。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -90,6 +98,28 @@ mod tests {
         })
         .unwrap();
         assert_eq!(status, r#"{"status":"ok"}"#);
+    }
+
+    #[test]
+    fn current_user_response_keeps_the_exact_user_envelope() {
+        let response = CurrentUserResponse {
+            user: CurrentUser {
+                id: ActorId::new("user-1"),
+                email: "user@example.test".to_owned(),
+                name: Some("User".to_owned()),
+                image: None,
+                role: Role::User,
+            },
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(
+            json,
+            r#"{"user":{"id":"user-1","email":"user@example.test","name":"User","image":null,"role":"user"}}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<CurrentUserResponse>(&json).unwrap(),
+            response
+        );
     }
 
     #[test]

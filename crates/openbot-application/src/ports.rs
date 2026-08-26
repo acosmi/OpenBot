@@ -8,7 +8,7 @@ use openbot_contracts::audit::AuditPage;
 use openbot_contracts::auth::Role;
 use openbot_contracts::command::{BeginThreadRun, ChannelSummary, ThreadHistory, ThreadRunStarted};
 use openbot_contracts::error::{AppError, IdentityConflictReason};
-use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
+use openbot_contracts::ids::{ActorId, ChannelId, DeploymentId, TenantId, ThreadId};
 use openbot_contracts::memory::{
     CorrectMemory, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, RecallMemories,
     RememberMemory,
@@ -111,9 +111,11 @@ impl PortError {
 ///
 /// # scope
 ///
-/// `actor` 是权威身份，来自 `AuthContext`，**不是**调用方传来的过滤条件。
-/// 租户维度由 membership 投影本身承载（一条 membership 行只属于一个租户的 channel）；
-/// 多租户 Server 的显式 tenant 传参是 G2 的工作，见交付报告里的遗留项。
+/// `actor` 是权威身份，来自 `AuthContext`，**不是**调用方传来的过滤条件。固定 0012 的
+/// `channels/channel_memberships` 没有 deployment/tenant 列，所以 roster 可见性只能诚实地按
+/// materialized actor membership 表达；不能假装物理列存在。G3 native thread 有两列，故
+/// [`ChannelReadScope`] 的 deployment/tenant 只用于 thread projection，防止同 channel id 的
+/// foreign scope thread 被带进 DTO。
 #[async_trait]
 pub trait ChannelReader: Send + Sync {
     /// 列出 actor 通过 **materialized membership** 可见的 channel。
@@ -128,6 +130,40 @@ pub trait ChannelReader: Send + Sync {
         limit: u32,
         cursor: Option<ChannelCursor>,
     ) -> Result<Vec<ChannelSummary>, PortError>;
+
+    /// Scope-aware production list. Legacy/fake implementations may delegate to actor-only
+    /// visibility; PostgreSQL overrides this to project only a matching native thread.
+    async fn list_visible_channels_scoped(
+        &self,
+        scope: &ChannelReadScope,
+        limit: u32,
+        cursor: Option<ChannelCursor>,
+    ) -> Result<Vec<ChannelSummary>, PortError> {
+        self.list_visible_channels(&scope.actor, limit, cursor)
+            .await
+    }
+
+    /// Read one channel through current membership and project only a scope-matching native thread.
+    async fn get_visible_channel(
+        &self,
+        _scope: &ChannelReadScope,
+        _channel_id: &ChannelId,
+    ) -> Result<Option<ChannelSummary>, PortError> {
+        Err(PortError::Unavailable {
+            dependency: "channel_reader",
+        })
+    }
+}
+
+/// Authoritative scope for channel reads that may project native thread state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelReadScope {
+    /// Verified deployment.
+    pub deployment: DeploymentId,
+    /// Verified tenant.
+    pub tenant: TenantId,
+    /// Verified actor.
+    pub actor: ActorId,
 }
 
 /// Native thread 目录端口错误；不携带随机源或数据库的原始错误文本。

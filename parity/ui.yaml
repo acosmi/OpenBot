@@ -138,16 +138,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 27 精确完成27原语+46 Lucide映射+4 layout+2 AgentPresence+2 placeholder art；其余todo
+  # Batch30累计完成前述地基与ChannelRow；其余todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 71
+    expect: 70
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 81
+    expect: 82
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 81
+    expect: 82
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -604,7 +604,7 @@ entries:
     migration_rule: "remove: 组件下沉为 shell 的一部分"
     status: "todo"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `app-sidebar`（该组上游文件数 2）。§6.2 点名的替代（原文\"`app-sidebar` → `Sidebar` 内容\"）。上游 387 行是一个业务组件；本项目里它是 App shell 的一部分（§5.1 / §13 的 `shell/`），内容填进 `openbot_ui::primitives::sidebar::Sidebar`（T-UI-0017）。判据：落点从 features/ 换到 shell/，不再是可独立复用的业务组件 ⇒ 替代。"
+    notes: "§6.2 组 `app-sidebar`（该组上游文件数 2）。§6.2 点名的替代（原文\"`app-sidebar` → `Sidebar` 内容\"）。Batch30已落真实shell content：PG分页/search、socket reconnect-refetch、current row、account/session/sign-out与三断点同一children；但上游可观察的new-channel/skills/agents/settings/admin destinations尚未迁移，故本总项仍todo，不能因channel子面完成而删除其余导航能力。"
 
   - id: "biz-app-sidebar-channel"
     upstream: "app/src/components/app-sidebar/channel.tsx"
@@ -613,7 +613,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0038"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch30 production ChannelRow uses a bounded percent-encoded same-origin /channel/:id link, deterministic decorative avatar, visible name/last-message/localized relative time and exact aria-current. Pure UI tests cover closed nonnegative relative units; real Chromium proves 50→52 keyset pagination, name/visible-preview-only search/no-match, socket generation 1→4 refetch, single current row, nested detail navigation/hard reload, zero duplicate accessible avatar name and zero console errors. Host UI 63/0/0, WASM/Clippy/gates green. Evidence: docs/2026-08-26-G3-G6-ChannelDetail与ChannelRow-batch30.md"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `app-sidebar`（该组上游文件数 2）。同名保留（侧栏里的单个 channel 行）。"
 

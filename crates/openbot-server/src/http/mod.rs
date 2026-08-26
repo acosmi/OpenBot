@@ -484,6 +484,7 @@ pub fn router(state: ServerState) -> Router {
         )
         .route("/api/channels", get(channels::list))
         .route("/api/channels/events", get(channels::events))
+        .route("/api/channels/{channel_id}", get(channels::get))
         .route("/api/tool-approvals", get(approvals::pending_get))
         .route(
             "/api/tool-approvals/{approval_id}",

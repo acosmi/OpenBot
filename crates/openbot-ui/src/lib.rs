@@ -34,8 +34,9 @@
 //! Sidebar；27 条 primitive 子账全 done。Batch 24 关闭46条 Lucide mapping，Batch 25 闭合
 //! layout 组四条业务组件并把 PageShell 接入 production Approval，Batch 26 以同一
 //! AgentPresence 关闭orb/ai-core两条，Batch 27 以唯一中性线稿关闭ComputerPlaceholder/Art两条。
-//! Batch 28 接通生产session status/sign-out WASM helper；AppSidebar仍等channel realtime。完整 route/
-//! 其余37业务组件/
+//! Batch 28 接通生产session status/sign-out WASM helper，Batch29接通channel realtime，Batch30
+//! 又落真实channel detail destination shell、分页/search/reconnect-refetch roster与ChannelRow。
+//! AppSidebar仍缺未迁移nav destinations，完整channel transcript/composer route journey、其余业务/
 //! golden 与可发布 Tauri 宿主仍按台账保持未完成，不能由本 crate 存在而推导为 G6 整关通过。
 
 #![deny(missing_docs)]
@@ -47,6 +48,7 @@ pub mod design_gallery;
 pub mod features;
 pub mod preferences;
 pub mod primitives;
+pub mod shell;
 
 /// Generated, strongly typed icon allowlist. The source is `design/icons.toml` plus bundled SVGs.
 #[allow(missing_docs)]

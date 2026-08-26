@@ -96,6 +96,12 @@ pub enum AppCommand {
         cursor: Option<String>,
     },
 
+    /// Read one channel visible through current materialized membership.
+    GetVisibleChannel {
+        /// Untrusted path identity; authority still comes only from `AuthContext`.
+        channel_id: ChannelId,
+    },
+
     /// 返回当前已验证 actor 的公开资料。
     GetCurrentUser,
 
@@ -289,6 +295,8 @@ pub enum AppReply {
     Health(HealthReport),
     /// [`AppCommand::ListVisibleChannels`] 的应答。
     Channels(ChannelPage),
+    /// [`AppCommand::GetVisibleChannel`] 的应答。
+    Channel(ChannelDetail),
     /// [`AppCommand::GetCurrentUser`] 应答。
     CurrentUser(CurrentUser),
     /// [`AppCommand::AdminStatus`] 应答。
@@ -481,6 +489,30 @@ pub struct ChannelPage {
     /// 下一页游标；`None` 表示已到末页。不透明，见
     /// [`AppCommand::ListVisibleChannels::cursor`]。
     pub next_cursor: Option<String>,
+}
+
+/// One authenticated channel detail, excluding roster-only activity fields.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChannelDetail {
+    /// Channel identity.
+    pub id: ChannelId,
+    /// Display name from PostgreSQL.
+    pub name: String,
+    /// Canonically sorted linked Bots.
+    pub agent_ids: Vec<BotId>,
+    /// Current native thread for this deployment/tenant/member, if one has started.
+    pub thread_id: Option<ThreadId>,
+    /// False when at least one linked Bot profile is soft-deleted.
+    pub active: bool,
+}
+
+/// Exact `GET /api/channels/{channel_id}` response envelope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelDetailResponse {
+    /// Authenticated detail.
+    pub channel: ChannelDetail,
 }
 
 /// channel 列表项。
@@ -751,6 +783,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn channel_detail_response_is_the_exact_single_channel_envelope() {
+        let response = ChannelDetailResponse {
+            channel: ChannelDetail {
+                id: ChannelId::new("channel-1"),
+                name: "Finance".to_owned(),
+                agent_ids: vec![BotId::new("bot-1")],
+                thread_id: None,
+                active: true,
+            },
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(
+            json,
+            r#"{"channel":{"id":"channel-1","name":"Finance","agentIds":["bot-1"],"threadId":null,"active":true}}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<ChannelDetailResponse>(&json).unwrap(),
+            response
+        );
+    }
+
     /// 正向对照：同一个类型在**非空**时确实序列化出条目 —— 证明上一条不是靠
     /// 「这个类型序列化出来永远是空的」蒙混过关。
     #[test]
@@ -954,6 +1008,15 @@ mod tests {
             )
             .is_ok()
         );
+        assert_eq!(
+            serde_json::from_str::<AppCommand>(
+                r#"{"kind":"get_visible_channel","channel_id":"channel-1"}"#
+            )
+            .unwrap(),
+            AppCommand::GetVisibleChannel {
+                channel_id: ChannelId::new("channel-1")
+            }
+        );
     }
 
     #[test]
@@ -970,6 +1033,16 @@ mod tests {
             r#"{"kind":"channels","channels":[],"nextCursor":null}"#
         );
         assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), channels);
+
+        let channel = AppReply::Channel(ChannelDetail {
+            id: ChannelId::new("channel-1"),
+            name: "Finance".to_owned(),
+            agent_ids: vec![BotId::new("bot-1")],
+            thread_id: None,
+            active: true,
+        });
+        let json = serde_json::to_string(&channel).unwrap();
+        assert_eq!(serde_json::from_str::<AppReply>(&json).unwrap(), channel);
 
         let audit = AppReply::AuditEvents(AuditPage::default());
         let json = serde_json::to_string(&audit).unwrap();

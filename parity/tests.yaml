@@ -95,10 +95,10 @@ recount:
     expect: 105
   - command: "grep -c '^    label: parity$' parity/tests.yaml"
     cwd: repo
-    expect: 775
+    expect: 773
   - command: "grep -c '^    label: 替代$' parity/tests.yaml"
     cwd: repo
-    expect: 272
+    expect: 274
   - command: "grep -c '^    label: 新增$' parity/tests.yaml"
     cwd: repo
     expect: 0
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 771
+    expect: 757
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -4129,61 +4129,67 @@ entries:
   - id: "server-tests-channel-activity-integration--reading-a-person-s-channels--answers-a-page-rather-than-everything"
     upstream: "server/tests/channel-activity.integration.test.ts::reading a person's channels"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::answers_a_page_rather_than_everything"
+    target: "openbot_application::use_cases::list_visible_channels + openbot_infra::channel_repo::paging_through_every_page_yields_each_channel_exactly_once"
     owner: openbot-infra
     test_id: T-TEST-0385
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Application 125/0/0 proves default/clamped page plus one-row probe and next-cursor contract; PostgreSQL17.11 SCRAM channel_repo 7/0/0 proves LIMIT applies to channels and real keyset pages. Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[465]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「answers a page rather than everything」。"
   - id: "server-tests-channel-activity-integration--reading-a-person-s-channels--walking-the-cursor-reaches-every-channel-exactly-once"
     upstream: "server/tests/channel-activity.integration.test.ts::reading a person's channels"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::walking_the_cursor_reaches_every_channel_exactly_once"
+    target: "openbot_infra::channel_repo::paging_through_every_page_yields_each_channel_exactly_once"
     owner: openbot-infra
     test_id: T-TEST-0386
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Real PG test uses equal timestamps plus id-desc tie-break, limit=1 and repeated keyset cursors; observed c-3,c-2,c-1 exactly once with no duplicate. PostgreSQL17.11 SCRAM channel_repo 7/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[466]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「walking the cursor reaches every channel exactly once」。"
   - id: "server-tests-channel-activity-integration--reading-a-person-s-channels--a-channel-with-two-bots-is-never-split-across-pages"
     upstream: "server/tests/channel-activity.integration.test.ts::reading a person's channels"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::a_channel_with_two_bots_is_never_split_across_pages"
+    target: "openbot_infra::channel_repo::a_channel_with_three_agents_is_never_split_across_pages"
     owner: openbot-infra
     test_id: T-TEST-0387
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Stronger PG fixture has one channel with three agents and limit=1; first page returns that channel once with all three canonical IDs, second page returns the other channel. PostgreSQL17.11 SCRAM 7/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[467]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「a channel with two Bots is never split across pages」。"
   - id: "server-tests-channel-activity-integration--reading-a-person-s-channels--a-caller-cannot-ask-for-every-channel-in-one-page"
     upstream: "server/tests/channel-activity.integration.test.ts::reading a person's channels"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::a_caller_cannot_ask_for_every_channel_in_one_page"
+    target: "openbot_application::use_cases::list_visible_channels::tests::limit_above_max_is_truncated_to_the_cap"
     owner: openbot-infra
     test_id: T-TEST-0388
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Closed u32 command plus application clamp proves u32::MAX becomes MAX_CHANNEL_PAGE=200 before the port and probes only 201; Server transport passes the raw limit unchanged. Application125/0/0 and existing channel transport matrix green; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[468]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「a caller cannot ask for every channel in one page」。"
   - id: "server-tests-channel-activity-integration--reading-a-person-s-channels--a-nonsense-cursor-reads-as-the-first-page"
     upstream: "server/tests/channel-activity.integration.test.ts::reading a person's channels"
-    label: parity
-    target: "openbot_infra::store::channel_activity::tests::a_nonsense_cursor_reads_as_the_first_page"
+    label: 替代
+    target: "openbot_application::use_cases::list_visible_channels::tests::malformed_cursor_does_not_silently_restart_from_page_one"
     owner: openbot-infra
     test_id: T-TEST-0389
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "preserve: opaque-cursor journey retained; malformed cursor is corrected to 400/port-call-zero instead of upstream fail-open replay"
+    status: done
+    done_evidence: "First-source §15.3 hardening is mechanically opposite to the upstream defect: malformed/tampered cursors return malformed_payload before any ChannelReader call, while a subsequent cursor=None request returns the real first page. Application125/0/0 and Server list tests green; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[469]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「a nonsense cursor reads as the first page」。"
   - id: "server-tests-channel-activity-integration--reading-a-person-s-channels--somebody-with-no-channels-gets-an-empty-page-and-no-curs"
     upstream: "server/tests/channel-activity.integration.test.ts::reading a person's channels"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::somebody_with_no_channels_gets_an_empty_page_and_no_curs"
+    target: "openbot_application::use_cases::list_visible_channels::tests::empty_result_is_success_with_an_empty_page + openbot_infra::channel_repo::an_actor_sees_only_channels_it_has_a_membership_for"
     owner: openbot-infra
     test_id: T-TEST-0390
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Application returns channels=[]/nextCursor=null as success; real PG fixture queries a third actor with no memberships and observes an empty Vec while two positive-control actors see their own rows. Application125/0/0 + PG7/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[470]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「somebody with no channels gets an empty page and no cursor」。"
   - id: "server-tests-channel-activity-integration--channel-activity--records-the-last-message-and-returns-it-on-the-roster"
@@ -4244,21 +4250,23 @@ entries:
   - id: "server-tests-channel-activity-integration--channel-activity--puts-a-channel-just-created-above-one-that-has-already-b"
     upstream: "server/tests/channel-activity.integration.test.ts::channel activity"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::puts_a_channel_just_created_above_one_that_has_already_b"
+    target: "openbot_infra::channel_repo::rows_are_ordered_by_coalesced_recency_then_id_descending"
     owner: openbot-infra
     test_id: T-TEST-0396
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Real PG mixed fixture proves a silent channel created at 05:00 sorts above an activity channel last used at 03:00, because ordering is coalesce(last_message_at,created_at) desc. PostgreSQL17.11 SCRAM channel_repo7/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[477]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「puts a channel just created above one that has already been used」。"
   - id: "server-tests-channel-activity-integration--channel-activity--sorts-by-recency-and-leaves-silent-channels-below-not-ab"
     upstream: "server/tests/channel-activity.integration.test.ts::channel activity"
     label: parity
-    target: "openbot_infra::store::channel_activity::tests::sorts_by_recency_and_leaves_silent_channels_below_not_ab"
+    target: "openbot_infra::channel_repo::rows_are_ordered_by_coalesced_recency_then_id_descending"
     owner: openbot-infra
     test_id: T-TEST-0397
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Real PG mixed NULL/non-NULL fixture returns all four channels in coalesced recency order and explicitly preserves silent rows with last_message_at=NULL. PostgreSQL17.11 SCRAM channel_repo7/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[478]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Channel + §14.1：某人可读哪些 channel、channel 活动如何汇总，判据逐条移植。上游用例标题：「sorts by recency and leaves silent channels below, not absent」。"
   # ---------------------------------------------------------------------------
@@ -4405,11 +4413,12 @@ entries:
   - id: "server-tests-channel-routes--channel-routes--returns-404-when-get-returns-null"
     upstream: "server/tests/channel-routes.test.ts::channel routes"
     label: parity
-    target: "openbot_server::routes::channels::tests::returns_404_when_get_returns_null"
+    target: "openbot_server::http::channels::tests::get_channel_collapses_missing_and_outsider_to_404_and_auth_runs_first"
     owner: openbot-server
     test_id: T-TEST-0411
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Real Axum router returns 404 {code:not_visible} for application None and proves unauthenticated 401 occurs with ChannelReader calls=0; no existence/authorization discriminator. Server channel tests6/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[496]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「returns 404 when get returns null」。"
   - id: "server-tests-channel-routes--channel-routes--maps-known-store-errors-from-s"
@@ -4455,51 +4464,56 @@ entries:
   - id: "server-tests-channel-routes--channel-store-integration--reads-the-creator-s-persisted-channel-exactly"
     upstream: "server/tests/channel-routes.test.ts::channel store integration"
     label: parity
-    target: "openbot_server::routes::channels::tests::reads_the_creator_s_persisted_channel_exactly"
+    target: "openbot_infra::channel_detail::detail_is_member_only_and_projects_only_the_matching_native_thread"
     owner: openbot-server
     test_id: T-TEST-0416
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "PG17.11 SCRAM reads the member's persisted id/name, sorted agents, active flag and newest matching native thread; Axum/in-process parity then returns the exact closed envelope. PG1/0/0 + transport parity1/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[503]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「reads the creator's persisted channel exactly」。"
   - id: "server-tests-channel-routes--channel-store-integration--does-not-expose-a-member-s-channel-to-another-user-throu"
     upstream: "server/tests/channel-routes.test.ts::channel store integration"
     label: parity
-    target: "openbot_server::routes::channels::tests::does_not_expose_a_member_s_channel_to_another_user_throu"
+    target: "openbot_infra::channel_detail::detail_is_member_only_and_projects_only_the_matching_native_thread"
     owner: openbot-server
     test_id: T-TEST-0417
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Real PG fixture contains public agents but a different actor without channel membership receives None; after current membership deletion, stale materialized thread membership still cannot widen detail/status/history/realtime. PG1/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[504]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「does not expose a member's channel to another user through public agents」。"
   - id: "server-tests-channel-routes--channel-store-integration--reads-linked-agent-ids-in-lexicographic-order"
     upstream: "server/tests/channel-routes.test.ts::channel store integration"
     label: parity
-    target: "openbot_server::routes::channels::tests::reads_linked_agent_ids_in_lexicographic_order"
+    target: "openbot_infra::channel_detail::detail_is_member_only_and_projects_only_the_matching_native_thread"
     owner: openbot-server
     test_id: T-TEST-0418
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "channel_agents are inserted bot-b then bot-a; production lateral array_agg ORDER BY returns exactly [bot-a,bot-b] in detail and scoped roster. PostgreSQL17.11 SCRAM PG1/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[505]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「reads linked agent IDs in lexicographic order」。"
   - id: "server-tests-channel-routes--channel-store-integration--keeps-a-historical-channel-readable-but-inactive-after-a"
     upstream: "server/tests/channel-routes.test.ts::channel store integration"
     label: parity
-    target: "openbot_server::routes::channels::tests::keeps_a_historical_channel_readable_but_inactive_after_a"
+    target: "openbot_infra::channel_detail::detail_is_member_only_and_projects_only_the_matching_native_thread + channel_repo::active_is_false_only_when_some_agent_profile_is_soft_deleted"
     owner: openbot-server
     test_id: T-TEST-0419
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Real PG linked bot-b profile is soft-deleted: member detail remains readable with both agent IDs while active=false; independent channel_repo matrix covers live/deleted/bare cases. PG1+7/0/0; Batch30."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[506]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「keeps a historical channel readable but inactive after a linked profile is deleted」。"
   - id: "server-tests-channel-routes--channel-store-integration--returns-null-when-the-member-s-channel-mapping-is-missin"
     upstream: "server/tests/channel-routes.test.ts::channel store integration"
-    label: parity
-    target: "openbot_server::routes::channels::tests::returns_null_when_the_member_s_channel_mapping_is_missin"
+    label: 替代
+    target: "openbot_infra::channel_repo::a_channel_without_an_intelligence_mapping_is_still_visible + channel_detail::detail_is_member_only_and_projects_only_the_matching_native_thread"
     owner: openbot-server
     test_id: T-TEST-0420
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "remove: R22 deletes legacy Intelligence mapping from runtime visibility; membership-visible channel remains readable and threadId is nullable/native"
+    status: done
+    done_evidence: "Mechanical opposite of the upstream defect: PG fixture has one mapped and one unmapped membership-visible channel and returns both; Batch30 detail fixture has zero Intelligence mappings yet returns detail/native thread. PostgreSQL17.11 SCRAM PG7+1/0/0."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[507]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「returns null when the member's channel mapping is missing」。"
   - id: "server-tests-channel-routes--channel-store-integration--creates-independent-persisted-channels-for-repeated-agen"

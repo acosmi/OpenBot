@@ -43,6 +43,15 @@ grep -qxF 'leptos_i18n = { version = "=0.6.2", features = ["csr", "plurals", "fo
   || fail 'leptos_i18n pin/features drifted'
 grep -qxF 'leptos_i18n_build = "=0.6.2"' Cargo.toml \
   || fail 'leptos_i18n_build pin drifted'
+grep -qxF 'gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json", "websocket"] }' Cargo.toml \
+  || fail 'gloo-net pin/WebSocket feature boundary drifted'
+grep -qxF 'futures-util.workspace = true' crates/openbot-ui/Cargo.toml \
+  || fail 'UI WebSocket StreamExt dependency boundary drifted'
+gloo_net_root="$(crate_root gloo-net-0.6.0)"
+[[ ! -e "$gloo_net_root/build.rs" ]] || fail 'gloo-net gained a build script'
+grep -qF 'pub fn open_with_protocol(url: &str, protocol: &str)' \
+  "$gloo_net_root/src/websocket/futures.rs" \
+  || fail 'gloo-net typed WebSocket protocol constructor drifted'
 
 # Every build script that Batch 15 added. Hash equality is intentionally stronger than a keyword
 # scan: any new side effect, even without a familiar network/process spelling, requires re-review.
@@ -117,4 +126,4 @@ grep -qxF 'ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2026-017
 grep -qF 'cargo audit --deny warnings --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0173' .github/workflows/ci.yml \
   || fail 'manual CI cargo-audit waiver set drifted'
 
-printf '%s\n' 'UI dependency guard: ok (30 build scripts; 2 licenses; 2 compile-time unmaintained advisories; 2 Windows archives; 2 unreachable maintainer scripts)'
+printf '%s\n' 'UI dependency guard: ok (30 build scripts; gloo-net WebSocket exact/no-build.rs; 2 licenses; 2 compile-time unmaintained advisories; 2 Windows archives; 2 unreachable maintainer scripts)'

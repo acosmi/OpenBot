@@ -138,7 +138,7 @@ entries:
     migration_rule: "preserve"
     status: todo
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/channel/$channelId.tsx 得 createFileRoute(\"/_authed/_app/channel/$channelId\")；同文件 useQuery(channelQueryOptions(channelId)) + ChannelChat + DetailPanel + ComputerView"
-    notes: "模板 Chat。journey：读 transcript、写 composer 草稿与队列、@coworker、stop/steer、失败恢复，并可把 Bot 的实时屏幕开进右侧 detail 面板（v3 §3.1 条 4）。权限：非 membership 一律 404 —— 上游 server/src/channels/routes.ts 已返回 `{\"error\":\"Channel not found.\"}` 404，与 v3 §3.2 同向，重写必须保持。"
+    notes: "模板 Chat。journey：读 transcript、写 composer 草稿与队列、@coworker、stop/steer、失败恢复，并可把 Bot 的实时屏幕开进右侧 detail 面板（v3 §3.1 条 4）。权限：非 membership 一律404。Batch30已落真实`/channel/:channel_id` data-backed destination、current-row与nested hard reload，并明确不渲染假composer/control；上述完整Chat/Screen journey仍未落，故本route继续todo。"
   - id: channel-new
     upstream: app/src/routes/_authed/_app/channel/new.tsx
     label: parity

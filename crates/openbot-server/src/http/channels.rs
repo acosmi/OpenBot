@@ -42,11 +42,12 @@ use std::future::poll_fn;
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::response::Response;
-use openbot_contracts::command::{AppCommand, AppReply, ChannelPage};
+use openbot_contracts::command::{AppCommand, AppReply, ChannelDetailResponse, ChannelPage};
 use openbot_contracts::command::{AppEvent, SubscriptionRequest};
 use openbot_contracts::error::AppError;
+use openbot_contracts::ids::ChannelId;
 use serde::Deserialize;
 
 use crate::auth::{Authenticated, OriginAuthenticated};
@@ -129,6 +130,7 @@ pub async fn list(
         // 不 `unreachable!()`：一条不该发生的路径该以可诊断的失败收场，而不是把整个
         // 进程打死；也不伪装成 200 空列表，那会把一次契约破损洗成"没有数据"。
         AppReply::Health(_)
+        | AppReply::Channel(_)
         | AppReply::CurrentUser(_)
         | AppReply::AdminStatus(_)
         | AppReply::People(_)
@@ -156,6 +158,58 @@ pub async fn list(
             tracing::error!(
                 "ListVisibleChannels 收到非 Channels 应答 —— ApplicationService 契约破损"
             );
+            Err(AppError::DependencyUnavailable {
+                dependency: "application",
+            }
+            .into())
+        }
+    }
+}
+
+/// `GET /api/channels/{channel_id}`; current membership and native thread scope stay in application.
+pub async fn get(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+    Path(channel_id): Path<String>,
+) -> Result<Json<ChannelDetailResponse>, HttpError> {
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::GetVisibleChannel {
+                channel_id: ChannelId::new(channel_id),
+            },
+        )
+        .await?
+    {
+        AppReply::Channel(channel) => Ok(Json(ChannelDetailResponse { channel })),
+        AppReply::Health(_)
+        | AppReply::Channels(_)
+        | AppReply::CurrentUser(_)
+        | AppReply::AdminStatus(_)
+        | AppReply::People(_)
+        | AppReply::Person(_)
+        | AppReply::AuditEvents(_)
+        | AppReply::ActionPolicy { .. }
+        | AppReply::Tool(_)
+        | AppReply::ThreadMinted(_)
+        | AppReply::ThreadStatus(_)
+        | AppReply::ThreadRunStarted(_)
+        | AppReply::ThreadHistory(_)
+        | AppReply::Memory(_)
+        | AppReply::Memories(_)
+        | AppReply::MemoryRecall(_)
+        | AppReply::AgentCallbackToken(_)
+        | AppReply::AgentCallbackTokenRevoked(_)
+        | AppReply::McpConnections(_)
+        | AppReply::McpOAuthAuthorization(_)
+        | AppReply::McpConnectionDisconnected(_)
+        | AppReply::McpOAuthClientRegistered(_)
+        | AppReply::McpServerMutation(_)
+        | AppReply::PendingToolApprovals(_)
+        | AppReply::ToolApprovalResolved(_)
+        | AppReply::UiPreferences(_) => {
+            tracing::error!("GetVisibleChannel received a non-Channel application reply");
             Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }
@@ -273,11 +327,12 @@ mod tests {
 
     use async_trait::async_trait;
     use axum::Router;
+    use axum::body::{Body, to_bytes};
     use futures_core::Stream;
     use futures_util::{SinkExt as _, StreamExt as _};
-    use http::StatusCode;
+    use http::{Method, Request, StatusCode};
     use openbot_application::ports::{
-        ChannelActivitySubscription, ChannelReader, PortError, ThreadDirectory,
+        ChannelActivitySubscription, ChannelReadScope, ChannelReader, PortError, ThreadDirectory,
         ThreadDirectoryError,
     };
     use openbot_application::{AppEventStream, ChannelCursor, OpenBotApplication};
@@ -288,6 +343,7 @@ mod tests {
     use openbot_infra::auth::config::default_session_lifetime;
     use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
     use tokio_tungstenite::tungstenite::{Error as ClientWebSocketError, Message as ClientMessage};
+    use tower::ServiceExt as _;
 
     use super::*;
     use crate::auth::{FixedAuthResolver, SensitiveWriteSecurity};
@@ -305,6 +361,49 @@ mod tests {
             _cursor: Option<ChannelCursor>,
         ) -> Result<Vec<ChannelSummary>, PortError> {
             Ok(Vec::new())
+        }
+    }
+
+    #[derive(Clone)]
+    struct DetailChannels {
+        result: Result<Option<ChannelSummary>, PortError>,
+        calls: Arc<Mutex<Vec<(ChannelReadScope, ChannelId)>>>,
+    }
+
+    impl DetailChannels {
+        fn new(result: Result<Option<ChannelSummary>, PortError>) -> Self {
+            Self {
+                result,
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn calls(&self) -> Vec<(ChannelReadScope, ChannelId)> {
+            self.calls.lock().expect("detail lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl ChannelReader for DetailChannels {
+        async fn list_visible_channels(
+            &self,
+            _actor: &ActorId,
+            _limit: u32,
+            _cursor: Option<ChannelCursor>,
+        ) -> Result<Vec<ChannelSummary>, PortError> {
+            Ok(Vec::new())
+        }
+
+        async fn get_visible_channel(
+            &self,
+            scope: &ChannelReadScope,
+            channel_id: &ChannelId,
+        ) -> Result<Option<ChannelSummary>, PortError> {
+            self.calls
+                .lock()
+                .expect("detail lock")
+                .push((scope.clone(), channel_id.clone()));
+            self.result.clone()
         }
     }
 
@@ -410,13 +509,122 @@ mod tests {
     }
 
     fn app(directory: FakeChannelDirectory, resolver: FixedAuthResolver) -> Router {
-        let application = Arc::new(OpenBotApplication::new(EmptyChannels).with_threads(directory));
+        app_with_channels(EmptyChannels, directory, resolver)
+    }
+
+    fn app_with_channels<R>(
+        channels: R,
+        directory: FakeChannelDirectory,
+        resolver: FixedAuthResolver,
+    ) -> Router
+    where
+        R: ChannelReader + 'static,
+    {
+        let application = Arc::new(OpenBotApplication::new(channels).with_threads(directory));
         ServerBuilder::new(application, Arc::new(resolver))
             .with_sensitive_write_security(SensitiveWriteSecurity::new(
                 default_session_lifetime(),
                 TrustedOrigins::from_configured(["https://app.example.test"]).unwrap(),
             ))
             .into_router()
+    }
+
+    #[tokio::test]
+    async fn get_channel_uses_authoritative_scope_and_exact_response_envelope() {
+        let channels = DetailChannels::new(Ok(Some(ChannelSummary {
+            id: ChannelId::new("channel-1"),
+            name: "Finance".to_owned(),
+            agent_ids: vec![BotId::new("bot-1")],
+            last_message: Some("private preview excluded".to_owned()),
+            last_message_at: Some(time::OffsetDateTime::UNIX_EPOCH),
+            last_message_agent_id: Some(BotId::new("bot-1")),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            thread_id: Some(ThreadId::new("thread-1")),
+            active: true,
+        })));
+        let visible = channels.clone();
+        let (status, body) = get_json(
+            app_with_channels(
+                channels,
+                FakeChannelDirectory::with_events(Vec::new()),
+                FixedAuthResolver::granting(auth("u1")),
+            ),
+            "/api/channels/channel-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            serde_json::json!({"channel":{
+                "id":"channel-1",
+                "name":"Finance",
+                "agentIds":["bot-1"],
+                "threadId":"thread-1",
+                "active":true
+            }})
+        );
+        assert_eq!(
+            visible.calls(),
+            vec![(
+                ChannelReadScope {
+                    deployment: DeploymentId::new("openbot-test"),
+                    tenant: TenantId::new("tenant-test"),
+                    actor: ActorId::new("u1"),
+                },
+                ChannelId::new("channel-1"),
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_channel_collapses_missing_and_outsider_to_404_and_auth_runs_first() {
+        let missing = DetailChannels::new(Ok(None));
+        let visible = missing.clone();
+        let (status, body) = get_json(
+            app_with_channels(
+                missing,
+                FakeChannelDirectory::with_events(Vec::new()),
+                FixedAuthResolver::granting(auth("u1")),
+            ),
+            "/api/channels/missing",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, serde_json::json!({"code":"not_visible"}));
+        assert_eq!(visible.calls().len(), 1);
+
+        let protected = DetailChannels::new(Ok(None));
+        let untouched = protected.clone();
+        let (status, _) = get_json(
+            app_with_channels(
+                protected,
+                FakeChannelDirectory::with_events(Vec::new()),
+                FixedAuthResolver::rejecting(AppError::Unauthenticated),
+            ),
+            "/api/channels/channel-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(untouched.calls().is_empty());
+    }
+
+    async fn get_json(router: Router, uri: &str) -> (StatusCode, serde_json::Value) {
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("detail request"),
+            )
+            .await
+            .expect("detail response");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("detail body");
+        let body = serde_json::from_slice(&bytes).expect("detail json");
+        (status, body)
     }
 
     #[tokio::test]

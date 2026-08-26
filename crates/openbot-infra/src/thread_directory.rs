@@ -113,9 +113,16 @@ impl ThreadDirectory for PostgresThreadDirectory {
             .query_one(
                 "SELECT EXISTS( \
                    SELECT 1 FROM public.threads t \
-                   JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id \
                    WHERE t.thread_id=$1 AND t.deployment_id=$2 AND t.tenant_id=$3 \
-                     AND tm.user_id=$4 AND t.status<>'deleted' \
+                     AND t.status<>'deleted' AND ( \
+                       (t.anchor_kind='direct_bot' AND EXISTS( \
+                         SELECT 1 FROM public.thread_memberships tm \
+                         WHERE tm.thread_id=t.thread_id AND tm.user_id=$4 \
+                       )) OR (t.anchor_kind='channel' AND EXISTS( \
+                         SELECT 1 FROM public.channel_memberships cm \
+                         WHERE cm.channel_id=t.anchor_id AND cm.user_id=$4 \
+                       )) \
+                     ) \
                  ) AS known",
                 &[
                     &thread.as_str(),
@@ -245,9 +252,16 @@ impl ThreadDirectory for PostgresThreadDirectory {
                 "SELECT m.message_id,m.role,m.content \
                  FROM public.messages m \
                  JOIN public.threads t ON t.thread_id=m.thread_id \
-                 JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id \
                  WHERE t.thread_id=$1 AND t.deployment_id=$2 AND t.tenant_id=$3 \
-                   AND tm.user_id=$4 AND t.status<>'deleted' \
+                   AND t.status<>'deleted' AND ( \
+                     (t.anchor_kind='direct_bot' AND EXISTS( \
+                       SELECT 1 FROM public.thread_memberships tm \
+                       WHERE tm.thread_id=t.thread_id AND tm.user_id=$4 \
+                     )) OR (t.anchor_kind='channel' AND EXISTS( \
+                       SELECT 1 FROM public.channel_memberships cm \
+                       WHERE cm.channel_id=t.anchor_id AND cm.user_id=$4 \
+                     )) \
+                   ) \
                  ORDER BY m.seq",
                 &[
                     &request.thread.as_str(),
@@ -531,9 +545,16 @@ async fn replay_batch(
         .query_one(
             "SELECT EXISTS( \
                SELECT 1 FROM public.threads t \
-               JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id \
                WHERE t.thread_id=$1 AND t.deployment_id=$2 AND t.tenant_id=$3 \
-                 AND tm.user_id=$4 AND t.status<>'deleted' \
+                 AND t.status<>'deleted' AND ( \
+                   (t.anchor_kind='direct_bot' AND EXISTS( \
+                     SELECT 1 FROM public.thread_memberships tm \
+                     WHERE tm.thread_id=t.thread_id AND tm.user_id=$4 \
+                   )) OR (t.anchor_kind='channel' AND EXISTS( \
+                     SELECT 1 FROM public.channel_memberships cm \
+                     WHERE cm.channel_id=t.anchor_id AND cm.user_id=$4 \
+                   )) \
+                 ) \
              )",
             &[
                 &request.thread.as_str(),
@@ -807,6 +828,17 @@ async fn apply_begin(
         }
     };
 
+    if matches!(&command.anchor, ThreadRunAnchor::Channel { .. }) {
+        transaction
+            .execute(
+                "INSERT INTO public.thread_memberships(thread_id,user_id,created_at) \
+                 VALUES($1,$2,$3) ON CONFLICT(thread_id,user_id) DO NOTHING",
+                &[&command.thread_id.as_str(), &request.actor.as_str(), &now],
+            )
+            .await
+            .map_err(|error| write_error("materialize channel thread membership", error))?;
+    }
+
     let expires_at = now
         .checked_add(runtime.duration)
         .ok_or(ThreadDirectoryError::Corrupt {
@@ -1015,8 +1047,13 @@ async fn load_thread(
         .query_opt(
             "SELECT t.deployment_id,t.tenant_id,t.anchor_kind,t.anchor_id,t.status, \
                     t.next_message_seq,t.next_event_seq, \
-                    EXISTS(SELECT 1 FROM public.thread_memberships tm \
-                           WHERE tm.thread_id=t.thread_id AND tm.user_id=$2) AS member \
+                    CASE WHEN t.anchor_kind='channel' THEN EXISTS( \
+                      SELECT 1 FROM public.channel_memberships cm \
+                      WHERE cm.channel_id=t.anchor_id AND cm.user_id=$2 \
+                    ) ELSE EXISTS( \
+                      SELECT 1 FROM public.thread_memberships tm \
+                      WHERE tm.thread_id=t.thread_id AND tm.user_id=$2 \
+                    ) END AS member \
              FROM public.threads t WHERE t.thread_id=$1 FOR UPDATE OF t",
             &[&command.thread_id.as_str(), &request.actor.as_str()],
         )

@@ -135,11 +135,11 @@ leptos_i18n_build = "=0.6.2"
 tauri = { version = "=2.11.5", default-features = false, features = ["wry"] }
 sys-locale = "=0.3.2"
 toml = "=0.9.8"
-gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json"] }
+gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json", "websocket"] }
 js-sys = "=0.3.104"
 wasm-bindgen-futures = "=0.4.77"
 wasm-bindgen = "=0.2.127"
-web-sys = { version = "=0.3.104", features = ["CssStyleDeclaration", "Document", "DomRect", "DomTokenList", "Element", "Event", "EventTarget", "HtmlCollection", "HtmlElement", "HtmlInputElement", "HtmlTextAreaElement", "KeyboardEvent", "MediaQueryList", "MutationObserver", "MutationObserverInit", "Navigator", "Node", "NodeList", "ResizeObserver", "Window"] }
+web-sys = { version = "=0.3.104", features = ["CssStyleDeclaration", "Document", "DomRect", "DomTokenList", "Element", "Event", "EventTarget", "HtmlCollection", "HtmlElement", "HtmlInputElement", "HtmlTextAreaElement", "KeyboardEvent", "Location", "MediaQueryList", "MutationObserver", "MutationObserverInit", "Navigator", "Node", "NodeList", "ResizeObserver", "Window"] }
 
 # Axum transport（v3 §5.2：transport 只做认证 / framing / 大小限制 / 错误映射）
 axum = { version = "0.8.9", features = ["macros", "ws"] }
