@@ -2,5 +2,7 @@
 
 pub mod agents;
 pub mod approvals;
+pub mod computer;
 pub mod layout;
+pub mod settings;
 pub mod threads;

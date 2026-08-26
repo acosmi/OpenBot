@@ -353,7 +353,8 @@
     "layout_empty": "没有配置其它连接器。",
     "layout_detail": "连接器详情",
     "layout_detail_body": "这个由 URL 状态控制的面板关闭后会移出导航。",
-    "agent_presence": "Agent 状态"
+    "agent_presence": "Agent 状态",
+    "computer_placeholder_art": "计算机占位线稿"
   },
   "keyboard": {
     "command": "Command",

@@ -353,7 +353,8 @@
     "layout_empty": "No additional connectors are configured.",
     "layout_detail": "Connector details",
     "layout_detail_body": "This URL-owned pane is removed from navigation when it closes.",
-    "agent_presence": "Agent presence"
+    "agent_presence": "Agent presence",
+    "computer_placeholder_art": "Computer placeholder artwork"
   },
   "keyboard": {
     "command": "Command",

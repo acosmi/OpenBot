@@ -97,6 +97,33 @@ fn reduced_motion_constructively_stops_every_declared_css_animation() {
 }
 
 #[test]
+fn computer_placeholder_is_one_neutral_id_free_svg_source() {
+    let art = include_str!("features/settings/computer_placeholder_art.rs");
+    let wrapper = include_str!("features/computer/placeholder.rs");
+    assert_eq!(art.matches("<svg").count(), 1);
+    assert_eq!(wrapper.matches("<svg").count(), 0);
+    assert!(wrapper.contains("<ComputerPlaceholderArt"));
+    assert!(art.contains("stroke=\"currentColor\""));
+    assert!(art.contains("aria-hidden=\"true\""));
+    assert!(art.contains("focusable=\"false\""));
+    for forbidden in [
+        "linearGradient",
+        "radialGradient",
+        "<filter",
+        "<defs",
+        "url(",
+        "http://",
+        "https://",
+        " id=",
+        "fill=\"#",
+        "stroke=\"#",
+        "stop-color",
+    ] {
+        assert!(!art.contains(forbidden), "forbidden SVG marker {forbidden}");
+    }
+}
+
+#[test]
 fn all_avatar_palettes_keep_initials_wcag_aa_in_both_themes() {
     let tokens = tokens();
     let color = table(&tokens, "color");

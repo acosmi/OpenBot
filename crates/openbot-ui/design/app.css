@@ -421,6 +421,27 @@ textarea:focus-visible,
   animation: ob-agent-presence-error var(--motion-agent-presence-error) var(--motion-ease-exit) 1;
 }
 
+.ob-computer-placeholder,
+.ob-design-computer-art {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+}
+
+.ob-computer-placeholder-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  color: var(--fg-muted);
+}
+
+.ob-computer-art-frame {
+  color: var(--fg-secondary);
+}
+
 @keyframes ob-agent-presence-spin {
   to { rotate: 1turn; }
 }
@@ -1276,6 +1297,12 @@ textarea:focus-visible,
   display: inline-flex;
   align-items: center;
   gap: calc(var(--spacing) * 2);
+}
+
+.ob-design-computer-examples {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 3);
 }
 
 .ob-input-group-affix[data-position="prefix"] {

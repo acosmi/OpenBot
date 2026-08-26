@@ -30,11 +30,11 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–26 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 79 条：
+# Batch 15–27 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 81 条：
 # Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
 # Batch22 Combobox/Select + Batch23 Sidebar，27 条 primitive 子账全 done；Batch24 又关闭46条
-# Lucide映射；Batch25 关闭 layout 组4条；Batch26 关闭 orb/ai-core→AgentPresence 2条。
-# Google Drive品牌标、其余39业务、6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
+# Lucide映射；Batch25 layout 4条；Batch26 AgentPresence 2条；Batch27 共享占位线稿2条。
+# Google Drive品牌标、其余37业务、6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）
@@ -138,16 +138,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 26 精确完成27原语+46 Lucide映射+4 layout业务+2 AgentPresence映射；其余保持todo
+  # Batch 27 精确完成27原语+46 Lucide映射+4 layout+2 AgentPresence+2 placeholder art；其余todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 73
+    expect: 71
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 79
+    expect: 81
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 79
+    expect: 81
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -767,7 +767,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0052"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "ComputerPlaceholder 不复制上游162行SVG，只复用 settings::ComputerPlaceholderArt；固定3:2 frame、装饰aria-hidden，不制造假status/live region。源码反向单测实得唯一1个<svg>、wrapper 0个<svg>，无gradient/radial/filter/defs/url/id/字面fill/stroke。Chromium两实例同为1200×800/3:2/currentColor，AX img/focusable=0，DOM/overflow/remote/console=0；UI59/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `computer`（该组上游文件数 5）。同名保留。等待态的装饰 SVG 不在本条，在 settings/background（T-UI-0065）。"
 
@@ -914,7 +915,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0065"
     migration_rule: "rename: background → ComputerPlaceholderArt（同时重绘为中性线稿）"
-    status: "todo"
+    status: "done"
+    done_evidence: "ComputerPlaceholderArt 把上游彩色渐变+噪声/filter SVG重绘为一份中性线稿；viewBox=0 0 1200 800、preserve=xMidYMid meet，只用fill=none/stroke=currentColor与token surface，无shadow/defs/ID/remote。Chromium两实例均aria-hidden=true/focusable=false，defs/gradient/filter/style/id/remote/literal-color=0，computed stroke精确继承fg-muted；UI59/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `settings`（该组上游文件数 2）。§6.2 点名的替代。上游 162 行，是 computer frame 的等待态装饰 SVG，文件名 `background` 说不清它是什么；本项目改名为 ComputerPlaceholderArt 并按 GUI 裁决重绘为中性线稿（不用彩色、不上阴影）。改名 + 重绘 ⇒ 替代而非 parity。"
 

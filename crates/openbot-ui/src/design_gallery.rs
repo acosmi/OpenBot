@@ -4,10 +4,12 @@
 use leptos::prelude::*;
 
 use crate::features::agents::{AgentPresence, AgentPresenceState};
+use crate::features::computer::ComputerPlaceholder;
 use crate::features::layout::{
     DetailPanel, DetailPanelLayout, DetailPanelMain, PageEmpty, PageRows, PageSection, PageShell,
     PageTopbar, PageWidth, RowMark, StaggerItem,
 };
+use crate::features::settings::ComputerPlaceholderArt;
 use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
 use crate::primitives::{
@@ -934,6 +936,18 @@ pub fn DesignGallery() -> impl IntoView {
                             <AgentPresence state=AgentPresenceState::Error />
                             <span>{move || t!(i18n, agents.presence_error)}</span>
                         </div>
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-computer-art-title">
+                    <h2 id="design-computer-art-title">
+                        {move || t!(i18n, design_gallery.computer_placeholder_art)}
+                    </h2>
+                    <div class="ob-design-computer-examples" id="design-computer-art">
+                        <div class="ob-design-computer-art">
+                            <ComputerPlaceholderArt />
+                        </div>
+                        <ComputerPlaceholder />
                     </div>
                 </section>
             </div>
