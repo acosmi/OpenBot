@@ -10,11 +10,12 @@ use async_trait::async_trait;
 use futures_core::Stream;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
-    AppEventStream, ApplicationService, ChannelReadScope, ChannelReader, OpenBotApplication,
-    PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError, ThreadDirectory,
-    ThreadDirectoryError, ToolApprovalAdministration, ToolApprovalAdministrationError,
-    UiPreferenceAdministration, UiPreferenceAdministrationError,
+    AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, ChannelReadScope,
+    ChannelReader, OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError,
+    PortError, ThreadDirectory, ThreadDirectoryError, ToolApprovalAdministration,
+    ToolApprovalAdministrationError, UiPreferenceAdministration, UiPreferenceAdministrationError,
 };
+use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
 use openbot_contracts::command::{AppEvent, ChannelActivityEvent, ChannelSummary};
 use openbot_contracts::ids::{
@@ -105,6 +106,108 @@ impl ChannelReader for FixtureChannels {
         channel_id: &ChannelId,
     ) -> Result<Option<ChannelSummary>, PortError> {
         Ok(self.rows.iter().find(|row| &row.id == channel_id).cloned())
+    }
+}
+
+#[derive(Clone)]
+struct FixtureAgents {
+    rows: Arc<Vec<AgentProfile>>,
+}
+
+impl FixtureAgents {
+    fn new() -> Self {
+        Self {
+            rows: Arc::new(vec![
+                AgentProfile {
+                    id: BotId::new("fixture-owned-private"),
+                    name: "Research Partner".to_owned(),
+                    title: "Private research coworker".to_owned(),
+                    role_description: "Finds primary sources and keeps citations attached to every conclusion.".to_owned(),
+                    avatar_seed: "fixture-research".to_owned(),
+                    visibility: AgentVisibility::Private,
+                    endpoint: Some("https://research.example.test/ag-ui".to_owned()),
+                    has_auth: true,
+                    has_callback_token: true,
+                    hidden: false,
+                    system_owned: false,
+                    can_manage: true,
+                    mine: true,
+                },
+                AgentProfile {
+                    id: BotId::new("fixture-owned-public"),
+                    name: "Operations Guide".to_owned(),
+                    title: "Operations coworker".to_owned(),
+                    role_description: "Turns recurring operating work into clear, reviewable checklists.".to_owned(),
+                    avatar_seed: "fixture-operations".to_owned(),
+                    visibility: AgentVisibility::Public,
+                    endpoint: None,
+                    has_auth: false,
+                    has_callback_token: false,
+                    hidden: false,
+                    system_owned: false,
+                    can_manage: true,
+                    mine: true,
+                },
+                AgentProfile {
+                    id: BotId::new("fixture-system-public"),
+                    name: "Knowledge Desk".to_owned(),
+                    title: "System knowledge coworker".to_owned(),
+                    role_description: "Answers from the deployment knowledge package without exposing its internals.".to_owned(),
+                    avatar_seed: "fixture-knowledge".to_owned(),
+                    visibility: AgentVisibility::Public,
+                    endpoint: None,
+                    has_auth: false,
+                    has_callback_token: false,
+                    hidden: false,
+                    system_owned: true,
+                    can_manage: false,
+                    mine: false,
+                },
+                AgentProfile {
+                    id: BotId::new("fixture-explore-public"),
+                    name: "Risk Analyst".to_owned(),
+                    title: "Shared risk coworker".to_owned(),
+                    role_description: "Reviews operational changes and identifies controls that need evidence.".to_owned(),
+                    avatar_seed: "fixture-risk".to_owned(),
+                    visibility: AgentVisibility::Public,
+                    endpoint: Some("https://risk.example.test/ag-ui".to_owned()),
+                    has_auth: false,
+                    has_callback_token: false,
+                    hidden: false,
+                    system_owned: false,
+                    can_manage: false,
+                    mine: false,
+                },
+            ]),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentDirectory for FixtureAgents {
+    async fn list_visible_agents(
+        &self,
+        _scope: &AgentReadScope,
+        hidden: bool,
+    ) -> Result<Vec<AgentProfile>, PortError> {
+        Ok(self
+            .rows
+            .iter()
+            .filter(|profile| profile.hidden == hidden)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_visible_agent(
+        &self,
+        _scope: &AgentReadScope,
+        agent_id: &BotId,
+    ) -> Result<Option<AgentProfile>, PortError> {
+        Ok(self
+            .rows
+            .iter()
+            .find(|profile| &profile.id == agent_id)
+            .cloned())
     }
 }
 
@@ -384,6 +487,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(FixtureChannels::new(now))
+            .with_agent_directory(Arc::new(FixtureAgents::new()))
             .with_people(FixturePeople)
             .with_threads(FixtureThreads)
             .with_tool_approvals(Arc::new(FixtureApprovals::new(now)))

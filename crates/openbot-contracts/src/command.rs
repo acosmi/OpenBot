@@ -30,7 +30,7 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use crate::agent::{CallbackTokenIssued, CallbackTokenRevoked};
+use crate::agent::{AgentProfile, CallbackTokenIssued, CallbackTokenRevoked};
 use crate::audit::AuditPage;
 use crate::auth::Role;
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
@@ -100,6 +100,18 @@ pub enum AppCommand {
     GetVisibleChannel {
         /// Untrusted path identity; authority still comes only from `AuthContext`.
         channel_id: ChannelId,
+    },
+
+    /// List current-actor-visible coworkers in visible or hidden roster state.
+    ListVisibleAgents {
+        /// False for default roster; true for per-user hidden roster.
+        hidden: bool,
+    },
+
+    /// Read one current-actor-visible coworker.
+    GetVisibleAgent {
+        /// Untrusted path identity.
+        agent_id: BotId,
     },
 
     /// 返回当前已验证 actor 的公开资料。
@@ -297,6 +309,10 @@ pub enum AppReply {
     Channels(ChannelPage),
     /// [`AppCommand::GetVisibleChannel`] 的应答。
     Channel(ChannelDetail),
+    /// [`AppCommand::ListVisibleAgents`] response.
+    Agents(Vec<AgentProfile>),
+    /// [`AppCommand::GetVisibleAgent`] response.
+    Agent(AgentProfile),
     /// [`AppCommand::GetCurrentUser`] 应答。
     CurrentUser(CurrentUser),
     /// [`AppCommand::AdminStatus`] 应答。

@@ -3,6 +3,147 @@
 use openbot_contracts::ids::RunId;
 use serde_json::Value;
 
+/// Pure Agent profile access policy shared by roster and runtime adapters.
+pub mod profile_policy {
+    use openbot_contracts::agent::AgentVisibility;
+
+    /// Verified actor facts needed by the profile policy.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct AgentActor<'a> {
+        /// Verified actor identity.
+        pub id: &'a str,
+        /// Whether verified roles include administrator.
+        pub admin: bool,
+    }
+
+    /// Persistence-independent profile facts needed by the policy.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct AgentProfileFacts<'a> {
+        /// Creator, or `None` for a package-backed profile.
+        pub owner_user_id: Option<&'a str>,
+        /// Public/private visibility.
+        pub visibility: AgentVisibility,
+        /// Package-backed profiles cannot be managed through user lifecycle APIs.
+        pub system_owned: bool,
+        /// Soft-deleted profiles deny every current action while old channels remain readable.
+        pub deleted: bool,
+    }
+
+    /// Access one active public profile, or an active private profile as owner/admin.
+    #[must_use]
+    pub fn can_access_agent(actor: &AgentActor<'_>, profile: &AgentProfileFacts<'_>) -> bool {
+        !profile.deleted
+            && (profile.visibility == AgentVisibility::Public
+                || profile.owner_user_id == Some(actor.id)
+                || actor.admin)
+    }
+
+    /// Manage only an active non-system profile as its owner or an administrator.
+    #[must_use]
+    pub fn can_manage_agent(actor: &AgentActor<'_>, profile: &AgentProfileFacts<'_>) -> bool {
+        !profile.deleted
+            && !profile.system_owned
+            && (profile.owner_user_id == Some(actor.id) || actor.admin)
+    }
+
+    /// Running uses exactly the same permission function as reading; this is an alias, not a copy.
+    pub use can_access_agent as can_run_agent;
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const CREATOR: AgentActor<'static> = AgentActor {
+            id: "user-1",
+            admin: false,
+        };
+        const OTHER: AgentActor<'static> = AgentActor {
+            id: "user-2",
+            admin: false,
+        };
+        const ADMIN: AgentActor<'static> = AgentActor {
+            id: "admin-1",
+            admin: true,
+        };
+
+        fn profile(visibility: AgentVisibility) -> AgentProfileFacts<'static> {
+            AgentProfileFacts {
+                owner_user_id: Some(CREATOR.id),
+                visibility,
+                system_owned: false,
+                deleted: false,
+            }
+        }
+
+        #[test]
+        fn allows_every_actor_to_access_and_run_an_active_public_pr() {
+            let profile = profile(AgentVisibility::Public);
+            for actor in [CREATOR, OTHER, ADMIN] {
+                assert!(can_access_agent(&actor, &profile));
+                assert!(can_run_agent(&actor, &profile));
+            }
+        }
+
+        #[test]
+        fn limits_active_private_profile_access_and_runs_to_its_cre() {
+            let profile = profile(AgentVisibility::Private);
+            assert!(can_access_agent(&CREATOR, &profile));
+            assert!(!can_access_agent(&OTHER, &profile));
+            assert!(can_access_agent(&ADMIN, &profile));
+            assert!(can_run_agent(&CREATOR, &profile));
+            assert!(!can_run_agent(&OTHER, &profile));
+            assert!(can_run_agent(&ADMIN, &profile));
+        }
+
+        #[test]
+        fn allows_only_the_creator_and_admins_to_manage_active_user() {
+            for visibility in [AgentVisibility::Public, AgentVisibility::Private] {
+                let profile = profile(visibility);
+                assert!(can_manage_agent(&CREATOR, &profile));
+                assert!(!can_manage_agent(&OTHER, &profile));
+                assert!(can_manage_agent(&ADMIN, &profile));
+            }
+        }
+
+        #[test]
+        fn allows_all_actors_to_access_and_run_a_system_public_prof() {
+            let profile = AgentProfileFacts {
+                owner_user_id: None,
+                visibility: AgentVisibility::Public,
+                system_owned: true,
+                deleted: false,
+            };
+            for actor in [CREATOR, OTHER, ADMIN] {
+                assert!(can_access_agent(&actor, &profile));
+                assert!(can_run_agent(&actor, &profile));
+                assert!(!can_manage_agent(&actor, &profile));
+            }
+        }
+
+        #[test]
+        fn denies_every_permission_for_deleted_profiles() {
+            let profile = AgentProfileFacts {
+                deleted: true,
+                ..profile(AgentVisibility::Public)
+            };
+            for actor in [CREATOR, OTHER, ADMIN] {
+                assert!(!can_access_agent(&actor, &profile));
+                assert!(!can_manage_agent(&actor, &profile));
+                assert!(!can_run_agent(&actor, &profile));
+            }
+        }
+
+        #[test]
+        fn exports_canrunagent_as_the_canaccessagent_alias() {
+            type AccessCheck = for<'a, 'b> fn(&AgentActor<'a>, &AgentProfileFacts<'b>) -> bool;
+            assert!(core::ptr::fn_addr_eq(
+                can_run_agent as AccessCheck,
+                can_access_agent as AccessCheck
+            ));
+        }
+    }
+}
+
 /// Reducer phase；terminal phases 不能再产生 effect。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentPhase {

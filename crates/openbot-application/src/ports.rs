@@ -4,11 +4,12 @@
 //! 本模块不 import 任何 I/O crate，也不出现任何 SQL —— 出现了就说明抽象漏了。
 
 use async_trait::async_trait;
+use openbot_contracts::agent::AgentProfile;
 use openbot_contracts::audit::AuditPage;
 use openbot_contracts::auth::Role;
 use openbot_contracts::command::{BeginThreadRun, ChannelSummary, ThreadHistory, ThreadRunStarted};
 use openbot_contracts::error::{AppError, IdentityConflictReason};
-use openbot_contracts::ids::{ActorId, ChannelId, DeploymentId, TenantId, ThreadId};
+use openbot_contracts::ids::{ActorId, BotId, ChannelId, DeploymentId, TenantId, ThreadId};
 use openbot_contracts::memory::{
     CorrectMemory, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, RecallMemories,
     RememberMemory,
@@ -164,6 +165,62 @@ pub struct ChannelReadScope {
     pub tenant: TenantId,
     /// Verified actor.
     pub actor: ActorId,
+}
+
+/// Authority already resolved for Agent roster reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentReadScope {
+    /// Verified tenant; package-backed profiles from another tenant are never roster candidates.
+    pub tenant: TenantId,
+    /// Verified actor.
+    pub actor: ActorId,
+    /// Whether current verified roles include administrator.
+    pub admin: bool,
+}
+
+/// Current-schema Agent roster/detail read port.
+#[async_trait]
+pub trait AgentDirectory: Send + Sync {
+    /// List either visible or per-user-hidden profiles after access filtering.
+    async fn list_visible_agents(
+        &self,
+        scope: &AgentReadScope,
+        hidden: bool,
+    ) -> Result<Vec<AgentProfile>, PortError>;
+
+    /// Read one accessible, non-deleted profile.
+    async fn get_visible_agent(
+        &self,
+        scope: &AgentReadScope,
+        agent_id: &BotId,
+    ) -> Result<Option<AgentProfile>, PortError>;
+}
+
+/// Fail-closed Agent directory until a host injects production PostgreSQL.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoAgentDirectory;
+
+#[async_trait]
+impl AgentDirectory for NoAgentDirectory {
+    async fn list_visible_agents(
+        &self,
+        _scope: &AgentReadScope,
+        _hidden: bool,
+    ) -> Result<Vec<AgentProfile>, PortError> {
+        Err(PortError::Unavailable {
+            dependency: "agent_directory",
+        })
+    }
+
+    async fn get_visible_agent(
+        &self,
+        _scope: &AgentReadScope,
+        _agent_id: &BotId,
+    ) -> Result<Option<AgentProfile>, PortError> {
+        Err(PortError::Unavailable {
+            dependency: "agent_directory",
+        })
+    }
 }
 
 /// Native thread 目录端口错误；不携带随机源或数据库的原始错误文本。

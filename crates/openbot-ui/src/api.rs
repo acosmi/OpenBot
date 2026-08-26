@@ -3,6 +3,9 @@
 //! This module only performs HTTP framing. Approval binding, actor resolution and the durable
 //! decision remain behind `ApplicationService` on the Server.
 
+use openbot_contracts::agent::AgentProfile;
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::agent::{AgentProfileResponse, AgentProfilesResponse};
 use openbot_contracts::command::{ChannelDetail, ChannelPage};
 use openbot_contracts::people::CurrentUser;
 #[cfg(target_arch = "wasm32")]
@@ -33,6 +36,72 @@ pub enum ApiError {
 
 /// Roster page size; the application still owns the authoritative 1..=200 clamp.
 pub const CHANNEL_PAGE_SIZE: u32 = 50;
+
+/// Load the current actor's authoritative visible or per-user-hidden coworker roster.
+pub async fn list_agents(hidden: bool) -> Result<Vec<AgentProfile>, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = if hidden {
+            "/api/agents?hidden=true"
+        } else {
+            "/api/agents"
+        };
+        let response = Request::get(path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<AgentProfilesResponse>()
+            .await
+            .map(|response| response.agents)
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = hidden;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load one current-actor-visible coworker profile.
+pub async fn load_agent(agent_id: &str) -> Result<AgentProfile, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = agent_detail_path(agent_id)?;
+        let response = Request::get(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<AgentProfileResponse>()
+            .await
+            .map(|response| response.agent)
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = agent_id;
+        Err(ApiError::Unavailable)
+    }
+}
 
 /// Load one authoritative channel roster page.
 pub async fn list_channels(cursor: Option<&str>) -> Result<ChannelPage, ApiError> {
@@ -336,6 +405,26 @@ fn channel_detail_path(channel_id: &str) -> Result<String, ApiError> {
     ))
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+fn agent_detail_path(agent_id: &str) -> Result<String, ApiError> {
+    validate_agent_id(agent_id)?;
+    Ok(format!("/api/agents/{}", encode_url_component(agent_id)))
+}
+
+/// Build the URL-owned profile-panel route for one validated Agent identity.
+pub fn agent_profile_href(agent_id: &str) -> Result<String, ApiError> {
+    validate_agent_id(agent_id)?;
+    Ok(format!("/agents?agent={}", encode_url_component(agent_id)))
+}
+
+fn validate_agent_id(agent_id: &str) -> Result<(), ApiError> {
+    if agent_id.is_empty() || agent_id.len() > 512 || agent_id.chars().any(char::is_control) {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
 /// Build one same-origin UI route for a validated channel identity.
 pub fn channel_route_href(channel_id: &str) -> Result<String, ApiError> {
     validate_channel_id(channel_id)?;
@@ -427,6 +516,26 @@ mod tests {
         );
         assert_eq!(
             channel_list_path(Some("bad\ncursor")).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn agent_paths_are_bounded_and_encode_one_path_or_query_component() {
+        assert_eq!(
+            agent_detail_path("agent/one?x=1").unwrap(),
+            "/api/agents/agent%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
+            agent_profile_href("agent/one?x=1").unwrap(),
+            "/agents?agent=agent%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
+            agent_detail_path("").unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        assert_eq!(
+            agent_profile_href("bad\nagent").unwrap_err(),
             ApiError::InvalidResponse
         );
     }

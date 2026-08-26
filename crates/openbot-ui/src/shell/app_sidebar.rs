@@ -121,6 +121,7 @@ pub fn AppSidebar() -> impl IntoView {
     };
 
     let roster_location = location.clone();
+    let agents_location = location.clone();
     let footer_location = location;
     view! {
         <span
@@ -209,6 +210,12 @@ pub fn AppSidebar() -> impl IntoView {
         </SidebarContent>
         <SidebarFooter>
             <SidebarNavList>
+                <SidebarNavLink
+                    href="/agents".to_owned()
+                    icon=Icon::Zap
+                    label=move || t_string!(i18n, shell.nav_agents).to_owned()
+                    current=Signal::derive(move || agents_location.pathname.get() == "/agents")
+                />
                 <SidebarNavLink
                     href="/approvals".to_owned()
                     icon=Icon::ListChecks

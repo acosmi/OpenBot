@@ -68,10 +68,10 @@ use openbot_infra::provider::openai::{
     OpenAiApiKey, OpenAiProtocol, OpenAiProvider, OpenAiProviderConfig,
 };
 use openbot_infra::remote_agui::SafeRemoteAguiTransport;
-use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_infra::repo::tools::PostgresToolJournal;
+use openbot_infra::repo::{ChannelRepo, PostgresAgentDirectory};
 use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
 use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
@@ -448,6 +448,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_memory(memory)
         .with_agent_callback_tokens(callback_tokens);
     let application = application
+        .with_agent_directory(Arc::new(PostgresAgentDirectory::new(pool.clone())))
         .with_mcp_connections(mcp_connections.clone())
         .with_tool_approvals(tool_approvals)
         .with_ui_preferences(Arc::new(PostgresUiPreferenceAdministration::new(

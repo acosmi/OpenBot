@@ -13,6 +13,7 @@
 //! 用例是**函数**不是结构体：它们没有需要跨调用保存的状态，依赖由参数传入（port 的
 //! 引用 + `AuthContext`）。做成 struct 只会让「这次调用用了哪些依赖」从签名里消失。
 
+pub mod agents;
 pub mod audit;
 pub mod health;
 pub mod list_visible_channels;
@@ -21,6 +22,7 @@ pub mod people;
 pub mod policy;
 pub mod thread;
 
+pub use agents::{get_visible_agent, list_visible_agents};
 pub use audit::{DEFAULT_AUDIT_PAGE, MAX_AUDIT_PAGE, list_audit_events};
 pub use health::{DEFAULT_HEARTBEAT_PERIOD, health, health_stream};
 pub use list_visible_channels::{DEFAULT_CHANNEL_PAGE, get_visible_channel, list_visible_channels};

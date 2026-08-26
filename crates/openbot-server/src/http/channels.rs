@@ -131,6 +131,8 @@ pub async fn list(
         // 进程打死；也不伪装成 200 空列表，那会把一次契约破损洗成"没有数据"。
         AppReply::Health(_)
         | AppReply::Channel(_)
+        | AppReply::Agents(_)
+        | AppReply::Agent(_)
         | AppReply::CurrentUser(_)
         | AppReply::AdminStatus(_)
         | AppReply::People(_)
@@ -185,6 +187,8 @@ pub async fn get(
         AppReply::Channel(channel) => Ok(Json(ChannelDetailResponse { channel })),
         AppReply::Health(_)
         | AppReply::Channels(_)
+        | AppReply::Agents(_)
+        | AppReply::Agent(_)
         | AppReply::CurrentUser(_)
         | AppReply::AdminStatus(_)
         | AppReply::People(_)

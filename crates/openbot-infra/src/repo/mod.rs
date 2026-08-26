@@ -27,6 +27,7 @@ pub mod tenant;
 pub mod thread;
 pub mod tools;
 
+pub use agents::PostgresAgentDirectory;
 pub use channels::ChannelRepo;
 
 /// 当前已有物理表的具名 repository 台账。

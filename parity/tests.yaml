@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 757
+    expect: 747
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -3232,8 +3232,9 @@ entries:
     owner: openbot-domain
     test_id: T-TEST-0298
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[362]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "openbot-domain Agent profile pure policy 6/0/0：active public 对 owner/other/admin 的 access 与 run 全 true，hidden 不改变权限。"
     notes: "ported —— v3 §5.2 Hexagonal ownership：agent profile 权限判据是纯领域规则，逐条移植。上游用例标题：「allows every actor to access and run an active public profile」。"
   - id: "server-tests-agent-profile-policy--agent-profile-permissions--limits-active-private-profile-access-and-runs-to-its-cre"
     upstream: "server/tests/agent-profile-policy.test.ts::agent profile permissions"
@@ -3242,8 +3243,9 @@ entries:
     owner: openbot-domain
     test_id: T-TEST-0299
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[363]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "openbot-domain Agent profile pure policy 6/0/0：active private 只准 owner/admin access+run，other 两者均 false。"
     notes: "ported —— v3 §5.2 Hexagonal ownership：agent profile 权限判据是纯领域规则，逐条移植。上游用例标题：「limits active private profile access and runs to its creator and admins」。"
   - id: "server-tests-agent-profile-policy--agent-profile-permissions--allows-only-the-creator-and-admins-to-manage-active-user"
     upstream: "server/tests/agent-profile-policy.test.ts::agent profile permissions"
@@ -3252,8 +3254,9 @@ entries:
     owner: openbot-domain
     test_id: T-TEST-0300
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[364]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "openbot-domain Agent profile pure policy 6/0/0：public/private user profile 均只准 owner/admin manage。"
     notes: "ported —— v3 §5.2 Hexagonal ownership：agent profile 权限判据是纯领域规则，逐条移植。上游用例标题：「allows only the creator and admins to manage active user profiles」。"
   - id: "server-tests-agent-profile-policy--agent-profile-permissions--allows-all-actors-to-access-and-run-a-system-public-prof"
     upstream: "server/tests/agent-profile-policy.test.ts::agent profile permissions"
@@ -3262,8 +3265,9 @@ entries:
     owner: openbot-domain
     test_id: T-TEST-0301
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[365]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "openbot-domain Agent profile pure policy 6/0/0：system public 对三类actor可access/run且全员不可manage。"
     notes: "ported —— v3 §5.2 Hexagonal ownership：agent profile 权限判据是纯领域规则，逐条移植。上游用例标题：「allows all actors to access and run a system public profile but nobody to manage it」。"
   - id: "server-tests-agent-profile-policy--agent-profile-permissions--denies-every-permission-for-deleted-profiles"
     upstream: "server/tests/agent-profile-policy.test.ts::agent profile permissions"
@@ -3272,8 +3276,9 @@ entries:
     owner: openbot-domain
     test_id: T-TEST-0302
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[366]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "openbot-domain Agent profile pure policy 6/0/0：deleted 对 owner/other/admin 的 access/manage/run 全 false。"
     notes: "ported —— v3 §5.2 Hexagonal ownership：agent profile 权限判据是纯领域规则，逐条移植。上游用例标题：「denies every permission for deleted profiles」。"
   - id: "server-tests-agent-profile-policy--agent-profile-permissions--exports-canrunagent-as-the-canaccessagent-alias"
     upstream: "server/tests/agent-profile-policy.test.ts::agent profile permissions"
@@ -3282,8 +3287,9 @@ entries:
     owner: openbot-domain
     test_id: T-TEST-0303
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[367]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "openbot-domain 以 pub use 构造性导出 can_run_agent=can_access_agent，同一函数地址断言通过。"
     notes: "ported —— v3 §5.2 Hexagonal ownership：agent profile 权限判据是纯领域规则，逐条移植。上游用例标题：「exports canRunAgent as the canAccessAgent alias」。"
   # ---------------------------------------------------------------------------
   # server/tests/agent-profile-store.integration.test.ts —— owner openbot-infra / ported / parity
@@ -3301,12 +3307,13 @@ entries:
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--lets-an-owner-and-admin-get-and-list-a-private-profile-b"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::lets_an_owner_and_admin_get_and_list_a_private_profile_b"
+    target: "openbot_infra::tests::agent_directory::roster_and_detail_apply_access_hidden_delete_and_server_decided_flags"
     owner: openbot-infra
     test_id: T-TEST-0305
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[370]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG17.11 host SCRAM 1/0/0：owner list+get own private，other list/get均看不到，admin list+get可见；同时钉tenant、hidden、deleted边界。"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「lets an owner and admin get and list a private profile but hides it from another user」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--stores-hiding-per-user-and-moves-the-caller-between-defa"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
@@ -3537,22 +3544,24 @@ entries:
   - id: "server-tests-agent-routes--agent-lifecycle-routes--projects-exact-dto-fields-and-computes-permissions-for-t"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
     label: parity
-    target: "openbot_server::routes::agents::tests::projects_exact_dto_fields_and_computes_permissions_for_t"
+    target: "openbot_contracts::agent::tests::agent_projection_envelopes_are_closed_camel_case_and_secret_free + openbot_infra::tests::agent_directory::roster_and_detail_apply_access_hidden_delete_and_server_decided_flags"
     owner: openbot-server
     test_id: T-TEST-0328
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[395]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "contracts Agent projection 2/0/0逐字段camelCase/deny-unknown/secret-free；PG17.11 1/0/0从权威owner/package/config/preferences计算mine/canManage/systemOwned/has*。"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「projects exact DTO fields and computes permissions for the authenticated actor」。"
   - id: "server-tests-agent-routes--agent-lifecycle-routes--separates-ownership-from-permission-for-an-administrator"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
     label: parity
-    target: "openbot_server::routes::agents::tests::separates_ownership_from_permission_for_an_administrator"
+    target: "openbot_infra::tests::agent_directory::roster_and_detail_apply_access_hidden_delete_and_server_decided_flags"
     owner: openbot-server
     test_id: T-TEST-0329
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[396]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "PG17.11 host SCRAM 1/0/0：admin roster中他人private为canManage=true/mine=false，自有private为true/true，system仍不可manage。"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「separates ownership from permission for an administrator」。"
   - id: "server-tests-agent-routes--agent-lifecycle-routes--never-forwards-forged-create-or-update-fields"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
@@ -3577,12 +3586,13 @@ entries:
   - id: "server-tests-agent-routes--agent-lifecycle-routes--returns-404-when-get-returns-null"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
     label: parity
-    target: "openbot_server::routes::agents::tests::returns_404_when_get_returns_null"
+    target: "openbot_server::http::agents::tests::agent_reads_authenticate_first_reject_unknown_query_and_collapse_missing_to_404"
     owner: openbot-server
     test_id: T-TEST-0332
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[399]（cargo xtask test-inventory，oxc_parser 0.146.0）"
+    done_evidence: "Server Agent handler定向4/0/0：directory None 精确映射404；真实PG另证invisible/deleted/cross-tenant同答404。"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「returns 404 when get returns null」。"
   - id: "server-tests-agent-routes--agent-lifecycle-routes--maps-known-store-errors"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"

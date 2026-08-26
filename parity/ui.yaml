@@ -30,11 +30,12 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–27 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 81 条：
+# Batch 15–31 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 84 条：
 # Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
 # Batch22 Combobox/Select + Batch23 Sidebar，27 条 primitive 子账全 done；Batch24 又关闭46条
-# Lucide映射；Batch25 layout 4条；Batch26 AgentPresence 2条；Batch27 共享占位线稿2条。
-# Google Drive品牌标、其余37业务、6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
+# Lucide映射；Batch25 layout 4条；Batch26 AgentPresence 2条；Batch27 共享占位线稿2条；
+# Batch30 ChannelRow；Batch31 又关闭 abstract-avatar→Avatar 与 AgentCard。
+# Google Drive品牌标、其余34业务、6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）
@@ -138,16 +139,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch30累计完成前述地基与ChannelRow；其余todo
+  # Batch31累计完成前述地基、ChannelRow、abstract-avatar替代与AgentCard；其余todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 70
+    expect: 68
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 82
+    expect: 84
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 82
+    expect: 84
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -508,12 +509,13 @@ entries:
   - id: "biz-agents-abstract-avatar"
     upstream: "app/src/components/agents/abstract-avatar.tsx"
     label: "替代"
-    target: "openbot_ui::primitives::avatar::Avatar"
+    target: "openbot_ui::primitives::avatar::Avatar + openbot_ui::features::agents::{agent_card,agent_profile}"
     owner: "openbot-ui"
     test_id: "T-UI-0029"
     migration_rule: "remove: 生成式头像收敛进统一 Avatar 原语"
-    status: "todo"
+    status: "done"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
+    done_evidence: "Batch31：真实roster card与detail profile均只消费统一SHA-256确定性Avatar；无abstract-avatar/boring-avatars/remote image，UI tests/WASM/Chromium四卡头像AX通过。"
     notes: "§6.2 组 `agents`（该组上游文件数 8）。§6.2 点名的 7 处替代之一。上游 25 行，配合 `boring-avatars`（(d) 组 T-UI-0124）生成抽象头像；本项目收敛为 §6.6 的确定性 Avatar（SHA-256(principal_id) 前 8 位 → 8 个预设中性低饱和底色）。替代而非 parity 的判据：视觉形态换了、生成算法换了、能力收敛（不再是任意抽象图形）。"
 
   - id: "biz-agents-agent-card"
@@ -523,8 +525,9 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0030"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
+    done_evidence: "Batch31：AgentCard保留name+三行role、144×180/4:5形态、URL-owned同源profile链接，统一Avatar与stagger；UI host/WASM/Chromium 1440/1024/900/600绿。"
     notes: "§6.2 组 `agents`（该组上游文件数 8）。同名保留。"
 
   - id: "biz-agents-agent-fields"

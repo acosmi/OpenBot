@@ -122,14 +122,15 @@ pub use mcp_connections::{
     register_mcp_oauth_client,
 };
 pub use ports::{
-    AuditPageRequest, AuditReadError, AuditReader, BeginThreadRunRequest,
-    ChannelActivitySubscription, ChannelReadScope, ChannelReader, CorrectMemoryRequest,
-    MemoryAdministration, MemoryAdministrationError, MemoryPageRequest, MutateMemoryRequest,
-    NoAuditReader, NoMemoryAdministration, NoPeopleAdministration, NoPolicyAdministration,
-    NoThreadDirectory, OwnedCredentialRetirementError, OwnedCredentialRetirer,
-    PeopleAdministration, PeoplePageRequest, PeoplePortError, PolicyAdministration,
-    PolicyAdministrationError, PortError, RecallMemoriesRequest, RememberMemoryRequest,
-    ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
+    AgentDirectory, AgentReadScope, AuditPageRequest, AuditReadError, AuditReader,
+    BeginThreadRunRequest, ChannelActivitySubscription, ChannelReadScope, ChannelReader,
+    CorrectMemoryRequest, MemoryAdministration, MemoryAdministrationError, MemoryPageRequest,
+    MutateMemoryRequest, NoAgentDirectory, NoAuditReader, NoMemoryAdministration,
+    NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory,
+    OwnedCredentialRetirementError, OwnedCredentialRetirer, PeopleAdministration,
+    PeoplePageRequest, PeoplePortError, PolicyAdministration, PolicyAdministrationError, PortError,
+    RecallMemoriesRequest, RememberMemoryRequest, ThreadDirectory, ThreadDirectoryError,
+    ThreadEventSubscription, ThreadHistoryRequest,
 };
 pub use provider::{
     AgentAudit, AgentAuditError, AgentAuditKind, AgentAuthorizationError, AgentAuthorizationSource,
@@ -164,7 +165,8 @@ pub use use_cases::{
     MAX_AUDIT_PAGE, MAX_MEMORY_CONTENT_BYTES, MAX_MEMORY_QUERY_BYTES, MAX_MEMORY_TAG_BYTES,
     MAX_MEMORY_TAGS, MAX_PEOPLE_PAGE, admin_status, begin_thread_run, change_person_access,
     change_person_role, correct_memory, current_user, get_action_policy, get_thread_history,
-    get_thread_status, get_visible_channel, health, list_audit_events, list_memories, list_people,
-    list_visible_channels, mint_thread_id, mutate_memory, recall_memories, remember_memory,
-    set_action_policy, subscribe_channel_activity, subscribe_thread_events,
+    get_thread_status, get_visible_agent, get_visible_channel, health, list_audit_events,
+    list_memories, list_people, list_visible_agents, list_visible_channels, mint_thread_id,
+    mutate_memory, recall_memories, remember_memory, set_action_policy, subscribe_channel_activity,
+    subscribe_thread_events,
 };
