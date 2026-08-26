@@ -30,11 +30,11 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–25 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 77 条：
+# Batch 15–26 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 79 条：
 # Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
 # Batch22 Combobox/Select + Batch23 Sidebar，27 条 primitive 子账全 done；Batch24 又关闭46条
-# Lucide映射；Batch25 关闭 layout 组 detail-panel/page-shell/row-mark/stagger 4条。
-# Google Drive品牌标、其余41业务、6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
+# Lucide映射；Batch25 关闭 layout 组4条；Batch26 关闭 orb/ai-core→AgentPresence 2条。
+# Google Drive品牌标、其余39业务、6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）
@@ -138,16 +138,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 25 精确完成27原语+46 Lucide映射+4 layout 业务；品牌/其余业务/runtime/golden保持todo
+  # Batch 26 精确完成27原语+46 Lucide映射+4 layout业务+2 AgentPresence映射；其余保持todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 75
+    expect: 73
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 77
+    expect: 79
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 77
+    expect: 79
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -578,7 +578,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0035"
     migration_rule: "remove: 437 行 canvas/shader orb 收敛为 20px 状态环"
-    status: "todo"
+    status: "done"
+    done_evidence: "AgentPresence 以 reactive Signal<AgentPresenceState> 闭集投影 idle/thinking/speaking/error，固定20px；完整环/单弧/双弧/danger环分形，本地化 role=img name。thinking=ob-agent-presence-spin 1.2s infinite，speaking双弧=1.2s alternate/alternate-reverse，error=160ms×1；时长只消费tokens.toml生成值。全局reduce闸门构造性animation:none。Chromium四态均20×20、AX名各1，DOM/overflow/remote/console=0；UI57/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `agents`（该组上游文件数 8）。§6.2 + §6.7 点名的替代。上游实测 437 行（wc -l app/src/components/agents/orb/agent-orb.tsx = 437），canvas/shader + 音频反应；本项目按原则 7 收为 20px 状态环：idle 静止灰环 / thinking 慢速旋转弧（loader-circle，1.2s 每圈）/ speaking 两段弧交替 / error 变 danger 色静止环 + 单次 160ms 横向位移。reduced-motion 下全部静止，只靠颜色与 aria-label 表达状态。上游 orb 与 ai-core 两个文件合并成这一个 Rust 组件，故两条 entry 指向同一 target。"
 
@@ -589,7 +590,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0036"
     migration_rule: "remove: 395 行 shader 内核并入同一状态环"
-    status: "todo"
+    status: "done"
+    done_evidence: "上游395行 shader/audio 内核与437行 orb 外壳按第一真源合并到同一 AgentPresence，不在Rust重建canvas/shader。共享机器证据：四态Signal、20px、形状+本地化AX、1.2s thinking/双弧speaking、160ms单次error、全局reduce静止；Chromium role=img四名各1且0缺陷；UI57/0/0、WASM/Clippy/gates绿。motion运行时总项仍todo。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `agents`（该组上游文件数 8）。同上条的另一半：wc -l app/src/components/agents/orb/ai-core.tsx = 395。两个文件在上游是 orb 的外壳与内核，本项目合并为一个组件——**这是 45 → Leptos 组件数不是 1:1 的两处之一**（另一处是 app-sidebar → shell），台账里仍各记一条，因为台账的单位是上游文件不是目标组件。"
 

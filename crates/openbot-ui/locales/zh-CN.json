@@ -352,7 +352,8 @@
     "layout_row_description": "带中性供应商标识的第三方行。",
     "layout_empty": "没有配置其它连接器。",
     "layout_detail": "连接器详情",
-    "layout_detail_body": "这个由 URL 状态控制的面板关闭后会移出导航。"
+    "layout_detail_body": "这个由 URL 状态控制的面板关闭后会移出导航。",
+    "agent_presence": "Agent 状态"
   },
   "keyboard": {
     "command": "Command",

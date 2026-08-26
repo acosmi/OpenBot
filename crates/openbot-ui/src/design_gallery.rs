@@ -3,6 +3,7 @@
 
 use leptos::prelude::*;
 
+use crate::features::agents::{AgentPresence, AgentPresenceState};
 use crate::features::layout::{
     DetailPanel, DetailPanelLayout, DetailPanelMain, PageEmpty, PageRows, PageSection, PageShell,
     PageTopbar, PageWidth, RowMark, StaggerItem,
@@ -909,6 +910,30 @@ pub fn DesignGallery() -> impl IntoView {
                                 <p>{move || t!(i18n, design_gallery.layout_detail_body)}</p>
                             </DetailPanel>
                         </DetailPanelLayout>
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-agent-presence-title">
+                    <h2 id="design-agent-presence-title">
+                        {move || t!(i18n, design_gallery.agent_presence)}
+                    </h2>
+                    <div class="ob-design-row" id="design-agent-presence">
+                        <div class="ob-design-presence-state">
+                            <AgentPresence state=AgentPresenceState::Idle />
+                            <span>{move || t!(i18n, agents.presence_idle)}</span>
+                        </div>
+                        <div class="ob-design-presence-state">
+                            <AgentPresence state=AgentPresenceState::Thinking />
+                            <span>{move || t!(i18n, agents.presence_thinking)}</span>
+                        </div>
+                        <div class="ob-design-presence-state">
+                            <AgentPresence state=AgentPresenceState::Speaking />
+                            <span>{move || t!(i18n, agents.presence_speaking)}</span>
+                        </div>
+                        <div class="ob-design-presence-state">
+                            <AgentPresence state=AgentPresenceState::Error />
+                            <span>{move || t!(i18n, agents.presence_error)}</span>
+                        </div>
                     </div>
                 </section>
             </div>

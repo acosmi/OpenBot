@@ -352,7 +352,8 @@
     "layout_row_description": "A third-party row with a neutral vendor mark.",
     "layout_empty": "No additional connectors are configured.",
     "layout_detail": "Connector details",
-    "layout_detail_body": "This URL-owned pane is removed from navigation when it closes."
+    "layout_detail_body": "This URL-owned pane is removed from navigation when it closes.",
+    "agent_presence": "Agent presence"
   },
   "keyboard": {
     "command": "Command",

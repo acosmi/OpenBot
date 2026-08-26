@@ -80,9 +80,14 @@ fn generated_icons_and_array_table_tokens_are_complete() {
 }
 
 #[test]
-fn reduced_motion_constructively_stops_skeleton_and_control_motion() {
+fn reduced_motion_constructively_stops_every_declared_css_animation() {
     let css = include_str!("../design/app.css");
     assert!(css.contains("animation: ob-skeleton-pulse"));
+    assert!(css.contains("animation: ob-agent-presence-spin"));
+    assert!(css.contains("animation: ob-agent-presence-speak"));
+    assert!(css.contains("animation: ob-agent-presence-error"));
+    assert!(css.contains("var(--motion-agent-presence-cycle)"));
+    assert!(css.contains("var(--motion-agent-presence-error)"));
     let reduced = css
         .split_once("@media (prefers-reduced-motion: reduce)")
         .expect("reduced-motion media query")
