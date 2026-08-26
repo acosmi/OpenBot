@@ -12,10 +12,17 @@ use crate::primitives::{
     InputType, Item, ItemAction, ItemActions, ItemDescription, ItemMedia, ItemTitle, Kbd, KbdKey,
     KbdModifier, Menu, MenuContent, MenuItem, MenuSeparator, MenuSub, MenuSubTrigger, MenuTrigger,
     Message, MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageGroup,
-    MessageHeader, Separator, SeparatorOrientation, Sheet, SheetSide, Skeleton, SkeletonShape,
-    Switch, Textarea, TextareaPreviewState, Toast, ToastPreviewState, Tooltip, TooltipTrigger,
-    TooltipTriggerAction,
+    MessageHeader, MessageScroller, MessageScrollerButton, MessageScrollerContent,
+    MessageScrollerItem, MessageScrollerViewport, Separator, SeparatorOrientation, Sheet,
+    SheetSide, Skeleton, SkeletonShape, Switch, Textarea, TextareaPreviewState, Toast,
+    ToastPreviewState, Tooltip, TooltipTrigger, TooltipTriggerAction,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScrollerGalleryItem {
+    id: i32,
+    anchor: bool,
+}
 
 /// Render the first Batch 17 primitive states for golden, keyboard and AX inspection.
 #[component]
@@ -39,6 +46,17 @@ pub fn DesignGallery() -> impl IntoView {
     let menu_open = RwSignal::new(false);
     let menu_select_count = RwSignal::new(0_u32);
     let menu_close_count = RwSignal::new(0_u32);
+    let scroller_items = RwSignal::new(
+        (1..=10)
+            .map(|id| ScrollerGalleryItem {
+                id,
+                anchor: id % 2 == 1,
+            })
+            .collect::<Vec<_>>(),
+    );
+    let scroller_next_id = RwSignal::new(11_i32);
+    let scroller_previous_id = RwSignal::new(-1_i32);
+    let scroller_expanded_id = RwSignal::new(None::<i32>);
 
     view! {
         <section class="ob-page ob-design-gallery" aria-labelledby="design-gallery-title">
@@ -261,6 +279,142 @@ pub fn DesignGallery() -> impl IntoView {
                             />
                             <Kbd key=KbdKey::Escape />
                             <Kbd key=KbdKey::Slash />
+                        </div>
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-message-scroller-title">
+                    <h2 id="design-message-scroller-title">
+                        {move || t!(i18n, design_gallery.message_scroller)}
+                    </h2>
+                    <div class="ob-design-stack">
+                        <div class="ob-design-message-scroller" id="design-message-scroller-example">
+                            <MessageScroller
+                                id="design-message-scroller"
+                                aria_label=move || t_string!(i18n, design_gallery.message_scroller_label).to_owned()
+                            >
+                                <MessageScrollerViewport>
+                                    <MessageScrollerContent>
+                                        <For
+                                            each=move || scroller_items.get()
+                                            key=|item| item.id
+                                            children=move |item| {
+                                                let id = item.id;
+                                                let anchor = item.anchor;
+                                                view! {
+                                                    <MessageScrollerItem
+                                                        message_id=format!("design-scroller-message-{id}")
+                                                        scroll_anchor=anchor
+                                                    >
+                                                        <div
+                                                            class="ob-design-scroller-row"
+                                                            data-anchor=if anchor { "true" } else { "false" }
+                                                        >
+                                                            <strong>
+                                                                {move || if anchor {
+                                                                    t_string!(i18n, design_gallery.scroller_user).to_owned()
+                                                                } else {
+                                                                    t_string!(i18n, design_gallery.scroller_reply).to_owned()
+                                                                }}
+                                                            </strong>
+                                                            " · "
+                                                            {move || format!(
+                                                                "{} {id}",
+                                                                t_string!(i18n, design_gallery.scroller_item),
+                                                            )}
+                                                            <Show when=move || scroller_expanded_id.get() == Some(id)>
+                                                                <p>{move || t!(i18n, design_gallery.scroller_stream_line)}</p>
+                                                                <p>{move || t!(i18n, design_gallery.scroller_stream_line)}</p>
+                                                                <p>{move || t!(i18n, design_gallery.scroller_stream_line)}</p>
+                                                                <p>{move || t!(i18n, design_gallery.scroller_stream_line)}</p>
+                                                            </Show>
+                                                        </div>
+                                                    </MessageScrollerItem>
+                                                }
+                                            }
+                                        />
+                                    </MessageScrollerContent>
+                                </MessageScrollerViewport>
+                                <MessageScrollerButton
+                                    aria_label=move || t_string!(i18n, design_gallery.scroll_to_end).to_owned()
+                                />
+                            </MessageScroller>
+                        </div>
+                        <div class="ob-design-row" id="design-message-scroller-controls">
+                            <Button
+                                id="design-scroller-append"
+                                on_activate=move |_| {
+                                    let id = scroller_next_id.get_untracked();
+                                    scroller_next_id.set(id + 1);
+                                    scroller_expanded_id.set(None);
+                                    scroller_items.update(|items| items.push(ScrollerGalleryItem {
+                                        id,
+                                        anchor: false,
+                                    }));
+                                }
+                            >
+                                {move || t!(i18n, design_gallery.scroller_append)}
+                            </Button>
+                            <Button
+                                id="design-scroller-anchor"
+                                on_activate=move |_| {
+                                    let id = scroller_next_id.get_untracked();
+                                    scroller_next_id.set(id + 1);
+                                    scroller_expanded_id.set(None);
+                                    scroller_items.update(|items| items.push(ScrollerGalleryItem {
+                                        id,
+                                        anchor: true,
+                                    }));
+                                }
+                            >
+                                {move || t!(i18n, design_gallery.scroller_anchor)}
+                            </Button>
+                            <Button
+                                id="design-scroller-prepend"
+                                on_activate=move |_| {
+                                    let id = scroller_previous_id.get_untracked();
+                                    scroller_previous_id.set(id - 1);
+                                    scroller_items.update(|items| items.insert(0, ScrollerGalleryItem {
+                                        id,
+                                        anchor: true,
+                                    }));
+                                }
+                            >
+                                {move || t!(i18n, design_gallery.scroller_prepend)}
+                            </Button>
+                            <Button
+                                id="design-scroller-grow"
+                                on_activate=move |_| {
+                                    let last = scroller_items.with(|items| items.last().map(|item| item.id));
+                                    scroller_expanded_id.set(
+                                        if scroller_expanded_id.get_untracked() == last {
+                                            None
+                                        } else {
+                                            last
+                                        },
+                                    );
+                                }
+                            >
+                                {move || t!(i18n, design_gallery.scroller_grow)}
+                            </Button>
+                            <Button
+                                id="design-scroller-replace"
+                                on_activate=move |_| {
+                                    let id = scroller_next_id.get_untracked();
+                                    scroller_next_id.set(id + 1);
+                                    scroller_expanded_id.set(None);
+                                    scroller_items.update(|items| {
+                                        if let Some(last) = items.last_mut() {
+                                            *last = ScrollerGalleryItem { id, anchor: false };
+                                        }
+                                    });
+                                }
+                            >
+                                {move || t!(i18n, design_gallery.scroller_replace)}
+                            </Button>
+                            <output id="design-scroller-count" aria-live="polite">
+                                {move || scroller_items.with(Vec::len)}
+                            </output>
                         </div>
                     </div>
                 </section>

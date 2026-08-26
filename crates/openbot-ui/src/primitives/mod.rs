@@ -16,6 +16,7 @@ mod label;
 mod locale_switch;
 mod menu;
 mod message;
+mod message_scroller;
 mod modal;
 mod separator;
 mod sheet;
@@ -45,6 +46,11 @@ pub use menu::{Menu, MenuContent, MenuItem, MenuSeparator, MenuSub, MenuSubTrigg
 pub use message::{
     Message, MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageGroup,
     MessageHeader,
+};
+pub use message_scroller::{
+    MESSAGE_SCROLL_EDGE_THRESHOLD_PX, MESSAGE_SCROLL_PREVIOUS_ITEM_PEEK_PX, MessageScroller,
+    MessageScrollerButton, MessageScrollerContent, MessageScrollerController, MessageScrollerItem,
+    MessageScrollerViewport, use_message_scroller,
 };
 pub use modal::SheetSide;
 pub use separator::{Separator, SeparatorOrientation};

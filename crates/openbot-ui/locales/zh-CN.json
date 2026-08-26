@@ -307,7 +307,19 @@
     "menu_copy": "复制链接",
     "menu_delete": "删除条目",
     "menu_settings": "设置",
-    "menu_after": "菜单之后"
+    "menu_after": "菜单之后",
+    "message_scroller": "消息滚动器",
+    "message_scroller_label": "对话消息",
+    "scroll_to_end": "回到最新消息",
+    "scroller_append": "追加回复",
+    "scroller_anchor": "追加用户回合",
+    "scroller_prepend": "前插历史记录",
+    "scroller_grow": "增长最新回复",
+    "scroller_replace": "替换末项",
+    "scroller_item": "消息",
+    "scroller_user": "用户回合",
+    "scroller_reply": "助手回复",
+    "scroller_stream_line": "一行会增加回复实测高度的流式内容。"
   },
   "keyboard": {
     "command": "Command",

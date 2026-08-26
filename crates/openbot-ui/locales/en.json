@@ -307,7 +307,19 @@
     "menu_copy": "Copy link",
     "menu_delete": "Delete item",
     "menu_settings": "Settings",
-    "menu_after": "After menu"
+    "menu_after": "After menu",
+    "message_scroller": "Message scroller",
+    "message_scroller_label": "Conversation messages",
+    "scroll_to_end": "Scroll to latest",
+    "scroller_append": "Append reply",
+    "scroller_anchor": "Append user turn",
+    "scroller_prepend": "Prepend history",
+    "scroller_grow": "Grow latest reply",
+    "scroller_replace": "Replace tail",
+    "scroller_item": "Message",
+    "scroller_user": "User turn",
+    "scroller_reply": "Assistant reply",
+    "scroller_stream_line": "A streamed line that increases the measured reply height."
   },
   "keyboard": {
     "command": "Command",

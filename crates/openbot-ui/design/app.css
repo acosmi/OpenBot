@@ -841,6 +841,99 @@ textarea:focus-visible,
   gap: calc(var(--spacing) * 3);
 }
 
+.ob-message-scroller {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ob-message-scroller-viewport {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.ob-message-scroller-content {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 6);
+}
+
+.ob-message-scroller-item {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.ob-message-scroller-spacer {
+  flex: 0 0 auto;
+  margin-block-start: calc(var(--spacing) * -6);
+}
+
+.ob-message-scroller-button {
+  position: absolute;
+  inset-block-end: calc(var(--spacing) * 4);
+  inset-inline-start: 50%;
+  z-index: var(--z-sticky);
+  display: inline-flex;
+  min-width: var(--size-control-md);
+  min-height: var(--size-control-md);
+  align-items: center;
+  justify-content: center;
+  padding-inline: calc(var(--spacing) * 2);
+  border: 0;
+  border-radius: var(--radius-full);
+  color: var(--fg);
+  background: var(--bg-chip);
+  box-shadow: var(--elevation-popover);
+  cursor: pointer;
+  translate: -50% 0;
+}
+
+.ob-message-scroller-button:hover {
+  background: var(--bg-popover);
+}
+
+.ob-design-message-scroller {
+  width: 100%;
+  height: var(--size-message-scroller-preview);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.ob-design-scroller-content {
+  padding: calc(var(--spacing) * 3);
+}
+
+.ob-design-scroller-row {
+  min-height: var(--size-control-lg);
+  padding: calc(var(--spacing) * 3);
+  border-radius: var(--radius-md);
+  color: var(--fg-secondary);
+  background: var(--bg-subtle);
+}
+
+.ob-design-scroller-row[data-anchor="true"] {
+  color: var(--fg);
+  background: var(--bg-chip);
+}
+
+.ob-design-scroller-row p {
+  margin: calc(var(--spacing) * 2) 0 0;
+}
+
 .ob-message-group,
 .ob-bubble-group,
 .ob-message-content {
