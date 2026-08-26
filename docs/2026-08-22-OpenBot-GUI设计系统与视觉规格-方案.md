@@ -633,7 +633,8 @@ G6 重写后的文本（替换 v3 原四条）：
   Batch25关闭 layout 组 detail-panel/page-shell/row-mark/stagger 四条，当时
   UI=`77/75/152`；Batch26又关闭orb/ai-core→AgentPresence两条，当前
   UI=`79/73/152`；Batch27又以唯一中性线稿关computer/placeholder与settings/background
-  两条，当前 UI=`81/71/152`；其余37业务/brand/runtime/golden仍按各自证据保持 todo；
+  两条，当时 UI=`81/71/152`；Batch30又关闭独立ChannelRow，当前UI=`82/70/152`；
+  AppSidebar总项与其余35业务/brand/runtime/golden仍按各自证据保持 todo；
 - [x] `design-gallery` compile feature 才有 `/_design`，production bundle WASM `_design` byte=0；
   当前画廊用于状态/键盘/AX/目视 QA，不冒充正式 golden；
 - [x] Message 命名 article、neutral Bubble、跨平台 Kbd、SHA-256 deterministic Avatar、5s
@@ -662,9 +663,12 @@ G6 重写后的文本（替换 v3 原四条）：
 - [x] AppSidebar 的roster realtime生产依赖：`channels.last_message*`为PG真源，
   `/api/channels/events`只发送不含member IDs的bounded提示；每帧回查当前membership，断线/错误/
   queue pressure均要求客户端重连并refetch，不把NOTIFY当真源；
-- [ ] AppSidebar/channel row自身仍不勾：真实channel destination route/journey尚未落，当前实现会生成
-  断链导航；须与该route同批接入同一Sidebar children后再关闭T-UI-0037/0038；
-- [ ] 31 route journey、其余37 个业务组件、1 brand icon、6 runtime替代、compiled gallery、
+- [x] ChannelRow：同源percent-encoded `/channel/:id`、中性装饰Avatar、name/last-message/
+  localized relative time/current；真实50→52分页、可见字段搜索、socket refetch与nested hard reload绿；
+- [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
+  但new-channel/skills/agents/settings/admin真实destinations尚未迁移；完整channel route也仍缺
+  transcript/composer/stop/steer/screen，不得用data shell冒充journey；
+- [ ] 31 route journey、其余35 个业务组件、1 brand icon、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -681,7 +685,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-25-G6-AgentPresence-batch26.md`、
 `docs/2026-08-25-G6-ComputerPlaceholderArt-batch27.md` 与
 `docs/2026-08-26-G2-生产SessionSignOut-batch28.md`、
-`docs/2026-08-26-G3-ChannelActivity与WebSocket-batch29.md`；
+`docs/2026-08-26-G3-ChannelActivity与WebSocket-batch29.md`、
+`docs/2026-08-26-G3-G6-ChannelDetail与ChannelRow-batch30.md`；
 G6 整关继续不勾。
 
 ---
