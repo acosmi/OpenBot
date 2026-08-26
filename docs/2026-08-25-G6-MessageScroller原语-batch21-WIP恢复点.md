@@ -1,7 +1,9 @@
 # Batch 21 WIP 恢复点：MessageScroller 原语
 
 > 分支 `codex/2026-08-25-G6-message-scroller-primitive`，base = Batch20 正式 head
-> `9b0d6c0a3907f139ea2237cd179464ad9a2c85bb`。只跑本地定向测试，不运行
+> `9b0d6c0a3907f139ea2237cd179464ad9a2c85bb`；implementation checkpoint
+> `521873c3449a8bd68d541383eb385cc063348897`。正式证据文档为
+> `2026-08-25-G6-MessageScroller原语-batch21.md`。只跑本地定向测试，不运行
 > `cargo xtask ci`，不派发 Actions，不处理 `grok-bot`。
 
 ## 本批范围

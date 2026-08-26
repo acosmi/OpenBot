@@ -29,7 +29,8 @@
 //! tool approval 的可点击生产 API 竖切。Batch 16 又接 Server preference API/cookie 与
 //! Desktop-local custom-protocol framing；Batch 17 闭合十个基础原语和 compile-only design
 //! gallery；Batch 18 又闭合 Message/Bubble/Kbd/Avatar/Toast/Tooltip，Batch 19 闭合
-//! Dialog/Sheet 共享模态内核，Batch 20 闭合 Menu 与一层 submenu。其余 4 原语、完整
+//! Dialog/Sheet 共享模态内核，Batch 20 闭合 Menu 与一层 submenu，Batch 21 闭合
+//! MessageScroller。其余 3 原语、完整
 //! route/业务组件/golden 与可发布 Tauri 宿主仍按台账保持未完成，
 //! 不能由本 crate 存在而推导为 G6 整关通过。
 

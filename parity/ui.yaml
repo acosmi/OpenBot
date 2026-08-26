@@ -30,8 +30,9 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–20 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 23 条原语打勾：
-# Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu；其余即使已有部分源码也
+# Batch 15–21 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 24 条原语打勾：
+# Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller；
+# 其余即使已有部分源码也
 # 保持 todo，不能用 Approval/preferences/design-gallery 冒充 27 原语、45 业务组件或 27 页
 # golden 全量完成。
 #
@@ -137,16 +138,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 20 精确完成 23 条；其余部分实现或完全未实现均保持 todo
+  # Batch 21 精确完成 24 条；其余部分实现或完全未实现均保持 todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 129
+    expect: 128
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 23
+    expect: 24
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 23
+    expect: 24
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -287,7 +288,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0011"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "MessageScroller compound 实现 initial end、following/free/anchored 三态、streaming ResizeObserver、child-list MutationObserver、prepend reading-item offset 恢复、48px user anchor、self-managed end button 与 production scroll_to_end controller。真实 Chromium 两组 9/9+8/8：wheel/scroll-key yield，free append/prepend/resize 不移阅读项，following append+收缩竞态/stream growth 恒 end，same-count swap 不回旧 anchor；AX named region→log/live polite、button exact，DOM 五类缺陷与 console error 0。UI47/0/0、WASM/Clippy/fmt/i18n/design/css/bundle 全绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：`role=\"log\"`、`aria-live=\"polite\"`。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。自动贴底 + \"回到底部\"胶囊 + 新消息时保持阅读位置。上游用 `IconArrowDown`（见 T-UI-0074），替代实现用 Lucide `arrow-down`。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
