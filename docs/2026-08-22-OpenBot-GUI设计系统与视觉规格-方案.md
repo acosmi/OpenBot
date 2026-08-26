@@ -512,8 +512,8 @@ CI 对 `parity/ui.yaml` 的规则与其它 parity 文件相同：未归类项与
   --text-base: 14px; --text-base--line-height: 20px;  /* lg/xl/2xl 同理 */
   --radius-sm: 6px; --radius-md: 8px; --radius-lg: 10px; --radius-xl: 14px;
 }
-@font-face { font-family: "Inter Variable"; src: url("../assets/fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
-@font-face { font-family: "Inter Variable"; font-style: italic; src: url("../assets/fonts/InterVariable-Italic.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Inter Variable"; src: url("/fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Inter Variable"; font-style: italic; src: url("/fonts/InterVariable-Italic.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0ms !important; animation: none !important; } }
 ```
 
@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-26，Batch 15–28）
+### 15.1 当前实施勾选（2026-08-26，Batch 15–31）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -633,8 +633,9 @@ G6 重写后的文本（替换 v3 原四条）：
   Batch25关闭 layout 组 detail-panel/page-shell/row-mark/stagger 四条，当时
   UI=`77/75/152`；Batch26又关闭orb/ai-core→AgentPresence两条，当前
   UI=`79/73/152`；Batch27又以唯一中性线稿关computer/placeholder与settings/background
-  两条，当时 UI=`81/71/152`；Batch30又关闭独立ChannelRow，当前UI=`82/70/152`；
-  AppSidebar总项与其余35业务/brand/runtime/golden仍按各自证据保持 todo；
+  两条，当时 UI=`81/71/152`；Batch30又关闭独立ChannelRow；Batch31关闭
+  abstract-avatar→Avatar与AgentCard，当前UI=`84/68/152`；
+  AppSidebar总项与其余33业务/brand/runtime/golden仍按各自证据保持 todo；
 - [x] `design-gallery` compile feature 才有 `/_design`，production bundle WASM `_design` byte=0；
   当前画廊用于状态/键盘/AX/目视 QA，不冒充正式 golden；
 - [x] Message 命名 article、neutral Bubble、跨平台 Kbd、SHA-256 deterministic Avatar、5s
@@ -665,10 +666,14 @@ G6 重写后的文本（替换 v3 原四条）：
   queue pressure均要求客户端重连并refetch，不把NOTIFY当真源；
 - [x] ChannelRow：同源percent-encoded `/channel/:id`、中性装饰Avatar、name/last-message/
   localized relative time/current；真实50→52分页、可见字段搜索、socket refetch与nested hard reload绿；
+- [x] `/agents`真实读面：GET list/detail只消费Server权威secret-free DTO；固定上游mine与
+  `!mine && public`分组、144×180 AgentCard、URL-owned只读profile、404/error/close返焦；
+  AppSidebar Agents destination已接。已有同名文字旁Avatar AX隐藏；Trunk最终CSS以根同源
+  `/fonts/*`加载Inter。T-UI-0029/0030已勾，mutation/start与整条route/golden仍不勾；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
-  但new-channel/skills/agents/settings/admin真实destinations尚未迁移；完整channel route也仍缺
+  但new-channel/skills/settings/admin真实destinations尚未迁移；完整channel route也仍缺
   transcript/composer/stop/steer/screen，不得用data shell冒充journey；
-- [ ] 31 route journey、其余35 个业务组件、1 brand icon、6 runtime替代、compiled gallery、
+- [ ] 31 route journey、AppSidebar总项+其余33个业务组件、1 brand icon、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -686,7 +691,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-25-G6-ComputerPlaceholderArt-batch27.md` 与
 `docs/2026-08-26-G2-生产SessionSignOut-batch28.md`、
 `docs/2026-08-26-G3-ChannelActivity与WebSocket-batch29.md`、
-`docs/2026-08-26-G3-G6-ChannelDetail与ChannelRow-batch30.md`；
+`docs/2026-08-26-G3-G6-ChannelDetail与ChannelRow-batch30.md`、
+`docs/2026-08-26-G4-G6-AgentRoster与AgentsRoute-batch31.md`；
 G6 整关继续不勾。
 
 ---

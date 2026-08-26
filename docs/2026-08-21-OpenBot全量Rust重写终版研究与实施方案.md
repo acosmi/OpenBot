@@ -1693,7 +1693,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 
 任何闸门失败都只能修复后重跑，不能以“后续补齐”进入下一发布阶段。
 
-### 24.1 实施状态勾选（2026-08-25；进度证据以机器台账为准）
+### 24.1 实施状态勾选（2026-08-26；进度证据以机器台账为准）
 
 - [ ] **G0**：Phase 0 证据产物已落；仍缺 §1.1 两份输入文档原件，故整关不勾。
 - [x] **G1**：10 crate/locked build、Axum/in-process、28 表/13 migration/read checksum、tracing/metrics 四判据均已通过。
@@ -1752,19 +1752,24 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] local-first disconnect：本地 tombstone/join delete/audit 先 commit；RFC7009 失败进入 `revocation_pending`，SKIP LOCKED 周期 reconciliation 成功后才记 vendor 已撤权；
   - [x] native 0019 + Google Drive GA REST：closed transport identity、compile-time single-vendor catalogue、4 条 read-only static tools、asker per-user Google OAuth、SafeDialer REST、vendor link/provenance、Agent 401 单次 refresh/retry、local-first disconnect/revoke reconciliation；正文不入库且不建本地 ACL/index；
   - [x] native 0020 + durable approval backend：完整 binding（含 AuthGeneration）、pending-only 脱敏摘要、actor-only typed GET/decision、fresh Origin、grant/deny/expire/cancel hash-chain audit、跨 replica wait、once-per-run exact reuse；真实 acting MCP grant 后才写 approval-linked decision/attempt 并调用 vendor，deny 零 attempt/action；
+  - [x] Agent profile权限与roster/detail读面：`canAccess/canRun/canManage`六条纯领域判据唯一化，
+    `AgentReadScope`只从权威AuthContext取得tenant/actor/admin；PostgreSQL同时收紧package tenant、
+    public/private、owner/admin、soft-delete与per-user hidden，SQL结果再过domain终判。GET list/detail
+    只回closed secret-free DTO与`no-store`，missing/invisible/deleted/cross-tenant统一404；
   - [ ] provider gate 要求的三家 recorded vendor trace 仍为 **0/3**，本批未使用 live vendor credential；human approval 的 Leptos/Axum 可点击竖切已落，但真实 PG 浏览器端到端、critical realtime/完整 thread 集成仍未闭合；完整 run-wide token/cost/并发/computer budget、Desktop Local installed-app client/system browser/random loopback callback、run/user cancellation 向 RMCP notification 传播、MCP 专用 private egress与 admin custom/通用 refresh/grant/effect 完整 UI、用户创建 remote Agent lifecycle/customer auth、interrupt/resume 与其余事件 durable/UI projection、browser/file/shell executor 尚未闭合。Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
-  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 362 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
+  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 391 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
   - [x] Axum `APP_DIST_DIR` 条件挂同一 bundle，唯一同源 external bootstrap、strict CSP/安全头、cookie/Accept-Language 首帧 `<html class lang>` Rust 改写、API/缺失 asset 不被 SPA fallback 隐藏；
   - [x] Approval 页面只展示服务端权威 effect/target/redacted arguments/change，GET poll + fresh POST grant/deny；真实 Chromium 已验证 APG ThemeToggle/LocaleSwitch、批准后 card 消失+status、1440×900 与 1024×640 无横向溢出、landmark/heading/id/name/remote-resource 审计；浏览器数据来自明确 test-only fixture，不冒充生产 PostgreSQL；
   - [x] Server 用户偏好经唯一 typed ApplicationService/PostgreSQL native 0021 持久化并镜像 closed `SameSite=Lax` cookie；Desktop Local closed file 原子写；Leptos startup read + serialized/coalescing partial PUT，失败显示本地化 `role=alert`；
   - [x] opt-in Tauri 2.11.5 production custom protocol：host-bound window label→AuthContext，未绑定连 asset 401；preferences/approval 只经 typed in-process；本地偏好/OS locale 首帧 Rust 改写、strict CSP、canonical asset/closed MIME/8MiB；Linux Server/Web 与 WASM graph 构造性无 Tauri/Wry/GTK；
   - [x] UI ledger 的27条primitive子账全done；46条Tabler→Lucide经第一真源→icons.toml→ledger三向join关闭；
     layout 组 detail-panel/page-shell/row-mark/stagger 四条业务、orb/ai-core→AgentPresence两条又有生产实现与本机证据。
-    ComputerPlaceholder/Art两条又共享唯一中性线稿闭合；Batch30关闭独立ChannelRow。当前UI=`82/70/152`；
-    Google Drive brand、AppSidebar总项+其余35业务/runtime/golden保持todo；
+    ComputerPlaceholder/Art两条又共享唯一中性线稿闭合；Batch30关闭独立ChannelRow；Batch31关闭
+    abstract-avatar→统一Avatar与AgentCard。当前UI=`84/68/152`；
+    Google Drive brand、AppSidebar总项+其余33业务/runtime/golden保持todo；
   - [x] `design-gallery` compile feature 承载 `/_design` 状态/键盘/AX 样本；production feature 关闭且 bundle gate 直接要求 WASM `_design` byte=0。真实 Chromium 已验证十条基础原语的 Enter/Space、Field ARIA、focus-within、Textarea 十行 cap、separator/skeleton AX 与 DOM 五类零缺陷；截图只作目视 QA，不冒充 golden；
   - [x] Message/Bubble compound、platform-aware Kbd、SHA-256 deterministic Avatar、5s generation-safe polite Toast、400ms hover/focus/Escape Tooltip 已过 Rust/WASM/Chromium/AX；Avatar remote image、Item/Tooltip external link 构造性拒绝，Toast 仍不冒充所有 accepted:false 业务 use case 已接线；
   - [x] Dialog/Sheet 共享唯一 modal kernel：explicit ARIA、首焦点、Tab双向环、Escape/close/backdrop、return focus、body scroll lock 与 path-sibling inert/aria-hidden；Sheet top/right/bottom/left 四值不复制安全规则；
@@ -1783,14 +1788,18 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] AppSidebar的production roster与独立ChannelRow已落：50条keyset页/load-more、只搜可见name/
     last-message、socket reconnect-refetch、current row、三断点同一children、current user/session/
     sign-out；真实data-backed `/channel/:id` 可直接硬刷新且不画假composer。ChannelRow已勾；
-    AppSidebar总项仍因new-channel/skills/agents/settings/admin destinations缺失不勾，完整channel route
+    AppSidebar总项仍因new-channel/skills/settings/admin destinations缺失不勾，完整channel route
     仍因transcript/composer/stop/steer/screen journey缺失不勾；
-  - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及AppSidebar总项+其余35业务组件/31route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
+  - [x] data-backed `/agents` read surface：固定上游`mine`与`!mine && public`两组、144×180
+    AgentCard、URL-owned只读profile DetailPanel、同源percent-encoded id、404错误态与AppSidebar
+    Agents destination；头像在已有同名文字处AX隐藏，Inter最终产物从`/fonts/*`同源加载。只关闭
+    T-UI-0029/0030；create/edit/duplicate/hide/unhide/delete/start-channel与正式route/golden仍todo；
+  - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及AppSidebar总项+其余33业务组件/31route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
   - [ ] Tauri target-aware bans/sources 已绿；macOS/Windows 各仍有 5 个 MPL-2.0、5 个 runtime UNIC unmaintained（无 patched 版），Cargo Vet 为 macOS **270** / Windows **269** unvetted（既有 target 基线 181，净增 89/88）；未改 license/advisory/vet policy，故供应链与 G6 整关均不勾。
 - [ ] **G7**：Screen/Handover 性能、安全票据、human lease 未实施完成。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账：parity **546/1673 done（1127 todo）**，fixtures **15/37 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账：parity **560/1673 done（1113 todo）**，fixtures **15/37 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -2005,6 +2014,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R92 | §3.2 / §4.1–§4.3 / §5.2 / §6.2 / §13.2–§13.3 / §15.1–§15.3 / §21.1 / §24 G3、G6（2026-08-26 Channel Activity/WebSocket batch29） | R91后roster仍只能轮询，固定上游`/api/channels/events`与10条activity/event判据全todo。若把memberIds放进NOTIFY/frame，会把完整channel成员表复制到每个renderer；若NOTIFY当真源，断线即永久漏更新；若writer先通知后commit，回滚也会显示幽灵消息；若只在upgrade验一次成员，撤权后的长连接继续收消息。直接落AppSidebar又会把channel行链接到尚不存在的真实destination route。 | `ChannelActivityEvent`为closed bounded projection；channel user begin与assistant terminal只在各自既有PG事务内、且`last_message_at`严格前进时更新`channels.last_message*`并`pg_notify(openbot_channel_activity)`。通知不携memberIds；每条subscription在每帧发送前按已验actor回查当前`channel_memberships`。NOTIFY仅优化，roster为真源，LISTEN失败发稳定错误后断流，UI重连必须refetch。`GET /api/channels/events`要求session+trusted Origin+`openbot.channel-activity.v1`，1KiB inbound，只读Text/Binary=1008，依赖错=稳定frame+1011。Desktop将channel event归Critical，压力时断开/refetch而非静默丢。AppSidebar/channel row继续todo，等真实channel route/journey同批。 | 本机：contracts/application=`71+123/0/0`；Server真实TCP/Axum WebSocket=`4/0/0`（401前置、Origin/protocol、typed frame、1008、error+1011）；infra preview=`1/0/0`、Desktop budget=`7/0/0`。临时PostgreSQL **17.11** host SCRAM真库=`1/0/0`：两member+outsider、同actor双连接、4→3→2 LISTEN清理、撤权后零帧、assistant roster exact、stale零覆盖/零通知、非member/未挂Bot写拒绝；实例只监听127.0.0.1，测后停止并精确删除。五crate all-targets Clippy、contracts WASM、fmt/diff绿；API=`42/120/162`、tests=`276/771/1047`、UI=`81/71/152`、parity=`530/1143/1673`、0 violation/warning；strict recount=`157/157/0`。T-API-0030、T-TEST-0391–0395/0398–0402 done；0396/0397及其余channel route/UI保持todo。implementation `572bb3c81e76dd18867b7925f3e947b45dcf7e38`；未运行`cargo xtask ci`、未派发Actions。详见Batch29文档。 |
 
 | R93 | §3.1–§3.2 / §4.1–§4.3 / §5.2 / §6.2 / §9.2–§10.4（GUI第一真源）/ §13.1–§13.3 / §15.1–§15.3 / §21.1 / §24 G3、G6（2026-08-26 Channel Detail/ChannelRow batch30） | R92后roster realtime已闭，但G1时代`ChannelRepo`仍把thread_id恒置None；GET detail、ChannelRow与destination route缺失。若直接join legacy Intelligence mapping会重新隐藏刚provision的channel；若channel thread沿用direct-bot私有thread_membership，共享channel其他成员能看roster却不能看history/realtime。UI若先画全部AppSidebar链接会生成五类断链；nested route硬刷新又实测bootstrap把`./wasm`按document path解析成`/channel/*.wasm` 404。 | 新增closed GetVisibleChannel/ChannelDetail/Response与ChannelReadScope；list/detail只按current channel membership并投影deployment/tenant/anchor匹配的最新native thread，threadId在尚未开thread时为null。channel-anchor的status/begin/history/replay改按current channel membership，direct-bot保持thread membership；member首次begin补downstream run membership，撤权后stale行不能扩大四面。Axum GET只回`{channel:{id,name,agentIds,threadId,active}}`，missing/outsider统一404。Leptos App shell接真实50条keyset/load-more、visible-field search、localized ChannelRow、socket全量refetch、current user/revocable/sign-out与data-backed `/channel/:id`；完整chat/control不画。bootstrap保持JS module-relative但WASM改root-absolute同源。AppSidebar总项只实现已存在destination，余nav继续todo。 | 本机：contracts/application=`73+125/0/0`；Server channel=`6/0/0`；Axum/in-process parity=`8/0/0`；UI=`63/0/0`；xtask=`78/0/0`。PG17.11 host SCRAM：channel_repo=`7/0/0`、channel_detail/shared thread=`1/0/0`，覆盖foreign scope/deleted、shared member history/event0、revoke error+empty、stale thread membership零扩权。七crate all-targets Clippy、contracts/UI WASM、fmt/diff、dependency guard绿；i18n381、design62 Rust/74 icons、CSS178；bundle wasm gzip544139/CSS65607/fonts740216/external-inline1/0。真实Chromium：50→52、两类search/no-match、socket generation1→4、nested hard reload/current/h1/no fake composer、1440 240↔48、900 auto48、600 Sheet240+3 inert+Escape返焦、overflow0、204→sign且session401、final console0。API=`43/119/162`、tests=`290/757/1047`、UI=`82/70/152`、parity=`546/1127/1673`，0 violation/warning；strict recount=`157/157/0`。T-API-0034、T-UI-0038与T-TEST-0385–0390/0396–0397/0411/0416–0420 done；AppSidebar总项/T-ROUTE-0009/create/activity/control仍todo。Cargo.lock package delta0，只增既有futures-util target edge；implementation `33273d135ee16e70519f727a1d863c229567a0e7`；未运行CI/Actions。详见Batch30文档。 |
+
+| R94 | §3.2 / §5.2 / §6.6（GUI第一真源）/ §13.1–§13.3 / §14.1 / §15.1–§15.3 / §21.1 / §24 G4、G6（2026-08-26 Agent Roster/Agents route batch31） | R93后`agents/agent_profiles/agent_preferences`已有表与callback写面，但list/detail API、纯profile权限判据与`/agents` destination仍todo。只把public/private写进SQL会让runtime与roster判据漂移；只带actor/admin又违反tenant是最外层scope，可能暴露另一tenant的package Agent。浏览器实测还发现第一真源示例的`../assets/fonts/*`在Trunk最终根CSS中请求成不存在的`/assets/fonts/*`。若先画create/edit/hide/delete按钮，只会把尚无生产API的动作伪装成可用。 | 新增closed `AgentProfile(s)Response`、typed list/get command与`AgentDirectory`；`openbot_domain::agent::profile_policy`唯一实现access/run alias/manage六条判据。Application只从AuthContext铸tenant/actor/admin；PG以compile-time SQL收紧package tenant、visibility/owner/admin、deleted/hidden并让domain复核，flags与has-*只从权威列/config投影。Axum GET list/detail均`no-store`，unknown query/malformed 400，missing/invisible/deleted/cross-tenant统一404。Leptos `/agents`按固定上游mine/explore分组，AgentCard+URL profile只读，AppSidebar接Agents；mutation/start按钮全部不画。字体URL修为根绝对同源`/fonts/*`并同步GUI第一真源。 | 本机：contracts agent=`2/0/0`、domain profile=`6/0/0`、application agents=`2/0/0`、Server agents=`4/0/0`、UI agents=`3/0/0`；PG17.11 host SCRAM=`1/0/0`，覆盖owner/other/admin list+get、system、hidden、deleted、cross-tenant、endpoint/auth/callback secret-free flags。七crate all-targets/all-features Clippy `-D warnings`、UI WASM、fmt/diff绿；i18n391、design65 Rust/74 icons、CSS193；bundle wasm gzip600783/CSS68843/fonts740216/external-inline1/0。真实Chromium：4张144×180卡、mine2/explore2、list/detail 200+no-store、URL硬刷新/404/close返焦、1440/1024/900/600 overflow0、Inter loaded、external/duplicate/fake actions/forbidden wire keys均0、合法route error0；保留Chromium preload SRI warning与尚未提供brand favicon的已知todo，不冒充全局warning0。API=`45/117/162`、tests=`300/747/1047`、UI=`84/68/152`、parity=`560/1113/1673`，0 violation/warning；strict recount=`157/157/0`。关闭T-API-0019/0020、T-TEST-0298–0303/0305/0328–0329/0332、T-UI-0029/0030；T-TEST-0306及Agent lifecycle、T-UI-0032、T-ROUTE-0007、T-UI-0126与AppSidebar总项继续todo。Cargo.lock/package delta0；implementation `55bc2f18d1f6108272864dee8fba6d22c637305a`；未运行CI/Actions。详见Batch31文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 
