@@ -342,7 +342,17 @@
     "sidebar_toggle": "切换侧栏",
     "sidebar_group": "工作区",
     "sidebar_content": "响应式壳内容",
-    "sidebar_user": "测试用户"
+    "sidebar_user": "测试用户",
+    "layout": "页面布局",
+    "layout_topbar": "配置",
+    "layout_open_detail": "打开详情",
+    "layout_section": "已连接服务",
+    "layout_section_description": "使用共享配置框架的命名分区。",
+    "layout_row": "示例连接器",
+    "layout_row_description": "带中性供应商标识的第三方行。",
+    "layout_empty": "没有配置其它连接器。",
+    "layout_detail": "连接器详情",
+    "layout_detail_body": "这个由 URL 状态控制的面板关闭后会移出导航。"
   },
   "keyboard": {
     "command": "Command",

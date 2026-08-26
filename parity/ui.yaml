@@ -30,11 +30,11 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–24 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 73 条：
+# Batch 15–25 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 77 条：
 # Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
 # Batch22 Combobox/Select + Batch23 Sidebar，27 条 primitive 子账全 done；Batch24 又关闭46条
-# Lucide映射。Google Drive品牌标与其余业务/runtime/golden保持 todo；不能用已有地基冒充
-# 45业务组件或27页golden全量完成。
+# Lucide映射；Batch25 关闭 layout 组 detail-panel/page-shell/row-mark/stagger 4条。
+# Google Drive品牌标、其余41业务、6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）
@@ -138,16 +138,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 24 精确完成27原语+46 Lucide映射；品牌/业务/runtime/golden保持todo
+  # Batch 25 精确完成27原语+46 Lucide映射+4 layout 业务；品牌/其余业务/runtime/golden保持todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 79
+    expect: 75
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 73
+    expect: 77
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 73
+    expect: 77
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -864,7 +864,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0061"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "DetailPanelLayout/Main/Panel 以 URL-owned MaybeProp 驱动 opening/open/closing/closed；360px、160/240ms、easing 均直读生成 Rust token。支持 WAAPI width/flex-basis/opacity 尺寸联动，API 不可用时同 token CSS transition fallback，reduce=0ms；动画完成后才卸载 detail 子树。关闭 Enter/Space/click 本机计数0→1→2→3，每次返焦 opener；Chromium 实得 WAAPI path、exit/enter=160/240、named complementary=1、panel=360px。UI56/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `layout`（该组上游文件数 4）。同名保留。"
 
@@ -875,7 +876,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0062"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "PageWidth 闭集只允许 content/table/chat=960/1200/768 token；PageTopbar=44px，PageBackLink 构造性拒绝非同源，PageHeader/PageSection stable ID+单一h1/h2，PageRows/PageEmpty 闭合配置页解剖。真实 ApprovalPage 已接 PageShell；1024×640 实得 h1/main/nav=1/1/1、content max=960px、topbar=44px、横向溢出0、重复ID0、远程资产0。UI56/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `layout`（该组上游文件数 4）。同名保留；§5.1 App shell 的 parity 面在此，尺寸契约是新增（§5.1 标题原文\"尺寸新增\"），尺寸不在本 ledger 逐条登记。上游用 IconChevronLeft。"
 
@@ -886,7 +888,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0063"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "RowMark 只作第三方/vendor 中性 tile，子图标仍 currentColor，不使用语义色 surface。compile-only 真实 connector Item 接线；1024×640 实得 36×36、connector named link=1、嵌套交互0、横向溢出0。UI56/0/0、design/css/bundle gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `layout`（该组上游文件数 4）。同名保留。"
 
@@ -897,9 +900,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0064"
     migration_rule: "remove: JS 交错动画 → CSS 级联工具类"
-    status: "todo"
+    status: "done"
+    done_evidence: "StaggerItem 以静态 ob-stagger-item class + data-stagger 0..8 闭集实现 CSS mount-only entrance；超过8项统一cap=8，delay只消费 --motion-stagger-step=30ms，@keyframes=ob-list-stagger。全局 prefers-reduced-motion 强制 animation:none，不引入 JS/动画crate。单测覆盖0/7/8/200→0/7/8/8；Chromium 实得 data-stagger=0 + animationName=ob-list-stagger。motion 总替代项仍todo。UI56/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `layout`（该组上游文件数 4）。§6.2 + §4.5 ③ 点名的替代。上游 68 行、依赖 `motion` 库做逐项延迟入场；本项目换成纯 CSS 工具类（`--stagger-index` + `animation-delay` 级联）。target 是 CSS 落点不是 Rust 模块——这是全 ledger 唯一一条 target 落在 CSS 文件上的 entry，因为替代物本身就不是 Rust 代码。reduced-motion 下必须整体静止（§4.5），否则 golden 在两种 media 下不确定。"
+    notes: "§6.2 组 `layout`（该组上游文件数 4）。§6.2 + §4.5 ③ 点名的替代。上游 68 行、依赖 `motion` 库做逐项延迟入场；本项目换成纯 CSS（`data-stagger=0..8` + `--motion-stagger-step` + `animation-delay`）。target 是 CSS 落点不是 Rust 模块——这是全 ledger 唯一一条 target 落在 CSS 文件上的 entry，因为替代物本身就不是 Rust 代码。reduced-motion 下必须整体静止（§4.5），否则 golden 在两种 media 下不确定。"
 
   - id: "biz-settings-background"
     upstream: "app/src/components/settings/background.tsx"

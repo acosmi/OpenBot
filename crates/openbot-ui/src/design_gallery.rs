@@ -3,6 +3,10 @@
 
 use leptos::prelude::*;
 
+use crate::features::layout::{
+    DetailPanel, DetailPanelLayout, DetailPanelMain, PageEmpty, PageRows, PageSection, PageShell,
+    PageTopbar, PageWidth, RowMark, StaggerItem,
+};
 use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
 use crate::primitives::{
@@ -61,6 +65,8 @@ pub fn DesignGallery() -> impl IntoView {
     let disabled_select_value = RwSignal::new(None::<String>);
     let sidebar_collapsed = RwSignal::new(false);
     let sidebar_change_count = RwSignal::new(0_u32);
+    let detail_open = RwSignal::new(true);
+    let detail_close_count = RwSignal::new(0_u32);
     let scroller_items = RwSignal::new(
         (1..=10)
             .map(|id| ScrollerGalleryItem {
@@ -838,6 +844,71 @@ pub fn DesignGallery() -> impl IntoView {
                         </button>
                         <output id="design-menu-select-count" aria-live="polite">{menu_select_count}</output>
                         <output id="design-menu-close-count" aria-live="polite">{menu_close_count}</output>
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-layout-title">
+                    <h2 id="design-layout-title">{move || t!(i18n, design_gallery.layout)}</h2>
+                    <div class="ob-design-layout-preview" id="design-layout-example">
+                        <DetailPanelLayout>
+                            <DetailPanelMain>
+                                <PageShell width=PageWidth::Content>
+                                    <PageTopbar>
+                                        <span>{move || t!(i18n, design_gallery.layout_topbar)}</span>
+                                        <div class="ob-design-row">
+                                            <Button
+                                                id="design-detail-open"
+                                                open=detail_open
+                                                on_activate=move |_| detail_open.set(true)
+                                            >
+                                                {move || t!(i18n, design_gallery.layout_open_detail)}
+                                            </Button>
+                                            <output id="design-detail-close-count" aria-live="polite">
+                                                {detail_close_count}
+                                            </output>
+                                        </div>
+                                    </PageTopbar>
+                                    <PageSection
+                                        heading_id="design-layout-section"
+                                        title=move || t_string!(i18n, design_gallery.layout_section).to_owned()
+                                        description=move || t_string!(i18n, design_gallery.layout_section_description).to_owned()
+                                    >
+                                        <PageRows>
+                                            <StaggerItem index=0>
+                                                <Item action=ItemAction::Link("/settings".to_owned())>
+                                                    <ItemMedia>
+                                                        <RowMark>
+                                                            <IconView icon=Icon::Plug size=IconSize::Navigation />
+                                                        </RowMark>
+                                                    </ItemMedia>
+                                                    <ItemTitle>
+                                                        {move || t!(i18n, design_gallery.layout_row)}
+                                                    </ItemTitle>
+                                                    <ItemDescription>
+                                                        {move || t!(i18n, design_gallery.layout_row_description)}
+                                                    </ItemDescription>
+                                                </Item>
+                                            </StaggerItem>
+                                        </PageRows>
+                                        <PageEmpty>
+                                            {move || t!(i18n, design_gallery.layout_empty)}
+                                        </PageEmpty>
+                                    </PageSection>
+                                </PageShell>
+                            </DetailPanelMain>
+                            <DetailPanel
+                                id="design-detail-panel"
+                                title=move || t_string!(i18n, design_gallery.layout_detail).to_owned()
+                                open=detail_open
+                                return_focus_id="design-detail-open"
+                                on_close=move |_| {
+                                    detail_open.set(false);
+                                    detail_close_count.update(|count| *count += 1);
+                                }
+                            >
+                                <p>{move || t!(i18n, design_gallery.layout_detail_body)}</p>
+                            </DetailPanel>
+                        </DetailPanelLayout>
                     </div>
                 </section>
             </div>

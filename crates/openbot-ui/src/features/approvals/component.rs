@@ -12,6 +12,7 @@ use crate::api::ApiError;
 use crate::api::decide_tool_approval;
 #[cfg(target_arch = "wasm32")]
 use crate::api::list_pending_tool_approvals;
+use crate::features::layout::{PageHeader, PageShell, PageTopbar, PageWidth};
 use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
 use crate::primitives::{
@@ -37,15 +38,9 @@ pub fn ApprovalPage() -> impl IntoView {
     };
 
     view! {
-        <section class="ob-page" aria-labelledby="approvals-title">
-            <header class="ob-page-header">
-                <div>
-                    <p class="ob-eyebrow">{move || t!(i18n, admin.approval_pending)}</p>
-                    <h1 id="approvals-title" class="ob-page-title">
-                        {move || t!(i18n, admin.approvals_title)}
-                    </h1>
-                    <p class="ob-page-intro">{move || t!(i18n, admin.approvals_intro)}</p>
-                </div>
+        <PageShell width=PageWidth::Content>
+            <PageTopbar>
+                <p class="ob-eyebrow">{move || t!(i18n, admin.approval_pending)}</p>
                 <Button
                     variant=ButtonVariant::Chip
                     size=ButtonSize::Medium
@@ -56,7 +51,12 @@ pub fn ApprovalPage() -> impl IntoView {
                     <IconView icon=Icon::RefreshCw size=IconSize::Inline />
                     {move || t!(i18n, common.refresh)}
                 </Button>
-            </header>
+            </PageTopbar>
+            <PageHeader
+                heading_id="approvals-title"
+                title=move || t_string!(i18n, admin.approvals_title).to_owned()
+                description=move || t_string!(i18n, admin.approvals_intro).to_owned()
+            />
 
             <Show when=move || load_error.get().is_some()>
                 <div class="ob-alert" role="alert">
@@ -135,7 +135,7 @@ pub fn ApprovalPage() -> impl IntoView {
                     .into_any()
                 }
             }}
-        </section>
+        </PageShell>
     }
 }
 

@@ -342,7 +342,17 @@
     "sidebar_toggle": "Toggle sidebar",
     "sidebar_group": "Workspace",
     "sidebar_content": "Responsive shell content",
-    "sidebar_user": "Test user"
+    "sidebar_user": "Test user",
+    "layout": "Page layout",
+    "layout_topbar": "Configuration",
+    "layout_open_detail": "Open details",
+    "layout_section": "Connected services",
+    "layout_section_description": "A named section using the shared configuration frame.",
+    "layout_row": "Example connector",
+    "layout_row_description": "A third-party row with a neutral vendor mark.",
+    "layout_empty": "No additional connectors are configured.",
+    "layout_detail": "Connector details",
+    "layout_detail_body": "This URL-owned pane is removed from navigation when it closes."
   },
   "keyboard": {
     "command": "Command",
