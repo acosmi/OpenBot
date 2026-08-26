@@ -10,16 +10,18 @@ use core::time::Duration;
 use std::future::poll_fn;
 
 use axum::Json;
-use axum::extract::rejection::QueryRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::header::CACHE_CONTROL;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive};
 use axum::response::{IntoResponse, Response, Sse};
 use futures_core::Stream;
 use openbot_application::AppEventStream;
 use openbot_contracts::command::{
-    AppCommand, AppEvent, AppReply, SubscriptionRequest, ThreadHistory, ThreadMinted, ThreadStatus,
+    AppCommand, AppEvent, AppReply, BeginThreadRun, BeginThreadRunBody, SubscriptionRequest,
+    ThreadHistory, ThreadMinted, ThreadRunStarted, ThreadStatus,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ThreadId;
@@ -66,6 +68,45 @@ pub async fn status(
         .await?
     {
         AppReply::ThreadStatus(reply) => Ok(Json(reply)),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/threads/{thread_id}/runs`; native durable first-turn framing.
+pub async fn begin_run(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    Path(thread_id): Path<String>,
+    body: Result<Json<BeginThreadRunBody>, JsonRejection>,
+) -> Result<(StatusCode, HeaderMap, Json<ThreadRunStarted>), HttpError> {
+    let Json(body) = body.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "begin thread run body parsing failed");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::BeginThreadRun(BeginThreadRun {
+                thread_id: ThreadId::new(thread_id),
+                run_id: body.run_id,
+                bot_id: body.bot_id,
+                anchor: body.anchor,
+                message: body.message,
+            }),
+        )
+        .await?
+    {
+        AppReply::ThreadRunStarted(started) => {
+            let status = if started.replayed {
+                StatusCode::OK
+            } else {
+                StatusCode::CREATED
+            };
+            let mut headers = HeaderMap::new();
+            headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            Ok((status, headers, Json(started)))
+        }
         _ => Err(application_contract_error()),
     }
 }
@@ -304,8 +345,8 @@ mod tests {
     use futures_util::{SinkExt as _, StreamExt as _};
     use http::{Method, Request, StatusCode};
     use openbot_application::ports::{
-        ChannelReader, PortError, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
-        ThreadHistoryRequest,
+        BeginThreadRunRequest, ChannelReader, PortError, ThreadDirectory, ThreadDirectoryError,
+        ThreadEventSubscription, ThreadHistoryRequest,
     };
     use openbot_application::{ChannelCursor, OpenBotApplication};
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
@@ -364,6 +405,8 @@ mod tests {
         hold_stream_open: AtomicBool,
         history: Mutex<Result<ThreadHistory, ThreadDirectoryError>>,
         history_calls: Mutex<Vec<ThreadHistoryRequest>>,
+        begin: Mutex<Result<ThreadRunStarted, ThreadDirectoryError>>,
+        begin_calls: Mutex<Vec<BeginThreadRunRequest>>,
     }
 
     impl FakeThreadDirectory {
@@ -379,6 +422,8 @@ mod tests {
                     hold_stream_open: AtomicBool::new(false),
                     history: Mutex::new(Ok(ThreadHistory::default())),
                     history_calls: Mutex::new(Vec::new()),
+                    begin: Mutex::new(Err(ThreadDirectoryError::Unavailable)),
+                    begin_calls: Mutex::new(Vec::new()),
                 }),
             }
         }
@@ -395,6 +440,11 @@ mod tests {
 
         fn with_history(self, history: Result<ThreadHistory, ThreadDirectoryError>) -> Self {
             *self.inner.history.lock().expect("fake lock") = history;
+            self
+        }
+
+        fn with_begin(self, begin: Result<ThreadRunStarted, ThreadDirectoryError>) -> Self {
+            *self.inner.begin.lock().expect("fake lock") = begin;
             self
         }
 
@@ -416,6 +466,10 @@ mod tests {
 
         fn history_calls(&self) -> Vec<ThreadHistoryRequest> {
             self.inner.history_calls.lock().expect("fake lock").clone()
+        }
+
+        fn begin_calls(&self) -> Vec<BeginThreadRunRequest> {
+            self.inner.begin_calls.lock().expect("fake lock").clone()
         }
     }
 
@@ -450,6 +504,18 @@ mod tests {
                     thread: thread.clone(),
                 });
             self.inner.known
+        }
+
+        async fn begin_thread_run(
+            &self,
+            request: BeginThreadRunRequest,
+        ) -> Result<ThreadRunStarted, ThreadDirectoryError> {
+            self.inner
+                .begin_calls
+                .lock()
+                .expect("fake lock")
+                .push(request);
+            self.inner.begin.lock().expect("fake lock").clone()
         }
 
         async fn subscribe_thread_events(
@@ -545,6 +611,129 @@ mod tests {
             serde_json::from_slice(&bytes).expect("JSON response")
         };
         (status, body)
+    }
+
+    async fn begin_request(
+        router: Router,
+        origin: Option<&str>,
+        thread_id: &str,
+        body: &str,
+    ) -> (StatusCode, HeaderMap, Value) {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/threads/{thread_id}/runs"))
+            .header(http::header::CONTENT_TYPE, "application/json");
+        if let Some(origin) = origin {
+            request = request.header(http::header::ORIGIN, origin);
+        }
+        let response = router
+            .oneshot(
+                request
+                    .body(Body::from(body.to_owned()))
+                    .expect("begin request"),
+            )
+            .await
+            .expect("begin response");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("begin body");
+        let body = serde_json::from_slice(&bytes).expect("begin json");
+        (status, headers, body)
+    }
+
+    #[tokio::test]
+    async fn begin_run_uses_path_and_authoritative_scope_then_distinguishes_create_from_replay() {
+        let thread = "550e8400-e29b-41d4-a716-446655440000";
+        for (replayed, expected) in [(false, StatusCode::CREATED), (true, StatusCode::OK)] {
+            let directory = FakeThreadDirectory::new(Ok(true)).with_begin(Ok(ThreadRunStarted {
+                thread_id: ThreadId::new(thread),
+                run_id: RunId::new("run-1"),
+                message_sequence: 1,
+                event_sequence: 1,
+                replayed,
+            }));
+            let visible = directory.clone();
+            let (status, headers, body) = begin_request(
+                app(directory, FixedAuthResolver::granting(auth("u1"))),
+                Some("https://app.example.test"),
+                thread,
+                r#"{"runId":"run-1","botId":"agent-1","anchor":{"kind":"channel","channel_id":"channel-1"},"message":"hello"}"#,
+            )
+            .await;
+            assert_eq!(status, expected);
+            assert_eq!(headers[CACHE_CONTROL], "no-store");
+            assert_eq!(body["threadId"], thread);
+            assert_eq!(body["runId"], "run-1");
+            assert_eq!(body["replayed"], replayed);
+            assert_eq!(
+                visible.begin_calls(),
+                [BeginThreadRunRequest {
+                    deployment: DeploymentId::new("openbot-test"),
+                    tenant: TenantId::new("tenant-test"),
+                    actor: ActorId::new("u1"),
+                    command: BeginThreadRun {
+                        thread_id: ThreadId::new(thread),
+                        run_id: RunId::new("run-1"),
+                        bot_id: openbot_contracts::ids::BotId::new("agent-1"),
+                        anchor: openbot_contracts::command::ThreadRunAnchor::Channel {
+                            channel_id: openbot_contracts::ids::ChannelId::new("channel-1"),
+                        },
+                        message: "hello".to_owned(),
+                    },
+                }]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn begin_run_auth_and_origin_precede_json_and_no_port_call_occurs_on_rejection() {
+        let thread = "550e8400-e29b-41d4-a716-446655440000";
+        let directory = FakeThreadDirectory::new(Ok(true));
+        let visible = directory.clone();
+        let (status, _, _) = begin_request(
+            app(
+                directory,
+                FixedAuthResolver::rejecting(AppError::Unauthenticated),
+            ),
+            None,
+            thread,
+            "not-json",
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(visible.begin_calls().is_empty());
+
+        let directory = FakeThreadDirectory::new(Ok(true));
+        let visible = directory.clone();
+        let (status, _, _) = begin_request(
+            app(directory, FixedAuthResolver::granting(auth("u1"))),
+            None,
+            thread,
+            "not-json",
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(visible.begin_calls().is_empty());
+
+        for body in [
+            "null",
+            r#"{"runId":"","botId":"agent-1","anchor":{"kind":"channel","channel_id":"channel-1"},"message":"hello"}"#,
+            r#"{"runId":"run-1","botId":"agent-1","anchor":{"kind":"channel","channel_id":"channel-1"},"message":"hello","actor":"forged"}"#,
+        ] {
+            let directory = FakeThreadDirectory::new(Ok(true));
+            let visible = directory.clone();
+            let (status, _, response) = begin_request(
+                app(directory, FixedAuthResolver::granting(auth("u1"))),
+                Some("https://app.example.test"),
+                thread,
+                body,
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {response}");
+            assert!(visible.begin_calls().is_empty(), "{body}");
+        }
     }
 
     #[tokio::test]

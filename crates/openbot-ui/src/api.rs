@@ -6,7 +6,14 @@
 use openbot_contracts::agent::AgentProfile;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::agent::{AgentProfileResponse, AgentProfilesResponse};
-use openbot_contracts::command::{ChannelDetail, ChannelPage};
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::command::{
+    BeginThreadRunBody, CreateChannelRequest, RouteChannelRequest, ThreadRunAnchor,
+};
+use openbot_contracts::command::{
+    ChannelDetail, ChannelPage, ChannelRoutingDecision, ThreadRunStarted,
+};
+use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::people::CurrentUser;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::people::CurrentUserResponse;
@@ -36,6 +43,149 @@ pub enum ApiError {
 
 /// Roster page size; the application still owns the authoritative 1..=200 clamp.
 pub const CHANNEL_PAGE_SIZE: u32 = 50;
+
+/// Create one private channel for a single URL-selected recipient.
+pub async fn create_channel(agent_id: &BotId) -> Result<ChannelDetail, ApiError> {
+    validate_agent_id(agent_id.as_str())?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let request = Request::post("/api/channels")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&CreateChannelRequest {
+                agent_ids: vec![agent_id.clone()],
+            })
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let response = request.send().await.map_err(|_| ApiError::Network)?;
+        if response.status() != 201 {
+            return Err(status_error(response.status()));
+        }
+        let channel = response
+            .json::<openbot_contracts::command::ChannelDetailResponse>()
+            .await
+            .map(|response| response.channel)
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if channel.agent_ids.as_slice() != [agent_id.clone()]
+            || channel.thread_id.is_none()
+            || !channel.active
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(channel)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = agent_id;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Validate or infer one first-message recipient through the native routing API.
+pub async fn route_channel_message(
+    text: &str,
+    agent_id: Option<&BotId>,
+) -> Result<ChannelRoutingDecision, ApiError> {
+    if let Some(agent_id) = agent_id {
+        validate_agent_id(agent_id.as_str())?;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let request = Request::post("/api/route")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&RouteChannelRequest {
+                text: text.to_owned(),
+                agent_id: agent_id.cloned(),
+            })
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let response = request.send().await.map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let decision = response
+            .json::<ChannelRoutingDecision>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if let Some(explicit) = agent_id
+            && (decision.agent_id != *explicit || !decision.via_mention)
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(decision)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (text, agent_id);
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Begin the first durable native run for a channel-created thread.
+pub async fn begin_channel_run(
+    thread_id: &ThreadId,
+    channel_id: &ChannelId,
+    agent_id: &BotId,
+    run_id: &RunId,
+    message: &str,
+) -> Result<ThreadRunStarted, ApiError> {
+    validate_channel_id(channel_id.as_str())?;
+    validate_agent_id(agent_id.as_str())?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = thread_run_path(thread_id.as_str())?;
+        let request = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&BeginThreadRunBody {
+                run_id: run_id.clone(),
+                bot_id: agent_id.clone(),
+                anchor: ThreadRunAnchor::Channel {
+                    channel_id: channel_id.clone(),
+                },
+                message: message.to_owned(),
+            })
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let response = request.send().await.map_err(|_| ApiError::Network)?;
+        let status = response.status();
+        if !matches!(status, 200 | 201) {
+            return Err(status_error(status));
+        }
+        let started = response
+            .json::<ThreadRunStarted>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if started.thread_id != *thread_id
+            || started.run_id != *run_id
+            || started.replayed != (status == 200)
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(started)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (thread_id, channel_id, agent_id, run_id, message);
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Mint one browser-CSPRNG-backed durable idempotency key.
+#[must_use]
+pub fn mint_run_id() -> RunId {
+    RunId::new(uuid::Uuid::now_v7().to_string())
+}
 
 /// Load the current actor's authoritative visible or per-user-hidden coworker roster.
 pub async fn list_agents(hidden: bool) -> Result<Vec<AgentProfile>, ApiError> {
@@ -406,6 +556,15 @@ fn channel_detail_path(channel_id: &str) -> Result<String, ApiError> {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn thread_run_path(thread_id: &str) -> Result<String, ApiError> {
+    validate_thread_id(thread_id)?;
+    Ok(format!(
+        "/api/threads/{}/runs",
+        encode_url_component(thread_id)
+    ))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn agent_detail_path(agent_id: &str) -> Result<String, ApiError> {
     validate_agent_id(agent_id)?;
     Ok(format!("/api/agents/{}", encode_url_component(agent_id)))
@@ -431,8 +590,26 @@ pub fn channel_route_href(channel_id: &str) -> Result<String, ApiError> {
     Ok(format!("/channel/{}", encode_url_component(channel_id)))
 }
 
+/// Build the URL-owned new-channel route for one selected Agent.
+pub fn channel_new_href(agent_id: &str) -> Result<String, ApiError> {
+    validate_agent_id(agent_id)?;
+    Ok(format!(
+        "/channel/new?agent={}",
+        encode_url_component(agent_id)
+    ))
+}
+
 fn validate_channel_id(channel_id: &str) -> Result<(), ApiError> {
     if channel_id.is_empty() || channel_id.len() > 512 || channel_id.chars().any(char::is_control) {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_thread_id(thread_id: &str) -> Result<(), ApiError> {
+    if thread_id.is_empty() || thread_id.len() > 512 || thread_id.chars().any(char::is_control) {
         Err(ApiError::InvalidResponse)
     } else {
         Ok(())
@@ -515,6 +692,10 @@ mod tests {
             ApiError::InvalidResponse
         );
         assert_eq!(
+            thread_run_path("thread/one?x=1").unwrap(),
+            "/api/threads/thread%2Fone%3Fx%3D1/runs"
+        );
+        assert_eq!(
             channel_list_path(Some("bad\ncursor")).unwrap_err(),
             ApiError::InvalidResponse
         );
@@ -529,6 +710,10 @@ mod tests {
         assert_eq!(
             agent_profile_href("agent/one?x=1").unwrap(),
             "/agents?agent=agent%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
+            channel_new_href("agent/one?x=1").unwrap(),
+            "/channel/new?agent=agent%2Fone%3Fx%3D1"
         );
         assert_eq!(
             agent_detail_path("").unwrap_err(),

@@ -98,6 +98,34 @@ impl fmt::Display for AuditIdentifier {
     }
 }
 
+/// Bounded ordered identifier list used for routing candidates, never content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuditIdentifierList(Vec<AuditIdentifier>);
+
+impl AuditIdentifierList {
+    /// A routing decision never needs an unbounded model-facing roster in one audit row.
+    pub const MAX_ITEMS: usize = 256;
+
+    /// Validate a non-empty bounded list.
+    pub fn new(values: Vec<AuditIdentifier>) -> Result<Self, AuditFieldError> {
+        if values.is_empty() {
+            return Err(AuditFieldError::EmptyList);
+        }
+        if values.len() > Self::MAX_ITEMS {
+            return Err(AuditFieldError::TooManyItems {
+                found: values.len(),
+            });
+        }
+        Ok(Self(values))
+    }
+
+    /// Borrow the ordered identifiers.
+    #[must_use]
+    pub fn as_slice(&self) -> &[AuditIdentifier] {
+        &self.0
+    }
+}
+
 /// 封闭词汇型字段值 —— 只能是**编译期字面量**。
 ///
 /// `&'static str` 在这里不是省一次分配，是一条准入判据：运行期得到的字符串（HTTP 体、
@@ -144,6 +172,15 @@ pub enum AuditFieldError {
     /// 含控制字符（换行 / 制表 / NUL 等）。
     #[error("audit_field_control_character")]
     ControlCharacter,
+    /// An identifier list required at least one element.
+    #[error("audit_field_list_empty")]
+    EmptyList,
+    /// An identifier list exceeded its fixed item bound.
+    #[error("audit_field_list_too_long found={found}")]
+    TooManyItems {
+        /// Actual item count; values themselves are never echoed.
+        found: usize,
+    },
 }
 
 /// 人工接管的三个阶段。
@@ -201,6 +238,16 @@ pub enum AuditFact {
     TargetKind(AuditLabel),
     /// 目标对象的标识。
     TargetId(AuditIdentifier),
+    /// Authoritative recipient duplicated in the upstream routing payload for compatibility.
+    RoutingChosen(AuditIdentifier),
+    /// Stable reason classification; raw model prose and the user message are excluded.
+    RoutingReason(AuditLabel),
+    /// Whether uncertainty selected the deterministic default.
+    RoutingFallback(bool),
+    /// Whether the person explicitly selected the recipient.
+    RoutingViaMention(bool),
+    /// Ordered authoritative roster identities considered by this decision.
+    RoutingCandidates(AuditIdentifierList),
     /// 本次 acting 之前写下的 durable decision 的 id（§17.2 条 2 的锚点）。
     DecisionId(AuditIdentifier),
     /// 做出该 decision 时生效的 policy 版本（§8.3：多副本下用旧版本做出的 decision 必须可辨认）。
@@ -283,6 +330,11 @@ impl AuditFact {
             Self::SchemaHash(_) => "schema_hash",
             Self::TargetKind(_) => "target_kind",
             Self::TargetId(_) => "target_id",
+            Self::RoutingChosen(_) => "chosen",
+            Self::RoutingReason(_) => "reason",
+            Self::RoutingFallback(_) => "fallback",
+            Self::RoutingViaMention(_) => "via_mention",
+            Self::RoutingCandidates(_) => "candidates",
             Self::DecisionId(_) => "decision_id",
             Self::PolicyVersion(_) => "policy_version",
             Self::RefusedByRule(_) => "refused_by_rule",
@@ -318,6 +370,7 @@ impl AuditFact {
             Self::ToolName(value)
             | Self::Bot(value)
             | Self::TargetId(value)
+            | Self::RoutingChosen(value)
             | Self::DecisionId(value)
             | Self::ApprovalId(value)
             | Self::PolicyVersion(value)
@@ -325,6 +378,7 @@ impl AuditFact {
             | Self::CredentialOwner(value) => Value::String(value.as_str().to_owned()),
             Self::EffectClass(label)
             | Self::TargetKind(label)
+            | Self::RoutingReason(label)
             | Self::ErrorCode(label)
             | Self::CommitState(label)
             | Self::PreviousRole(label)
@@ -340,6 +394,8 @@ impl AuditFact {
             | Self::ParallelSafe(value)
             | Self::AccessRevoked(value)
             | Self::VendorRevoked(value)
+            | Self::RoutingFallback(value)
+            | Self::RoutingViaMention(value)
             | Self::OutputTruncated(value) => Value::Bool(*value),
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
@@ -349,6 +405,13 @@ impl AuditFact {
             | Self::OutputBytes(value) => Value::Number((*value).into()),
             Self::AttemptNumber(value) => Value::Number((*value).into()),
             Self::HumanTakeover(phase) => Value::String(phase.as_str().to_owned()),
+            Self::RoutingCandidates(values) => Value::Array(
+                values
+                    .as_slice()
+                    .iter()
+                    .map(|value| Value::String(value.as_str().to_owned()))
+                    .collect(),
+            ),
             Self::SecretInput {
                 secret_id,
                 purpose,
@@ -385,6 +448,7 @@ impl AuditFact {
             Self::ToolName(value)
             | Self::Bot(value)
             | Self::TargetId(value)
+            | Self::RoutingChosen(value)
             | Self::DecisionId(value)
             | Self::ApprovalId(value)
             | Self::PolicyVersion(value)
@@ -392,6 +456,7 @@ impl AuditFact {
             | Self::CredentialOwner(value) => writer.str(value.as_str()),
             Self::EffectClass(label)
             | Self::TargetKind(label)
+            | Self::RoutingReason(label)
             | Self::ErrorCode(label)
             | Self::CommitState(label)
             | Self::PreviousRole(label)
@@ -405,6 +470,8 @@ impl AuditFact {
             | Self::ParallelSafe(value)
             | Self::AccessRevoked(value)
             | Self::VendorRevoked(value)
+            | Self::RoutingFallback(value)
+            | Self::RoutingViaMention(value)
             | Self::OutputTruncated(value) => writer.bool(*value),
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
@@ -414,6 +481,12 @@ impl AuditFact {
             | Self::OutputBytes(value) => writer.u64(*value),
             Self::AttemptNumber(value) => writer.u32(*value),
             Self::HumanTakeover(phase) => writer.str(phase.as_str()),
+            Self::RoutingCandidates(values) => {
+                writer.u64(values.as_slice().len() as u64);
+                for value in values.as_slice() {
+                    writer.str(value.as_str());
+                }
+            }
             Self::SecretInput {
                 secret_id,
                 purpose,
@@ -445,6 +518,11 @@ pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "schema_hash",
     "target_kind",
     "target_id",
+    "chosen",
+    "reason",
+    "fallback",
+    "via_mention",
+    "candidates",
     "decision_id",
     "policy_version",
     "refused_by_rule",
@@ -590,6 +668,14 @@ mod tests {
             AuditFact::SchemaHash(Sha256Digest::of(b"schema")),
             AuditFact::TargetKind(AuditLabel::new("browser_tab")),
             AuditFact::TargetId(identifier("tab-1")),
+            AuditFact::RoutingChosen(identifier("agent-1")),
+            AuditFact::RoutingReason(AuditLabel::new("model_match")),
+            AuditFact::RoutingFallback(false),
+            AuditFact::RoutingViaMention(false),
+            AuditFact::RoutingCandidates(
+                AuditIdentifierList::new(vec![identifier("agent-1"), identifier("agent-2")])
+                    .unwrap(),
+            ),
             AuditFact::DecisionId(identifier("pd-1")),
             AuditFact::PolicyVersion(identifier("pv-7")),
             AuditFact::RefusedByRule(identifier("deny.private_hosts")),
@@ -802,6 +888,31 @@ mod tests {
         // 正向对照：真实形态的标识符照常通过，边界值恰好通过。
         assert!(AuditIdentifier::new("0199a4d1-6f2b-7c3e-8a11-0242ac120002").is_ok());
         assert!(AuditIdentifier::new("x".repeat(AuditIdentifier::MAX_BYTES)).is_ok());
+    }
+
+    #[test]
+    fn routing_candidate_list_is_nonempty_and_bounded() {
+        assert_eq!(
+            AuditIdentifierList::new(Vec::new()),
+            Err(AuditFieldError::EmptyList)
+        );
+        assert_eq!(
+            AuditIdentifierList::new(
+                (0..=AuditIdentifierList::MAX_ITEMS)
+                    .map(|index| identifier(&format!("agent-{index}")))
+                    .collect()
+            ),
+            Err(AuditFieldError::TooManyItems {
+                found: AuditIdentifierList::MAX_ITEMS + 1
+            })
+        );
+        let boundary = AuditIdentifierList::new(
+            (0..AuditIdentifierList::MAX_ITEMS)
+                .map(|index| identifier(&format!("agent-{index}")))
+                .collect(),
+        )
+        .unwrap();
+        assert_eq!(boundary.as_slice().len(), AuditIdentifierList::MAX_ITEMS);
     }
 
     #[test]

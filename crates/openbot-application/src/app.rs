@@ -35,9 +35,11 @@ use crate::mcp_connections::{
     register_mcp_oauth_client,
 };
 use crate::ports::{
-    AgentDirectory, AuditReader, ChannelReader, MemoryAdministration, NoAgentDirectory,
-    NoAuditReader, NoMemoryAdministration, NoPeopleAdministration, NoPolicyAdministration,
-    NoThreadDirectory, PeopleAdministration, PolicyAdministration, ThreadDirectory,
+    AgentDirectory, AuditReader, ChannelAdministration, ChannelReader, ChannelRoutingBackend,
+    MemoryAdministration, NoAgentDirectory, NoAuditReader, NoChannelAdministration,
+    NoChannelRoutingBackend, NoMemoryAdministration, NoPeopleAdministration,
+    NoPolicyAdministration, NoThreadDirectory, PeopleAdministration, PolicyAdministration,
+    ThreadDirectory,
 };
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
@@ -47,11 +49,11 @@ use crate::ui_preferences::{
 };
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, begin_thread_run, change_person_access,
-    change_person_role, correct_memory, current_user, get_action_policy, get_thread_history,
-    get_thread_status, get_visible_agent, get_visible_channel, health, health_stream,
-    list_audit_events, list_memories, list_people, list_visible_agents, list_visible_channels,
-    mint_thread_id, mutate_memory, recall_memories, remember_memory, set_action_policy,
-    subscribe_channel_activity, subscribe_thread_events,
+    change_person_role, correct_memory, create_channel, current_user, get_action_policy,
+    get_thread_history, get_thread_status, get_visible_agent, get_visible_channel, health,
+    health_stream, list_audit_events, list_memories, list_people, list_visible_agents,
+    list_visible_channels, mint_thread_id, mutate_memory, recall_memories, remember_memory,
+    route_channel_message, set_action_policy, subscribe_channel_activity, subscribe_thread_events,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -80,6 +82,8 @@ pub struct OpenBotApplication<
     memory: M,
     callback_tokens: B,
     agents: std::sync::Arc<dyn AgentDirectory>,
+    channel_administration: std::sync::Arc<dyn ChannelAdministration>,
+    channel_routing: std::sync::Arc<dyn ChannelRoutingBackend>,
     mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
     tool_approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
     ui_preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
@@ -112,6 +116,8 @@ impl<R>
             memory: NoMemoryAdministration,
             callback_tokens: NoAgentCallbackTokenAdministration,
             agents: std::sync::Arc::new(NoAgentDirectory),
+            channel_administration: std::sync::Arc::new(NoChannelAdministration),
+            channel_routing: std::sync::Arc::new(NoChannelRoutingBackend),
             mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
             tool_approvals: std::sync::Arc::new(NoToolApprovalAdministration),
             ui_preferences: std::sync::Arc::new(NoUiPreferenceAdministration),
@@ -135,6 +141,8 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
@@ -156,6 +164,8 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
@@ -177,6 +187,8 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
@@ -202,6 +214,8 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
@@ -223,6 +237,8 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
@@ -244,6 +260,8 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
@@ -268,6 +286,8 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens,
             agents: self.agents,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
@@ -279,6 +299,26 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
     #[must_use]
     pub fn with_agent_directory(mut self, agents: std::sync::Arc<dyn AgentDirectory>) -> Self {
         self.agents = agents;
+        self
+    }
+
+    /// Attach the atomic user-channel creation transaction.
+    #[must_use]
+    pub fn with_channel_administration(
+        mut self,
+        administration: std::sync::Arc<dyn ChannelAdministration>,
+    ) -> Self {
+        self.channel_administration = administration;
+        self
+    }
+
+    /// Attach deployment-model completion, reach hints, and hash-chained routing audit.
+    #[must_use]
+    pub fn with_channel_routing(
+        mut self,
+        routing: std::sync::Arc<dyn ChannelRoutingBackend>,
+    ) -> Self {
+        self.channel_routing = routing;
         self
     }
 
@@ -352,6 +392,19 @@ where
             }
             AppCommand::GetVisibleChannel { channel_id } => Ok(AppReply::Channel(
                 get_visible_channel(&self.channels, auth, channel_id).await?,
+            )),
+            AppCommand::CreateChannel { agent_ids } => Ok(AppReply::Channel(
+                create_channel(self.channel_administration.as_ref(), auth, agent_ids).await?,
+            )),
+            AppCommand::RouteChannelMessage { text, agent_id } => Ok(AppReply::ChannelRouting(
+                route_channel_message(
+                    self.agents.as_ref(),
+                    self.channel_routing.as_ref(),
+                    auth,
+                    text,
+                    agent_id,
+                )
+                .await?,
             )),
             AppCommand::ListVisibleAgents { hidden } => Ok(AppReply::Agents(
                 list_visible_agents(self.agents.as_ref(), auth, hidden).await?,

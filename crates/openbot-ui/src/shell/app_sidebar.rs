@@ -120,6 +120,7 @@ pub fn AppSidebar() -> impl IntoView {
         }
     };
 
+    let new_channel_location = location.clone();
     let roster_location = location.clone();
     let agents_location = location.clone();
     let footer_location = location;
@@ -138,6 +139,16 @@ pub fn AppSidebar() -> impl IntoView {
         <SidebarContent>
             <SidebarGroup>
                 <SidebarGroupLabel>{move || t!(i18n, shell.nav_channels)}</SidebarGroupLabel>
+                <SidebarNavList>
+                    <SidebarNavLink
+                        href="/channel/new".to_owned()
+                        icon=Icon::Plus
+                        label=move || t_string!(i18n, shell.new_channel).to_owned()
+                        current=Signal::derive(move || {
+                            new_channel_location.pathname.get() == "/channel/new"
+                        })
+                    />
+                </SidebarNavList>
                 <Input
                     value=search
                     input_type=InputType::Search

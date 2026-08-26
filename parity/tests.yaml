@@ -95,10 +95,10 @@ recount:
     expect: 105
   - command: "grep -c '^    label: parity$' parity/tests.yaml"
     cwd: repo
-    expect: 773
+    expect: 771
   - command: "grep -c '^    label: 替代$' parity/tests.yaml"
     cwd: repo
-    expect: 274
+    expect: 276
   - command: "grep -c '^    label: 新增$' parity/tests.yaml"
     cwd: repo
     expect: 0
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 747
+    expect: 713
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -4343,81 +4343,89 @@ entries:
   - id: "server-tests-channel-routes--channel-input-parser--rejects-a-non-object-root-p"
     upstream: "server/tests/channel-routes.test.ts::channel input parser"
     label: parity
-    target: "openbot_server::routes::channels::tests::rejects_a_non_object_root_p"
+    target: "openbot_server::http::channels::tests::create_authenticates_before_body_and_rejects_every_malformed_shape_without_a_write"
     owner: openbot-server
     test_id: T-TEST-0403
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Axum same-origin POST matrix rejects null/array/non-JSON roots before ChannelAdministration; calls=0. Server create 3/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[487]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「rejects a non-object root: %p」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-channel-routes--channel-input-parser--rejects-invalid-agentids-p"
     upstream: "server/tests/channel-routes.test.ts::channel input parser"
     label: parity
-    target: "openbot_server::routes::channels::tests::rejects_invalid_agentids_p"
+    target: "openbot_server::http::channels::tests::create_authenticates_before_body_and_rejects_every_malformed_shape_without_a_write"
     owner: openbot-server
     test_id: T-TEST-0404
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Closed CreateChannelRequest plus Application rejects null/empty/non-array agentIds with stable 400 and zero write-port calls. Server create 3/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[488]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「rejects invalid agentIds: %p」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-channel-routes--channel-input-parser--rejects-invalid-agent-id-members-p"
     upstream: "server/tests/channel-routes.test.ts::channel input parser"
     label: parity
-    target: "openbot_server::routes::channels::tests::rejects_invalid_agent_id_members_p"
+    target: "openbot_server::http::channels::tests::create_authenticates_before_body_and_rejects_every_malformed_shape_without_a_write"
     owner: openbot-server
     test_id: T-TEST-0405
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Typed member parsing and canonical application validation reject non-string/blank/control/duplicate IDs before the transaction. Server 3/0/0 + Application2/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[489]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「rejects invalid agent ID members: %p」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-channel-routes--channel-input-parser--trims-sorts-and-whitelists-channel-input"
     upstream: "server/tests/channel-routes.test.ts::channel input parser"
     label: parity
-    target: "openbot_server::routes::channels::tests::trims_sorts_and_whitelists_channel_input"
+    target: "openbot_server::http::channels::tests::create_uses_auth_scope_canonical_ids_and_returns_only_the_channel_dto"
     owner: openbot-server
     test_id: T-TEST-0406
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Only agentIds crosses the wire; Application ECMAScript-trims, sorts and rejects duplicates, while actor/scope/name/id/thread remain authoritative. Server3 + Application2, all green; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[490]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「trims, sorts, and whitelists channel input」。"
   - id: "server-tests-channel-routes--channel-routes--attaches-authentication-middleware-to-every-route-before"
     upstream: "server/tests/channel-routes.test.ts::channel routes"
     label: parity
-    target: "openbot_server::routes::channels::tests::attaches_authentication_middleware_to_every_route_before"
+    target: "openbot_server::http::channels::tests::create_authenticates_before_body_and_rejects_every_malformed_shape_without_a_write"
     owner: openbot-server
     test_id: T-TEST-0407
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Unauthenticated malformed POST returns 401 and missing Origin returns 403 before JSON parsing or write-port calls. Server create3/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[492]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「attaches authentication middleware to every route before calling the store」。"
   - id: "server-tests-channel-routes--channel-routes--uses-the-authenticated-context-actor-and-canonical-agent"
     upstream: "server/tests/channel-routes.test.ts::channel routes"
     label: parity
-    target: "openbot_server::routes::channels::tests::uses_the_authenticated_context_actor_and_canonical_agent"
+    target: "openbot_server::http::channels::tests::create_uses_auth_scope_canonical_ids_and_returns_only_the_channel_dto"
     owner: openbot-server
     test_id: T-TEST-0408
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Captured ChannelCreateRequest contains only AuthContext deployment/tenant/actor/admin and canonical [agent-a,agent-z]. Server3/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[493]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「uses the authenticated context actor and canonical agent IDs」。"
   - id: "server-tests-channel-routes--channel-routes--returns-only-the-channel-dto-for-create-and-get"
     upstream: "server/tests/channel-routes.test.ts::channel routes"
     label: parity
-    target: "openbot_server::routes::channels::tests::returns_only_the_channel_dto_for_create_and_get"
+    target: "openbot_server::http::channels::tests::create_uses_auth_scope_canonical_ids_and_returns_only_the_channel_dto"
     owner: openbot-server
     test_id: T-TEST-0409
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "201 no-store response is exactly {channel:{id,name,agentIds,threadId,active}} with five inner keys and no forged/store fields. Server3/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[494]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「returns only the channel DTO for create and get」。"
   - id: "server-tests-channel-routes--channel-routes--returns-safe-validation-errors-for-malformed-post-bodies"
     upstream: "server/tests/channel-routes.test.ts::channel routes"
     label: parity
-    target: "openbot_server::routes::channels::tests::returns_safe_validation_errors_for_malformed_post_bodies"
+    target: "openbot_server::http::channels::tests::create_authenticates_before_body_and_rejects_every_malformed_shape_without_a_write"
     owner: openbot-server
     test_id: T-TEST-0410
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Eight malformed/unknown/duplicate shapes all return only {code:malformed_payload}; no parser/database detail and calls=0. Server3/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[495]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「returns safe validation errors for malformed POST bodies」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-channel-routes--channel-routes--returns-404-when-get-returns-null"
@@ -4434,41 +4442,45 @@ entries:
   - id: "server-tests-channel-routes--channel-routes--maps-known-store-errors-from-s"
     upstream: "server/tests/channel-routes.test.ts::channel routes"
     label: parity
-    target: "openbot_server::routes::channels::tests::maps_known_store_errors_from_s"
+    target: "openbot_server::http::channels::tests::create_maps_the_closed_error_domain_and_absent_store_is_mounted_fail_closed"
     owner: openbot-server
     test_id: T-TEST-0412
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Closed administration errors map NotVisible to 404 and Unavailable/Corrupt to stable 503 without backend text. Server create3/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[497]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「maps known store errors from %s」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-channel-routes--channel-routes--rethrows-unexpected-errors-to-the-outer-hono-error-handl"
     upstream: "server/tests/channel-routes.test.ts::channel routes"
-    label: parity
-    target: "openbot_server::routes::channels::tests::rethrows_unexpected_errors_to_the_outer_hono_error_handl"
+    label: 替代
+    target: "openbot_server::http::channels::tests::create_maps_the_closed_error_domain_and_absent_store_is_mounted_fail_closed"
     owner: openbot-server
     test_id: T-TEST-0413
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "remove: Rust ChannelAdministrationError/AppError are closed enums, so an arbitrary exception cannot cross the port; corruption is normalized to dependency_unavailable"
+    status: done
+    done_evidence: "Exhaustive enum mapping compiles with no wildcard; Corrupt{static field} reaches Axum as stable 503. Server create3/0/0 + seven-crate Clippy; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[498]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「rethrows unexpected errors to the outer Hono error handler」。"
   - id: "server-tests-channel-routes--channel-route-composition--mounts-the-store-behind-createapp-authentication-with-th"
     upstream: "server/tests/channel-routes.test.ts::channel route composition"
     label: parity
-    target: "openbot_server::routes::channels::tests::mounts_the_store_behind_createapp_authentication_with_th"
+    target: "openbot_server::http::channels::tests::create_uses_auth_scope_canonical_ids_and_returns_only_the_channel_dto"
     owner: openbot-server
     test_id: T-TEST-0414
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "The production router is mounted behind the shared extractor and the captured request actor is exactly the verified session actor, never body/query data. Server3/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[500]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「mounts the store behind createApp authentication with the derived actor」。"
   - id: "server-tests-channel-routes--channel-route-composition--leaves-channel-routes-unmounted-when-createapp-has-no-st"
     upstream: "server/tests/channel-routes.test.ts::channel route composition"
-    label: parity
-    target: "openbot_server::routes::channels::tests::leaves_channel_routes_unmounted_when_createapp_has_no_st"
+    label: 替代
+    target: "openbot_server::http::channels::tests::create_maps_the_closed_error_domain_and_absent_store_is_mounted_fail_closed"
     owner: openbot-server
     test_id: T-TEST-0415
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "remove: production routes are unconditional; absent ChannelAdministration uses NoChannelAdministration and returns fail-closed 503 instead of changing the route table"
+    status: done
+    done_evidence: "A Server built without the write port still matches POST /api/channels and returns dependency_unavailable 503 after auth/origin. Server create3/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[501]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「leaves channel routes unmounted when createApp has no store」。"
   - id: "server-tests-channel-routes--channel-store-integration--reads-the-creator-s-persisted-channel-exactly"
@@ -4529,61 +4541,67 @@ entries:
   - id: "server-tests-channel-routes--channel-store-integration--creates-independent-persisted-channels-for-repeated-agen"
     upstream: "server/tests/channel-routes.test.ts::channel store integration"
     label: parity
-    target: "openbot_server::routes::channels::tests::creates_independent_persisted_channels_for_repeated_agen"
+    target: "openbot_infra::channel_create::create_is_atomic_scoped_independent_native_and_single_connection"
     owner: openbot-server
     test_id: T-TEST-0421
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "PG17.11 SCRAM repeats the same canonical selection and gets distinct channel_* and deployment-owned UUIDv8 thread identities; surface counts double exactly. PG2/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[508]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「creates independent persisted channels for repeated agent selections」。"
   - id: "server-tests-channel-routes--channel-store-integration--persists-every-canonical-agent-and-derives-its-name-in-c"
     upstream: "server/tests/channel-routes.test.ts::channel store integration"
     label: parity
-    target: "openbot_server::routes::channels::tests::persists_every_canonical_agent_and_derives_its_name_in_c"
+    target: "openbot_infra::channel_create::create_is_atomic_scoped_independent_native_and_single_connection"
     owner: openbot-server
     test_id: T-TEST-0422
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "PG transaction stores both sorted channel_agents and derives 'Alpha, Zeta' from locked profile names in canonical ID order. PG2/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[509]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「persists every canonical agent and derives its name in canonical order」。"
   - id: "server-tests-channel-routes--channel-store-integration--truncates-derived-names-to-120-unicode-code-points-with"
     upstream: "server/tests/channel-routes.test.ts::channel store integration"
     label: parity
-    target: "openbot_server::routes::channels::tests::truncates_derived_names_to_120_unicode_code_points_with"
+    target: "openbot_infra::channel_create::create_is_atomic_scoped_independent_native_and_single_connection"
     owner: openbot-server
     test_id: T-TEST-0423
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Pure domain and PG fixture both produce exactly 120 Unicode code points with one terminal ellipsis for a 140-code-point name. Domain2 + PG2; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[510]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「truncates derived names to 120 Unicode code points with an ellipsis」。"
   - id: "server-tests-channel-routes--channel-store-integration--rejects-an-s-agent-and-leaves-every-channel-table-unchan"
     upstream: "server/tests/channel-routes.test.ts::channel store integration"
     label: parity
-    target: "openbot_server::routes::channels::tests::rejects_an_s_agent_and_leaves_every_channel_table_unchan"
+    target: "openbot_infra::channel_create::create_is_atomic_scoped_independent_native_and_single_connection"
     owner: openbot-server
     test_id: T-TEST-0424
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Missing/deleted/cross-tenant/other-owner private Agents all collapse to NotVisible and leave channel/membership/agent/thread/legacy-mapping counts exact; admin private positive control succeeds. PG2/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[511]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「rejects an %s agent and leaves every channel table unchanged」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-channel-routes--channel-store-concurrency--creates-a-channel-without-borrowing-a-second-connection"
     upstream: "server/tests/channel-routes.test.ts::channel store concurrency"
     label: parity
-    target: "openbot_server::routes::channels::tests::creates_a_channel_without_borrowing_a_second_connection"
+    target: "openbot_infra::channel_create::create_is_atomic_scoped_independent_native_and_single_connection"
     owner: openbot-server
     test_id: T-TEST-0425
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "The complete create transaction and subsequent native begin succeed with max_pool_size=1; no nested pool checkout exists. PG17.11 SCRAM2/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[513]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「creates a channel without borrowing a second connection」。"
   - id: "server-tests-channel-routes--channel-store-concurrency--refuses-an-agent-whose-deletion-commits-mid-creation"
     upstream: "server/tests/channel-routes.test.ts::channel store concurrency"
     label: parity
-    target: "openbot_server::routes::channels::tests::refuses_an_agent_whose_deletion_commits_mid_creation"
+    target: "openbot_infra::channel_create::deletion_committing_mid_creation_is_seen_after_the_profile_lock"
     owner: openbot-server
     test_id: T-TEST-0426
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A concurrent delete holds the profile row; create remains blocked, then observes committed deleted_at after the ordered FOR UPDATE and returns NotVisible with all six surfaces at zero. PG2/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[514]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §21.1 条 1：channel 路由输入解析、路由组合与并发写判据逐条移植。上游用例标题：「refuses an agent whose deletion commits mid-creation」。"
   # ---------------------------------------------------------------------------
@@ -9331,111 +9349,122 @@ entries:
   - id: "server-tests-routing-classify--routing-a-message-with-no-mention--routes-to-the-specialist-the-model-picks-named-not-a-fal"
     upstream: "server/tests/routing-classify.test.ts::routing a message with no @mention"
     label: parity
-    target: "openbot_domain::routing::classify::tests::routes_to_the_specialist_the_model_picks_named_not_a_fal"
+    target: "openbot_domain::routing::tests::routes_to_the_specialist_the_model_picks_named_not_a_fal"
     owner: openbot-domain
     test_id: T-TEST-0873
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Pure Rust classifier returns the named specialist with bounded reason, fallback=false and model_match; domain routing12/0/0. Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1060]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「routes to the specialist the model picks, named, not a fallback」。"
   - id: "server-tests-routing-classify--routing-a-message-with-no-mention--falls-back-to-the-default-named-when-the-model-is-unreac"
     upstream: "server/tests/routing-classify.test.ts::routing a message with no @mention"
     label: parity
-    target: "openbot_domain::routing::classify::tests::falls_back_to_the_default_named_when_the_model_is_unreac"
+    target: "openbot_domain::routing::tests::falls_back_to_the_default_named_when_the_model_is_unreac"
     owner: openbot-domain
     test_id: T-TEST-0874
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Unavailable completion deterministically chooses the authoritative default by ID/name with router_unavailable and fallback=true; domain12/0/0. Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1061]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「falls back to the default, named, when the model is unreachable」。"
   - id: "server-tests-routing-classify--routing-a-message-with-no-mention--falls-back-when-the-answer-does-not-parse"
     upstream: "server/tests/routing-classify.test.ts::routing a message with no @mention"
     label: parity
-    target: "openbot_domain::routing::classify::tests::falls_back_when_the_answer_does_not_parse"
+    target: "openbot_domain::routing::tests::falls_back_when_the_answer_does_not_parse"
     owner: openbot-domain
     test_id: T-TEST-0875
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Non-JSON answer never escapes as an error or chosen ID; it returns the deterministic default and invalid_response. Domain12/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1062]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「falls back when the answer does not parse」。"
   - id: "server-tests-routing-classify--routing-a-message-with-no-mention--never-acts-on-an-id-that-is-not-on-the-roster"
     upstream: "server/tests/routing-classify.test.ts::routing a message with no @mention"
     label: parity
-    target: "openbot_domain::routing::classify::tests::never_acts_on_an_id_that_is_not_on_the_roster"
+    target: "openbot_domain::routing::tests::never_acts_on_an_id_that_is_not_on_the_roster"
     owner: openbot-domain
     test_id: T-TEST-0876
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A high-confidence out-of-roster model ID is ignored and classified candidate_not_visible; authoritative default wins. Domain12/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1063]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「NEVER acts on an id that is not on the roster」。"
   - id: "server-tests-routing-classify--routing-a-message-with-no-mention--defers-to-the-default-when-confidence-is-low"
     upstream: "server/tests/routing-classify.test.ts::routing a message with no @mention"
     label: parity
-    target: "openbot_domain::routing::classify::tests::defers_to_the_default_when_confidence_is_low"
+    target: "openbot_domain::routing::tests::defers_to_the_default_when_confidence_is_low"
     owner: openbot-domain
     test_id: T-TEST-0877
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Confidence below the fixed 0.6 threshold returns low_confidence/default, never the named specialist. Domain12/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1064]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「defers to the default when confidence is low」。"
   - id: "server-tests-routing-classify--routing-a-message-with-no-mention--a-fenced-padded-json-answer-is-still-parsed"
     upstream: "server/tests/routing-classify.test.ts::routing a message with no @mention"
     label: parity
-    target: "openbot_domain::routing::classify::tests::a_fenced_padded_json_answer_is_still_parsed"
+    target: "openbot_domain::routing::tests::a_fenced_padded_json_answer_is_still_parsed"
     owner: openbot-domain
     test_id: T-TEST-0878
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Fenced/padded JSON object is extracted and a visible 0.8-confidence candidate is chosen without fallback. Domain12/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1065]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「a fenced/padded JSON answer is still parsed」。"
   - id: "server-tests-routing-classify--routing-a-message-with-no-mention--a-single-coworker-roster-is-a-fallback-not-a-model-call"
     upstream: "server/tests/routing-classify.test.ts::routing a message with no @mention"
     label: parity
-    target: "openbot_domain::routing::classify::tests::a_single_coworker_roster_is_a_fallback_not_a_model_call"
+    target: "openbot_domain::routing::tests::a_single_coworker_roster_is_a_fallback_not_a_model_call"
     owner: openbot-domain
     test_id: T-TEST-0879
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "needs_completion=false for one candidate and decide returns only_candidate fallback regardless of supplied model text. Domain12/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1066]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「a single-coworker roster is a fallback, not a model call」。"
   - id: "server-tests-routing-classify--routing-on-what-a-coworker-can-reach--names-the-systems-in-the-roster-the-model-is-given"
     upstream: "server/tests/routing-classify.test.ts::routing on what a coworker can reach"
     label: parity
-    target: "openbot_domain::routing::classify::tests::names_the_systems_in_the_roster_the_model_is_given"
+    target: "openbot_domain::routing::tests::names_the_systems_in_the_roster_the_model_is_given"
     owner: openbot-domain
     test_id: T-TEST-0880
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Exact prompt projection includes 'can reach: google-drive' on the matching candidate; PG active-grant integration independently proves the production source. Domain12 + PG1; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1068]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「names the systems in the roster the model is given」。"
   - id: "server-tests-routing-classify--routing-on-what-a-coworker-can-reach--says-nothing-about-reach-for-a-coworker-that-holds-nothi"
     upstream: "server/tests/routing-classify.test.ts::routing on what a coworker can reach"
     label: parity
-    target: "openbot_domain::routing::classify::tests::says_nothing_about_reach_for_a_coworker_that_holds_nothi"
+    target: "openbot_domain::routing::tests::says_nothing_about_reach_for_a_coworker_that_holds_nothi"
     owner: openbot-domain
     test_id: T-TEST-0881
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "The no-grant candidate block contains no can-reach line; absent facts are not invented. Domain routing12/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1069]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「says nothing about reach for a coworker that holds nothing」。"
   - id: "server-tests-routing-classify--routing-on-what-a-coworker-can-reach--tells-the-model-to-prefer-reach-without-letting-it-overr"
     upstream: "server/tests/routing-classify.test.ts::routing on what a coworker can reach"
     label: parity
-    target: "openbot_domain::routing::classify::tests::tells_the_model_to_prefer_reach_without_letting_it_overr"
+    target: "openbot_domain::routing::tests::tells_the_model_to_prefer_reach_without_letting_it_overr"
     owner: openbot-domain
     test_id: T-TEST-0882
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "When any reach fact exists the exact fixed prompt says to prefer reach and also that purpose comes first. Domain routing12/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1070]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「tells the model to prefer reach without letting it override purpose」。"
   - id: "server-tests-routing-classify--routing-on-what-a-coworker-can-reach--a-roster-with-no-reach-at-all-reads-exactly-as-it-did-be"
     upstream: "server/tests/routing-classify.test.ts::routing on what a coworker can reach"
     label: parity
-    target: "openbot_domain::routing::classify::tests::a_roster_with_no_reach_at_all_reads_exactly_as_it_did_be"
+    target: "openbot_domain::routing::tests::a_roster_with_no_reach_at_all_reads_exactly_as_it_did_be"
     owner: openbot-domain
     test_id: T-TEST-0883
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A roster with zero reach facts omits both per-Agent reach lines and the conditional reach instruction, preserving the fixed base prompt. Domain12/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1071]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。上游用例标题：「a roster with no reach at all reads exactly as it did before」。"
   # ---------------------------------------------------------------------------
@@ -9444,51 +9473,56 @@ entries:
   - id: "server-tests-routing-routes--recording-which-coworker-a-message-went--a-named-coworker-is-recorded-as-the-person-s-own-choice"
     upstream: "server/tests/routing-routes.test.ts::recording which coworker a message went to"
     label: parity
-    target: "openbot_server::routes::routing::tests::a_named_coworker_is_recorded_as_the_person_s_own_choice"
+    target: "openbot_server::http::routing::tests::a_named_coworker_is_recorded_as_the_person_s_own_choice"
     owner: openbot-server
     test_id: T-TEST-0884
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "POST /api/route returns the explicit visible Agent, viaMention=true, no-store and one closed audit record. Server routing6/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1073]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §3.2：记录消息去了哪个 coworker 的路由判据逐条移植。上游用例标题：「a named coworker is recorded as the person's own choice」。"
   - id: "server-tests-routing-routes--recording-which-coworker-a-message-went--naming-a-coworker-never-asks-the-model"
     upstream: "server/tests/routing-routes.test.ts::recording which coworker a message went to"
     label: parity
-    target: "openbot_server::routes::routing::tests::naming_a_coworker_never_asks_the_model"
+    target: "openbot_server::http::routing::tests::naming_a_coworker_never_asks_the_model"
     owner: openbot-server
     test_id: T-TEST-0885
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Explicit recipient produces zero provider prompts/reach calls and still records the verified choice. Server6 + Application6, all green; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1074]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §3.2：记录消息去了哪个 coworker 的路由判据逐条移植。上游用例标题：「naming a coworker never asks the model」。"
   - id: "server-tests-routing-routes--recording-which-coworker-a-message-went--an-inferred-choice-is-still-recorded-as-inferred"
     upstream: "server/tests/routing-routes.test.ts::recording which coworker a message went to"
     label: parity
-    target: "openbot_server::routes::routing::tests::an_inferred_choice_is_still_recorded_as_inferred"
+    target: "openbot_server::http::routing::tests::an_inferred_choice_is_still_recorded_as_inferred"
     owner: openbot-server
     test_id: T-TEST-0886
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Inference calls the provider once, returns the visible chosen Agent with viaMention=false, and records model_match without source text. Server6/0/0 + PG1/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1075]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §3.2：记录消息去了哪个 coworker 的路由判据逐条移植。上游用例标题：「an inferred choice is still recorded as inferred」。"
   - id: "server-tests-routing-routes--recording-which-coworker-a-message-went--a-coworker-who-is-not-on-the-roster-is-refused-not-redir"
     upstream: "server/tests/routing-routes.test.ts::recording which coworker a message went to"
     label: parity
-    target: "openbot_server::routes::routing::tests::a_coworker_who_is_not_on_the_roster_is_refused_not_redir"
+    target: "openbot_server::http::routing::tests::a_coworker_who_is_not_on_the_roster_is_refused_not_redirected"
     owner: openbot-server
     test_id: T-TEST-0887
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "An explicit out-of-roster ID returns stable 404 not_visible with provider calls=0 and audit rows=0. Server routing6/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1076]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §3.2：记录消息去了哪个 coworker 的路由判据逐条移植。上游用例标题：「a coworker who is not on the roster is refused, not redirected」。"
   - id: "server-tests-routing-routes--recording-which-coworker-a-message-went--a-blank-agentid-is-a-message-with-no-mention-not-a-broke"
     upstream: "server/tests/routing-routes.test.ts::recording which coworker a message went to"
     label: parity
-    target: "openbot_server::routes::routing::tests::a_blank_agentid_is_a_message_with_no_mention_not_a_broke"
+    target: "openbot_server::http::routing::tests::a_blank_agentid_is_a_message_with_no_mention_not_a_broken_one"
     owner: openbot-server
     test_id: T-TEST-0888
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "ECMAScript-blank agentId enters inference, makes one provider call and returns viaMention=false rather than malformed. Server6/0/0; Batch32."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[1077]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 + §3.2：记录消息去了哪个 coworker 的路由判据逐条移植。上游用例标题：「a blank agentId is a message with no mention, not a broken one」。"
   # ---------------------------------------------------------------------------

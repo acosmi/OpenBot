@@ -52,10 +52,12 @@
 
 pub mod agent;
 pub mod audit;
+pub mod channel;
 pub mod identity;
 pub mod memory;
 pub mod policy;
 pub mod remote_callback;
+pub mod routing;
 pub mod run;
 pub mod text;
 pub mod thread;

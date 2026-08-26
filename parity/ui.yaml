@@ -139,16 +139,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch31累计完成前述地基、ChannelRow、abstract-avatar替代与AgentCard；其余todo
+  # Batch32累计完成前述地基、ChannelRow、AgentCard与RecipientField；其余todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 68
+    expect: 67
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 84
+    expect: 85
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 84
+    expect: 85
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -607,7 +607,7 @@ entries:
     migration_rule: "remove: 组件下沉为 shell 的一部分"
     status: "todo"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `app-sidebar`（该组上游文件数 2）。§6.2 点名的替代（原文\"`app-sidebar` → `Sidebar` 内容\"）。Batch30已落真实shell content：PG分页/search、socket reconnect-refetch、current row、account/session/sign-out与三断点同一children；但上游可观察的new-channel/skills/agents/settings/admin destinations尚未迁移，故本总项仍todo，不能因channel子面完成而删除其余导航能力。"
+    notes: "§6.2 组 `app-sidebar`（该组上游文件数 2）。§6.2 点名的替代（原文\"`app-sidebar` → `Sidebar` 内容\"）。Batch30已落真实shell content：PG分页/search、socket reconnect-refetch、current row、account/session/sign-out与三断点同一children；Batch31接Agents、Batch32接真实new-channel；skills/settings/admin destinations仍未迁移，故本总项仍todo。"
 
   - id: "biz-app-sidebar-channel"
     upstream: "app/src/components/app-sidebar/channel.tsx"
@@ -690,11 +690,12 @@ entries:
   - id: "biz-channels-recipient-field"
     upstream: "app/src/components/channels/recipient-field.tsx"
     label: "parity"
-    target: "openbot_ui::features::channels::recipient_field"
+    target: "openbot_ui::features::channels::recipient_field::RecipientField"
     owner: "openbot-ui"
     test_id: "T-UI-0045"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch32: RecipientField directly reuses the shared editable Combobox/listbox engine, accepts only Server AgentProfile projections, stores one ID in URL state, hashes option DOM IDs, and locks changes during create/begin replay. UI68/0/0 + WASM/Clippy. Browser proves keyboard filter/ArrowDown/Enter selects Knowledge Desk and writes ?agent=fixture-system-public; hidden-but-visible direct Agent loads by URL/hard reload; AX named combobox/options and duplicate IDs0."
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `channels`（该组上游文件数 8）。同名保留；基于 Combobox（T-UI-0002）。"
 
@@ -1678,13 +1679,13 @@ entries:
   - id: "page-app-channel-new"
     upstream: "app/src/routes/_authed/_app/channel/new.tsx"
     label: "parity"
-    target: "openbot_ui::shell::routes::app_channel_new"
+    target: "openbot_ui::features::channels::new::ChannelNewPage"
     owner: "openbot-ui"
     test_id: "T-UI-0129"
     migration_rule: "preserve"
     status: "todo"
     evidence: "find app/src/routes -name '*.tsx' | grep -vE '(__root|_authed|_app|route)\\.tsx$' | wc -l = 26（正向对照：不加 grep -v 时 = 31，即 26 页 + 5 layout，本轮均实跑）"
-    notes: "golden 落点 fixtures/ui/golden/web/app_channel_new.<theme>.<w>x<h>.png，theme ∈ {light, dark}，视口 ∈ {1440x900, 1024x640}，DPR 1 ⇒ Web 每页 4 张；Desktop（macos-arm64 / windows-x64）每页 2 张（1440x900 单视口）。全矩阵 Web 27×2×2 + 画廊 1×2 = 110 张，Desktop 27×2 = 54 张/平台。**本轮 0 张 golden 已生成**（fixtures/ui/ 目录尚不存在），status 因此是 todo。新建 channel 页。"
+    notes: "golden 落点 fixtures/ui/golden/web/app_channel_new.<theme>.<w>x<h>.png，theme ∈ {light, dark}，视口 ∈ {1440x900, 1024x640}，DPR 1 ⇒ Web 每页 4 张；Desktop（macos-arm64 / windows-x64）每页 2 张（1440x900 单视口）。Batch32已完成真实route/AX/键盘/四视口/首发journey，但**正式 golden 仍为0张**，因此本golden条目继续todo，不能拿浏览器功能证据替代视觉oracle。"
 
   - id: "page-app-index"
     upstream: "app/src/routes/_authed/_app/index.tsx"

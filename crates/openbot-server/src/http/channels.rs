@@ -40,11 +40,16 @@
 use std::future::poll_fn;
 
 use axum::Json;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::extract::{Path, Query, State};
+use axum::http::header::CACHE_CONTROL;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
-use openbot_contracts::command::{AppCommand, AppReply, ChannelDetailResponse, ChannelPage};
+use openbot_contracts::command::{
+    AppCommand, AppReply, ChannelDetailResponse, ChannelPage, CreateChannelRequest,
+};
 use openbot_contracts::command::{AppEvent, SubscriptionRequest};
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ChannelId;
@@ -131,6 +136,7 @@ pub async fn list(
         // 进程打死；也不伪装成 200 空列表，那会把一次契约破损洗成"没有数据"。
         AppReply::Health(_)
         | AppReply::Channel(_)
+        | AppReply::ChannelRouting(_)
         | AppReply::Agents(_)
         | AppReply::Agent(_)
         | AppReply::CurrentUser(_)
@@ -187,6 +193,7 @@ pub async fn get(
         AppReply::Channel(channel) => Ok(Json(ChannelDetailResponse { channel })),
         AppReply::Health(_)
         | AppReply::Channels(_)
+        | AppReply::ChannelRouting(_)
         | AppReply::Agents(_)
         | AppReply::Agent(_)
         | AppReply::CurrentUser(_)
@@ -220,6 +227,75 @@ pub async fn get(
             .into())
         }
     }
+}
+
+/// `POST /api/channels`; authentication and same-origin validation precede body parsing.
+pub async fn create(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    body: Result<Json<CreateChannelRequest>, JsonRejection>,
+) -> Result<(StatusCode, HeaderMap, Json<ChannelDetailResponse>), HttpError> {
+    let Json(body) = body.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "channel create body parsing failed");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::CreateChannel {
+                agent_ids: body.agent_ids,
+            },
+        )
+        .await?
+    {
+        AppReply::Channel(channel) => Ok((
+            StatusCode::CREATED,
+            no_store(),
+            Json(ChannelDetailResponse { channel }),
+        )),
+        AppReply::Health(_)
+        | AppReply::Channels(_)
+        | AppReply::ChannelRouting(_)
+        | AppReply::Agents(_)
+        | AppReply::Agent(_)
+        | AppReply::CurrentUser(_)
+        | AppReply::AdminStatus(_)
+        | AppReply::People(_)
+        | AppReply::Person(_)
+        | AppReply::AuditEvents(_)
+        | AppReply::ActionPolicy { .. }
+        | AppReply::Tool(_)
+        | AppReply::ThreadMinted(_)
+        | AppReply::ThreadStatus(_)
+        | AppReply::ThreadRunStarted(_)
+        | AppReply::ThreadHistory(_)
+        | AppReply::Memory(_)
+        | AppReply::Memories(_)
+        | AppReply::MemoryRecall(_)
+        | AppReply::AgentCallbackToken(_)
+        | AppReply::AgentCallbackTokenRevoked(_)
+        | AppReply::McpConnections(_)
+        | AppReply::McpOAuthAuthorization(_)
+        | AppReply::McpConnectionDisconnected(_)
+        | AppReply::McpOAuthClientRegistered(_)
+        | AppReply::McpServerMutation(_)
+        | AppReply::PendingToolApprovals(_)
+        | AppReply::ToolApprovalResolved(_)
+        | AppReply::UiPreferences(_) => {
+            tracing::error!("CreateChannel received a non-Channel application reply");
+            Err(AppError::DependencyUnavailable {
+                dependency: "application",
+            }
+            .into())
+        }
+    }
+}
+
+fn no_store() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers
 }
 
 /// `GET /api/channels/events`; same-origin, read-only channel activity WebSocket.
@@ -336,12 +412,13 @@ mod tests {
     use futures_util::{SinkExt as _, StreamExt as _};
     use http::{Method, Request, StatusCode};
     use openbot_application::ports::{
-        ChannelActivitySubscription, ChannelReadScope, ChannelReader, PortError, ThreadDirectory,
+        ChannelActivitySubscription, ChannelAdministration, ChannelAdministrationError,
+        ChannelCreateRequest, ChannelReadScope, ChannelReader, PortError, ThreadDirectory,
         ThreadDirectoryError,
     };
     use openbot_application::{AppEventStream, ChannelCursor, OpenBotApplication};
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
-    use openbot_contracts::command::{ChannelActivityEvent, ChannelSummary};
+    use openbot_contracts::command::{ChannelActivityEvent, ChannelDetail, ChannelSummary};
     use openbot_contracts::ids::{ActorId, BotId, ChannelId, DeploymentId, TenantId, ThreadId};
     use openbot_domain::identity::session::TrustedOrigins;
     use openbot_infra::auth::config::default_session_lifetime;
@@ -365,6 +442,36 @@ mod tests {
             _cursor: Option<ChannelCursor>,
         ) -> Result<Vec<ChannelSummary>, PortError> {
             Ok(Vec::new())
+        }
+    }
+
+    #[derive(Clone)]
+    struct FakeChannelAdministration {
+        result: Result<ChannelDetail, ChannelAdministrationError>,
+        calls: Arc<Mutex<Vec<ChannelCreateRequest>>>,
+    }
+
+    impl FakeChannelAdministration {
+        fn new(result: Result<ChannelDetail, ChannelAdministrationError>) -> Self {
+            Self {
+                result,
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn calls(&self) -> Vec<ChannelCreateRequest> {
+            self.calls.lock().expect("channel admin lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl ChannelAdministration for FakeChannelAdministration {
+        async fn create_channel(
+            &self,
+            request: ChannelCreateRequest,
+        ) -> Result<ChannelDetail, ChannelAdministrationError> {
+            self.calls.lock().expect("channel admin lock").push(request);
+            self.result.clone()
         }
     }
 
@@ -531,6 +638,193 @@ mod tests {
                 TrustedOrigins::from_configured(["https://app.example.test"]).unwrap(),
             ))
             .into_router()
+    }
+
+    fn app_with_administration(
+        administration: FakeChannelAdministration,
+        resolver: FixedAuthResolver,
+    ) -> Router {
+        let application = Arc::new(
+            OpenBotApplication::new(EmptyChannels)
+                .with_channel_administration(Arc::new(administration)),
+        );
+        ServerBuilder::new(application, Arc::new(resolver))
+            .with_sensitive_write_security(SensitiveWriteSecurity::new(
+                default_session_lifetime(),
+                TrustedOrigins::from_configured(["https://app.example.test"]).unwrap(),
+            ))
+            .into_router()
+    }
+
+    fn app_without_administration(resolver: FixedAuthResolver) -> Router {
+        let application = Arc::new(OpenBotApplication::new(EmptyChannels));
+        ServerBuilder::new(application, Arc::new(resolver))
+            .with_sensitive_write_security(SensitiveWriteSecurity::new(
+                default_session_lifetime(),
+                TrustedOrigins::from_configured(["https://app.example.test"]).unwrap(),
+            ))
+            .into_router()
+    }
+
+    async fn post_channel(
+        router: Router,
+        origin: Option<&str>,
+        body: &str,
+    ) -> (StatusCode, HeaderMap, serde_json::Value) {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/channels")
+            .header(http::header::CONTENT_TYPE, "application/json");
+        if let Some(origin) = origin {
+            request = request.header(http::header::ORIGIN, origin);
+        }
+        let response = router
+            .oneshot(
+                request
+                    .body(Body::from(body.to_owned()))
+                    .expect("create request"),
+            )
+            .await
+            .expect("create response");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("create body");
+        let body = serde_json::from_slice(&bytes).expect("create json");
+        (status, headers, body)
+    }
+
+    #[tokio::test]
+    async fn create_authenticates_before_body_and_rejects_every_malformed_shape_without_a_write() {
+        let administration =
+            FakeChannelAdministration::new(Err(ChannelAdministrationError::Unavailable));
+        let visible = administration.clone();
+        let (status, _, _) = post_channel(
+            app_with_administration(
+                administration,
+                FixedAuthResolver::rejecting(AppError::Unauthenticated),
+            ),
+            None,
+            "not-json",
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(visible.calls().is_empty());
+
+        let administration =
+            FakeChannelAdministration::new(Err(ChannelAdministrationError::Unavailable));
+        let visible = administration.clone();
+        let (status, _, _) = post_channel(
+            app_with_administration(administration, FixedAuthResolver::granting(auth("u1"))),
+            None,
+            "not-json",
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(visible.calls().is_empty());
+
+        for body in [
+            "null",
+            "[]",
+            r#"{"agentIds":null}"#,
+            r#"{"agentIds":[]}"#,
+            r#"{"agentIds":[1]}"#,
+            r#"{"agentIds":[""]}"#,
+            r#"{"agentIds":["agent-1"," agent-1 "]}"#,
+            r#"{"agentIds":["agent-1"],"name":"forged"}"#,
+        ] {
+            let administration =
+                FakeChannelAdministration::new(Err(ChannelAdministrationError::Unavailable));
+            let visible = administration.clone();
+            let (status, _, response) = post_channel(
+                app_with_administration(administration, FixedAuthResolver::granting(auth("u1"))),
+                Some("https://app.example.test"),
+                body,
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {response}");
+            assert_eq!(response, serde_json::json!({"code":"malformed_payload"}));
+            assert!(visible.calls().is_empty(), "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn create_uses_auth_scope_canonical_ids_and_returns_only_the_channel_dto() {
+        let administration = FakeChannelAdministration::new(Ok(ChannelDetail {
+            id: ChannelId::new("channel-1"),
+            name: "Alpha, Zeta".to_owned(),
+            agent_ids: vec![BotId::new("agent-a"), BotId::new("agent-z")],
+            thread_id: Some(ThreadId::new("thread-1")),
+            active: true,
+        }));
+        let visible = administration.clone();
+        let (status, headers, body) = post_channel(
+            app_with_administration(administration, FixedAuthResolver::granting(auth("u1"))),
+            Some("https://app.example.test"),
+            r#"{"agentIds":[" agent-z ","agent-a"]}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(headers[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            body,
+            serde_json::json!({"channel":{
+                "id":"channel-1","name":"Alpha, Zeta",
+                "agentIds":["agent-a","agent-z"],"threadId":"thread-1","active":true
+            }})
+        );
+        assert_eq!(body["channel"].as_object().unwrap().len(), 5);
+        assert_eq!(
+            visible.calls(),
+            [ChannelCreateRequest {
+                scope: openbot_application::ChannelCreateScope {
+                    deployment: DeploymentId::new("openbot-test"),
+                    tenant: TenantId::new("tenant-test"),
+                    actor: ActorId::new("u1"),
+                    admin: false,
+                },
+                agent_ids: vec![BotId::new("agent-a"), BotId::new("agent-z")],
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn create_maps_the_closed_error_domain_and_absent_store_is_mounted_fail_closed() {
+        for (error, expected) in [
+            (
+                ChannelAdministrationError::NotVisible,
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                ChannelAdministrationError::Unavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                ChannelAdministrationError::Corrupt { field: "fixture" },
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+        ] {
+            let (status, _, _) = post_channel(
+                app_with_administration(
+                    FakeChannelAdministration::new(Err(error)),
+                    FixedAuthResolver::granting(auth("u1")),
+                ),
+                Some("https://app.example.test"),
+                r#"{"agentIds":["agent-1"]}"#,
+            )
+            .await;
+            assert_eq!(status, expected);
+        }
+
+        let (status, _, body) = post_channel(
+            app_without_administration(FixedAuthResolver::granting(auth("u1"))),
+            Some("https://app.example.test"),
+            r#"{"agentIds":["agent-1"]}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, serde_json::json!({"code":"dependency_unavailable"}));
     }
 
     #[tokio::test]

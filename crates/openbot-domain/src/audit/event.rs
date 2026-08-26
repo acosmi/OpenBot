@@ -54,6 +54,8 @@ use super::payload::{AuditIdentifier, AuditLabel, AuditPayload};
 pub struct AuditEventType(&'static str);
 
 impl AuditEventType {
+    /// A create-time channel recipient was explicitly chosen or inferred.
+    pub const CHANNEL_ROUTED: Self = Self("channel.routed");
     /// Built-in/remote Agent run 已 durable activate。
     pub const AGENT_INVOKED: Self = Self("agent.invoked");
     /// Provider/remote Agent 真实 body read gap 超时。

@@ -31,10 +31,20 @@
 
 use async_trait::async_trait;
 use deadpool_postgres::Pool;
-use openbot_application::{ChannelCursor, ChannelReadScope, ChannelReader, PortError};
-use openbot_contracts::command::ChannelSummary;
+use openbot_application::{
+    ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelCursor,
+    ChannelReadScope, ChannelReader, PortError,
+};
+use openbot_contracts::agent::AgentVisibility;
+use openbot_contracts::command::{ChannelDetail, ChannelSummary};
 use openbot_contracts::ids::{ActorId, BotId, ChannelId};
+use openbot_contracts::text::trim_ecmascript;
+use openbot_domain::agent::profile_policy::{AgentActor, AgentProfileFacts, can_access_agent};
+use openbot_domain::channel::{PRIVATE_AGENT_CHANNEL_DESCRIPTION, derive_channel_name};
 use time::OffsetDateTime;
+use uuid::Uuid;
+
+use crate::thread_id::mint_thread_id;
 
 /// `PortError` 里的依赖名。与 `AppError::DependencyUnavailable::dependency` 同域。
 const DEPENDENCY: &str = "database";
@@ -214,6 +224,184 @@ impl std::fmt::Debug for ChannelRepo {
         // 不打印池内部状态：`deadpool` 的 Debug 会带上连接配置。
         f.debug_struct("ChannelRepo").finish_non_exhaustive()
     }
+}
+
+#[async_trait]
+impl ChannelAdministration for ChannelRepo {
+    async fn create_channel(
+        &self,
+        request: ChannelCreateRequest,
+    ) -> Result<ChannelDetail, ChannelAdministrationError> {
+        if request.agent_ids.is_empty()
+            || request.agent_ids.windows(2).any(|pair| pair[0] >= pair[1])
+            || request.agent_ids.iter().any(|agent_id| {
+                let value = agent_id.as_str();
+                value.is_empty()
+                    || value.len() > 512
+                    || value.chars().any(char::is_control)
+                    || trim_ecmascript(value) != value
+            })
+        {
+            return Err(ChannelAdministrationError::Corrupt { field: "agent_ids" });
+        }
+        let channel_id = ChannelId::new(format!("channel_{}", Uuid::now_v7()));
+        let thread_id = mint_thread_id(&request.scope.deployment)
+            .map_err(|_| ChannelAdministrationError::Unavailable)?;
+        let mut client = self.pool.get().await.map_err(|error| {
+            tracing::error!(error = %error, "channel create pool unavailable");
+            ChannelAdministrationError::Unavailable
+        })?;
+        let transaction = client.transaction().await.map_err(|error| {
+            tracing::error!(error = %error, "begin channel create transaction failed");
+            ChannelAdministrationError::Unavailable
+        })?;
+        let result = async {
+            let actor = AgentActor {
+                id: request.scope.actor.as_str(),
+                admin: request.scope.admin,
+            };
+            let mut names = Vec::with_capacity(request.agent_ids.len());
+            for agent_id in &request.agent_ids {
+                let row = transaction
+                    .query_opt(
+                        "SELECT a.name,p.owner_user_id,p.visibility::text, \
+                                (a.package_id IS NOT NULL) AS system_owned, \
+                                (p.deleted_at IS NOT NULL) AS deleted, \
+                                (a.package_id IS NULL OR dp.tenant_id=$2) AS tenant_visible \
+                         FROM public.agents a \
+                         JOIN public.agent_profiles p ON p.agent_id=a.id \
+                         LEFT JOIN public.deployment_packages dp ON dp.id=a.package_id \
+                         WHERE a.id=$1 FOR UPDATE OF a,p",
+                        &[&agent_id.as_str(), &request.scope.tenant.as_str()],
+                    )
+                    .await
+                    .map_err(|error| channel_admin_query("lock Agent profile", error))?;
+                let Some(row) = row else {
+                    return Err(ChannelAdministrationError::NotVisible);
+                };
+                let visibility = match admin_decode::<String>(&row, "visibility")?.as_str() {
+                    "public" => AgentVisibility::Public,
+                    "private" => AgentVisibility::Private,
+                    _ => {
+                        return Err(ChannelAdministrationError::Corrupt {
+                            field: "visibility",
+                        });
+                    }
+                };
+                let owner: Option<String> = admin_decode(&row, "owner_user_id")?;
+                let facts = AgentProfileFacts {
+                    owner_user_id: owner.as_deref(),
+                    visibility,
+                    system_owned: admin_decode(&row, "system_owned")?,
+                    deleted: admin_decode(&row, "deleted")?,
+                };
+                let tenant_visible: bool = admin_decode(&row, "tenant_visible")?;
+                if !tenant_visible || !can_access_agent(&actor, &facts) {
+                    return Err(ChannelAdministrationError::NotVisible);
+                }
+                names.push(admin_decode(&row, "name")?);
+            }
+            let name = derive_channel_name(&names).map_err(|_| {
+                ChannelAdministrationError::Corrupt {
+                    field: "agent_ids",
+                }
+            })?;
+            let now: OffsetDateTime = transaction
+                .query_one("SELECT clock_timestamp()", &[])
+                .await
+                .map_err(|error| channel_admin_query("read database clock", error))?
+                .try_get(0)
+                .map_err(|_| ChannelAdministrationError::Corrupt {
+                    field: "database_clock",
+                })?;
+            transaction
+                .execute(
+                    "INSERT INTO public.channels( \
+                       id,name,description,created_at,updated_at \
+                     ) VALUES($1,$2,$3,$4,$4)",
+                    &[
+                        &channel_id.as_str(),
+                        &name,
+                        &PRIVATE_AGENT_CHANNEL_DESCRIPTION,
+                        &now,
+                    ],
+                )
+                .await
+                .map_err(|error| channel_admin_query("insert channel", error))?;
+            transaction
+                .execute(
+                    "INSERT INTO public.channel_memberships(channel_id,user_id,created_at) \
+                     VALUES($1,$2,$3)",
+                    &[&channel_id.as_str(), &request.scope.actor.as_str(), &now],
+                )
+                .await
+                .map_err(|error| channel_admin_query("insert channel membership", error))?;
+            for agent_id in &request.agent_ids {
+                transaction
+                    .execute(
+                        "INSERT INTO public.channel_agents(channel_id,agent_id,created_at) \
+                         VALUES($1,$2,$3)",
+                        &[&channel_id.as_str(), &agent_id.as_str(), &now],
+                    )
+                    .await
+                    .map_err(|error| channel_admin_query("insert channel Agent", error))?;
+            }
+            transaction
+                .execute(
+                    "INSERT INTO public.threads( \
+                       thread_id,tenant_id,deployment_id,created_by,anchor_kind,anchor_id, \
+                       title,status,next_message_seq,next_event_seq,created_at,updated_at,deleted_at \
+                     ) VALUES($1,$2,$3,$4,'channel',$5,NULL,'active',0,0,$6,$6,NULL)",
+                    &[
+                        &thread_id.as_str(),
+                        &request.scope.tenant.as_str(),
+                        &request.scope.deployment.as_str(),
+                        &request.scope.actor.as_str(),
+                        &channel_id.as_str(),
+                        &now,
+                    ],
+                )
+                .await
+                .map_err(|error| channel_admin_query("insert channel thread", error))?;
+            Ok(ChannelDetail {
+                id: channel_id,
+                name,
+                agent_ids: request.agent_ids,
+                thread_id: Some(thread_id),
+                active: true,
+            })
+        }
+        .await;
+        match result {
+            Ok(channel) => {
+                transaction.commit().await.map_err(|error| {
+                    tracing::error!(error = %error, "commit channel create transaction failed");
+                    ChannelAdministrationError::Unavailable
+                })?;
+                Ok(channel)
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn channel_admin_query(
+    context: &'static str,
+    error: tokio_postgres::Error,
+) -> ChannelAdministrationError {
+    tracing::error!(context, error = %error, "channel create query failed");
+    ChannelAdministrationError::Unavailable
+}
+
+fn admin_decode<'a, T>(
+    row: &'a tokio_postgres::Row,
+    field: &'static str,
+) -> Result<T, ChannelAdministrationError>
+where
+    T: tokio_postgres::types::FromSql<'a>,
+{
+    row.try_get(field)
+        .map_err(|_| ChannelAdministrationError::Corrupt { field })
 }
 
 #[async_trait]

@@ -102,6 +102,20 @@ pub enum AppCommand {
         channel_id: ChannelId,
     },
 
+    /// Create one private user channel and its native channel-anchored thread.
+    CreateChannel {
+        /// Untrusted selected Agent identities; application canonicalizes and validates them.
+        agent_ids: Vec<BotId>,
+    },
+
+    /// Choose or validate the recipient for a first channel message and append routing audit.
+    RouteChannelMessage {
+        /// User message used only for model routing; audit never stores it.
+        text: String,
+        /// Explicit recipient from an `@`/picker, or `None` for inference.
+        agent_id: Option<BotId>,
+    },
+
     /// List current-actor-visible coworkers in visible or hidden roster state.
     ListVisibleAgents {
         /// False for default roster; true for per-user hidden roster.
@@ -309,6 +323,8 @@ pub enum AppReply {
     Channels(ChannelPage),
     /// [`AppCommand::GetVisibleChannel`] 的应答。
     Channel(ChannelDetail),
+    /// [`AppCommand::RouteChannelMessage`] response.
+    ChannelRouting(ChannelRoutingDecision),
     /// [`AppCommand::ListVisibleAgents`] response.
     Agents(Vec<AgentProfile>),
     /// [`AppCommand::GetVisibleAgent`] response.
@@ -425,6 +441,20 @@ pub struct BeginThreadRun {
     pub message: String,
 }
 
+/// Native HTTP body for beginning a run on the thread identified by the route path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BeginThreadRunBody {
+    /// Caller-minted durable idempotency key.
+    pub run_id: RunId,
+    /// Selected Agent; authority is rechecked against the anchor.
+    pub bot_id: BotId,
+    /// Channel/direct anchor; the stored thread must match it exactly.
+    pub anchor: ThreadRunAnchor,
+    /// Initial user message.
+    pub message: String,
+}
+
 /// thread/message/run/event/outbox 同事务提交后的 receipt。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -529,6 +559,40 @@ pub struct ChannelDetail {
 pub struct ChannelDetailResponse {
     /// Authenticated detail.
     pub channel: ChannelDetail,
+}
+
+/// Closed `POST /api/channels` request; every other channel field is server-minted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateChannelRequest {
+    /// One or more selected Agent identities.
+    pub agent_ids: Vec<BotId>,
+}
+
+/// Closed `POST /api/route` request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RouteChannelRequest {
+    /// First-message text; trimmed for routing but never written to audit.
+    pub text: String,
+    /// Optional explicit recipient.
+    pub agent_id: Option<BotId>,
+}
+
+/// Exact recipient-decision response used by the native GUI.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChannelRoutingDecision {
+    /// Chosen Agent identity.
+    pub agent_id: BotId,
+    /// Chosen Agent display name.
+    pub name: String,
+    /// Bounded explanation suitable for presentation.
+    pub reason: String,
+    /// True when deterministic defaulting replaced inference.
+    pub fallback: bool,
+    /// True when the person explicitly selected the Agent.
+    pub via_mention: bool,
 }
 
 /// channel 列表项。
@@ -818,6 +882,79 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ChannelDetailResponse>(&json).unwrap(),
             response
+        );
+    }
+
+    #[test]
+    fn channel_create_routing_and_native_begin_http_bodies_are_closed() {
+        let create = CreateChannelRequest {
+            agent_ids: vec![BotId::new("bot-2"), BotId::new("bot-1")],
+        };
+        assert_eq!(
+            serde_json::to_string(&create).unwrap(),
+            r#"{"agentIds":["bot-2","bot-1"]}"#
+        );
+        assert!(
+            serde_json::from_str::<CreateChannelRequest>(
+                r#"{"agentIds":["bot-1"],"name":"forged"}"#
+            )
+            .is_err()
+        );
+
+        let route = RouteChannelRequest {
+            text: "hello".to_owned(),
+            agent_id: Some(BotId::new("bot-1")),
+        };
+        assert_eq!(
+            serde_json::to_string(&route).unwrap(),
+            r#"{"text":"hello","agentId":"bot-1"}"#
+        );
+        let decision = ChannelRoutingDecision {
+            agent_id: BotId::new("bot-1"),
+            name: "Bot One".to_owned(),
+            reason: "named by the person asking".to_owned(),
+            fallback: false,
+            via_mention: true,
+        };
+        assert_eq!(
+            serde_json::to_string(&decision).unwrap(),
+            r#"{"agentId":"bot-1","name":"Bot One","reason":"named by the person asking","fallback":false,"viaMention":true}"#
+        );
+
+        let begin = BeginThreadRunBody {
+            run_id: RunId::new("run-1"),
+            bot_id: BotId::new("bot-1"),
+            anchor: ThreadRunAnchor::Channel {
+                channel_id: ChannelId::new("channel-1"),
+            },
+            message: "hello".to_owned(),
+        };
+        let json = serde_json::to_string(&begin).unwrap();
+        assert_eq!(
+            json,
+            r#"{"runId":"run-1","botId":"bot-1","anchor":{"kind":"channel","channel_id":"channel-1"},"message":"hello"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<BeginThreadRunBody>(&json).unwrap(),
+            begin
+        );
+
+        let create_command = AppCommand::CreateChannel {
+            agent_ids: vec![BotId::new("bot-1")],
+        };
+        let wire = serde_json::to_string(&create_command).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AppCommand>(&wire).unwrap(),
+            create_command
+        );
+        let route_command = AppCommand::RouteChannelMessage {
+            text: "hello".to_owned(),
+            agent_id: None,
+        };
+        let wire = serde_json::to_string(&route_command).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AppCommand>(&wire).unwrap(),
+            route_command
         );
     }
 

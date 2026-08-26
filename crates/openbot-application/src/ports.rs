@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use openbot_contracts::agent::AgentProfile;
 use openbot_contracts::audit::AuditPage;
 use openbot_contracts::auth::Role;
-use openbot_contracts::command::{BeginThreadRun, ChannelSummary, ThreadHistory, ThreadRunStarted};
+use openbot_contracts::command::{
+    BeginThreadRun, ChannelDetail, ChannelSummary, ThreadHistory, ThreadRunStarted,
+};
 use openbot_contracts::error::{AppError, IdentityConflictReason};
 use openbot_contracts::ids::{ActorId, BotId, ChannelId, DeploymentId, TenantId, ThreadId};
 use openbot_contracts::memory::{
@@ -16,6 +18,7 @@ use openbot_contracts::memory::{
 };
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use openbot_domain::policy::ActionPolicy;
+use openbot_domain::routing::RoutingReasonCode;
 use time::OffsetDateTime;
 
 use crate::cursor::ChannelCursor;
@@ -165,6 +168,182 @@ pub struct ChannelReadScope {
     pub tenant: TenantId,
     /// Verified actor.
     pub actor: ActorId,
+}
+
+/// Authoritative scope for creating a user channel and native thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelCreateScope {
+    /// Verified deployment used to mint the thread fingerprint.
+    pub deployment: DeploymentId,
+    /// Verified tenant used to exclude another package's Agents.
+    pub tenant: TenantId,
+    /// Verified creator and sole initial channel member.
+    pub actor: ActorId,
+    /// Whether verified roles include administrator for private-Agent access.
+    pub admin: bool,
+}
+
+/// Canonical channel creation request passed to the single PostgreSQL transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelCreateRequest {
+    /// Verified scope.
+    pub scope: ChannelCreateScope,
+    /// Non-empty, unique, lexicographically sorted Agent identities.
+    pub agent_ids: Vec<BotId>,
+}
+
+/// Channel creation failure without database or input payload text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ChannelAdministrationError {
+    /// Any selected Agent is missing, inaccessible, deleted, or cross-tenant.
+    #[error("channel_agent_not_visible")]
+    NotVisible,
+    /// Pool/query/transaction/random source failed.
+    #[error("channel_administration_unavailable")]
+    Unavailable,
+    /// A stored row could not be decoded or violated a structural invariant.
+    #[error("channel_administration_corrupt field={field}")]
+    Corrupt {
+        /// Static field only.
+        field: &'static str,
+    },
+}
+
+impl ChannelAdministrationError {
+    /// Map to stable application semantics.
+    #[must_use]
+    pub const fn into_app_error(self) -> AppError {
+        match self {
+            Self::NotVisible => AppError::NotVisible,
+            Self::Unavailable | Self::Corrupt { .. } => AppError::DependencyUnavailable {
+                dependency: "channel_administration",
+            },
+        }
+    }
+}
+
+/// User-channel write port; implementation owns profile locks and the complete transaction.
+#[async_trait]
+pub trait ChannelAdministration: Send + Sync {
+    /// Create channel, membership, links, and native thread atomically.
+    async fn create_channel(
+        &self,
+        request: ChannelCreateRequest,
+    ) -> Result<ChannelDetail, ChannelAdministrationError>;
+}
+
+/// Fail-closed channel write port until production PostgreSQL is injected.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoChannelAdministration;
+
+#[async_trait]
+impl ChannelAdministration for NoChannelAdministration {
+    async fn create_channel(
+        &self,
+        _request: ChannelCreateRequest,
+    ) -> Result<ChannelDetail, ChannelAdministrationError> {
+        Err(ChannelAdministrationError::Unavailable)
+    }
+}
+
+/// Current Agent-to-system reach hints. They influence routing only and confer no permission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentReachability {
+    /// Candidate Agent.
+    pub agent_id: BotId,
+    /// Stable system/server names, sorted and unique.
+    pub systems: Vec<String>,
+}
+
+/// Durable routing audit input; deliberately contains no user message or model prose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoutingAuditRecord {
+    /// Verified tenant used to re-read the candidate set at commit time.
+    pub tenant: TenantId,
+    /// Verified actor.
+    pub actor: ActorId,
+    /// Verified administrator role used by the same roster predicate.
+    pub admin: bool,
+    /// Full ordered visible roster snapshot used solely for commit-time conflict detection.
+    pub roster: Vec<BotId>,
+    /// Chosen Agent.
+    pub chosen: BotId,
+    /// Stable reason classification.
+    pub reason: RoutingReasonCode,
+    /// Whether deterministic fallback was used.
+    pub fallback: bool,
+    /// Whether the person explicitly selected the recipient.
+    pub via_mention: bool,
+    /// Ordered authoritative candidates considered.
+    pub candidates: Vec<BotId>,
+}
+
+/// Routing backend failure. Completion/reach failures are soft; audit failure is hard in use case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ChannelRoutingBackendError {
+    /// The visible non-hidden roster no longer equals the set used for the decision.
+    #[error("channel_routing_candidate_set_changed")]
+    CandidateSetChanged,
+    /// Provider/database/audit dependency unavailable.
+    #[error("channel_routing_backend_unavailable")]
+    Unavailable,
+    /// Stored or provider projection was structurally invalid.
+    #[error("channel_routing_backend_corrupt field={field}")]
+    Corrupt {
+        /// Static field only.
+        field: &'static str,
+    },
+}
+
+/// Model/reach/audit adapter for create-time routing; business decisions remain in application/domain.
+#[async_trait]
+pub trait ChannelRoutingBackend: Send + Sync {
+    /// Complete the domain-built routing prompt through the deployment package model.
+    async fn complete(&self, prompt: &str) -> Result<String, ChannelRoutingBackendError>;
+
+    /// Resolve current reach hints in one bounded query.
+    async fn reachable_systems(
+        &self,
+        agents: &[BotId],
+    ) -> Result<Vec<AgentReachability>, ChannelRoutingBackendError>;
+
+    /// Append one hash-chained routing event.
+    async fn record_routing(
+        &self,
+        record: RoutingAuditRecord,
+    ) -> Result<(), ChannelRoutingBackendError>;
+}
+
+/// Fail-closed routing backend. Completion falls back; audit prevents an unrecorded success.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoChannelRoutingBackend;
+
+#[async_trait]
+impl ChannelRoutingBackend for NoChannelRoutingBackend {
+    async fn complete(&self, _prompt: &str) -> Result<String, ChannelRoutingBackendError> {
+        Err(ChannelRoutingBackendError::Unavailable)
+    }
+
+    async fn reachable_systems(
+        &self,
+        agents: &[BotId],
+    ) -> Result<Vec<AgentReachability>, ChannelRoutingBackendError> {
+        Ok(agents
+            .iter()
+            .cloned()
+            .map(|agent_id| AgentReachability {
+                agent_id,
+                systems: Vec::new(),
+            })
+            .collect())
+    }
+
+    async fn record_routing(
+        &self,
+        _record: RoutingAuditRecord,
+    ) -> Result<(), ChannelRoutingBackendError> {
+        Err(ChannelRoutingBackendError::Unavailable)
+    }
 }
 
 /// Authority already resolved for Agent roster reads.

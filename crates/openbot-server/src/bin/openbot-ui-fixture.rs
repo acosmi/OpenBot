@@ -2,7 +2,7 @@
 
 use std::error::Error;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -10,14 +10,17 @@ use async_trait::async_trait;
 use futures_core::Stream;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
-    AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, ChannelReadScope,
+    AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, BeginThreadRunRequest,
+    ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
     ChannelReader, OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError,
     PortError, ThreadDirectory, ThreadDirectoryError, ToolApprovalAdministration,
     ToolApprovalAdministrationError, UiPreferenceAdministration, UiPreferenceAdministrationError,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
-use openbot_contracts::command::{AppEvent, ChannelActivityEvent, ChannelSummary};
+use openbot_contracts::command::{
+    AppEvent, ChannelActivityEvent, ChannelDetail, ChannelSummary, ThreadRunStarted,
+};
 use openbot_contracts::ids::{
     ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
 };
@@ -36,7 +39,8 @@ use time::{Duration, OffsetDateTime};
 
 #[derive(Clone)]
 struct FixtureChannels {
-    rows: Arc<Vec<ChannelSummary>>,
+    rows: Arc<Mutex<Vec<ChannelSummary>>>,
+    next: Arc<AtomicU64>,
 }
 
 impl FixtureChannels {
@@ -63,12 +67,13 @@ impl FixtureChannels {
             })
             .collect();
         Self {
-            rows: Arc::new(rows),
+            rows: Arc::new(Mutex::new(rows)),
+            next: Arc::new(AtomicU64::new(1)),
         }
     }
 
     fn read(&self, limit: u32, cursor: Option<ChannelCursor>) -> Vec<ChannelSummary> {
-        let mut rows = self.rows.as_ref().clone();
+        let mut rows = self.rows.lock().expect("fixture channel lock").clone();
         if let Some(cursor) = cursor {
             rows.retain(|row| {
                 let recency = row.last_message_at.unwrap_or(row.created_at);
@@ -105,7 +110,56 @@ impl ChannelReader for FixtureChannels {
         _scope: &ChannelReadScope,
         channel_id: &ChannelId,
     ) -> Result<Option<ChannelSummary>, PortError> {
-        Ok(self.rows.iter().find(|row| &row.id == channel_id).cloned())
+        Ok(self
+            .rows
+            .lock()
+            .expect("fixture channel lock")
+            .iter()
+            .find(|row| &row.id == channel_id)
+            .cloned())
+    }
+}
+
+#[async_trait]
+impl ChannelAdministration for FixtureChannels {
+    async fn create_channel(
+        &self,
+        request: ChannelCreateRequest,
+    ) -> Result<ChannelDetail, ChannelAdministrationError> {
+        let sequence = self.next.fetch_add(1, Ordering::SeqCst);
+        let id = ChannelId::new(format!("channel-created-{sequence}"));
+        let thread_id = ThreadId::new(uuid::Uuid::now_v7().to_string());
+        let name = request
+            .agent_ids
+            .iter()
+            .map(|id| id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let created_at = OffsetDateTime::now_utc();
+        self.rows
+            .lock()
+            .map_err(|_| ChannelAdministrationError::Unavailable)?
+            .insert(
+                0,
+                ChannelSummary {
+                    id: id.clone(),
+                    name: name.clone(),
+                    agent_ids: request.agent_ids.clone(),
+                    last_message: None,
+                    last_message_at: None,
+                    last_message_agent_id: None,
+                    created_at,
+                    thread_id: Some(thread_id.clone()),
+                    active: true,
+                },
+            );
+        Ok(ChannelDetail {
+            id,
+            name,
+            agent_ids: request.agent_ids,
+            thread_id: Some(thread_id),
+            active: true,
+        })
     }
 }
 
@@ -177,6 +231,21 @@ impl FixtureAgents {
                     system_owned: false,
                     can_manage: false,
                     mine: false,
+                },
+                AgentProfile {
+                    id: BotId::new("fixture-hidden-private"),
+                    name: "Hidden Counsel".to_owned(),
+                    title: "Hidden private coworker".to_owned(),
+                    role_description: "A directly addressable coworker hidden from the default roster.".to_owned(),
+                    avatar_seed: "fixture-hidden".to_owned(),
+                    visibility: AgentVisibility::Private,
+                    endpoint: None,
+                    has_auth: false,
+                    has_callback_token: false,
+                    hidden: true,
+                    system_owned: false,
+                    can_manage: true,
+                    mine: true,
                 },
             ]),
         }
@@ -272,6 +341,19 @@ impl ThreadDirectory for FixtureThreads {
         _thread: &ThreadId,
     ) -> Result<bool, ThreadDirectoryError> {
         Err(ThreadDirectoryError::Unavailable)
+    }
+
+    async fn begin_thread_run(
+        &self,
+        request: BeginThreadRunRequest,
+    ) -> Result<ThreadRunStarted, ThreadDirectoryError> {
+        Ok(ThreadRunStarted {
+            thread_id: request.command.thread_id,
+            run_id: request.command.run_id,
+            message_sequence: 1,
+            event_sequence: 1,
+            replayed: false,
+        })
     }
 
     async fn subscribe_channel_activity(
@@ -485,8 +567,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ),
         revoked: AtomicBool::new(false),
     };
+    let channels = FixtureChannels::new(now);
     let application: Arc<dyn ApplicationService> = Arc::new(
-        OpenBotApplication::new(FixtureChannels::new(now))
+        OpenBotApplication::new(channels.clone())
+            .with_channel_administration(Arc::new(channels))
             .with_agent_directory(Arc::new(FixtureAgents::new()))
             .with_people(FixturePeople)
             .with_threads(FixtureThreads)

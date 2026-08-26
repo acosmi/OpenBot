@@ -4700,6 +4700,7 @@ dependencies = [
  "sha2 0.10.9",
  "time",
  "toml 0.9.8",
+ "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

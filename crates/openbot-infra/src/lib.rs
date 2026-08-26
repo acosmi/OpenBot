@@ -91,6 +91,7 @@ pub mod policy;
 pub mod provider;
 pub mod remote_agui;
 pub mod repo;
+pub mod routing;
 pub mod run_runtime;
 pub mod store;
 pub mod tenant;

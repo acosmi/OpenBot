@@ -142,11 +142,12 @@ entries:
   - id: channel-new
     upstream: app/src/routes/_authed/_app/channel/new.tsx
     label: parity
-    target: "openbot_ui::shell::routes::channel_new -> /channel/new"
+    target: "openbot_ui::features::channels::new::ChannelNewPage -> /channel/new"
     owner: openbot-ui
     test_id: T-ROUTE-0010
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch32 real release WASM/browser journey: static route wins before /channel/:id; no recipient leaves send disabled; URL recipient and hidden-but-accessible direct Agent survive hard reload; refresh keeps channel count 52→52; keyboard Combobox selection owns ?agent=; click first message performs create→native begin→navigate and count 52→53. Four viewports overflow0, AX 1 main/nav/h1, duplicate IDs0, console error/warn0. Full channel detail Composer/queue/stop/steer remains T-ROUTE-0009 todo."
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/channel/new.tsx 得 createFileRoute(\"/_authed/_app/channel/new\")；同文件 useStartChannel + recipients + canSend"
     notes: "模板 Chat。journey：先选收件人（可由 URL 预填，隐藏的 coworker 仍是合法收件人）再写第一条消息 -> start() 创建 channel；刷新不会创建空 channel。权限：已登录即可见；路由匹配上 /channel/new 必须先于 /channel/:channel_id。"
   - id: skills-personal

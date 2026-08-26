@@ -208,6 +208,7 @@ impl AgentToolGateway {
                 AppReply::Health(_)
                 | AppReply::Channels(_)
                 | AppReply::Channel(_)
+                | AppReply::ChannelRouting(_)
                 | AppReply::Agents(_)
                 | AppReply::Agent(_)
                 | AppReply::CurrentUser(_)

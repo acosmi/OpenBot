@@ -52,6 +52,7 @@ pub mod health;
 pub mod memories;
 pub mod metrics;
 pub mod plugins;
+pub mod routing;
 pub mod session;
 pub mod static_app;
 pub mod threads;
@@ -482,9 +483,10 @@ pub fn router(state: ServerState) -> Router {
             "/api/auth/sso/saml2/sp/metadata/{provider_id}",
             get(auth_sso::saml_metadata),
         )
-        .route("/api/channels", get(channels::list))
+        .route("/api/channels", get(channels::list).post(channels::create))
         .route("/api/channels/events", get(channels::events))
         .route("/api/channels/{channel_id}", get(channels::get))
+        .route("/api/route", post(routing::choose))
         .route("/api/agents", get(agents::list_get))
         .route("/api/agents/{agent_id}", get(agents::get))
         .route("/api/tool-approvals", get(approvals::pending_get))
@@ -525,6 +527,7 @@ pub fn router(state: ServerState) -> Router {
         )
         .route("/api/memories/{memory_id}/forbid", post(memories::forbid))
         .route("/api/threads/mint", post(threads::mint))
+        .route("/api/threads/{thread_id}/runs", post(threads::begin_run))
         .route("/api/threads/{thread_id}/ws", get(threads::websocket))
         .route("/api/threads/{thread_id}/events", get(threads::events))
         .route("/api/threads/{thread_id}", get(threads::status))

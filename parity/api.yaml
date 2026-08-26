@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 162
+    expect: 163
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 16
+    expect: 17
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 162
+    expect: 163
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -517,7 +517,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0031"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch32: typed same-origin POST returns 201+no-store exact five-field Channel DTO; auth/Origin precede JSON; Application canonicalizes IDs and PostgreSQL17.11 SCRAM uses one atomic transaction for profile locks/channel/member/agents/native thread with no Intelligence mapping. Server3/0/0 + PG2/0/0."
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "session。成功 201。错误码：401 未登录 / 404 不可见（Bot、channel、component 一律 404 不区分不存在与无权）/ 400 malformed"
   - id: "api-channels-list-get"
@@ -1179,7 +1180,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0095"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch32: typed same-origin POST returns direct five-field decision+no-store; explicit recipient is zero-model, inference uses current scoped roster/package Chat adapter, all provider failures fall back, out-of-roster 404, candidate-set change 409. PG audit is hash-chained and contains IDs/closed reason only, never message/model prose. Domain12 + Application6 + Server6 + PG1, all green."
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "session。为无 @ 提及的消息挑 coworker；唯一写 channel.routed 审计行的地方。错误码：401 未登录 / 404 不可见（Bot、channel、component 一律 404 不区分不存在与无权）/ 400 malformed / 409 候选集在裁决期间变更"
   - id: "mount-copilotkit-root"
@@ -1749,3 +1751,14 @@ entries:
     done_evidence: "closed SessionStatus 只含 revocable bool，零session id/token/hash/scope；GET 已认证且 no-store。Server session framing 2/0/0实得multi-user=true/single-user=false；PG17.11 SCRAM 1/0/0以真keyed cookie实得true。openbot-ui WASM helper只解闭集DTO。"
     evidence: "docs/2026-08-25-G2-生产SessionSignOut-batch28-WIP恢复点.md"
     notes: "新增。不改/api/me的上游{user}形状；GUI只在true时显示登出。"
+  - id: "api-thread-runs-post"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::threads::begin_run (POST /api/threads/{thread_id}/runs)"
+    owner: "openbot-server"
+    test_id: "T-API-0163"
+    migration_rule: "n/a: GUI第一真源去React/CopilotKit后，native Leptos首条消息必须穿过既有typed BeginThreadRun"
+    status: "done"
+    done_evidence: "Batch32: same-origin auth precedes closed BeginThreadRunBody; path owns threadId, AuthContext owns scope, 201=create/200=exact replay, no-store. Server2/0/0；PG Channel Create bridge proves the newly created native thread materializes membership/message/run/activity through the existing production transaction."
+    evidence: "docs/2026-08-26-G3-G6-ChannelCreate与Routing-batch32.md"
+    notes: "新增 framing，不新增第二套 run business path；all authority/replay/lease/transaction semantics remain in existing BeginThreadRun ApplicationService + PostgresThreadDirectory."

@@ -15,15 +15,18 @@
 
 pub mod agents;
 pub mod audit;
+pub mod channels_create;
 pub mod health;
 pub mod list_visible_channels;
 pub mod memory;
 pub mod people;
 pub mod policy;
+pub mod routing;
 pub mod thread;
 
 pub use agents::{get_visible_agent, list_visible_agents};
 pub use audit::{DEFAULT_AUDIT_PAGE, MAX_AUDIT_PAGE, list_audit_events};
+pub use channels_create::create_channel;
 pub use health::{DEFAULT_HEARTBEAT_PERIOD, health, health_stream};
 pub use list_visible_channels::{DEFAULT_CHANNEL_PAGE, get_visible_channel, list_visible_channels};
 pub use memory::{
@@ -36,6 +39,7 @@ pub use people::{
     current_user, list_people,
 };
 pub use policy::{get_action_policy, set_action_policy};
+pub use routing::{MAX_ROUTING_CANDIDATES, route_channel_message};
 pub use thread::{
     begin_thread_run, get_thread_history, get_thread_status, mint_thread_id,
     subscribe_channel_activity, subscribe_thread_events,

@@ -72,6 +72,7 @@ use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_infra::repo::tools::PostgresToolJournal;
 use openbot_infra::repo::{ChannelRepo, PostgresAgentDirectory};
+use openbot_infra::routing::PostgresChannelRouting;
 use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
 use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
@@ -95,6 +96,7 @@ use url::Url;
 
 type HmacSha256 = Hmac<Sha256>;
 const PACKAGE_OPENAI_PROTOCOL: OpenAiProtocol = OpenAiProtocol::Responses;
+const CHANNEL_ROUTING_OPENAI_PROTOCOL: OpenAiProtocol = OpenAiProtocol::ChatCompletions;
 type OidcLoginAssembly = (
     Arc<OidcLoginCoordinator>,
     Arc<DynamicSsoService>,
@@ -127,6 +129,16 @@ struct BuiltInAgentAssemblyInput {
     remote_assertions: Arc<RemoteRunAssertionSigner>,
     mcp_catalog: Arc<PostgresMcpCatalog>,
     budgets: AgentBudgets,
+}
+
+struct ChannelRoutingAssemblyInput {
+    pool: deadpool_postgres::Pool,
+    model: String,
+    credential_key_id: String,
+    provider: PackageOpenAiProviderConfig,
+    credential_vault: CredentialRecordVault,
+    audit_key: Vec<u8>,
+    stall_timeout: Option<Duration>,
 }
 
 #[tokio::main]
@@ -439,14 +451,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )?
         .with_mcp_catalog(mcp_catalog.clone()),
     );
-    let application = OpenBotApplication::new(ChannelRepo::new(pool.clone()))
+    let channel_routing = build_channel_routing(ChannelRoutingAssemblyInput {
+        pool: pool.clone(),
+        model: tenant_package.package.model.default_model.clone(),
+        credential_key_id: tenant_package.package.model.credential_secret_ref.clone(),
+        provider: server.package_openai_provider.clone(),
+        credential_vault: model_credential_vault.clone(),
+        audit_key: audit_key.to_vec(),
+        stall_timeout: server.agent_budgets.stall_timeout,
+    })?;
+    let channels = ChannelRepo::new(pool.clone());
+    let application = OpenBotApplication::new(channels.clone())
         .with_people(people)
         .with_audit(PostgresAuditReader::new(pool.clone()))
         .with_policy(policy_store)
         .with_tools(tool_control, tool_journal)
         .with_threads(thread_directory)
         .with_memory(memory)
-        .with_agent_callback_tokens(callback_tokens);
+        .with_agent_callback_tokens(callback_tokens)
+        .with_channel_administration(Arc::new(channels))
+        .with_channel_routing(Arc::new(channel_routing));
     let application = application
         .with_agent_directory(Arc::new(PostgresAgentDirectory::new(pool.clone())))
         .with_mcp_connections(mcp_connections.clone())
@@ -671,6 +695,57 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
     .map_err(|_| startup_error("agent_runtime_config_invalid"))?;
     let consumer = agent.consumer();
     Ok((consumer, Some(agent)))
+}
+
+fn build_channel_routing(
+    input: ChannelRoutingAssemblyInput,
+) -> Result<PostgresChannelRouting, Box<dyn Error>> {
+    let ChannelRoutingAssemblyInput {
+        pool,
+        model,
+        credential_key_id,
+        provider,
+        credential_vault,
+        audit_key,
+        stall_timeout,
+    } = input;
+    let PackageOpenAiProviderConfig {
+        base_url,
+        environment_api_key,
+        egress_allow_cidrs,
+        allow_http,
+    } = provider;
+    let protocol = CHANNEL_ROUTING_OPENAI_PROTOCOL;
+    let endpoint = openai_endpoint(base_url.as_str(), protocol)?;
+    let environment_fallback = environment_api_key
+        .map(|key| OpenAiApiKey::from_bytes(key.expose().as_bytes().to_vec()))
+        .transpose()?;
+    let credentials = Arc::new(PostgresOpenAiCredentialSource::new(
+        pool.clone(),
+        credential_vault,
+        credential_key_id,
+        environment_fallback,
+    )?);
+    let egress = EgressPolicy::new(CidrAllowlist::parse_exact(
+        egress_allow_cidrs.iter().map(String::as_str),
+    )?);
+    let provider: Arc<dyn ProviderAdapter> = Arc::new(OpenAiProvider::new_with_credential_source(
+        OpenAiProviderConfig::new_with_transport_policy(
+            endpoint,
+            model,
+            protocol,
+            SafeHttpBudget::new(16 * 1024 * 1024, Duration::from_secs(10))?,
+            stall_timeout,
+            if allow_http {
+                SchemePolicy::HttpOrHttps
+            } else {
+                SchemePolicy::HttpsOnly
+            },
+        )?,
+        credentials,
+        SafeDialer::new(egress),
+    ));
+    Ok(PostgresChannelRouting::new(pool, audit_key, provider)?)
 }
 
 fn managed_provider_for_slot(server: &ServerConfig) -> Option<ManagedProviderConfig> {
@@ -1014,6 +1089,10 @@ mod tests {
     #[test]
     fn openai_base_url_is_sdk_style_base_and_protocol_selects_exact_endpoint() {
         assert_eq!(PACKAGE_OPENAI_PROTOCOL, OpenAiProtocol::Responses);
+        assert_eq!(
+            CHANNEL_ROUTING_OPENAI_PROTOCOL,
+            OpenAiProtocol::ChatCompletions
+        );
         assert_eq!(
             openai_endpoint("https://api.openai.com/v1", OpenAiProtocol::Responses)
                 .unwrap()
