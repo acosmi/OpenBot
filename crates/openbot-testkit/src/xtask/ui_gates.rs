@@ -116,7 +116,7 @@ pub(crate) fn design_lint(root: &Path) -> Result<()> {
         bail!("source index.html must contain zero script tags; Trunk emits the external loader");
     }
 
-    let icon_count = check_icons(&ui, &sources)?;
+    let icon_count = check_icons(root, &ui, &sources)?;
     println!(
         "design-lint: ok ({} Rust files; {icon_count} manifest/SVG icons; reverse rules clean)",
         sources.len()
@@ -335,7 +335,7 @@ fn rust_sources(dir: &Path) -> Result<Vec<(PathBuf, String)>> {
     Ok(sources)
 }
 
-fn check_icons(ui: &Path, sources: &[(PathBuf, String)]) -> Result<usize> {
+fn check_icons(root: &Path, ui: &Path, sources: &[(PathBuf, String)]) -> Result<usize> {
     let manifest_path = ui.join("design/icons.toml");
     let manifest: toml::Value = toml::from_str(
         &fs::read_to_string(&manifest_path)
@@ -422,7 +422,245 @@ fn check_icons(ui: &Path, sources: &[(PathBuf, String)]) -> Result<usize> {
             }
         }
     }
+    check_icon_mapping_join(root, &manifest, entries)?;
     Ok(names.len())
+}
+
+fn check_icon_mapping_join(
+    root: &Path,
+    manifest: &toml::Value,
+    icon_entries: &[toml::Value],
+) -> Result<()> {
+    let first_source_path = root.join("docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md");
+    let first_source = fs::read_to_string(&first_source_path)
+        .with_context(|| format!("read {}", first_source_path.display()))?;
+    let documented = parse_icon_mapping_table(&first_source)?;
+    if documented.len() != 47 {
+        bail!(
+            "GUI first-source icon mapping count drift: expected 47, got {}",
+            documented.len()
+        );
+    }
+
+    let source_zip_sha = manifest
+        .get("meta")
+        .and_then(|value| value.get("source_zip_sha256"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| anyhow!("icons.toml missing meta.source_zip_sha256"))?;
+    if !first_source.contains(source_zip_sha) {
+        bail!("GUI first source does not contain the icons.toml source zip SHA-256");
+    }
+
+    let mut manifest_mappings = BTreeMap::new();
+    let mut manifest_usage = BTreeMap::<String, BTreeSet<String>>::new();
+    for entry in icon_entries {
+        if entry.get("label").and_then(toml::Value::as_str) != Some("parity") {
+            continue;
+        }
+        let tabler = required_toml_string(entry, "upstream_tabler")?;
+        let name = required_toml_string(entry, "name")?;
+        if manifest_mappings.insert(tabler.clone(), name).is_some() {
+            bail!("icons.toml duplicates upstream_tabler `{tabler}`");
+        }
+        let usage = entry
+            .get("upstream_usage")
+            .and_then(toml::Value::as_array)
+            .ok_or_else(|| anyhow!("icons.toml `{tabler}` missing upstream_usage"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| anyhow!("icons.toml `{tabler}` has non-string upstream_usage"))
+            })
+            .collect::<Result<BTreeSet<_>>>()?;
+        if usage.is_empty() {
+            bail!("icons.toml `{tabler}` has empty upstream_usage");
+        }
+        manifest_usage.insert(tabler, usage);
+    }
+    if manifest_mappings.len() != 46 {
+        bail!(
+            "icons.toml Lucide mapping count drift: expected 46, got {}",
+            manifest_mappings.len()
+        );
+    }
+
+    let brand_marks = manifest
+        .get("brand")
+        .and_then(|value| value.get("mark"))
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| anyhow!("icons.toml missing [[brand.mark]]"))?;
+    let brand = brand_marks
+        .iter()
+        .find(|entry| {
+            entry
+                .get("upstream_tabler")
+                .and_then(toml::Value::as_str)
+                .is_some()
+        })
+        .ok_or_else(|| anyhow!("icons.toml missing upstream Tabler brand mapping"))?;
+    if required_toml_string(brand, "upstream_tabler")? != "IconBrandGoogleDrive"
+        || required_toml_string(brand, "name")? != "google-drive"
+        || required_toml_string(brand, "file")? != "google-drive.svg"
+        || required_toml_string(brand, "status")? != "todo"
+    {
+        bail!("Google Drive brand mapping/status drift in icons.toml");
+    }
+
+    let mut manifest_all = manifest_mappings.clone();
+    manifest_all.insert(
+        "IconBrandGoogleDrive".to_owned(),
+        "brand/google-drive.svg".to_owned(),
+    );
+    if documented != manifest_all {
+        bail!(
+            "GUI first-source/icons.toml mapping drift: document_only={:?}, manifest_only={:?}",
+            documented
+                .iter()
+                .filter(|(key, value)| manifest_all.get(*key) != Some(*value))
+                .collect::<Vec<_>>(),
+            manifest_all
+                .iter()
+                .filter(|(key, value)| documented.get(*key) != Some(*value))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    let ledger_path = root.join("parity/ui.yaml");
+    let ledger: serde_yaml::Value = serde_yaml::from_str(
+        &fs::read_to_string(&ledger_path)
+            .with_context(|| format!("read {}", ledger_path.display()))?,
+    )?;
+    let ledger_entries = ledger
+        .get("entries")
+        .and_then(serde_yaml::Value::as_sequence)
+        .ok_or_else(|| anyhow!("parity/ui.yaml missing entries"))?;
+    let mut ledger_icons = BTreeMap::new();
+    for entry in ledger_entries {
+        let Some(id) = entry.get("id").and_then(serde_yaml::Value::as_str) else {
+            continue;
+        };
+        let Some(tabler) = id.strip_prefix("icon-") else {
+            continue;
+        };
+        if ledger_icons.insert(tabler.to_owned(), entry).is_some() {
+            bail!("parity/ui.yaml duplicates icon ledger `{tabler}`");
+        }
+    }
+    if ledger_icons.len() != 47
+        || ledger_icons.keys().cloned().collect::<BTreeSet<_>>()
+            != documented.keys().cloned().collect::<BTreeSet<_>>()
+    {
+        bail!("parity/ui.yaml icon ledger is not the exact 47-row first-source key set");
+    }
+
+    for (tabler, target_name) in &documented {
+        let entry = ledger_icons.get(tabler).expect("exact key set was checked");
+        let target = required_yaml_string(entry, "target")?;
+        let status = required_yaml_string(entry, "status")?;
+        let upstream = required_yaml_string(entry, "upstream")?;
+        if !upstream.ends_with(&format!("::{tabler}")) {
+            bail!("{tabler} ledger upstream does not end in its exact symbol");
+        }
+        if tabler == "IconBrandGoogleDrive" {
+            if target != "openbot_ui::icons::brand::GoogleDrive" || status != "todo" {
+                bail!("Google Drive brand ledger must remain exact todo until brand assets land");
+            }
+            continue;
+        }
+
+        let manifest_name = manifest_mappings
+            .get(tabler)
+            .ok_or_else(|| anyhow!("{tabler} missing from icons.toml Lucide mappings"))?;
+        if manifest_name != target_name {
+            bail!("{tabler} document/manifest target drift");
+        }
+        let expected_target = format!("openbot_ui::icons::Icon::{}", icon_variant(target_name));
+        if target != expected_target {
+            bail!("{tabler} ledger target `{target}` != `{expected_target}`");
+        }
+        if status != "done" {
+            bail!("{tabler} has a closed Lucide mapping but ledger status is `{status}`");
+        }
+        let done_evidence = required_yaml_string(entry, "done_evidence")?;
+        if !done_evidence.contains("icon-mapping-join=46/46") {
+            bail!("{tabler} done_evidence does not cite the exact mapping join gate");
+        }
+        let upstream_path = upstream
+            .split("::")
+            .next()
+            .and_then(|path| path.strip_prefix("app/src/"))
+            .ok_or_else(|| anyhow!("{tabler} ledger upstream path is not under app/src"))?;
+        if !manifest_usage
+            .get(tabler)
+            .is_some_and(|usage| usage.contains(upstream_path))
+        {
+            bail!("{tabler} ledger first upstream path is absent from icons.toml usage");
+        }
+    }
+
+    println!(
+        "icon-mapping-join: ok (46/46 Lucide done; Google Drive brand 1/1 todo; document/manifest/ledger exact)"
+    );
+    Ok(())
+}
+
+fn parse_icon_mapping_table(source: &str) -> Result<BTreeMap<String, String>> {
+    let start = source
+        .find("#### 4.6.2")
+        .ok_or_else(|| anyhow!("GUI first source missing §4.6.2"))?;
+    let end = source[start..]
+        .find("新增页面 / 新增控件")
+        .map(|offset| start + offset)
+        .ok_or_else(|| anyhow!("GUI first source missing §4.6.2 mapping-table end"))?;
+    let mut mappings = BTreeMap::new();
+    for line in source[start..end].lines() {
+        let cells = line.split('|').map(str::trim).collect::<Vec<_>>();
+        if cells.len() < 6 {
+            continue;
+        }
+        for (upstream_index, target_index) in [(1, 2), (3, 4)] {
+            let upstream = cells[upstream_index];
+            if !upstream.starts_with("Icon") {
+                continue;
+            }
+            let target_cell = cells[target_index];
+            let target = if target_cell.contains("brand/google-drive.svg") {
+                "brand/google-drive.svg".to_owned()
+            } else {
+                backtick_value(target_cell).ok_or_else(|| {
+                    anyhow!("GUI first-source mapping `{upstream}` lacks a backtick target")
+                })?
+            };
+            if mappings.insert(upstream.to_owned(), target).is_some() {
+                bail!("GUI first source duplicates icon mapping `{upstream}`");
+            }
+        }
+    }
+    Ok(mappings)
+}
+
+fn backtick_value(value: &str) -> Option<String> {
+    let start = value.find('`')? + 1;
+    let end = value[start..].find('`')? + start;
+    Some(value[start..end].to_owned())
+}
+
+fn required_toml_string(entry: &toml::Value, key: &str) -> Result<String> {
+    entry
+        .get(key)
+        .and_then(toml::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow!("TOML entry missing string `{key}`"))
+}
+
+fn required_yaml_string(entry: &serde_yaml::Value, key: &str) -> Result<String> {
+    entry
+        .get(key)
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow!("YAML entry missing string `{key}`"))
 }
 
 fn icon_variant(name: &str) -> String {
@@ -540,6 +778,27 @@ mod tests {
     fn icon_variant_mapping_matches_build_script_contract() {
         assert_eq!(icon_variant("arrow-up-right"), "ArrowUpRight");
         assert_eq!(icon_variant("x"), "X");
+    }
+
+    #[test]
+    fn icon_mapping_table_parser_keeps_two_columns_and_brand_exception() {
+        let source = r#"
+#### 4.6.2 mapping
+| upstream | target | upstream | target |
+| --- | --- | --- | --- |
+| IconArrowDown | `arrow-down` | IconBrandGoogleDrive | 品牌标 `brand/google-drive.svg` |
+新增页面 / 新增控件
+"#;
+        assert_eq!(
+            parse_icon_mapping_table(source).unwrap(),
+            BTreeMap::from([
+                ("IconArrowDown".to_owned(), "arrow-down".to_owned()),
+                (
+                    "IconBrandGoogleDrive".to_owned(),
+                    "brand/google-drive.svg".to_owned(),
+                ),
+            ])
+        );
     }
 
     #[test]

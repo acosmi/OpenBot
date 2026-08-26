@@ -30,22 +30,21 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–23 已有真实 Leptos/Trunk/WASM 实现，目前只对机器证据闭合的 27 条原语打勾：
+# Batch 15–24 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 73 条：
 # Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
-# Batch22 Combobox/Select + Batch23 Sidebar；27 条 primitive 子账现已全 done；
-# 其余即使已有部分源码也
-# 保持 todo，不能用 Approval/preferences/design-gallery 冒充 27 原语、45 业务组件或 27 页
-# golden 全量完成。
+# Batch22 Combobox/Select + Batch23 Sidebar，27 条 primitive 子账全 done；Batch24 又关闭46条
+# Lucide映射。Google Drive品牌标与其余业务/runtime/golden保持 todo；不能用已有地基冒充
+# 45业务组件或27页golden全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）
 # ---------------------------------------------------------------------------
 #
-#   U1. Lucide 1.33.0 zip/许可已在 Phase 0 以精确 size/SHA 记录到 provenance/NOTICE；Batch 15
-#       的 design-lint 与 build.rs 又证明 74 个 manifest/SVG 两向相等且形状安全。但 (c) 组
-#       暂不批量打勾：46 个映射仍需 ledger→icons.toml 的机械逐条 join，品牌标仍缺原件。
+#   U1. **46条Lucide映射已于Batch24解除**：design-lint 对 GUI §4.6.2→icons.toml→UI ledger
+#       做逐条三向join，并继续校74 manifest/SVG安全与source zip SHA声明。唯一剩余的是
+#       IconBrandGoogleDrive：brand manifest/status、ledger均保持todo，官方SVG/条款/provenance未落。
 #   U2. 28 个新增图标已进入同一 74 项 allowlist 并由 design-lint 实证；本 ledger 本来就不
-#       逐条登记它们。该事实不能替代 U1 剩余的 46 条映射 join 与 Google Drive 品牌标。
+#       逐条登记它们；Google Drive 品牌标仍不由这28条替代。
 #   U3. golden PNG 一张都还不存在（`fixtures/ui/` 目录未建），(e) 组的 evidence 只覆盖
 #       "上游确实有这个 route 文件"，不覆盖"golden 已生成"。
 
@@ -139,16 +138,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch 23 精确完成 27 条原语；其余业务/icon/runtime/golden 保持 todo
+  # Batch 24 精确完成27原语+46 Lucide映射；品牌/业务/runtime/golden保持todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 125
+    expect: 79
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 27
+    expect: 73
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 27
+    expect: 73
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -1001,9 +1000,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0073"
     migration_rule: "rename: IconAlertTriangle → Lucide `triangle-alert`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconAlertTriangle\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconAlertTriangle` → Lucide `triangle-alert`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/triangle-alert.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconAlertTriangle` → Lucide `triangle-alert`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/triangle-alert.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconArrowDown"
     upstream: "app/src/components/ui/message-scroller.tsx::IconArrowDown"
@@ -1012,9 +1012,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0074"
     migration_rule: "rename: IconArrowDown → Lucide `arrow-down`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconArrowDown\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/ui/message-scroller.tsx）"
-    notes: "Tabler `IconArrowDown` → Lucide `arrow-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconArrowDown` → Lucide `arrow-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconArrowLeft"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconArrowLeft"
@@ -1023,9 +1024,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0075"
     migration_rule: "rename: IconArrowLeft → Lucide `arrow-left`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconArrowLeft\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconArrowLeft` → Lucide `arrow-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconArrowLeft` → Lucide `arrow-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconArrowUp"
     upstream: "app/src/components/channels/composer/composer.tsx::IconArrowUp"
@@ -1034,9 +1036,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0076"
     migration_rule: "rename: IconArrowUp → Lucide `arrow-up`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconArrowUp\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/channels/composer/composer.tsx）"
-    notes: "Tabler `IconArrowUp` → Lucide `arrow-up`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-up.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconArrowUp` → Lucide `arrow-up`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-up.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconArrowUpRight"
     upstream: "app/src/routes/_authed/admin/plugins/$key.tsx::IconArrowUpRight"
@@ -1045,9 +1048,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0077"
     migration_rule: "rename: IconArrowUpRight → Lucide `arrow-up-right`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconArrowUpRight\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/routes/_authed/admin/plugins/$key.tsx）"
-    notes: "Tabler `IconArrowUpRight` → Lucide `arrow-up-right`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-up-right.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconArrowUpRight` → Lucide `arrow-up-right`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-up-right.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconBolt"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconBolt"
@@ -1056,9 +1060,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0078"
     migration_rule: "rename: IconBolt → Lucide `zap`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconBolt\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconBolt` → Lucide `zap`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/zap.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconBolt` → Lucide `zap`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/zap.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconBox"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconBox"
@@ -1067,9 +1072,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0079"
     migration_rule: "rename: IconBox → Lucide `box`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconBox\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconBox` → Lucide `box`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/box.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconBox` → Lucide `box`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/box.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconBrandGoogleDrive"
     upstream: "app/src/routes/_authed/admin/plugins/index.tsx::IconBrandGoogleDrive"
@@ -1089,9 +1095,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0081"
     migration_rule: "rename: IconBuildingBank → Lucide `landmark`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconBuildingBank\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconBuildingBank` → Lucide `landmark`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/landmark.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconBuildingBank` → Lucide `landmark`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/landmark.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconCheck"
     upstream: "app/src/components/ui/combobox.tsx::IconCheck"
@@ -1100,9 +1107,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0082"
     migration_rule: "rename: IconCheck → Lucide `check`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconCheck\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/ui/combobox.tsx）"
-    notes: "Tabler `IconCheck` → Lucide `check`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/check.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconCheck` → Lucide `check`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/check.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconChevronDown"
     upstream: "app/src/components/ui/combobox.tsx::IconChevronDown"
@@ -1111,9 +1119,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0083"
     migration_rule: "rename: IconChevronDown → Lucide `chevron-down`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconChevronDown\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/ui/combobox.tsx）"
-    notes: "Tabler `IconChevronDown` → Lucide `chevron-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconChevronDown` → Lucide `chevron-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconChevronLeft"
     upstream: "app/src/components/layout/page-shell.tsx::IconChevronLeft"
@@ -1122,9 +1131,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0084"
     migration_rule: "rename: IconChevronLeft → Lucide `chevron-left`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconChevronLeft\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/layout/page-shell.tsx）"
-    notes: "Tabler `IconChevronLeft` → Lucide `chevron-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconChevronLeft` → Lucide `chevron-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconChevronRight"
     upstream: "app/src/components/ui/dropdown-menu.tsx::IconChevronRight"
@@ -1133,9 +1143,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0085"
     migration_rule: "rename: IconChevronRight → Lucide `chevron-right`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconChevronRight\\b' --include=*.tsx --include=*.ts app/src | wc -l = 6（首个 = app/src/components/ui/dropdown-menu.tsx）"
-    notes: "Tabler `IconChevronRight` → Lucide `chevron-right`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 6 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-right.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconChevronRight` → Lucide `chevron-right`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 6 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-right.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconChevronUp"
     upstream: "app/src/components/ui/select.tsx::IconChevronUp"
@@ -1144,9 +1155,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0086"
     migration_rule: "rename: IconChevronUp → Lucide `chevron-up`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconChevronUp\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/ui/select.tsx）"
-    notes: "Tabler `IconChevronUp` → Lucide `chevron-up`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-up.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconChevronUp` → Lucide `chevron-up`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-up.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconClock"
     upstream: "app/src/routes/_authed/admin/components/$name.tsx::IconClock"
@@ -1155,9 +1167,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0087"
     migration_rule: "rename: IconClock → Lucide `clock`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconClock\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconClock` → Lucide `clock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/clock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconClock` → Lucide `clock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/clock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconCode"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconCode"
@@ -1166,9 +1179,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0088"
     migration_rule: "rename: IconCode → Lucide `code`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconCode\\b' --include=*.tsx --include=*.ts app/src | wc -l = 4（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconCode` → Lucide `code`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 4 个文件引用它。随包落点 crates/openbot-ui/design/icons/code.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconCode` → Lucide `code`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 4 个文件引用它。随包落点 crates/openbot-ui/design/icons/code.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconDatabase"
     upstream: "app/src/routes/_authed/admin/components/$name.tsx::IconDatabase"
@@ -1177,9 +1191,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0089"
     migration_rule: "rename: IconDatabase → Lucide `database`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconDatabase\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconDatabase` → Lucide `database`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/database.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconDatabase` → Lucide `database`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/database.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconDeviceDesktop"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconDeviceDesktop"
@@ -1188,9 +1203,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0090"
     migration_rule: "rename: IconDeviceDesktop → Lucide `monitor`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconDeviceDesktop\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconDeviceDesktop` → Lucide `monitor`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/monitor.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconDeviceDesktop` → Lucide `monitor`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/monitor.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconDots"
     upstream: "app/src/routes/_authed/_app/skills.tsx::IconDots"
@@ -1199,9 +1215,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0091"
     migration_rule: "rename: IconDots → Lucide `ellipsis`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconDots\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/_app/skills.tsx）"
-    notes: "Tabler `IconDots` → Lucide `ellipsis`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/ellipsis.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconDots` → Lucide `ellipsis`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/ellipsis.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconExternalLink"
     upstream: "app/src/routes/_authed/admin/plugins/$key.tsx::IconExternalLink"
@@ -1210,9 +1227,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0092"
     migration_rule: "rename: IconExternalLink → Lucide `external-link`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconExternalLink\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/plugins/$key.tsx）"
-    notes: "Tabler `IconExternalLink` → Lucide `external-link`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/external-link.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconExternalLink` → Lucide `external-link`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/external-link.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconFile"
     upstream: "app/src/components/computer/activity-log.tsx::IconFile"
@@ -1221,9 +1239,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0093"
     migration_rule: "rename: IconFile → Lucide `file`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconFile\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/computer/activity-log.tsx）"
-    notes: "Tabler `IconFile` → Lucide `file`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/file.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconFile` → Lucide `file`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/file.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconFileText"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconFileText"
@@ -1232,9 +1251,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0094"
     migration_rule: "rename: IconFileText → Lucide `file-text`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconFileText\\b' --include=*.tsx --include=*.ts app/src | wc -l = 5（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconFileText` → Lucide `file-text`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 5 个文件引用它。随包落点 crates/openbot-ui/design/icons/file-text.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconFileText` → Lucide `file-text`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 5 个文件引用它。随包落点 crates/openbot-ui/design/icons/file-text.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconFolder"
     upstream: "app/src/components/computer/activity-log.tsx::IconFolder"
@@ -1243,9 +1263,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0095"
     migration_rule: "rename: IconFolder → Lucide `folder`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconFolder\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/computer/activity-log.tsx）"
-    notes: "Tabler `IconFolder` → Lucide `folder`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/folder.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconFolder` → Lucide `folder`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/folder.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconKey"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconKey"
@@ -1254,9 +1275,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0096"
     migration_rule: "rename: IconKey → Lucide `key`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconKey\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconKey` → Lucide `key`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/key.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconKey` → Lucide `key`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/key.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconLayoutGrid"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconLayoutGrid"
@@ -1265,9 +1287,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0097"
     migration_rule: "rename: IconLayoutGrid → Lucide `layout-grid`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconLayoutGrid\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconLayoutGrid` → Lucide `layout-grid`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/layout-grid.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconLayoutGrid` → Lucide `layout-grid`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/layout-grid.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconLayoutSidebar"
     upstream: "app/src/components/ui/sidebar.tsx::IconLayoutSidebar"
@@ -1276,9 +1299,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0098"
     migration_rule: "rename: IconLayoutSidebar → Lucide `panel-left`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconLayoutSidebar\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/ui/sidebar.tsx）"
-    notes: "Tabler `IconLayoutSidebar` → Lucide `panel-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/panel-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconLayoutSidebar` → Lucide `panel-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/panel-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconListDetails"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconListDetails"
@@ -1287,9 +1311,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0099"
     migration_rule: "rename: IconListDetails → Lucide `list-checks`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconListDetails\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconListDetails` → Lucide `list-checks`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/list-checks.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconListDetails` → Lucide `list-checks`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/list-checks.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconLock"
     upstream: "app/src/routes/_authed/admin/people.tsx::IconLock"
@@ -1298,9 +1323,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0100"
     migration_rule: "rename: IconLock → Lucide `lock`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconLock\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/people.tsx）"
-    notes: "Tabler `IconLock` → Lucide `lock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/lock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconLock` → Lucide `lock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/lock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconLogout"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconLogout"
@@ -1309,9 +1335,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0101"
     migration_rule: "rename: IconLogout → Lucide `log-out`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconLogout\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconLogout` → Lucide `log-out`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/log-out.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconLogout` → Lucide `log-out`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/log-out.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPlayerStopFilled"
     upstream: "app/src/components/channels/composer/composer.tsx::IconPlayerStopFilled"
@@ -1320,9 +1347,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0102"
     migration_rule: "rename: IconPlayerStopFilled → Lucide `circle-stop`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPlayerStopFilled\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/channels/composer/composer.tsx）"
-    notes: "Tabler `IconPlayerStopFilled` → Lucide `circle-stop`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/circle-stop.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPlayerStopFilled` → Lucide `circle-stop`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/circle-stop.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPlug"
     upstream: "app/src/components/settings/settings-sidebar.tsx::IconPlug"
@@ -1331,9 +1359,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0103"
     migration_rule: "rename: IconPlug → Lucide `plug`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPlug\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/settings/settings-sidebar.tsx）"
-    notes: "Tabler `IconPlug` → Lucide `plug`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/plug.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPlug` → Lucide `plug`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/plug.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPlus"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconPlus"
@@ -1342,9 +1371,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0104"
     migration_rule: "rename: IconPlus → Lucide `plus`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPlus\\b' --include=*.tsx --include=*.ts app/src | wc -l = 7（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconPlus` → Lucide `plus`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 7 个文件引用它。随包落点 crates/openbot-ui/design/icons/plus.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPlus` → Lucide `plus`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 7 个文件引用它。随包落点 crates/openbot-ui/design/icons/plus.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPresentation"
     upstream: "app/src/lib/markdown.tsx::IconPresentation"
@@ -1353,9 +1383,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0105"
     migration_rule: "rename: IconPresentation → Lucide `presentation`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPresentation\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/lib/markdown.tsx）"
-    notes: "Tabler `IconPresentation` → Lucide `presentation`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/presentation.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPresentation` → Lucide `presentation`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/presentation.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPuzzle"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconPuzzle"
@@ -1364,9 +1395,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0106"
     migration_rule: "rename: IconPuzzle → Lucide `puzzle`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPuzzle\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconPuzzle` → Lucide `puzzle`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/puzzle.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPuzzle` → Lucide `puzzle`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/puzzle.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconRefresh"
     upstream: "app/src/routes/_authed/admin/audit.tsx::IconRefresh"
@@ -1375,9 +1407,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0107"
     migration_rule: "rename: IconRefresh → Lucide `refresh-cw`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconRefresh\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/audit.tsx）"
-    notes: "Tabler `IconRefresh` → Lucide `refresh-cw`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/refresh-cw.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconRefresh` → Lucide `refresh-cw`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/refresh-cw.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconSearch"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconSearch"
@@ -1386,9 +1419,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0108"
     migration_rule: "rename: IconSearch → Lucide `search`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconSearch\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconSearch` → Lucide `search`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/search.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconSearch` → Lucide `search`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/search.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconSelector"
     upstream: "app/src/components/ui/select.tsx::IconSelector"
@@ -1397,9 +1431,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0109"
     migration_rule: "rename: IconSelector → Lucide `chevrons-up-down`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconSelector\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/ui/select.tsx）"
-    notes: "Tabler `IconSelector` → Lucide `chevrons-up-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevrons-up-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconSelector` → Lucide `chevrons-up-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevrons-up-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconSettings"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconSettings"
@@ -1408,9 +1443,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0110"
     migration_rule: "rename: IconSettings → Lucide `settings`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconSettings\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconSettings` → Lucide `settings`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/settings.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconSettings` → Lucide `settings`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/settings.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconShieldCheck"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconShieldCheck"
@@ -1419,9 +1455,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0111"
     migration_rule: "rename: IconShieldCheck → Lucide `shield-check`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconShieldCheck\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconShieldCheck` → Lucide `shield-check`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/shield-check.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconShieldCheck` → Lucide `shield-check`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/shield-check.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconShieldLock"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconShieldLock"
@@ -1430,9 +1467,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0112"
     migration_rule: "rename: IconShieldLock → Lucide `shield-lock`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconShieldLock\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconShieldLock` → Lucide `shield-lock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/shield-lock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconShieldLock` → Lucide `shield-lock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/shield-lock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconTable"
     upstream: "app/src/lib/markdown.tsx::IconTable"
@@ -1441,9 +1479,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0113"
     migration_rule: "rename: IconTable → Lucide `table`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconTable\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/lib/markdown.tsx）"
-    notes: "Tabler `IconTable` → Lucide `table`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/table.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconTable` → Lucide `table`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/table.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconTag"
     upstream: "app/src/routes/_authed/admin/components/$name.tsx::IconTag"
@@ -1452,9 +1491,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0114"
     migration_rule: "rename: IconTag → Lucide `tag`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconTag\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconTag` → Lucide `tag`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/tag.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconTag` → Lucide `tag`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/tag.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconTerminal2"
     upstream: "app/src/components/computer/activity-log.tsx::IconTerminal2"
@@ -1463,9 +1503,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0115"
     migration_rule: "rename: IconTerminal2 → Lucide `square-terminal`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconTerminal2\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/computer/activity-log.tsx）"
-    notes: "Tabler `IconTerminal2` → Lucide `square-terminal`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/square-terminal.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconTerminal2` → Lucide `square-terminal`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/square-terminal.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconTrash"
     upstream: "app/src/routes/_authed/admin/identity-providers.tsx::IconTrash"
@@ -1474,9 +1515,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0116"
     migration_rule: "rename: IconTrash → Lucide `trash-2`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconTrash\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/identity-providers.tsx）"
-    notes: "Tabler `IconTrash` → Lucide `trash-2`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/trash-2.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconTrash` → Lucide `trash-2`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/trash-2.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconUser"
     upstream: "app/src/routes/_authed/admin/people.tsx::IconUser"
@@ -1485,9 +1527,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0117"
     migration_rule: "rename: IconUser → Lucide `user`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconUser\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/people.tsx）"
-    notes: "Tabler `IconUser` → Lucide `user`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/user.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconUser` → Lucide `user`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/user.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconUsers"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconUsers"
@@ -1496,9 +1539,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0118"
     migration_rule: "rename: IconUsers → Lucide `users`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconUsers\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconUsers` → Lucide `users`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/users.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconUsers` → Lucide `users`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/users.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconWorld"
     upstream: "app/src/routes/_authed/admin/components/$name.tsx::IconWorld"
@@ -1507,9 +1551,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0119"
     migration_rule: "rename: IconWorld → Lucide `globe`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconWorld\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconWorld` → Lucide `globe`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/globe.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconWorld` → Lucide `globe`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/globe.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   # =======================================================================
   # (d) 6 个运行时 JavaScript 库 → Rust/CSS 替代（设计系统文档 §6.3）
