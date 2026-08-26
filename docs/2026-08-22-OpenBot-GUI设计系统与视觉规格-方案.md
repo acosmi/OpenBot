@@ -154,7 +154,7 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 
 ### 4.5 动效
 
-- 时长：hover / 底色 **120ms**；popover / menu / sheet 进入 **180ms**、退出 120ms；dialog 进入 **240ms**、退出 160ms；列表入场级联每项 +30ms、上限 8 项。
+- 时长：hover / 底色 **120ms**；popover / menu / sheet 进入 **180ms**、退出 120ms；dialog 进入 **240ms**、退出 160ms；列表入场级联每项 +30ms、上限 8 项；Agent thinking/speaking 状态环 **1200ms**、error 单次位移 **160ms**。
 - 缓动：进入 `cubic-bezier(0.2, 0, 0, 1)`，退出 `cubic-bezier(0.4, 0, 1, 1)`。（上游 `EASE_OUT` / 0.2s 是其自有值，本项目**新增**自定，不做 parity。）
 - 允许动画的清单（闭合，增项走 PR）：① 底色 / 文字色过渡；② popover / menu / sheet / dialog 出入；③ 列表入场级联（替代上游 `layout/stagger.tsx`）；④ detail panel 滑入（替代 `layout/detail-panel.tsx` 的 motion）；⑤ skeleton 呼吸；⑥ 运行中工具行的文字扫光（上游 `styles.css` 已有，parity）；⑦ agent 状态环（§6.7）。
 - `@media (prefers-reduced-motion: reduce)`：以上全部 `transition-duration: 0ms; animation: none`，扫光 / 呼吸 / 状态环降为静态；这是一条 token 级总开关，不允许组件自行豁免。
@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-25，Batch 15–25）
+### 15.1 当前实施勾选（2026-08-25，Batch 15–26）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -630,8 +630,9 @@ G6 重写后的文本（替换 v3 原四条）：
 - [x] 截至 Batch23，27条 primitive 子账全 done：Batch18前20条 + Dialog/Sheet +
   Menu + MessageScroller + Combobox/Select + Sidebar，当时 UI=`27/125/152`；
   Batch24又以三向 join 关闭46条 Lucide 映射，当时 UI=`73/79/152`；
-  Batch25关闭 layout 组 detail-panel/page-shell/row-mark/stagger 四条，当前
-  UI=`77/75/152`；其余41业务/brand/runtime/golden仍按各自证据保持 todo；
+  Batch25关闭 layout 组 detail-panel/page-shell/row-mark/stagger 四条，当时
+  UI=`77/75/152`；Batch26又关闭orb/ai-core→AgentPresence两条，当前
+  UI=`79/73/152`；其余39业务/brand/runtime/golden仍按各自证据保持 todo；
 - [x] `design-gallery` compile feature 才有 `/_design`，production bundle WASM `_design` byte=0；
   当前画廊用于状态/键盘/AX/目视 QA，不冒充正式 golden；
 - [x] Message 命名 article、neutral Bubble、跨平台 Kbd、SHA-256 deterministic Avatar、5s
@@ -651,7 +652,9 @@ G6 重写后的文本（替换 v3 原四条）：
 - [x] layout 组四条业务组件：PageShell 的960/1200/768闭集宽度与44px topbar、
   same-origin back/PageSection/Rows/Empty；RowMark 中性 vendor tile；Stagger 纯CSS 30ms/8cap；
   DetailPanel 由URL信号驱动四态，优先WAAPI、同token CSS fallback、reduce=0ms，关闭卸载并返焦；
-- [ ] 31 route journey、其余41 个业务组件、1 brand icon、6 runtime替代、compiled gallery、
+- [x] `AgentPresence` 同时关orb/ai-core两上游文件：20px、四态Signal、完整环/单弧/双弧/
+  danger环分形，thinking/speaking=1200ms、error=160ms×1，本地化AX，reduce全局静止；
+- [ ] 31 route journey、其余39 个业务组件、1 brand icon、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -664,7 +667,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-25-G6-Combobox与Select原语-batch22.md` 与
 `docs/2026-08-25-G6-Sidebar原语-batch23.md`、
 `docs/2026-08-25-G6-图标映射三向join-batch24.md` 与
-`docs/2026-08-25-G6-布局业务组件-batch25.md`；
+`docs/2026-08-25-G6-布局业务组件-batch25.md`、
+`docs/2026-08-25-G6-AgentPresence-batch26.md`；
 G6 整关继续不勾。
 
 ---

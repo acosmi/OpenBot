@@ -1,7 +1,9 @@
 # Batch 26 WIP 恢复点：AgentPresence
 
 > 日期：2026-08-25。分支 `codex/2026-08-25-G6-agent-presence`，base =
-> Batch25 正式 head `ba57391080b48dafb5c254877af084e632c7c9f7`。只跑本地定向测试；
+> Batch25 正式 head `ba57391080b48dafb5c254877af084e632c7c9f7`，implementation =
+> `5bb9d1ffe7ca8e0a023a5b07739584deee49cc26`。正式文档为
+> `2026-08-25-G6-AgentPresence-batch26.md`。只跑本地定向测试；
 > 不运行 `cargo xtask ci`，不派发 Actions，不处理 `grok-bot`，不修改/暂存/
 > 提交并行出现的 `docs/assets/`。
 
