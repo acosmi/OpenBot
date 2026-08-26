@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-25，Batch 15–24）
+### 15.1 当前实施勾选（2026-08-25，Batch 15–25）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -629,8 +629,9 @@ G6 重写后的文本（替换 v3 原四条）：
   本地首帧/CSP/canonical asset；依赖只进入 macOS/Windows Desktop target；
 - [x] 截至 Batch23，27条 primitive 子账全 done：Batch18前20条 + Dialog/Sheet +
   Menu + MessageScroller + Combobox/Select + Sidebar，当时 UI=`27/125/152`；
-  Batch24又以三向 join 关闭46条 Lucide 映射，当前 UI=`73/79/152`；
-  业务/brand/runtime/golden仍按各自证据保持 todo；
+  Batch24又以三向 join 关闭46条 Lucide 映射，当时 UI=`73/79/152`；
+  Batch25关闭 layout 组 detail-panel/page-shell/row-mark/stagger 四条，当前
+  UI=`77/75/152`；其余41业务/brand/runtime/golden仍按各自证据保持 todo；
 - [x] `design-gallery` compile feature 才有 `/_design`，production bundle WASM `_design` byte=0；
   当前画廊用于状态/键盘/AX/目视 QA，不冒充正式 golden；
 - [x] Message 命名 article、neutral Bubble、跨平台 Kbd、SHA-256 deterministic Avatar、5s
@@ -647,7 +648,10 @@ G6 重写后的文本（替换 v3 原四条）：
   current、external trigger返焦与同一 children 单挂载；
 - [x] §4.6.2 的46条Tabler→Lucide由design-lint做第一真源→icons.toml→UI ledger三向join；
   `IconBrandGoogleDrive` 因官方SVG/条款/provenance缺失保持唯一icon todo；
-- [ ] 31 route journey、45 个业务组件、1 brand icon、6 runtime替代、compiled gallery、
+- [x] layout 组四条业务组件：PageShell 的960/1200/768闭集宽度与44px topbar、
+  same-origin back/PageSection/Rows/Empty；RowMark 中性 vendor tile；Stagger 纯CSS 30ms/8cap；
+  DetailPanel 由URL信号驱动四态，优先WAAPI、同token CSS fallback、reduce=0ms，关闭卸载并返焦；
+- [ ] 31 route journey、其余41 个业务组件、1 brand icon、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -659,7 +663,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-25-G6-MessageScroller原语-batch21.md`、
 `docs/2026-08-25-G6-Combobox与Select原语-batch22.md` 与
 `docs/2026-08-25-G6-Sidebar原语-batch23.md`、
-`docs/2026-08-25-G6-图标映射三向join-batch24.md`；
+`docs/2026-08-25-G6-图标映射三向join-batch24.md` 与
+`docs/2026-08-25-G6-布局业务组件-batch25.md`；
 G6 整关继续不勾。
 
 ---
