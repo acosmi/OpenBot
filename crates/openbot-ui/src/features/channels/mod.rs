@@ -1,5 +1,6 @@
 //! Channel destination route slices.
 
+pub mod composer;
 pub mod detail;
 pub mod new;
 pub mod recipient_field;

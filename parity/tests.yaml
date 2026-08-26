@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 713
+    expect: 687
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -1462,7 +1462,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0131
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Pure Rust Segment→ComposerDraft flattens @chip display text, preserves authoritative Agent ID and trims with the shared ECMAScript rule. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[156]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「flattens chips back into the plain text sent to the runtime」。"
   - id: "app-src-components-channels-composer-draft--todraft--reports-no-agent-when-the-message-does-not-address-one"
@@ -1472,7 +1473,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0132
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A text-only segment list yields agent_id=None without inventing a default recipient. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[157]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「reports no agent when the message does not address one」。"
   - id: "app-src-components-channels-composer-draft--todraft--collects-command-chips-in-the-order-they-were-typed"
@@ -1482,7 +1484,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0133
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Command chip identities are collected in typed order independently of display text. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[158]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「collects command chips in the order they were typed」。"
   - id: "app-src-components-channels-composer-draft--todraft--treats-whitespace-only-content-as-empty"
@@ -1492,7 +1495,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0134
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Whitespace-only and zero-segment drafts are empty under the shared ECMAScript TrimString boundary. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[159]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「treats whitespace-only content as empty」。"
   - id: "app-src-components-channels-composer-draft--enforcesingleagent--keeps-the-most-recent-mention-when-a-second-agent-is-add"
@@ -1502,7 +1506,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0135
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Multiple Agent chips collapse to the latest while surrounding text is merged and the selected identity remains computer. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[161]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「keeps the most recent mention when a second agent is added」。"
   - id: "app-src-components-channels-composer-draft--enforcesingleagent--returns-the-same-array-when-there-is-nothing-to-collapse"
@@ -1512,7 +1517,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0136
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Zero/one-Agent input returns Cow::Borrowed, mechanically preserving the no-op array identity. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[162]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「returns the same array when there is nothing to collapse」。"
   - id: "app-src-components-channels-composer-draft--applycommandchips--expands-a-prompt-command-into-editable-text"
@@ -1522,7 +1528,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0137
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A prompt command rewrites to editable text, removes its command ID and emits no action effect. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[164]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「expands a prompt command into editable text」。"
   - id: "app-src-components-channels-composer-draft--applycommandchips--removes-an-action-command-and-defers-its-side-effect"
@@ -1532,7 +1539,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0138
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "An action command is removed and returned as a closed deferred effect ID; dispatch occurs only when the caller explicitly interprets it after state commit. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[165]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「removes an action command and defers its side effect」。"
   - id: "app-src-components-channels-composer-draft--applycommandchips--leaves-chip-commands-alone-and-returns-the-same-array"
@@ -1542,7 +1550,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0139
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A chip command returns Cow::Borrowed and zero actions, preserving exact no-op identity. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[166]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「leaves chip commands alone and returns the same array」。"
   - id: "app-src-components-channels-composer-draft--applycommandchips--keeps-a-chip-for-a-command-that-is-no-longer-registered"
@@ -1552,7 +1561,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0140
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "An unregistered command remains a structured chip instead of being silently deleted or executed. Composer draft10/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[167]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：草稿构造、单 Agent 约束与命令 chip 应用是纯状态函数，判据逐条移植。上游用例标题：「keeps a chip for a command that is no longer registered」。"
   # ---------------------------------------------------------------------------
@@ -1565,7 +1575,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0141
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Idle submit with an empty queue returns borrowed queue and borrowed exact draft as the immediate run. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[169]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「an idle send goes straight out and queues nothing」。"
   - id: "app-src-components-channels-composer-queue--submitting--an-idle-send-takes-anything-already-waiting-with-it"
@@ -1575,7 +1586,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0142
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Defensive idle-with-waiting state drains prior and current messages in typed order as one newline-delimited turn. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[170]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「an idle send takes anything already waiting with it」。"
   - id: "app-src-components-channels-composer-queue--submitting--an-idle-send-that-empties-a-queue-carries-its-skills-too"
@@ -1585,7 +1597,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0143
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Idle drain carries queued/current command identities in first-seen order. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[171]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「an idle send that empties a queue carries its skills too」。"
   - id: "app-src-components-channels-composer-queue--submitting--a-send-while-the-bot-is-working-waits-instead-of-running"
@@ -1595,7 +1608,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0144
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Busy submit appends one uniquely identified in-memory message and starts no run. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[172]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「a send while the Bot is working waits instead of running」。"
   - id: "app-src-components-channels-composer-queue--submitting--keeps-the-order-they-were-typed-in"
@@ -1605,7 +1619,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0145
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Three busy submissions preserve the exact order typed. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[173]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「keeps the order they were typed in」。"
   - id: "app-src-components-channels-composer-queue--settling--a-burst-of-corrections-costs-one-turn-not-three"
@@ -1615,7 +1630,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0146
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Settle combines a correction burst into one newline-delimited run and atomically empties the transient queue. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[175]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「a burst of corrections costs one turn, not three」。"
   - id: "app-src-components-channels-composer-queue--settling--stopping-the-bot-is-what-makes-the-correction-run"
@@ -1625,7 +1641,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0147
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "The pure reducer treats any externally confirmed terminal/settle fact identically, so stop can drain a correction without a separate fake branch. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[176]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「stopping the Bot is what makes the correction run」。"
   - id: "app-src-components-channels-composer-queue--settling--a-turn-ending-with-nothing-waiting-starts-nothing"
@@ -1635,7 +1652,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0148
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Settling an empty queue starts nothing and preserves borrowed empty state. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[177]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「a turn ending with nothing waiting starts nothing」。"
   - id: "app-src-components-channels-composer-queue--settling--the-drained-turn-is-addressed-to-nobody-in-particular"
@@ -1645,7 +1663,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0149
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A drained follow-up has no routing Agent ID; its already-bound channel keeps mention text only as human words. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[178]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「the drained turn is addressed to nobody in particular」。"
   - id: "app-src-components-channels-composer-queue--settling--carries-the-skills-that-were-invoked-once-each"
@@ -1655,7 +1674,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0150
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Repeated skill IDs deduplicate once in stable first-seen order while distinct skills remain. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[179]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「carries the skills that were invoked, once each」。"
   - id: "app-src-components-channels-composer-queue--settling--draining-twice-does-not-resend-what-has-already-gone"
@@ -1665,7 +1685,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0151
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A second settle against the already drained queue yields no run, preventing resend. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[180]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「draining twice does not resend what has already gone」。"
   - id: "app-src-components-channels-composer-queue--removing--takes-a-message-back-before-it-runs"
@@ -1675,7 +1696,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0152
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Remove deletes only the addressed queue identity and never starts a run. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[182]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「takes a message back before it runs」。"
   - id: "app-src-components-channels-composer-queue--removing--what-is-left-is-what-still-runs-on-settle"
@@ -1685,7 +1707,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0153
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "After removal, settle runs exactly the messages still present. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[183]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「what is left is what still runs on settle」。"
   - id: "app-src-components-channels-composer-queue--removing--removing-the-last-one-leaves-nothing-to-run"
@@ -1695,7 +1718,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0154
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Removing the last entry leaves an empty queue whose settle starts nothing. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[184]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「removing the last one leaves nothing to run」。"
   - id: "app-src-components-channels-composer-queue--removing--an-id-that-is-not-in-the-queue-changes-nothing-at-all"
@@ -1705,7 +1729,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0155
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "A missing removal ID returns Cow::Borrowed, mechanically preserving the same queue identity and skipping a render. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[185]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「an id that is not in the queue changes nothing at all」。"
   - id: "app-src-components-channels-composer-queue--removing--two-identical-corrections-are-two-entries-and-only-one-i"
@@ -1715,7 +1740,8 @@ entries:
     owner: openbot-ui
     test_id: T-TEST-0156
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Two text-identical corrections remain distinct by caller-minted ID; removing one preserves the other exactly. Composer queue16/0/0; Batch33."
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[186]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.1 GUI：发送队列的提交/落定/移除是纯状态函数，判据逐条移植。上游用例标题：「two identical corrections are two entries and only one is taken back」。"
   # ---------------------------------------------------------------------------
