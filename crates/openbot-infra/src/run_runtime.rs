@@ -1,27 +1,33 @@
 //! Native run dispatch/outbox/lease/chunk/terminal 的 PostgreSQL 原子适配器。
 
 use core::time::Duration as StdDuration;
+use std::future::poll_fn;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use openbot_application::{
-    ClaimedRunDispatch, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease,
-    RunFailureCode, RunRuntime, RunRuntimeError, RunSemanticChannel, RunTerminal, RunToolExchange,
-    RunWriteReceipt, SEMANTIC_CHUNK_MAX_BYTES,
+    ClaimedRunCancellation, ClaimedRunDispatch, RunCancellationDisposition, RunDispatchConsumer,
+    RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError,
+    RunSemanticChannel, RunTerminal, RunToolExchange, RunWriteReceipt, SEMANTIC_CHUNK_MAX_BYTES,
 };
 use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId};
 use openbot_domain::audit::hash::Sha256Digest;
 use openbot_domain::thread::FencingToken;
 use serde_json::{Value, json};
 use time::{Duration, OffsetDateTime};
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use tokio_postgres::error::SqlState;
-use tokio_postgres::{Row, Transaction};
+use tokio_postgres::{AsyncMessage, NoTls, Row, Transaction};
+
+use crate::db::pool::DatabaseConfig;
 
 const THREAD_EVENT_TOPIC: &str = "openbot_thread_events";
 const DISPATCH_DESTINATION: &str = "agent_run_dispatch";
+pub(crate) const RUN_CANCEL_DESTINATION: &str = "agent_run_cancel";
+pub(crate) const RUN_CONTROL_TOPIC: &str = "openbot_run_control";
 const DISPATCH_RETRY_CODE: &str = "runtime_busy";
+const CANCEL_CHILD_SIGNALLED_CODE: &str = "child_signalled";
 const DISPATCH_RETRY_BASE: Duration = Duration::milliseconds(100);
 const ASSISTANT_MESSAGE_SUFFIX: &str = ":assistant";
 
@@ -31,10 +37,15 @@ pub const DEFAULT_DISPATCH_CLAIM_DURATION: Duration = Duration::seconds(10);
 pub const DEFAULT_RUN_RELAY_POLL: StdDuration = StdDuration::from_millis(100);
 const RUN_RELAY_BATCH: usize = 64;
 
+pub(crate) fn run_cancel_outbox_id(run_id: &str) -> String {
+    format!("{run_id}:{RUN_CANCEL_DESTINATION}")
+}
+
 /// Production outbox relay 生命周期句柄。
 pub struct RunRelay {
     stop: watch::Sender<bool>,
     task: JoinHandle<()>,
+    listener: Option<JoinHandle<()>>,
 }
 
 impl core::fmt::Debug for RunRelay {
@@ -48,14 +59,47 @@ impl RunRelay {
     #[must_use]
     pub fn start(runtime: Arc<dyn RunRuntime>, consumer: Arc<dyn RunDispatchConsumer>) -> Self {
         let (stop, stop_rx) = watch::channel(false);
-        let task = tokio::spawn(supervise_run_relay(runtime, consumer, stop_rx));
-        Self { stop, task }
+        let wake = Arc::new(Notify::new());
+        let task = tokio::spawn(supervise_run_relay(runtime, consumer, stop_rx, wake));
+        Self {
+            stop,
+            task,
+            listener: None,
+        }
+    }
+
+    /// Start the production relay with PostgreSQL LISTEN wakeups plus the same durable poll.
+    #[must_use]
+    pub fn start_with_database(
+        runtime: Arc<dyn RunRuntime>,
+        consumer: Arc<dyn RunDispatchConsumer>,
+        database: DatabaseConfig,
+    ) -> Self {
+        let (stop, stop_rx) = watch::channel(false);
+        let wake = Arc::new(Notify::new());
+        let task = tokio::spawn(supervise_run_relay(
+            runtime,
+            consumer,
+            stop_rx.clone(),
+            wake.clone(),
+        ));
+        let listener = Some(tokio::spawn(supervise_run_control_listener(
+            database, wake, stop_rx,
+        )));
+        Self {
+            stop,
+            task,
+            listener,
+        }
     }
 
     /// 停止 claim 新工作并等待当前一次原子操作收口。
     pub async fn stop(self) {
         self.stop.send_replace(true);
         let _ = self.task.await;
+        if let Some(listener) = self.listener {
+            let _ = listener.await;
+        }
     }
 }
 
@@ -113,6 +157,55 @@ impl PostgresRunRuntime {
 
 #[async_trait]
 impl RunRuntime for PostgresRunRuntime {
+    async fn claim_cancellation(&self) -> Result<Option<ClaimedRunCancellation>, RunRuntimeError> {
+        let mut client = self.client().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|error| unavailable("开始 cancellation claim 事务", error))?;
+        let result = claim_cancellation_in_transaction(
+            &transaction,
+            &self.owner_id,
+            self.lease_duration,
+            self.claim_duration,
+        )
+        .await;
+        finish_transaction(transaction, result).await
+    }
+
+    async fn mark_cancellation_signalled(
+        &self,
+        claim: &ClaimedRunCancellation,
+    ) -> Result<(), RunRuntimeError> {
+        let mut client = self.client().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|error| unavailable("开始 cancellation signal ack 事务", error))?;
+        let result = mark_cancellation_signalled_in_transaction(
+            &transaction,
+            &self.owner_id,
+            claim,
+            self.lease_duration,
+        )
+        .await;
+        finish_transaction(transaction, result).await
+    }
+
+    async fn finish_unstarted_cancellation(
+        &self,
+        claim: &ClaimedRunCancellation,
+    ) -> Result<RunWriteReceipt, RunRuntimeError> {
+        let mut client = self.client().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|error| unavailable("开始 unstarted cancellation 事务", error))?;
+        let result =
+            finish_unstarted_cancellation_in_transaction(&transaction, &self.owner_id, claim).await;
+        finish_transaction(transaction, result).await
+    }
+
     async fn claim_dispatch(&self) -> Result<Option<ClaimedRunDispatch>, RunRuntimeError> {
         let mut client = self.client().await?;
         let transaction = client
@@ -283,6 +376,7 @@ async fn supervise_run_relay(
     runtime: Arc<dyn RunRuntime>,
     consumer: Arc<dyn RunDispatchConsumer>,
     mut stop: watch::Receiver<bool>,
+    wake: Arc<Notify>,
 ) {
     let mut poll = tokio::time::interval(DEFAULT_RUN_RELAY_POLL);
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -294,9 +388,23 @@ async fn supervise_run_relay(
                 }
             }
             _ = poll.tick() => {}
+            () = wake.notified() => {}
         }
         if *stop.borrow() {
             return;
+        }
+
+        for _ in 0..RUN_RELAY_BATCH {
+            let claim = match runtime.claim_cancellation().await {
+                Ok(Some(claim)) => claim,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::error!(code = %error,
+                        "run cancellation claim失败；等待下一轮durable重试");
+                    break;
+                }
+            };
+            handle_cancellation(runtime.as_ref(), consumer.as_ref(), &claim).await;
         }
 
         for _ in 0..RUN_RELAY_BATCH {
@@ -321,6 +429,100 @@ async fn supervise_run_relay(
             };
             handle_dispatch(runtime.as_ref(), consumer.as_ref(), claim).await;
         }
+    }
+}
+
+async fn handle_cancellation(
+    runtime: &dyn RunRuntime,
+    consumer: &dyn RunDispatchConsumer,
+    claim: &ClaimedRunCancellation,
+) {
+    match consumer.revoke(claim.lease()).await {
+        RunCancellationDisposition::ChildSignalled => {
+            if let Err(error) = runtime.mark_cancellation_signalled(claim).await {
+                tracing::error!(code = %error,
+                    "local child已收到cancel但durable signal ack未确认；等待claim expiry重试");
+            }
+        }
+        RunCancellationDisposition::NoLocalChild => {
+            if let Err(error) = runtime.finish_unstarted_cancellation(claim).await {
+                tracing::error!(code = %error,
+                    "无local child的cancel terminal未确认；等待精确重放");
+            }
+        }
+    }
+}
+
+async fn supervise_run_control_listener(
+    database: DatabaseConfig,
+    wake: Arc<Notify>,
+    mut stop: watch::Receiver<bool>,
+) {
+    loop {
+        if *stop.borrow() {
+            return;
+        }
+        let connection = database.to_pg_config().connect(NoTls).await;
+        let (client, mut connection) = match connection {
+            Ok(connection) => connection,
+            Err(error) => {
+                tracing::error!(error = %error,
+                    "run control LISTEN连接失败；poll仍为durable兜底");
+                if wait_run_control_reconnect(&mut stop).await {
+                    return;
+                }
+                continue;
+            }
+        };
+        let listen = client.batch_execute("LISTEN openbot_run_control");
+        tokio::pin!(listen);
+        let mut listening = false;
+        loop {
+            tokio::select! {
+                changed = stop.changed() => {
+                    if changed.is_err() || *stop.borrow() {
+                        return;
+                    }
+                }
+                result = &mut listen, if !listening => {
+                    match result {
+                        Ok(()) => listening = true,
+                        Err(error) => {
+                            tracing::error!(error = %error,
+                                "run control LISTEN订阅失败；准备重连");
+                            break;
+                        }
+                    }
+                }
+                message = poll_fn(|cx| connection.poll_message(cx)) => match message {
+                    Some(Ok(AsyncMessage::Notification(notification)))
+                        if notification.channel() == RUN_CONTROL_TOPIC =>
+                    {
+                        wake.notify_one();
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(error)) => {
+                        tracing::error!(error = %error,
+                            "run control LISTEN连接失败；准备重连");
+                        break;
+                    }
+                    None => {
+                        tracing::warn!("run control LISTEN连接关闭；准备重连");
+                        break;
+                    }
+                }
+            }
+        }
+        if wait_run_control_reconnect(&mut stop).await {
+            return;
+        }
+    }
+}
+
+async fn wait_run_control_reconnect(stop: &mut watch::Receiver<bool>) -> bool {
+    tokio::select! {
+        changed = stop.changed() => changed.is_err() || *stop.borrow(),
+        () = tokio::time::sleep(DEFAULT_RUN_RELAY_POLL) => false,
     }
 }
 
@@ -366,6 +568,343 @@ async fn handle_dispatch(
     }
 }
 
+async fn claim_cancellation_in_transaction(
+    transaction: &Transaction<'_>,
+    owner: &str,
+    lease_duration: Duration,
+    claim_duration: Duration,
+) -> Result<Option<ClaimedRunCancellation>, RunRuntimeError> {
+    let now = database_now(transaction).await?;
+    let row = transaction
+        .query_opt(
+            "SELECT o.outbox_id,o.aggregate_kind,o.aggregate_id,o.seq,o.delivery_class, \
+                    o.payload,o.status,o.attempt_count,o.claimed_by,o.claim_expires_at, \
+                    o.last_error_code \
+             FROM public.outbox o \
+             WHERE o.destination=$1 AND ( \
+               (o.status='delivering' AND o.claimed_by=$2) \
+               OR (o.status='pending' AND o.available_at<=$3) \
+               OR (o.status='delivering' AND o.claim_expires_at<=$3) \
+             ) AND EXISTS( \
+               SELECT 1 FROM public.runs rx \
+               JOIN public.thread_leases lx ON lx.thread_id=rx.thread_id \
+               WHERE rx.run_id=o.aggregate_id \
+                 AND (lx.owner_id=$2 OR lx.expires_at<=$3) \
+             ) AND NOT ( \
+               o.status='delivering' AND o.claimed_by=$2 \
+               AND o.last_error_code IS NOT DISTINCT FROM $4 \
+               AND EXISTS( \
+                 SELECT 1 FROM public.runs sx \
+                 JOIN public.thread_leases sl ON sl.thread_id=sx.thread_id \
+                 WHERE sx.run_id=o.aggregate_id AND sx.status='running' \
+                   AND sl.owner_id=$2 AND sl.expires_at>$3 \
+               ) \
+             ) \
+             ORDER BY CASE WHEN o.status='delivering' AND o.claimed_by=$2 THEN 0 ELSE 1 END, \
+                      o.available_at,o.outbox_id \
+             FOR UPDATE OF o SKIP LOCKED LIMIT 1",
+            &[
+                &RUN_CANCEL_DESTINATION,
+                &owner,
+                &now,
+                &CANCEL_CHILD_SIGNALLED_CODE,
+            ],
+        )
+        .await
+        .map_err(|error| unavailable("选择 cancellation outbox", error))?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let outbox_id: String = decode(&row, "outbox_id")?;
+    let aggregate_kind: String = decode(&row, "aggregate_kind")?;
+    let aggregate_id: String = decode(&row, "aggregate_id")?;
+    let outbox_seq: i64 = decode(&row, "seq")?;
+    let delivery_class: String = decode(&row, "delivery_class")?;
+    let payload: Value = decode(&row, "payload")?;
+    let outbox_status: String = decode(&row, "status")?;
+    let old_attempt: i32 = decode(&row, "attempt_count")?;
+    let claimed_by: Option<String> = decode(&row, "claimed_by")?;
+    let last_error_code: Option<String> = decode(&row, "last_error_code")?;
+
+    let Some(run_id) = payload.get("runId").and_then(Value::as_str) else {
+        return dead_letter_cancellation(transaction, &outbox_id, now, "cancel_run_id").await;
+    };
+    let Some(thread_id) = payload.get("threadId").and_then(Value::as_str) else {
+        return dead_letter_cancellation(transaction, &outbox_id, now, "cancel_thread_id").await;
+    };
+    let Some(requested_by) = payload.get("requestedBy").and_then(Value::as_str) else {
+        return dead_letter_cancellation(transaction, &outbox_id, now, "cancel_actor").await;
+    };
+    if aggregate_kind != "run"
+        || aggregate_id != run_id
+        || outbox_seq != 0
+        || delivery_class != "internal"
+        || outbox_id != run_cancel_outbox_id(run_id)
+        || payload
+            != json!({
+                "runId": run_id,
+                "threadId": thread_id,
+                "requestedBy": requested_by,
+            })
+    {
+        return dead_letter_cancellation(transaction, &outbox_id, now, "cancel_binding").await;
+    }
+
+    let Some(mut locked) = lock_run(transaction, run_id).await? else {
+        return dead_letter_cancellation(transaction, &outbox_id, now, "cancel_run").await;
+    };
+    if locked.thread_id != thread_id || locked.actor_id != requested_by {
+        return dead_letter_cancellation(transaction, &outbox_id, now, "cancel_scope_binding")
+            .await;
+    }
+    if is_terminal_status(&locked.status) {
+        deliver_control_outbox(transaction, &outbox_id, now, None).await?;
+        return Ok(None);
+    }
+    if locked.status != "running" || locked.lease_fencing != locked.fencing {
+        return dead_letter_cancellation(transaction, &outbox_id, now, "cancel_run_status").await;
+    }
+
+    let lease_expires_at = checked_add(now, lease_duration, "lease_expiry")?;
+    if locked.lease_expires_at <= now {
+        let Some(next) = locked.lease_fencing.checked_add(1) else {
+            return dead_letter_cancellation(transaction, &outbox_id, now, "fencing_exhausted")
+                .await;
+        };
+        transaction
+            .execute(
+                "UPDATE public.thread_leases SET owner_id=$2,fencing_token=$3,acquired_at=$4, \
+                 expires_at=$5,updated_at=$4 WHERE thread_id=$1",
+                &[&thread_id, &owner, &next, &now, &lease_expires_at],
+            )
+            .await
+            .map_err(|error| unavailable("接管 cancellation lease", error))?;
+        transaction
+            .execute(
+                "UPDATE public.runs SET fencing_token=$2 WHERE run_id=$1 AND status='running'",
+                &[&run_id, &next],
+            )
+            .await
+            .map_err(|error| unavailable("重绑 cancellation run fencing", error))?;
+        locked.fencing = next;
+        locked.lease_fencing = next;
+        locked.lease_owner = owner.to_owned();
+    } else if locked.lease_owner == owner {
+        transaction
+            .execute(
+                "UPDATE public.thread_leases SET expires_at=$3,updated_at=$2 WHERE thread_id=$1",
+                &[&thread_id, &now, &lease_expires_at],
+            )
+            .await
+            .map_err(|error| unavailable("cancellation claim续租", error))?;
+    } else {
+        return Ok(None);
+    }
+
+    let replaying_owned_claim = outbox_status == "delivering"
+        && claimed_by.as_deref() == Some(owner)
+        && last_error_code.as_deref() != Some(CANCEL_CHILD_SIGNALLED_CODE);
+    let attempt = if replaying_owned_claim {
+        old_attempt
+    } else {
+        old_attempt.checked_add(1).ok_or(RunRuntimeError::Corrupt {
+            field: "attempt_count",
+        })?
+    };
+    if attempt <= 0 {
+        return Err(RunRuntimeError::Corrupt {
+            field: "attempt_count",
+        });
+    }
+    let claim_expires_at = checked_add(now, claim_duration, "claim_expiry")?;
+    transaction
+        .execute(
+            "UPDATE public.outbox SET status='delivering',claimed_by=$2,claim_expires_at=$3, \
+             attempt_count=$4,last_error_code=NULL,updated_at=$5 WHERE outbox_id=$1",
+            &[&outbox_id, &owner, &claim_expires_at, &attempt, &now],
+        )
+        .await
+        .map_err(|error| unavailable("写 cancellation claim", error))?;
+    let lease = lease_from_locked(&locked)?;
+    let attempt = u32::try_from(attempt).map_err(|_| RunRuntimeError::Corrupt {
+        field: "attempt_count",
+    })?;
+    ClaimedRunCancellation::new(outbox_id, attempt, lease).map(Some)
+}
+
+async fn mark_cancellation_signalled_in_transaction(
+    transaction: &Transaction<'_>,
+    owner: &str,
+    claim: &ClaimedRunCancellation,
+    lease_duration: Duration,
+) -> Result<(), RunRuntimeError> {
+    let now = database_now(transaction).await?;
+    let row = transaction
+        .query_opt(
+            "SELECT status,claimed_by,attempt_count,last_error_code FROM public.outbox \
+             WHERE outbox_id=$1 FOR UPDATE",
+            &[&claim.outbox_id()],
+        )
+        .await
+        .map_err(|error| unavailable("读取 cancellation signal ack", error))?
+        .ok_or(RunRuntimeError::Corrupt { field: "outbox" })?;
+    let status: String = decode(&row, "status")?;
+    let claimed_by: Option<String> = decode(&row, "claimed_by")?;
+    let attempt: i32 = decode(&row, "attempt_count")?;
+    let last_error_code: Option<String> = decode(&row, "last_error_code")?;
+    if status == "delivered" {
+        return Ok(());
+    }
+    if status != "delivering"
+        || claimed_by.as_deref() != Some(owner)
+        || u32::try_from(attempt).ok() != Some(claim.attempt())
+    {
+        return Err(RunRuntimeError::StaleLease);
+    }
+    let Some(locked) = lock_run(transaction, claim.lease().run_id().as_str()).await? else {
+        return Err(RunRuntimeError::StaleLease);
+    };
+    if is_terminal_status(&locked.status) {
+        deliver_control_outbox(transaction, claim.outbox_id(), now, None).await?;
+        return Ok(());
+    }
+    validate_active_lease(&locked, owner, claim.lease(), now)?;
+    if last_error_code.as_deref() == Some(CANCEL_CHILD_SIGNALLED_CODE) {
+        return Ok(());
+    }
+    let claim_expires_at = checked_add(now, lease_duration, "cancel_signal_expiry")?;
+    transaction
+        .execute(
+            "UPDATE public.outbox SET last_error_code=$4,claim_expires_at=$3,updated_at=$5 \
+             WHERE outbox_id=$1 AND claimed_by=$2 AND status='delivering'",
+            &[
+                &claim.outbox_id(),
+                &owner,
+                &claim_expires_at,
+                &CANCEL_CHILD_SIGNALLED_CODE,
+                &now,
+            ],
+        )
+        .await
+        .map_err(|error| unavailable("持久化 child-signalled fact", error))?;
+    Ok(())
+}
+
+async fn finish_unstarted_cancellation_in_transaction(
+    transaction: &Transaction<'_>,
+    owner: &str,
+    claim: &ClaimedRunCancellation,
+) -> Result<RunWriteReceipt, RunRuntimeError> {
+    let row = transaction
+        .query_opt(
+            "SELECT status,claimed_by,attempt_count FROM public.outbox \
+             WHERE outbox_id=$1 FOR UPDATE",
+            &[&claim.outbox_id()],
+        )
+        .await
+        .map_err(|error| unavailable("读取 unstarted cancellation", error))?
+        .ok_or(RunRuntimeError::Corrupt { field: "outbox" })?;
+    let status: String = decode(&row, "status")?;
+    let claimed_by: Option<String> = decode(&row, "claimed_by")?;
+    let attempt: i32 = decode(&row, "attempt_count")?;
+    if status != "delivered"
+        && (status != "delivering"
+            || claimed_by.as_deref() != Some(owner)
+            || u32::try_from(attempt).ok() != Some(claim.attempt()))
+    {
+        return Err(RunRuntimeError::StaleLease);
+    }
+    let receipt = finish_run_in_transaction(
+        transaction,
+        owner,
+        claim.lease(),
+        claim.lease().next_event_sequence(),
+        RunTerminal::Cancelled,
+        LeaseCheck::Active,
+    )
+    .await?;
+    let now = database_now(transaction).await?;
+    settle_dispatch_for_cancelled_run(transaction, claim.lease(), now).await?;
+    deliver_control_outbox(transaction, claim.outbox_id(), now, None).await?;
+    Ok(receipt)
+}
+
+async fn settle_dispatch_for_cancelled_run(
+    transaction: &Transaction<'_>,
+    lease: &RunExecutionLease,
+    now: OffsetDateTime,
+) -> Result<(), RunRuntimeError> {
+    let outbox_id = format!("{}:{DISPATCH_DESTINATION}", lease.run_id());
+    let row = transaction
+        .query_opt(
+            "SELECT aggregate_kind,aggregate_id,seq,destination,delivery_class,payload,status \
+             FROM public.outbox WHERE outbox_id=$1 FOR UPDATE",
+            &[&outbox_id],
+        )
+        .await
+        .map_err(|error| unavailable("读取 cancelled run dispatch", error))?
+        .ok_or(RunRuntimeError::Corrupt {
+            field: "dispatch_outbox",
+        })?;
+    let aggregate_kind: String = decode(&row, "aggregate_kind")?;
+    let aggregate_id: String = decode(&row, "aggregate_id")?;
+    let sequence: i64 = decode(&row, "seq")?;
+    let destination: String = decode(&row, "destination")?;
+    let delivery_class: String = decode(&row, "delivery_class")?;
+    let payload: Value = decode(&row, "payload")?;
+    let status: String = decode(&row, "status")?;
+    let payload_sequence = payload.get("eventSequence").and_then(Value::as_u64);
+    if aggregate_kind != "thread"
+        || aggregate_id != lease.thread_id().as_str()
+        || destination != DISPATCH_DESTINATION
+        || delivery_class != "internal"
+        || payload.get("runId").and_then(Value::as_str) != Some(lease.run_id().as_str())
+        || payload.get("threadId").and_then(Value::as_str) != Some(lease.thread_id().as_str())
+        || payload_sequence.and_then(|value| i64::try_from(value).ok()) != Some(sequence)
+        || !matches!(status.as_str(), "pending" | "delivering" | "delivered")
+    {
+        return Err(RunRuntimeError::Corrupt {
+            field: "dispatch_outbox",
+        });
+    }
+    deliver_control_outbox(transaction, &outbox_id, now, None).await
+}
+
+async fn deliver_control_outbox(
+    transaction: &Transaction<'_>,
+    outbox_id: &str,
+    now: OffsetDateTime,
+    code: Option<&str>,
+) -> Result<(), RunRuntimeError> {
+    transaction
+        .execute(
+            "UPDATE public.outbox SET status='delivered',delivered_at=coalesce(delivered_at,$2), \
+             claimed_by=NULL,claim_expires_at=NULL,last_error_code=$3,updated_at=$2 \
+             WHERE outbox_id=$1",
+            &[&outbox_id, &now, &code],
+        )
+        .await
+        .map_err(|error| unavailable("收敛 run control outbox", error))?;
+    Ok(())
+}
+
+async fn dead_letter_cancellation(
+    transaction: &Transaction<'_>,
+    outbox_id: &str,
+    now: OffsetDateTime,
+    code: &'static str,
+) -> Result<Option<ClaimedRunCancellation>, RunRuntimeError> {
+    transaction
+        .execute(
+            "UPDATE public.outbox SET status='dead_letter',claimed_by=NULL,claim_expires_at=NULL, \
+             last_error_code=$3,updated_at=$2 WHERE outbox_id=$1",
+            &[&outbox_id, &now, &code],
+        )
+        .await
+        .map_err(|error| unavailable("dead-letter cancellation outbox", error))?;
+    Ok(None)
+}
+
 async fn claim_dispatch_in_transaction(
     transaction: &Transaction<'_>,
     owner: &str,
@@ -388,11 +927,15 @@ async fn claim_dispatch_in_transaction(
                OR EXISTS(SELECT 1 FROM public.thread_leases lx \
                          WHERE lx.thread_id=o.aggregate_id \
                            AND (lx.owner_id=$2 OR lx.expires_at<=$3)) \
+             ) AND NOT EXISTS( \
+               SELECT 1 FROM public.outbox cx \
+               WHERE cx.aggregate_id=o.payload->>'runId' AND cx.destination=$4 \
+                 AND cx.status IN ('pending','delivering') \
              ) \
              ORDER BY CASE WHEN o.status='delivering' AND o.claimed_by=$2 THEN 0 ELSE 1 END, \
                       o.available_at,o.outbox_id \
              FOR UPDATE OF o SKIP LOCKED LIMIT 1",
-            &[&DISPATCH_DESTINATION, &owner, &now],
+            &[&DISPATCH_DESTINATION, &owner, &now, &RUN_CANCEL_DESTINATION],
         )
         .await
         .map_err(|error| unavailable("选择 dispatch outbox", error))?;
@@ -1101,9 +1644,12 @@ async fn recover_one_in_transaction(
              JOIN public.outbox o ON o.outbox_id=r.run_id || ':agent_run_dispatch' \
              WHERE r.status='running' AND l.expires_at<=$1 \
                AND o.status IN ('delivered','dead_letter') \
+               AND NOT EXISTS(SELECT 1 FROM public.outbox cx \
+                 WHERE cx.aggregate_id=r.run_id AND cx.destination=$2 \
+                   AND cx.status IN ('pending','delivering')) \
              ORDER BY l.expires_at,r.run_id \
              FOR UPDATE OF r,l,o SKIP LOCKED LIMIT 1",
-            &[&now],
+            &[&now, &RUN_CANCEL_DESTINATION],
         )
         .await
         .map_err(|error| unavailable("选择 stale running run", error))?;

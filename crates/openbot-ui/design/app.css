@@ -1394,6 +1394,23 @@ textarea:focus-visible,
   font-size: var(--text-sm);
 }
 
+.ob-conversation-cancelling {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.ob-queued-message {
+  opacity: 0.6;
+}
+
+.ob-queued-message .ob-message-footer .ob-button {
+  min-height: var(--size-control-sm);
+  padding-inline: var(--spacing);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
 .ob-channel-composer {
   position: sticky;
   inset-block-end: 0;

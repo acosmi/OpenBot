@@ -210,6 +210,12 @@ pub enum AppCommand {
     /// `AuthContext` / PostgreSQL transaction 铸造。`run_id` 同时是幂等键。
     BeginThreadRun(BeginThreadRun),
 
+    /// Persist an actor-owned foreground-run cancellation request.
+    ///
+    /// The request is durable before any in-process child is signalled. Thread/run identities are
+    /// untrusted candidates; deployment, tenant and actor still come only from `AuthContext`.
+    CancelThreadRun(CancelThreadRun),
+
     /// 读取当前 actor 可见的完整 native thread history。
     GetThreadHistory {
         /// Thread id；未知/空/不可见统一成功空列表，非 UUID 外形仍是 400。
@@ -358,6 +364,8 @@ pub enum AppReply {
     ThreadStatus(ThreadStatus),
     /// [`AppCommand::BeginThreadRun`] 的 durable receipt。
     ThreadRunStarted(ThreadRunStarted),
+    /// [`AppCommand::CancelThreadRun`] durable acknowledgement.
+    ThreadRunCancellation(ThreadRunCancellation),
     /// [`AppCommand::GetThreadHistory`] 的应答。
     ThreadHistory(ThreadHistory),
     /// [`AppCommand::GetThreadConversation`] response.
@@ -479,6 +487,40 @@ pub struct ThreadRunStarted {
     pub replayed: bool,
 }
 
+/// Minimal input for durable foreground-run cancellation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CancelThreadRun {
+    /// Native thread bound by the route/application scope.
+    pub thread_id: ThreadId,
+    /// Current foreground run candidate.
+    pub run_id: RunId,
+}
+
+/// Durable request outcome. A stale Stop racing a terminal is a successful closed observation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadRunCancellationState {
+    /// This call inserted the replay-safe internal control request.
+    Requested,
+    /// The same exact request already exists and remains authoritative.
+    AlreadyRequested,
+    /// The run was already terminal; no cancellation request was added.
+    AlreadyTerminal,
+}
+
+/// Durable cancellation acknowledgement; it never claims that children have stopped.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadRunCancellation {
+    /// Bound native thread.
+    pub thread_id: ThreadId,
+    /// Bound foreground run.
+    pub run_id: RunId,
+    /// Request persistence outcome, not the eventual terminal state.
+    pub state: ThreadRunCancellationState,
+}
+
 /// AG-UI history 可观察的 message role 子集。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -519,6 +561,20 @@ pub struct ThreadHistory {
     pub messages: Vec<ThreadHistoryMessage>,
 }
 
+/// Current foreground state projected from durable run + cancellation outbox facts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadForegroundRunState {
+    /// Durable row exists but execution has not begun.
+    Queued,
+    /// Provider/tool child may be active and no cancellation has been requested.
+    Running,
+    /// A durable cancellation request exists; terminal still waits for children-stopped facts.
+    Cancelling,
+    /// External commit state is unknown and the foreground slot remains blocked.
+    ReconciliationRequired,
+}
+
 /// Atomic PostgreSQL snapshot used to join durable history to realtime replay without a gap.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -527,6 +583,10 @@ pub struct ThreadConversationSnapshot {
     pub messages: Vec<ThreadHistoryMessage>,
     /// Current foreground run that blocks another send, if any.
     pub active_run_id: Option<RunId>,
+    /// Closed foreground state; `None` exactly when `active_run_id` is `None`.
+    pub active_run_state: Option<ThreadForegroundRunState>,
+    /// Whether this actor may issue the first cancellation request for the active run.
+    pub active_run_cancellable: bool,
     /// Already committed text chunks for the active run; empty when no text/run exists.
     pub active_run_text: String,
     /// Last committed thread-global event cursor; `None` means the thread has no events.
@@ -991,18 +1051,35 @@ mod tests {
                 tool_calls: None,
             }],
             active_run_id: Some(RunId::new("run-1")),
+            active_run_state: Some(ThreadForegroundRunState::Running),
+            active_run_cancellable: true,
             active_run_text: "partial".to_owned(),
             last_event_sequence: Some(7),
         };
         assert_eq!(
             serde_json::to_string(&snapshot).unwrap(),
-            r#"{"messages":[{"id":"message-1","role":"user","content":"hello"}],"activeRunId":"run-1","activeRunText":"partial","lastEventSequence":7}"#
+            r#"{"messages":[{"id":"message-1","role":"user","content":"hello"}],"activeRunId":"run-1","activeRunState":"running","activeRunCancellable":true,"activeRunText":"partial","lastEventSequence":7}"#
         );
         assert!(
             serde_json::from_str::<ThreadConversationSnapshot>(
-                r#"{"messages":[],"activeRunId":null,"activeRunText":"","lastEventSequence":null,"actor":"forged"}"#
+                r#"{"messages":[],"activeRunId":null,"activeRunState":null,"activeRunCancellable":false,"activeRunText":"","lastEventSequence":null,"actor":"forged"}"#
             )
             .is_err()
+        );
+
+        let cancellation = ThreadRunCancellation {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+            run_id: RunId::new("run-1"),
+            state: ThreadRunCancellationState::Requested,
+        };
+        let wire = serde_json::to_string(&cancellation).unwrap();
+        assert_eq!(
+            wire,
+            r#"{"threadId":"550e8400-e29b-81d4-a716-446655440000","runId":"run-1","state":"requested"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<ThreadRunCancellation>(&wire).unwrap(),
+            cancellation
         );
     }
 
@@ -1134,6 +1211,17 @@ mod tests {
             r#"{"kind":"begin_thread_run","threadId":"550e8400-e29b-81d4-a716-446655440000","runId":"run-1","botId":"bot-1","anchor":{"kind":"direct_bot"},"message":"hello"}"#
         );
         assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), begin);
+
+        let cancel = AppCommand::CancelThreadRun(CancelThreadRun {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+            run_id: RunId::new("run-1"),
+        });
+        let wire = serde_json::to_string(&cancel).unwrap();
+        assert_eq!(
+            wire,
+            r#"{"kind":"cancel_thread_run","threadId":"550e8400-e29b-81d4-a716-446655440000","runId":"run-1"}"#
+        );
+        assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), cancel);
 
         let history = AppCommand::GetThreadHistory {
             thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),

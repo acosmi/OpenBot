@@ -2,16 +2,17 @@
 
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{
-    BeginThreadRun, MAX_THREAD_MESSAGE_BYTES, ThreadConversationSnapshot, ThreadHistory,
-    ThreadMinted, ThreadRunAnchor, ThreadRunStarted, ThreadStatus,
+    BeginThreadRun, CancelThreadRun, MAX_THREAD_MESSAGE_BYTES, ThreadConversationSnapshot,
+    ThreadHistory, ThreadMinted, ThreadRunAnchor, ThreadRunCancellation, ThreadRunStarted,
+    ThreadStatus,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ThreadId;
 use openbot_contracts::ids::thread::ThreadIdentity;
 
 use crate::ports::{
-    BeginThreadRunRequest, ChannelActivitySubscription, ThreadConversationRequest, ThreadDirectory,
-    ThreadEventSubscription, ThreadHistoryRequest,
+    BeginThreadRunRequest, CancelThreadRunRequest, ChannelActivitySubscription,
+    ThreadConversationRequest, ThreadDirectory, ThreadEventSubscription, ThreadHistoryRequest,
 };
 use crate::service::AppEventStream;
 
@@ -77,6 +78,29 @@ pub async fn begin_thread_run<D: ThreadDirectory>(
     }
     directory
         .begin_thread_run(BeginThreadRunRequest {
+            deployment: auth.deployment().clone(),
+            tenant: auth.tenant().clone(),
+            actor: auth.actor().clone(),
+            command,
+        })
+        .await
+        .map_err(|error| error.into_app_error())
+}
+
+/// Validate public identities, then persist cancellation through the single authority-aware port.
+pub async fn cancel_thread_run<D: ThreadDirectory>(
+    directory: &D,
+    auth: &AuthContext,
+    command: CancelThreadRun,
+) -> Result<ThreadRunCancellation, AppError> {
+    if !ThreadIdentity::is_plausible(&command.thread_id) {
+        return Err(AppError::MalformedPayload { field: "thread_id" });
+    }
+    if command.run_id.as_str().is_empty() || command.run_id.as_str().as_bytes().contains(&0) {
+        return Err(AppError::MalformedPayload { field: "run_id" });
+    }
+    directory
+        .cancel_thread_run(CancelThreadRunRequest {
             deployment: auth.deployment().clone(),
             tenant: auth.tenant().clone(),
             actor: auth.actor().clone(),
@@ -460,6 +484,109 @@ mod tests {
                     .unwrap_err(),
                 expected
             );
+        }
+    }
+
+    struct CancelDirectory {
+        result: Result<ThreadRunCancellation, ThreadDirectoryError>,
+        calls: Mutex<Vec<CancelThreadRunRequest>>,
+    }
+
+    #[async_trait]
+    impl ThreadDirectory for CancelDirectory {
+        async fn mint_thread_id(
+            &self,
+            _deployment: &DeploymentId,
+        ) -> Result<ThreadId, ThreadDirectoryError> {
+            Err(ThreadDirectoryError::Unavailable)
+        }
+
+        async fn thread_known(
+            &self,
+            _deployment: &DeploymentId,
+            _tenant: &TenantId,
+            _actor: &ActorId,
+            _thread: &ThreadId,
+        ) -> Result<bool, ThreadDirectoryError> {
+            Err(ThreadDirectoryError::Unavailable)
+        }
+
+        async fn cancel_thread_run(
+            &self,
+            request: CancelThreadRunRequest,
+        ) -> Result<ThreadRunCancellation, ThreadDirectoryError> {
+            self.calls.lock().expect("fake lock").push(request);
+            self.result.clone()
+        }
+    }
+
+    fn cancel_command() -> CancelThreadRun {
+        CancelThreadRun {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+            run_id: openbot_contracts::ids::RunId::new("run-1"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_injects_authoritative_scope_and_returns_only_the_durable_ack() {
+        let expected = ThreadRunCancellation {
+            thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+            run_id: openbot_contracts::ids::RunId::new("run-1"),
+            state: openbot_contracts::command::ThreadRunCancellationState::Requested,
+        };
+        let directory = CancelDirectory {
+            result: Ok(expected.clone()),
+            calls: Mutex::new(Vec::new()),
+        };
+        let command = cancel_command();
+        assert_eq!(
+            cancel_thread_run(&directory, &auth(), command.clone())
+                .await
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            directory.calls.lock().expect("fake lock").as_slice(),
+            &[CancelThreadRunRequest {
+                deployment: DeploymentId::new("dep-authoritative"),
+                tenant: TenantId::new("tenant-authoritative"),
+                actor: ActorId::new("actor-authoritative"),
+                command,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_cancel_identities_never_reach_the_port() {
+        let invalid = [
+            ("thread_id", {
+                let mut command = cancel_command();
+                command.thread_id = ThreadId::new("not-a-uuid");
+                command
+            }),
+            ("run_id", {
+                let mut command = cancel_command();
+                command.run_id = openbot_contracts::ids::RunId::new("");
+                command
+            }),
+            ("run_id", {
+                let mut command = cancel_command();
+                command.run_id = openbot_contracts::ids::RunId::new("bad\0run");
+                command
+            }),
+        ];
+        for (field, command) in invalid {
+            let directory = CancelDirectory {
+                result: Err(ThreadDirectoryError::Unavailable),
+                calls: Mutex::new(Vec::new()),
+            };
+            assert_eq!(
+                cancel_thread_run(&directory, &auth(), command)
+                    .await
+                    .unwrap_err(),
+                AppError::MalformedPayload { field }
+            );
+            assert!(directory.calls.lock().expect("fake lock").is_empty());
         }
     }
 

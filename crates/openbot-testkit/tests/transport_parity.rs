@@ -470,6 +470,10 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         // InvokeTool 尚无公开 HTTP 路由。仍逐变体列出且无 wildcard：新增命令必须在这里明确
         // 选择“channel 矩阵有 route”或“由哪一份专项证据承担”。
         AppCommand::GetCurrentUser
+        | AppCommand::CreateChannel { .. }
+        | AppCommand::RouteChannelMessage { .. }
+        | AppCommand::ListVisibleAgents { .. }
+        | AppCommand::GetVisibleAgent { .. }
         | AppCommand::AdminStatus
         | AppCommand::ListPeople { .. }
         | AppCommand::ChangePersonRole { .. }
@@ -481,7 +485,9 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::MintThreadId
         | AppCommand::GetThreadStatus { .. }
         | AppCommand::BeginThreadRun(_)
+        | AppCommand::CancelThreadRun(_)
         | AppCommand::GetThreadHistory { .. }
+        | AppCommand::GetThreadConversation { .. }
         | AppCommand::RememberMemory(_)
         | AppCommand::ListMemories { .. }
         | AppCommand::CorrectMemory { .. }

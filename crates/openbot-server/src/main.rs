@@ -514,7 +514,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         budgets: server.agent_budgets,
     })?;
     let built_in_agent_ready = built_in_agent.is_some() || !requires_agent_runtime;
-    let run_relay = RunRelay::start(run_runtime, run_consumer);
+    let run_relay = RunRelay::start_with_database(
+        run_runtime,
+        run_consumer,
+        database
+            .clone()
+            .with_application_name("openbot-run-control"),
+    );
     let metrics = install_recorder()?;
     let db_probe_pool = pool.clone();
     let db_probe = FnReadinessProbe::new("database_native_schema", move || {

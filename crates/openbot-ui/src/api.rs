@@ -7,12 +7,14 @@ use openbot_contracts::agent::AgentProfile;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::agent::{AgentProfileResponse, AgentProfilesResponse};
 #[cfg(target_arch = "wasm32")]
+use openbot_contracts::command::ThreadRunCancellationState;
+#[cfg(target_arch = "wasm32")]
 use openbot_contracts::command::{
     BeginThreadRunBody, CreateChannelRequest, RouteChannelRequest, ThreadMinted, ThreadRunAnchor,
 };
 use openbot_contracts::command::{
     ChannelDetail, ChannelPage, ChannelRoutingDecision, ThreadConversationSnapshot,
-    ThreadRunStarted,
+    ThreadRunCancellation, ThreadRunStarted,
 };
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::people::CurrentUser;
@@ -182,6 +184,52 @@ pub async fn begin_channel_run(
     }
 }
 
+/// Persist cancellation for the exact active native run; terminal still arrives via snapshot/SSE.
+pub async fn cancel_thread_run(
+    thread_id: &ThreadId,
+    run_id: &RunId,
+) -> Result<ThreadRunCancellation, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = thread_cancel_path(thread_id.as_str(), run_id.as_str())?;
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        let status = response.status();
+        if !matches!(status, 200 | 202) {
+            return Err(status_error(status));
+        }
+        let reply = response
+            .json::<ThreadRunCancellation>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let status_matches = matches!(
+            (status, reply.state),
+            (
+                202,
+                ThreadRunCancellationState::Requested
+                    | ThreadRunCancellationState::AlreadyRequested
+            ) | (200, ThreadRunCancellationState::AlreadyTerminal)
+        );
+        if reply.thread_id != *thread_id || reply.run_id != *run_id || !status_matches {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(reply)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (thread_id, run_id);
+        Err(ApiError::Unavailable)
+    }
+}
+
 /// Mint one browser-CSPRNG-backed durable idempotency key.
 #[must_use]
 pub fn mint_run_id() -> RunId {
@@ -237,10 +285,24 @@ pub async fn load_thread_conversation(
         if response.status() != 200 {
             return Err(status_error(response.status()));
         }
-        response
+        let snapshot = response
             .json::<ThreadConversationSnapshot>()
             .await
-            .map_err(|_| ApiError::InvalidResponse)
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let active_shape_matches =
+            snapshot.active_run_id.is_some() == snapshot.active_run_state.is_some();
+        let cancellable_matches = !snapshot.active_run_cancellable
+            || matches!(
+                snapshot.active_run_state,
+                Some(openbot_contracts::command::ThreadForegroundRunState::Running)
+            );
+        if !active_shape_matches
+            || !cancellable_matches
+            || (snapshot.active_run_id.is_none() && !snapshot.active_run_text.is_empty())
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(snapshot)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -627,6 +689,17 @@ fn thread_run_path(thread_id: &str) -> Result<String, ApiError> {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn thread_cancel_path(thread_id: &str, run_id: &str) -> Result<String, ApiError> {
+    validate_thread_id(thread_id)?;
+    validate_run_id(run_id)?;
+    Ok(format!(
+        "/api/threads/{}/runs/{}/cancel",
+        encode_url_component(thread_id),
+        encode_url_component(run_id)
+    ))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn thread_conversation_path(thread_id: &str) -> Result<String, ApiError> {
     validate_thread_id(thread_id)?;
     Ok(format!(
@@ -699,6 +772,15 @@ fn validate_channel_id(channel_id: &str) -> Result<(), ApiError> {
 #[cfg(any(target_arch = "wasm32", test))]
 fn validate_thread_id(thread_id: &str) -> Result<(), ApiError> {
     if thread_id.is_empty() || thread_id.len() > 512 || thread_id.chars().any(char::is_control) {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_run_id(run_id: &str) -> Result<(), ApiError> {
+    if run_id.is_empty() || run_id.len() > 512 || run_id.chars().any(char::is_control) {
         Err(ApiError::InvalidResponse)
     } else {
         Ok(())
@@ -787,6 +869,10 @@ mod tests {
         assert_eq!(
             thread_conversation_path("thread/one?x=1").unwrap(),
             "/api/threads/thread%2Fone%3Fx%3D1/conversation"
+        );
+        assert_eq!(
+            thread_cancel_path("thread/one?x=1", "run/one?x=2").unwrap(),
+            "/api/threads/thread%2Fone%3Fx%3D1/runs/run%2Fone%3Fx%3D2/cancel"
         );
         assert_eq!(
             thread_event_stream_path(&ThreadId::new("thread/one?x=1"), Some(7)).unwrap(),

@@ -532,6 +532,10 @@ pub fn router(state: ServerState) -> Router {
             get(threads::conversation),
         )
         .route("/api/threads/{thread_id}/runs", post(threads::begin_run))
+        .route(
+            "/api/threads/{thread_id}/runs/{run_id}/cancel",
+            post(threads::cancel_run),
+        )
         .route("/api/threads/{thread_id}/ws", get(threads::websocket))
         .route("/api/threads/{thread_id}/events", get(threads::events))
         .route("/api/threads/{thread_id}", get(threads::status))

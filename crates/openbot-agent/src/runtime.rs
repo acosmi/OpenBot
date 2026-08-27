@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use openbot_application::{
     AgentAudit, AgentAuditKind, AgentContextError, AgentContextSource, DurableTextRun,
-    ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, RunDispatchConsumer,
-    RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError,
-    RunTerminal, RunToolExchange,
+    ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, RunCancellationDisposition,
+    RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime,
+    RunRuntimeError, RunTerminal, RunToolExchange,
 };
 use openbot_domain::agent::{
     AgentEffect, AgentEvent, AgentFailure, AgentState, AgentTerminal, AgentToolCall, reduce,
@@ -204,7 +204,7 @@ impl RunDispatchConsumer for BuiltInAgentConsumer {
         Ok(())
     }
 
-    async fn revoke(&self, lease: &RunExecutionLease) {
+    async fn revoke(&self, lease: &RunExecutionLease) -> RunCancellationDisposition {
         let mut reservations = self.inner.reservations.lock().await;
         if reservations
             .get(lease.run_id().as_str())
@@ -212,7 +212,9 @@ impl RunDispatchConsumer for BuiltInAgentConsumer {
             && let Some(reservation) = reservations.remove(lease.run_id().as_str())
         {
             reservation.cancel.send_replace(true);
+            return RunCancellationDisposition::ChildSignalled;
         }
+        RunCancellationDisposition::NoLocalChild
     }
 }
 
@@ -1691,7 +1693,10 @@ mod tests {
         );
         consumer.activate(&lease).await.unwrap();
         tokio::task::yield_now().await;
-        consumer.revoke(&lease).await;
+        assert_eq!(
+            consumer.revoke(&lease).await,
+            RunCancellationDisposition::ChildSignalled
+        );
         tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
             .await
             .unwrap();

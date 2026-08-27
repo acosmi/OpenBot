@@ -30,12 +30,14 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–31 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 84 条：
+# Batch 15–35 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 85 条：
 # Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
 # Batch22 Combobox/Select + Batch23 Sidebar，27 条 primitive 子账全 done；Batch24 又关闭46条
 # Lucide映射；Batch25 layout 4条；Batch26 AgentPresence 2条；Batch27 共享占位线稿2条；
-# Batch30 ChannelRow；Batch31 又关闭 abstract-avatar→Avatar 与 AgentCard。
-# Google Drive品牌标、其余34业务、6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
+# Batch30 ChannelRow；Batch31 又关闭 abstract-avatar→Avatar 与 AgentCard；Batch32关闭RecipientField。
+# Batch33–35虽已接draft/queue纯状态、plain conversation与durable Stop/production queue，但完整
+# Composer/channel组件仍缺sources/markdown/Screen等判据，未倒算整条。Google Drive品牌标、其余33业务、
+# 6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）

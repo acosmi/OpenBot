@@ -20,11 +20,12 @@ use axum::response::{IntoResponse, Response, Sse};
 use futures_core::Stream;
 use openbot_application::AppEventStream;
 use openbot_contracts::command::{
-    AppCommand, AppEvent, AppReply, BeginThreadRun, BeginThreadRunBody, SubscriptionRequest,
-    ThreadConversationSnapshot, ThreadHistory, ThreadMinted, ThreadRunStarted, ThreadStatus,
+    AppCommand, AppEvent, AppReply, BeginThreadRun, BeginThreadRunBody, CancelThreadRun,
+    SubscriptionRequest, ThreadConversationSnapshot, ThreadHistory, ThreadMinted,
+    ThreadRunCancellation, ThreadRunCancellationState, ThreadRunStarted, ThreadStatus,
 };
 use openbot_contracts::error::AppError;
-use openbot_contracts::ids::ThreadId;
+use openbot_contracts::ids::{RunId, ThreadId};
 use serde::Deserialize;
 
 use crate::auth::{Authenticated, OriginAuthenticated};
@@ -106,6 +107,47 @@ pub async fn begin_run(
             let mut headers = HeaderMap::new();
             headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
             Ok((status, headers, Json(started)))
+        }
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/threads/{thread_id}/runs/{run_id}/cancel`; durable control request framing.
+pub async fn cancel_run(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    Path((thread_id, run_id)): Path<(String, String)>,
+) -> Result<(StatusCode, HeaderMap, Json<ThreadRunCancellation>), HttpError> {
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::CancelThreadRun(CancelThreadRun {
+                thread_id: ThreadId::new(thread_id),
+                run_id: RunId::new(run_id),
+            }),
+        )
+        .await?
+    {
+        AppReply::ThreadRunCancellation(reply) => {
+            let outcome = match reply.state {
+                ThreadRunCancellationState::Requested => "requested",
+                ThreadRunCancellationState::AlreadyRequested => "already_requested",
+                ThreadRunCancellationState::AlreadyTerminal => "already_terminal",
+            };
+            metrics::counter!(
+                "openbot_agent_run_cancel_requests_total",
+                "outcome" => outcome
+            )
+            .increment(1);
+            let status = if reply.state == ThreadRunCancellationState::AlreadyTerminal {
+                StatusCode::OK
+            } else {
+                StatusCode::ACCEPTED
+            };
+            let mut headers = HeaderMap::new();
+            headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            Ok((status, headers, Json(reply)))
         }
         _ => Err(application_contract_error()),
     }
@@ -376,8 +418,9 @@ mod tests {
     use futures_util::{SinkExt as _, StreamExt as _};
     use http::{Method, Request, StatusCode};
     use openbot_application::ports::{
-        BeginThreadRunRequest, ChannelReader, PortError, ThreadConversationRequest,
-        ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
+        BeginThreadRunRequest, CancelThreadRunRequest, ChannelReader, PortError,
+        ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
+        ThreadHistoryRequest,
     };
     use openbot_application::{ChannelCursor, OpenBotApplication};
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
@@ -438,6 +481,8 @@ mod tests {
         history_calls: Mutex<Vec<ThreadHistoryRequest>>,
         begin: Mutex<Result<ThreadRunStarted, ThreadDirectoryError>>,
         begin_calls: Mutex<Vec<BeginThreadRunRequest>>,
+        cancel: Mutex<Result<ThreadRunCancellation, ThreadDirectoryError>>,
+        cancel_calls: Mutex<Vec<CancelThreadRunRequest>>,
         conversation: Mutex<Result<ThreadConversationSnapshot, ThreadDirectoryError>>,
         conversation_calls: Mutex<Vec<ThreadConversationRequest>>,
     }
@@ -457,6 +502,8 @@ mod tests {
                     history_calls: Mutex::new(Vec::new()),
                     begin: Mutex::new(Err(ThreadDirectoryError::Unavailable)),
                     begin_calls: Mutex::new(Vec::new()),
+                    cancel: Mutex::new(Err(ThreadDirectoryError::Unavailable)),
+                    cancel_calls: Mutex::new(Vec::new()),
                     conversation: Mutex::new(Ok(ThreadConversationSnapshot::default())),
                     conversation_calls: Mutex::new(Vec::new()),
                 }),
@@ -480,6 +527,11 @@ mod tests {
 
         fn with_begin(self, begin: Result<ThreadRunStarted, ThreadDirectoryError>) -> Self {
             *self.inner.begin.lock().expect("fake lock") = begin;
+            self
+        }
+
+        fn with_cancel(self, cancel: Result<ThreadRunCancellation, ThreadDirectoryError>) -> Self {
+            *self.inner.cancel.lock().expect("fake lock") = cancel;
             self
         }
 
@@ -513,6 +565,10 @@ mod tests {
 
         fn begin_calls(&self) -> Vec<BeginThreadRunRequest> {
             self.inner.begin_calls.lock().expect("fake lock").clone()
+        }
+
+        fn cancel_calls(&self) -> Vec<CancelThreadRunRequest> {
+            self.inner.cancel_calls.lock().expect("fake lock").clone()
         }
 
         fn conversation_calls(&self) -> Vec<ThreadConversationRequest> {
@@ -567,6 +623,18 @@ mod tests {
                 .expect("fake lock")
                 .push(request);
             self.inner.begin.lock().expect("fake lock").clone()
+        }
+
+        async fn cancel_thread_run(
+            &self,
+            request: CancelThreadRunRequest,
+        ) -> Result<ThreadRunCancellation, ThreadDirectoryError> {
+            self.inner
+                .cancel_calls
+                .lock()
+                .expect("fake lock")
+                .push(request);
+            self.inner.cancel.lock().expect("fake lock").clone()
         }
 
         async fn thread_conversation(
@@ -706,6 +774,31 @@ mod tests {
         (status, headers, body)
     }
 
+    async fn cancel_request(
+        router: Router,
+        origin: Option<&str>,
+        thread_id: &str,
+        run_id: &str,
+    ) -> (StatusCode, HeaderMap, Value) {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/threads/{thread_id}/runs/{run_id}/cancel"));
+        if let Some(origin) = origin {
+            request = request.header(http::header::ORIGIN, origin);
+        }
+        let response = router
+            .oneshot(request.body(Body::empty()).expect("cancel request"))
+            .await
+            .expect("cancel response");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("cancel body");
+        let body = serde_json::from_slice(&bytes).expect("cancel json");
+        (status, headers, body)
+    }
+
     #[tokio::test]
     async fn native_conversation_is_one_no_store_snapshot_scoped_only_by_auth_and_path() {
         let thread = "550e8400-e29b-41d4-a716-446655440000";
@@ -719,6 +812,10 @@ mod tests {
                     tool_calls: None,
                 }],
                 active_run_id: Some(RunId::new("run-1")),
+                active_run_state: Some(
+                    openbot_contracts::command::ThreadForegroundRunState::Running,
+                ),
+                active_run_cancellable: true,
                 active_run_text: "partial".to_owned(),
                 last_event_sequence: Some(7),
             }));
@@ -745,7 +842,8 @@ mod tests {
             body,
             serde_json::json!({
                 "messages":[{"id":"message-1","role":"user","content":"hello"}],
-                "activeRunId":"run-1","activeRunText":"partial","lastEventSequence":7
+                "activeRunId":"run-1","activeRunState":"running",
+                "activeRunCancellable":true,"activeRunText":"partial","lastEventSequence":7
             })
         );
         assert_eq!(
@@ -880,6 +978,62 @@ mod tests {
             assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {response}");
             assert!(visible.begin_calls().is_empty(), "{body}");
         }
+    }
+
+    #[tokio::test]
+    async fn cancel_run_is_origin_guarded_and_returns_only_durable_request_state() {
+        let thread = "550e8400-e29b-41d4-a716-446655440000";
+        for (state_value, expected) in [
+            (ThreadRunCancellationState::Requested, StatusCode::ACCEPTED),
+            (
+                ThreadRunCancellationState::AlreadyRequested,
+                StatusCode::ACCEPTED,
+            ),
+            (ThreadRunCancellationState::AlreadyTerminal, StatusCode::OK),
+        ] {
+            let directory =
+                FakeThreadDirectory::new(Ok(true)).with_cancel(Ok(ThreadRunCancellation {
+                    thread_id: ThreadId::new(thread),
+                    run_id: RunId::new("run-1"),
+                    state: state_value,
+                }));
+            let visible = directory.clone();
+            let (status, headers, body) = cancel_request(
+                app(directory, FixedAuthResolver::granting(auth("u1"))),
+                Some("https://app.example.test"),
+                thread,
+                "run-1",
+            )
+            .await;
+            assert_eq!(status, expected);
+            assert_eq!(headers[CACHE_CONTROL], "no-store");
+            assert_eq!(body["threadId"], thread);
+            assert_eq!(body["runId"], "run-1");
+            assert_eq!(
+                visible.cancel_calls(),
+                [CancelThreadRunRequest {
+                    deployment: DeploymentId::new("openbot-test"),
+                    tenant: TenantId::new("tenant-test"),
+                    actor: ActorId::new("u1"),
+                    command: CancelThreadRun {
+                        thread_id: ThreadId::new(thread),
+                        run_id: RunId::new("run-1"),
+                    },
+                }]
+            );
+        }
+
+        let directory = FakeThreadDirectory::new(Ok(true));
+        let visible = directory.clone();
+        let (status, _, _) = cancel_request(
+            app(directory, FixedAuthResolver::granting(auth("u1"))),
+            None,
+            thread,
+            "run-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(visible.cancel_calls().is_empty());
     }
 
     #[tokio::test]

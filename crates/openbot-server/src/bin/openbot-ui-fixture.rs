@@ -1,6 +1,6 @@
 //! Local-only deterministic GUI fixture host required by the GUI first-source golden workflow.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -12,17 +12,19 @@ use futures_core::Stream;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
     AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, BeginThreadRunRequest,
-    ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
-    ChannelReader, OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError,
-    PortError, ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError,
-    ThreadEventSubscription, ThreadHistoryRequest, ToolApprovalAdministration,
-    ToolApprovalAdministrationError, UiPreferenceAdministration, UiPreferenceAdministrationError,
+    CancelThreadRunRequest, ChannelAdministration, ChannelAdministrationError,
+    ChannelCreateRequest, ChannelReadScope, ChannelReader, OpenBotApplication,
+    PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError, ThreadConversationRequest,
+    ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
+    ToolApprovalAdministration, ToolApprovalAdministrationError, UiPreferenceAdministration,
+    UiPreferenceAdministrationError,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
 use openbot_contracts::command::{
     AppEvent, ChannelActivityEvent, ChannelDetail, ChannelSummary, ThreadConversationSnapshot,
-    ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole, ThreadRunEvent, ThreadRunEventKind,
+    ThreadForegroundRunState, ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole,
+    ThreadRunCancellation, ThreadRunCancellationState, ThreadRunEvent, ThreadRunEventKind,
     ThreadRunStarted,
 };
 use openbot_contracts::ids::{
@@ -338,6 +340,7 @@ struct FixtureThreadsInner {
     events: Mutex<HashMap<String, Vec<ThreadRunEvent>>>,
     subscribers: Mutex<HashMap<String, Vec<tokio::sync::mpsc::Sender<AppEvent>>>>,
     receipts: Mutex<HashMap<String, ThreadRunStarted>>,
+    cancelled_runs: Mutex<HashSet<String>>,
 }
 
 impl FixtureThreads {
@@ -363,6 +366,8 @@ impl FixtureThreads {
                     },
                 ],
                 active_run_id: None,
+                active_run_state: None,
+                active_run_cancellable: false,
                 active_run_text: String::new(),
                 last_event_sequence: None,
             },
@@ -373,6 +378,7 @@ impl FixtureThreads {
                 events: Mutex::new(HashMap::new()),
                 subscribers: Mutex::new(HashMap::new()),
                 receipts: Mutex::new(HashMap::new()),
+                cancelled_runs: Mutex::new(HashSet::new()),
             }),
             channels,
         }
@@ -477,6 +483,8 @@ impl ThreadDirectory for FixtureThreads {
                 tool_calls: None,
             });
             snapshot.active_run_id = Some(run.clone());
+            snapshot.active_run_state = Some(ThreadForegroundRunState::Running);
+            snapshot.active_run_cancellable = true;
             snapshot.active_run_text.clear();
             snapshot.last_event_sequence = Some(event_sequence);
             (message_sequence, event_sequence)
@@ -508,6 +516,14 @@ impl ThreadDirectory for FixtureThreads {
         let runtime = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            if runtime
+                .inner
+                .cancelled_runs
+                .lock()
+                .is_ok_and(|runs| runs.contains(run.as_str()))
+            {
+                return;
+            }
             let chunk_sequence = event_sequence.saturating_add(1);
             if let Ok(mut snapshots) = runtime.inner.snapshots.lock()
                 && let Some(snapshot) = snapshots.get_mut(thread.as_str())
@@ -528,6 +544,14 @@ impl ThreadDirectory for FixtureThreads {
                 },
             );
             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            if runtime
+                .inner
+                .cancelled_runs
+                .lock()
+                .is_ok_and(|runs| runs.contains(run.as_str()))
+            {
+                return;
+            }
             let terminal_sequence = chunk_sequence.saturating_add(1);
             if let Ok(mut snapshots) = runtime.inner.snapshots.lock()
                 && let Some(snapshot) = snapshots.get_mut(thread.as_str())
@@ -540,6 +564,8 @@ impl ThreadDirectory for FixtureThreads {
                     tool_calls: None,
                 });
                 snapshot.active_run_id = None;
+                snapshot.active_run_state = None;
+                snapshot.active_run_cancellable = false;
                 snapshot.active_run_text.clear();
                 snapshot.last_event_sequence = Some(terminal_sequence);
             }
@@ -557,6 +583,107 @@ impl ThreadDirectory for FixtureThreads {
             );
         });
         Ok(started)
+    }
+
+    async fn cancel_thread_run(
+        &self,
+        request: CancelThreadRunRequest,
+    ) -> Result<ThreadRunCancellation, ThreadDirectoryError> {
+        let run_id = request.command.run_id.clone();
+        let thread_id = request.command.thread_id.clone();
+        {
+            let mut snapshots = self
+                .inner
+                .snapshots
+                .lock()
+                .map_err(|_| ThreadDirectoryError::Unavailable)?;
+            let Some(snapshot) = snapshots.get_mut(thread_id.as_str()) else {
+                return Err(ThreadDirectoryError::NotVisible);
+            };
+            if snapshot.active_run_id.as_ref() != Some(&run_id) {
+                return Ok(ThreadRunCancellation {
+                    thread_id,
+                    run_id,
+                    state: ThreadRunCancellationState::AlreadyTerminal,
+                });
+            }
+            if matches!(
+                snapshot.active_run_state,
+                Some(ThreadForegroundRunState::Cancelling)
+            ) {
+                return Ok(ThreadRunCancellation {
+                    thread_id,
+                    run_id,
+                    state: ThreadRunCancellationState::AlreadyRequested,
+                });
+            }
+            snapshot.active_run_state = Some(ThreadForegroundRunState::Cancelling);
+            snapshot.active_run_cancellable = false;
+        }
+        self.inner
+            .cancelled_runs
+            .lock()
+            .map_err(|_| ThreadDirectoryError::Unavailable)?
+            .insert(run_id.as_str().to_owned());
+        let runtime = self.clone();
+        let terminal_thread = thread_id.clone();
+        let terminal_run = run_id.clone();
+        tokio::spawn(async move {
+            // Production only emits Cancelled after the cancellation token has stopped the child.
+            // Keep that observable ordering in the browser fixture instead of collapsing both
+            // states into one fake repository call.
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            let terminal_sequence = {
+                let Ok(mut snapshots) = runtime.inner.snapshots.lock() else {
+                    return;
+                };
+                let Some(snapshot) = snapshots.get_mut(terminal_thread.as_str()) else {
+                    return;
+                };
+                if snapshot.active_run_id.as_ref() != Some(&terminal_run)
+                    || !matches!(
+                        snapshot.active_run_state,
+                        Some(ThreadForegroundRunState::Cancelling)
+                    )
+                {
+                    return;
+                }
+                let terminal_sequence = snapshot
+                    .last_event_sequence
+                    .map_or(0, |value| value.saturating_add(1));
+                if !snapshot.active_run_text.is_empty() {
+                    snapshot.messages.push(ThreadHistoryMessage {
+                        id: format!("{}:assistant", terminal_run.as_str()),
+                        role: ThreadHistoryRole::Assistant,
+                        content: snapshot.active_run_text.clone(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                    });
+                }
+                snapshot.active_run_id = None;
+                snapshot.active_run_state = None;
+                snapshot.active_run_text.clear();
+                snapshot.last_event_sequence = Some(terminal_sequence);
+                terminal_sequence
+            };
+            runtime.publish(
+                &terminal_thread,
+                ThreadRunEvent {
+                    thread_id: terminal_thread.clone(),
+                    run_id: terminal_run.clone(),
+                    event_sequence: terminal_sequence,
+                    event_type: ThreadRunEventKind::Cancelled,
+                    payload: serde_json::json!({"status":"cancelled"}),
+                    terminal: true,
+                    created_at: OffsetDateTime::now_utc(),
+                },
+            );
+        });
+        Ok(ThreadRunCancellation {
+            thread_id,
+            run_id,
+            state: ThreadRunCancellationState::Requested,
+        })
     }
 
     async fn thread_history(
@@ -634,6 +761,11 @@ impl ThreadDirectory for FixtureThreads {
                     last_message_agent_id: Some(BotId::new("bot-0")),
                 }))
                 .await;
+            // production `subscribe_channel_activity` 用 LISTEN/NOTIFY 长连保持该流打开。fixture
+            // 若发完就 drop sender，流立刻结束、socket 关闭，AppSidebar 会以 reset 后的 backoff
+            // 无限重连并对每次重连全量重取 channel 列表 —— 侧栏持续闪 "加载中"，那是 harness
+            // 造出来的假象，不是被验收的 GUI 行为。持住 sender，让流像生产一样保持打开。
+            std::future::pending::<()>().await;
         });
         Ok(Box::pin(FixtureEventStream { receiver }))
     }

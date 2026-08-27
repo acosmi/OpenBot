@@ -233,6 +233,55 @@ pub struct ClaimedRunDispatch {
     lease: RunExecutionLease,
 }
 
+/// One replay-safe cancellation control record claimed by the current lease owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClaimedRunCancellation {
+    outbox_id: String,
+    attempt: u32,
+    lease: RunExecutionLease,
+}
+
+impl ClaimedRunCancellation {
+    /// Adapter constructor; empty identity or zero attempt is durable corruption.
+    pub fn new(
+        outbox_id: String,
+        attempt: u32,
+        lease: RunExecutionLease,
+    ) -> Result<Self, RunRuntimeError> {
+        if outbox_id.is_empty() || outbox_id.as_bytes().contains(&0) {
+            return Err(RunRuntimeError::Corrupt { field: "outbox_id" });
+        }
+        if attempt == 0 {
+            return Err(RunRuntimeError::Corrupt {
+                field: "attempt_count",
+            });
+        }
+        Ok(Self {
+            outbox_id,
+            attempt,
+            lease,
+        })
+    }
+
+    /// Durable outbox identity.
+    #[must_use]
+    pub fn outbox_id(&self) -> &str {
+        &self.outbox_id
+    }
+
+    /// Current claim attempt.
+    #[must_use]
+    pub const fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    /// Fenced run lease owned by this relay process.
+    #[must_use]
+    pub const fn lease(&self) -> &RunExecutionLease {
+        &self.lease
+    }
+}
+
 impl ClaimedRunDispatch {
     /// Adapter 构造；空 ID/零 attempt 是 durable corruption。
     pub fn new(
@@ -418,6 +467,15 @@ pub enum RunDispatchDecision {
     Rejected(RunFailureCode),
 }
 
+/// What the local consumer could prove when a durable cancellation reached this replica.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunCancellationDisposition {
+    /// A locally owned reservation/child was signalled; terminal must wait for its stopped fact.
+    ChildSignalled,
+    /// This process never owned a child for the fenced lease; runtime may terminalize directly.
+    NoLocalChild,
+}
+
 /// Built-in/remote Agent 的 in-process dispatch 边界。
 #[async_trait]
 pub trait RunDispatchConsumer: Send + Sync {
@@ -428,7 +486,7 @@ pub trait RunDispatchConsumer: Send + Sync {
     async fn activate(&self, lease: &RunExecutionLease) -> Result<(), RunFailureCode>;
 
     /// 撤销尚未取得 durable outbox ack 的 enqueue；必须幂等并传播 cancel。
-    async fn revoke(&self, lease: &RunExecutionLease);
+    async fn revoke(&self, lease: &RunExecutionLease) -> RunCancellationDisposition;
 }
 
 /// G4 Agent 尚未接线时的 production fail-closed consumer；它明确失败，不执行、不伪造回复。
@@ -445,12 +503,35 @@ impl RunDispatchConsumer for NoRunDispatchConsumer {
         Ok(())
     }
 
-    async fn revoke(&self, _lease: &RunExecutionLease) {}
+    async fn revoke(&self, _lease: &RunExecutionLease) -> RunCancellationDisposition {
+        RunCancellationDisposition::NoLocalChild
+    }
 }
 
 /// Run journal/outbox/lease 的唯一 application port。
 #[async_trait]
 pub trait RunRuntime: Send + Sync {
+    /// Claim a durable cancellation only when this process owns or may fence-take the run lease.
+    async fn claim_cancellation(&self) -> Result<Option<ClaimedRunCancellation>, RunRuntimeError> {
+        Ok(None)
+    }
+
+    /// Record that a local child received cancellation; outbox remains undelivered until terminal.
+    async fn mark_cancellation_signalled(
+        &self,
+        _claim: &ClaimedRunCancellation,
+    ) -> Result<(), RunRuntimeError> {
+        Err(RunRuntimeError::Unavailable)
+    }
+
+    /// No local child existed: write Cancelled terminal and deliver control in one transaction.
+    async fn finish_unstarted_cancellation(
+        &self,
+        _claim: &ClaimedRunCancellation,
+    ) -> Result<RunWriteReceipt, RunRuntimeError> {
+        Err(RunRuntimeError::Unavailable)
+    }
+
     /// Claim 当前 worker 可合法接管的一条 `agent_run_dispatch`。
     async fn claim_dispatch(&self) -> Result<Option<ClaimedRunDispatch>, RunRuntimeError>;
 
