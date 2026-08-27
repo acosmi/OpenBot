@@ -6,6 +6,22 @@
 > 只跑本地定向测试；不运行`cargo xtask ci`，不派发Actions，不处理`grok-bot`，不修改/
 > 暂存/提交`docs/assets/`。
 
+## 接续结果（2026-08-27）
+
+本恢复点已经完整接续，正式证据见
+[Durable Run Cancel 与 Production Queue](2026-08-27-G3-G6-DurableCancel与Queue-batch35.md)。
+
+production cancellation现为PostgreSQL internal outbox→LISTEN/漏通知poll→lease owner→child token→
+唯一terminal；真实PG首跑发现无child路径会留下pending dispatch，修为Cancelled+cancel+dispatch同事务
+收口后，poll-only与cross-replica active child-drop两条PG17.11 SCRAM测试均1/0/0。Leptos已接真实
+Stop/Cancelling/Cancelled与mount-local queue/remove/单次settle/stop后drain；hard reload明确丢queue但恢复
+durable foreground。API50/115/165、parity639/1037/1676、strict recount157/157/0，bundle
+`801086/73154/740216/1/0`。未运行CI/Actions，`docs/assets/`未动。
+实施提交=`86370626cebf3f78e87ac5b5a87e223377ff69ff`。
+
+sources/附件/per-channel draft/steer、markdown/tool boundary/Screen及RMCP/computer/file/shell协议级
+cancel仍未完成；完整Composer/channel route与G3/G4/G6整关继续不勾。下文保留为开工历史快照。
+
 ## 第一真源裁决
 
 - v3 §3.1条4、§7.2、§7.4要求每个thread一个foreground actor，cancel沿run→provider/tool/
