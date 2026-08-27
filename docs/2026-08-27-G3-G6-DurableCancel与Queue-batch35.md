@@ -6,6 +6,7 @@
 > 固定上游：`CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`。
 > 本批只运行本机定向测试；未运行`cargo xtask ci`，未派发Actions，未处理`grok-bot`，
 > 未修改/暂存/提交既有`docs/assets/`。
+> 远端：Batch34 base ref与Batch35分支已push；PR等待用户明确授权，尚未创建。
 
 ## 1. 第一真源裁决
 
