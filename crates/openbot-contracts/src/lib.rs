@@ -39,7 +39,7 @@
 //! | [`audit`] | 管理员 audit event/page DTO 与 JavaScript 毫秒时间 wire | §8.6 / R56 |
 //! | [`tool`] | Agent tool invocation 与脱敏结果；没有 actor/policy/target 自报字段 | §8.1 |
 //! | [`memory`] | explicit memory scope/provenance/lifecycle/recall DTO；wire 无 owner/origin 自报 | §4.3 / R66 |
-//! | [`components`] | compiled component治理record、build manifest/catalogue与Quote参数schema | §3.3 / R103 |
+//! | [`components`] | compiled component治理record、build manifest/catalogue与Quote+Cards参数schema | §3.3 / R103–R104 |
 //! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
 //!
 //! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：W-3a 只在 G1 的

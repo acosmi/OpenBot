@@ -37,8 +37,8 @@
 //! Batch 28–35继续接通session sign-out、channel realtime/detail/roster/create/routing/conversation、
 //! durable Stop与mount-local queue；Batch36–39再落Memory Controls、Settings Preferences/stable
 //! owner、200px secondary shell与reviewed Connected Accounts index/detail；Batch40补齐SettingsSidebar、
-//! Components Gallery read model与首个真实Quote renderer。AppSidebar仍缺skills/admin destinations；
-//! 完整Composer/Screen、其余12 compiled renderer/runtime、sandbox、route/golden与可发布Tauri宿主仍按
+//! Components Gallery read model与Quote+Cards五个真实renderer。AppSidebar仍缺skills/admin destinations；
+//! 完整Composer/Screen、其余8 compiled renderer/runtime、sandbox、route/golden与可发布Tauri宿主仍按
 //! 台账保持未完成，不能由本 crate 存在而推导为G4/G6整关通过。
 
 #![deny(missing_docs)]

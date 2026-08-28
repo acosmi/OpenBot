@@ -4,6 +4,9 @@
 > `d6d9036`。固定上游`CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`。
 > 本机定向测试；不运行`cargo xtask ci`，不派发Actions，不触碰`docs/assets/`。
 
+> 已完成：implementation `3173354d895110363850a4d8dcf6679fc90c332b`；正式边界与证据见
+> `docs/2026-08-27-G6-GalleryCards-batch41.md`与R104。本文件保留为恢复点历史。
+
 ## 第一真源与范围
 
 - 固定上游`cards.tsx`贡献四个独立工具身份：`showRecord/showMetrics/showChecklist/showNotice`；
