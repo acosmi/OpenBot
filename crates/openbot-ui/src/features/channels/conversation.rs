@@ -142,6 +142,24 @@ impl StopControl {
     }
 }
 
+/// A durable retry owns its Agent/message already, so an empty or now-unselected composer must not
+/// disable the only button that can replay it. Editing remains locked separately by `input_locked`.
+const fn send_control_disabled(
+    submitting: bool,
+    channel_active: bool,
+    has_selected_agent: bool,
+    snapshot_error: bool,
+    loading: bool,
+    draft_empty: bool,
+    has_resumable: bool,
+) -> bool {
+    submitting
+        || !channel_active
+        || snapshot_error
+        || loading
+        || (!has_resumable && (!has_selected_agent || draft_empty))
+}
+
 /// A parked queue drains on exactly one busy -> idle edge, never into an inactive channel and
 /// never twice for the same edge. `previous` is the last observed in-flight fact of this mount.
 const fn should_drain_queue(
@@ -373,6 +391,7 @@ fn durable_tool_call(call: &serde_json::Value) -> Option<(String, String, serde_
 struct PendingTurn {
     thread_id: ThreadId,
     run_id: RunId,
+    agent_id: BotId,
     message: String,
 }
 
@@ -432,12 +451,15 @@ pub fn ChannelConversation(
     let input_locked = Signal::derive(move || submitting.get() || resumable.get().is_some());
     let textarea_disabled = Signal::derive(move || input_locked.get() || !channel_active);
     let send_disabled = Signal::derive(move || {
-        input_locked.get()
-            || !channel_active
-            || agent_id.get_value().is_none()
-            || snapshot_error.get()
-            || loading.get()
-            || trim_ecmascript(&draft.get()).is_empty()
+        send_control_disabled(
+            submitting.get(),
+            channel_active,
+            agent_id.get_value().is_some(),
+            snapshot_error.get(),
+            loading.get(),
+            trim_ecmascript(&draft.get()).is_empty(),
+            resumable.get().is_some(),
+        )
     });
     let stop_control = Signal::derive(move || {
         let snapshot = state.get();
@@ -452,18 +474,14 @@ pub fn ChannelConversation(
     let can_stop = Signal::derive(move || stop_control.get().enabled());
     let show_stop = Signal::derive(move || stop_control.get().visible());
     let stop_disabled = Signal::derive(move || !can_stop.get());
-    let send_now = UnsyncCallback::new(move |message: String| {
+    let send_now = UnsyncCallback::new(move |(requested_agent, message): (BotId, String)| {
         if submitting.get_untracked()
-            || resumable.get_untracked().is_some()
             || state.get_untracked().active_run_id.is_some()
             || !channel_active
         {
             return;
         }
-        let Some(agent_id) = agent_id.get_value() else {
-            return;
-        };
-        if trim_ecmascript(&message).is_empty() {
+        if resumable.get_untracked().is_none() && trim_ecmascript(&message).is_empty() {
             return;
         }
         submitting.set(true);
@@ -487,6 +505,7 @@ pub fn ChannelConversation(
                     let attempt = PendingTurn {
                         thread_id: resolved_thread,
                         run_id: mint_run_id(),
+                        agent_id: requested_agent,
                         message,
                     };
                     resumable.set(Some(attempt.clone()));
@@ -496,7 +515,7 @@ pub fn ChannelConversation(
             match begin_channel_run(
                 &attempt.thread_id,
                 &channel_id.get_value(),
-                &agent_id,
+                &attempt.agent_id,
                 &attempt.run_id,
                 &attempt.message,
             )
@@ -526,13 +545,31 @@ pub fn ChannelConversation(
         });
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = (agent_id, message);
+            let _ = (requested_agent, message);
             submitting.set(false);
             send_error.set(true);
         }
     });
+    let component_ask_disabled = Signal::derive(move || {
+        submitting.get()
+            || resumable.get().is_some()
+            || state.get().active_run_id.is_some()
+            || !channel_active
+            || snapshot_error.get()
+            || loading.get()
+    });
+    let ask_from_component = UnsyncCallback::new(move |(agent_id, message): (BotId, String)| {
+        if component_ask_disabled.get_untracked() || trim_ecmascript(&message).is_empty() {
+            return;
+        }
+        send_now.run((agent_id, message));
+    });
     let submit = UnsyncCallback::new(move |_| {
         if send_disabled.get_untracked() {
+            return;
+        }
+        if let Some(attempt) = resumable.get_untracked() {
+            send_now.run((attempt.agent_id, attempt.message));
             return;
         }
         let message = draft.get_untracked();
@@ -556,8 +593,10 @@ pub fn ChannelConversation(
         if busy.get_untracked() {
             draft.set(String::new());
         }
-        if let Some(run) = run {
-            send_now.run(run.text);
+        if let Some(run) = run
+            && let Some(agent_id) = agent_id.get_value()
+        {
+            send_now.run((agent_id, run.text));
         }
     });
     let stop = UnsyncCallback::new(move |_| {
@@ -630,9 +669,12 @@ pub fn ChannelConversation(
         let run = transition.run.map(|run| run.into_owned());
         queued.set(next_queue);
         if let Some(run) = run {
+            let Some(agent_id) = agent_id.get_value() else {
+                return;
+            };
             match composer_owner.as_ref() {
-                Some(owner) => owner.with(|| send_now.run(run.text)),
-                None => send_now.run(run.text),
+                Some(owner) => owner.with(|| send_now.run((agent_id, run.text))),
+                None => send_now.run((agent_id, run.text)),
             }
         }
     });
@@ -682,6 +724,8 @@ pub fn ChannelConversation(
                                         message
                                         agent_seed=agent_seed.clone()
                                         agent_name=agent_name.clone()
+                                        on_component_ask=ask_from_component
+                                        component_ask_disabled
                                     />
                                 }
                             }
@@ -869,6 +913,8 @@ fn TranscriptMessage(
     message: TranscriptLine,
     agent_seed: String,
     agent_name: String,
+    on_component_ask: UnsyncCallback<(BotId, String)>,
+    component_ask_disabled: Signal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let user = message.kind == TranscriptKind::User;
@@ -883,6 +929,8 @@ fn TranscriptMessage(
                     component.agent_id.is_none().then(|| "component_agent_missing".to_owned())
                 })
                 agent_id=component.agent_id.unwrap_or_else(|| BotId::new("unavailable"))
+                on_ask=on_component_ask
+                ask_disabled=component_ask_disabled
             />
         }
         .into_any(),
@@ -1278,6 +1326,24 @@ mod tests {
                 .as_deref(),
             Some("component_result_mismatch")
         );
+    }
+
+    #[test]
+    fn durable_retry_keeps_its_agent_and_is_not_disabled_by_an_empty_composer() {
+        assert!(!send_control_disabled(
+            false, true, false, false, false, true, true,
+        ));
+        assert!(send_control_disabled(
+            false, true, true, false, false, true, false,
+        ));
+        let pending = PendingTurn {
+            thread_id: ThreadId::new("thread-1"),
+            run_id: RunId::new("run-1"),
+            agent_id: BotId::new("bot-from-component"),
+            message: "Exact follow-up".to_owned(),
+        };
+        assert_eq!(pending.agent_id.as_str(), "bot-from-component");
+        assert_eq!(pending.message, "Exact follow-up");
     }
 
     #[test]

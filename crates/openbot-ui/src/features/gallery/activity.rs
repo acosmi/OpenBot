@@ -15,6 +15,7 @@ use time::format_description::well_known::Rfc3339;
 #[cfg(target_arch = "wasm32")]
 use crate::api::call_component_function;
 use crate::i18n::{t, t_string, use_i18n};
+use crate::primitives::{Button, ButtonSize, ButtonVariant};
 
 use super::GalleryFrame;
 
@@ -54,6 +55,8 @@ pub fn ActivityReportCard(
     report: ActivityReportKind,
     title: Option<String>,
     days: Option<f64>,
+    on_ask: UnsyncCallback<String>,
+    ask_disabled: Signal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let state = RwSignal::new(ActivityState::Reading);
@@ -110,10 +113,20 @@ pub fn ActivityReportCard(
                 </GalleryFrame>
             }.into_any(),
             ActivityState::Activity(data) => view! {
-                <BotActivityView title=runtime_title(i18n, title.get_value(), report) data />
+                <BotActivityView
+                    title=runtime_title(i18n, title.get_value(), report)
+                    data
+                    on_ask
+                    ask_disabled
+                />
             }.into_any(),
             ActivityState::Refusals(data) => view! {
-                <RecentRefusalsView title=runtime_title(i18n, title.get_value(), report) data />
+                <RecentRefusalsView
+                    title=runtime_title(i18n, title.get_value(), report)
+                    data
+                    on_ask
+                    ask_disabled
+                />
             }.into_any(),
         }}
     }
@@ -138,15 +151,37 @@ fn project_result(report: ActivityReportKind, result: ComponentFunctionCall) -> 
 }
 
 #[component]
-fn BotActivityView(title: String, data: BotActivityReport) -> impl IntoView {
+fn BotActivityView(
+    title: String,
+    data: BotActivityReport,
+    on_ask: UnsyncCallback<String>,
+    ask_disabled: Signal<bool>,
+) -> impl IntoView {
     let i18n = use_i18n();
     let most = data.rows.first().map_or(0, |row| row.actions);
+    let busiest = StoredValue::new(data.rows.first().map(|row| row.bot.clone()));
+    let action = view! {
+        <Show when=move || busiest.get_value().is_some()>
+            <Button
+                variant=ButtonVariant::Chip
+                size=ButtonSize::Small
+                disabled=ask_disabled
+                on_activate=move |_| {
+                    if let Some(bot) = busiest.get_value() {
+                        on_ask.run(busiest_follow_up(&bot));
+                    }
+                }
+            >{t!(i18n, gallery.activity_ask_busiest)}</Button>
+        </Show>
+    }
+    .into_any();
     let days = data.days;
     let rows = RwSignal::new(data.rows);
     view! {
         <GalleryFrame
             title
             caption=move || t_string!(i18n, gallery.activity_bot_caption, days = days).to_owned()
+            action
         >
             <Show
                 when=move || !rows.get().is_empty()
@@ -183,11 +218,32 @@ fn BotActivityView(title: String, data: BotActivityReport) -> impl IntoView {
 }
 
 #[component]
-fn RecentRefusalsView(title: String, data: RecentRefusalsReport) -> impl IntoView {
+fn RecentRefusalsView(
+    title: String,
+    data: RecentRefusalsReport,
+    on_ask: UnsyncCallback<String>,
+    ask_disabled: Signal<bool>,
+) -> impl IntoView {
     let i18n = use_i18n();
+    let has_rows = !data.rows.is_empty();
+    let action = view! {
+        <Show when=move || has_rows>
+            <Button
+                variant=ButtonVariant::Chip
+                size=ButtonSize::Small
+                disabled=ask_disabled
+                on_activate=move |_| on_ask.run(REFUSAL_FOLLOW_UP.to_owned())
+            >{t!(i18n, gallery.activity_explain_latest)}</Button>
+        </Show>
+    }
+    .into_any();
     let rows = RwSignal::new(data.rows);
     view! {
-        <GalleryFrame title caption=move || t_string!(i18n, gallery.activity_refusals_caption).to_owned()>
+        <GalleryFrame
+            title
+            caption=move || t_string!(i18n, gallery.activity_refusals_caption).to_owned()
+            action
+        >
             <Show
                 when=move || !rows.get().is_empty()
                 fallback=move || view! {
@@ -273,6 +329,12 @@ fn activity_width(actions: u64, most: u64) -> f64 {
     }
 }
 
+fn busiest_follow_up(bot: &str) -> String {
+    format!("What has {bot} actually been doing? Look at the audit trail and summarise it.")
+}
+
+const REFUSAL_FOLLOW_UP: &str = "Explain the most recent refusal in that list, and what would have to change for it to be allowed.";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +353,14 @@ mod tests {
         );
         assert_eq!(activity_width(5, 10), 50.0);
         assert_eq!(activity_width(0, 0), 0.0);
+        assert_eq!(
+            busiest_follow_up("bot-finance"),
+            "What has bot-finance actually been doing? Look at the audit trail and summarise it."
+        );
+        assert_eq!(
+            REFUSAL_FOLLOW_UP,
+            "Explain the most recent refusal in that list, and what would have to change for it to be allowed."
+        );
         assert!(matches!(
             project_result(
                 ActivityReportKind::Refusals,

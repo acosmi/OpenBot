@@ -16,6 +16,8 @@ pub fn ConversationComponent(
     arguments: Value,
     error_code: Option<String>,
     agent_id: BotId,
+    on_ask: UnsyncCallback<(BotId, String)>,
+    ask_disabled: Signal<bool>,
 ) -> AnyView {
     let i18n = use_i18n();
     let title = compiled_component_title(&name)
@@ -34,19 +36,27 @@ pub fn ConversationComponent(
         .as_object()
         .expect("validated component arguments are an object");
     match name.as_str() {
-        SHOW_ACTIVITY_REPORT_COMPONENT_NAME => view! {
-            <ActivityReportCard
-                agent_id
-                report=if string(object, "report") == "activity" {
-                    ActivityReportKind::Activity
-                } else {
-                    ActivityReportKind::Refusals
-                }
-                title=optional_string(object, "title")
-                days=object.get("days").and_then(Value::as_f64)
-            />
+        SHOW_ACTIVITY_REPORT_COMPONENT_NAME => {
+            let follow_up_agent = agent_id.clone();
+            let follow_up = UnsyncCallback::new(move |message: String| {
+                on_ask.run((follow_up_agent.clone(), message));
+            });
+            view! {
+                <ActivityReportCard
+                    agent_id
+                    report=if string(object, "report") == "activity" {
+                        ActivityReportKind::Activity
+                    } else {
+                        ActivityReportKind::Refusals
+                    }
+                    title=optional_string(object, "title")
+                    days=object.get("days").and_then(Value::as_f64)
+                    on_ask=follow_up
+                    ask_disabled
+                />
+            }
+            .into_any()
         }
-        .into_any(),
         SHOW_QUOTE_COMPONENT_NAME => view! {
             <QuoteCard
                 quote=string(object, "quote")

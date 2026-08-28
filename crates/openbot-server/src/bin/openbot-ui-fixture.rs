@@ -14,10 +14,11 @@ use openbot_application::{
     AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, BeginThreadRunRequest,
     CancelThreadRunRequest, ChannelAdministration, ChannelAdministrationError,
     ChannelCreateRequest, ChannelReadScope, ChannelReader, ComponentAdministration,
-    ComponentAdministrationError, CorrectMemoryRequest, McpConnectionAdministration,
-    McpConnectionError, MemoryAdministration, MemoryAdministrationError, MemoryControlRequest,
-    MemoryPageRequest, MutateMemoryRequest, OpenBotApplication, PeopleAdministration,
-    PeoplePageRequest, PeoplePortError, PortError, RecallMemoriesRequest, RememberMemoryRequest,
+    ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
+    ComponentRuntimeScope, CorrectMemoryRequest, McpConnectionAdministration, McpConnectionError,
+    MemoryAdministration, MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest,
+    MutateMemoryRequest, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
+    PeoplePortError, PortError, RecallMemoriesRequest, RememberMemoryRequest,
     ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
     ThreadHistoryRequest, ToolApprovalAdministration, ToolApprovalAdministrationError,
     UiPreferenceAdministration, UiPreferenceAdministrationError, UpdateMemoryControlRequest,
@@ -31,8 +32,10 @@ use openbot_contracts::command::{
     ThreadRunStarted,
 };
 use openbot_contracts::components::{
-    CompiledComponentKind, CompiledComponentManifestEntry, ComponentCatalogueAdded,
-    ComponentRecord, ComponentRecords,
+    BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, BotActivityRow, CompiledComponentKind,
+    CompiledComponentManifestEntry, ComponentCatalogueAdded, ComponentFunctionCall,
+    ComponentFunctionData, ComponentRecord, ComponentRecords, RECENT_REFUSALS_FUNCTION_NAME,
+    RecentRefusalRow, RecentRefusalsReport, SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
 };
 use openbot_contracts::ids::{
     ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
@@ -62,6 +65,8 @@ use time::{Duration, OffsetDateTime};
 const FIXTURE_EXISTING_THREAD: &str = "550e8400-e29b-81d4-a716-446655440000";
 const FIXTURE_GOOGLE_DRIVE_SERVER: &str = "google-drive";
 const FIXTURE_GOOGLE_DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
+const FIXTURE_ACTIVITY_FOLLOW_UP: &str =
+    "What has bot-busiest actually been doing? Look at the audit trail and summarise it.";
 
 #[derive(Clone)]
 struct FixtureChannels {
@@ -517,6 +522,59 @@ impl ComponentAdministration for FixtureComponents {
         }
         Ok(ComponentCatalogueAdded { added })
     }
+
+    async fn call_component_function(
+        &self,
+        scope: &ComponentRuntimeScope,
+        component_name: &str,
+        build_has_renderer: bool,
+        plan: &ComponentFunctionCallPlan,
+    ) -> Result<ComponentFunctionCall, ComponentAdministrationError> {
+        if scope.agent_id.as_str() != "bot-0"
+            || component_name != SHOW_ACTIVITY_REPORT_COMPONENT_NAME
+            || !build_has_renderer
+        {
+            return Err(ComponentAdministrationError::NotVisible);
+        }
+        match plan.arguments {
+            Some(ComponentFunctionArguments::BotActivity { days })
+                if plan.function == BOT_ACTIVITY_FUNCTION_NAME =>
+            {
+                Ok(ComponentFunctionCall::succeeded(
+                    ComponentFunctionData::BotActivity(BotActivityReport {
+                        days,
+                        rows: vec![
+                            BotActivityRow {
+                                bot: "bot-busiest".to_owned(),
+                                actions: 9,
+                            },
+                            BotActivityRow {
+                                bot: "bot-secondary".to_owned(),
+                                actions: 4,
+                            },
+                        ],
+                    }),
+                ))
+            }
+            Some(ComponentFunctionArguments::RecentRefusals { .. })
+                if plan.function == RECENT_REFUSALS_FUNCTION_NAME =>
+            {
+                Ok(ComponentFunctionCall::succeeded(
+                    ComponentFunctionData::RecentRefusals(RecentRefusalsReport {
+                        rows: vec![RecentRefusalRow {
+                            at: self.now,
+                            bot: Some("bot-0".to_owned()),
+                            what: "component.refused".to_owned(),
+                            reason: Some("component_withheld".to_owned()),
+                        }],
+                    }),
+                ))
+            }
+            _ => Err(ComponentAdministrationError::InvalidInput {
+                field: "fixture_component_function",
+            }),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -886,6 +944,7 @@ struct FixtureThreadsInner {
     subscribers: Mutex<HashMap<String, Vec<tokio::sync::mpsc::Sender<AppEvent>>>>,
     receipts: Mutex<HashMap<String, ThreadRunStarted>>,
     cancelled_runs: Mutex<HashSet<String>>,
+    fail_activity_follow_up_once: AtomicBool,
 }
 
 impl FixtureThreads {
@@ -947,6 +1006,60 @@ impl FixtureThreads {
                         tool_calls: None,
                     },
                     ThreadHistoryMessage {
+                        id: "fixture-activity-component-call".to_owned(),
+                        role: ThreadHistoryRole::Assistant,
+                        content: String::new(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: None,
+                        tool_name: None,
+                        tool_error_code: None,
+                        tool_calls: Some(vec![serde_json::json!({
+                            "id":"fixture-provider-activity-component",
+                            "type":"function",
+                            "function":{
+                                "name":"showActivityReport",
+                                "arguments":{"report":"activity","days":7}
+                            }
+                        })]),
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-activity-component-result".to_owned(),
+                        role: ThreadHistoryRole::Tool,
+                        content: "The report is on screen for the person, filled with figures read from this deployment. You were not given the figures.".to_owned(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: Some("fixture-provider-activity-component".to_owned()),
+                        tool_name: Some("showActivityReport".to_owned()),
+                        tool_error_code: None,
+                        tool_calls: None,
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-refusals-component-call".to_owned(),
+                        role: ThreadHistoryRole::Assistant,
+                        content: String::new(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: None,
+                        tool_name: None,
+                        tool_error_code: None,
+                        tool_calls: Some(vec![serde_json::json!({
+                            "id":"fixture-provider-refusals-component",
+                            "type":"function",
+                            "function":{
+                                "name":"showActivityReport",
+                                "arguments":{"report":"refusals"}
+                            }
+                        })]),
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-refusals-component-result".to_owned(),
+                        role: ThreadHistoryRole::Tool,
+                        content: "The report is on screen for the person, filled with figures read from this deployment. You were not given the figures.".to_owned(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: Some("fixture-provider-refusals-component".to_owned()),
+                        tool_name: Some("showActivityReport".to_owned()),
+                        tool_error_code: None,
+                        tool_calls: None,
+                    },
+                    ThreadHistoryMessage {
                         id: "fixture-refused-component-call".to_owned(),
                         role: ThreadHistoryRole::Assistant,
                         content: String::new(),
@@ -988,6 +1101,7 @@ impl FixtureThreads {
                 subscribers: Mutex::new(HashMap::new()),
                 receipts: Mutex::new(HashMap::new()),
                 cancelled_runs: Mutex::new(HashSet::new()),
+                fail_activity_follow_up_once: AtomicBool::new(true),
             }),
             channels,
         }
@@ -1058,8 +1172,17 @@ impl ThreadDirectory for FixtureThreads {
                 ..receipt
             });
         }
+        if request.command.message == FIXTURE_ACTIVITY_FOLLOW_UP
+            && self
+                .inner
+                .fail_activity_follow_up_once
+                .swap(false, Ordering::SeqCst)
+        {
+            return Err(ThreadDirectoryError::Unavailable);
+        }
         let thread = request.command.thread_id.clone();
         let run = request.command.run_id.clone();
+        let bot = request.command.bot_id.clone();
         if let openbot_contracts::command::ThreadRunAnchor::Channel { channel_id } =
             &request.command.anchor
             && let Ok(mut channels) = self.channels.rows.lock()
@@ -1088,7 +1211,7 @@ impl ThreadDirectory for FixtureThreads {
                 id: format!("{}:user", run.as_str()),
                 role: ThreadHistoryRole::User,
                 content: request.command.message.clone(),
-                agent_id: Some(request.command.bot_id.clone()),
+                agent_id: Some(bot.clone()),
                 tool_call_id: None,
                 tool_name: None,
                 tool_error_code: None,
@@ -1120,7 +1243,7 @@ impl ThreadDirectory for FixtureThreads {
                 run_id: run.clone(),
                 event_sequence,
                 event_type: ThreadRunEventKind::Started,
-                payload: serde_json::json!({"runId":run,"messageId":format!("{}:user",run.as_str()),"botId":request.command.bot_id}),
+                payload: serde_json::json!({"runId":run,"messageId":format!("{}:user",run.as_str()),"botId":bot.clone()}),
                 terminal: false,
                 created_at: OffsetDateTime::now_utc(),
             },
@@ -1172,7 +1295,7 @@ impl ThreadDirectory for FixtureThreads {
                     id: format!("{}:assistant", run.as_str()),
                     role: ThreadHistoryRole::Assistant,
                     content: "Fixture reply".to_owned(),
-                    agent_id: None,
+                    agent_id: Some(bot.clone()),
                     tool_call_id: None,
                     tool_name: None,
                     tool_error_code: None,

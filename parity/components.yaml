@@ -85,7 +85,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0001"
     migration_rule: "preserve: 工具名 showActivityReport 与参数 schema 不变，React 实现换成 Leptos"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch44闭合showActivityReport exact schema、build-owned botActivity/recentRefusals、admin ACL/hot policy/function grant/call audit与两种typed report，并保留Settings不可预览；Batch45把fresh provider definition、args-derived function、call-time decision、durable call/result/Agent三向配对与safe conversation mount接入。Batch46把上游两条conversation follow-up ask逐字接入唯一native BeginThreadRun：按钮只在真实非空data与conversation callback存在时显示，busy/resumable/submitting明确disabled；PendingTurn绑定Server-derived Agent，失败Retry重放exact thread/run/Agent/message。UI conversation12/0/0、Activity1/0/0、Clippy/WASM/五bundle闸门绿。release浏览器Activity/Refusals两report与两按钮各1；busiest首次注入503后Retry可用、actions/textarea锁定，第二次以完全相同runId/botId/anchor/message得201；Refusals另一次201，两prompt逐字exact，durable user/assistant均agentId bot-0；hard reload后prompt/button/report各1，1440/600 overflow0、duplicate/nested application error0。"
     evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献 showActivityReport 一条"
     notes: "唯一会自己读部署数据的 gallery 组件。① 参数 schema = activity.tsx::ActivityReportProps；② published 状态 = server/src/db/schema/components.ts::components 的 publishedDescription（null 即模型永不被提供该组件）；③ per-Bot withholding = 同文件 componentExclusions（开放默认，有行才是例外）；④ data-function grant = 同文件 componentFunctions（缺行即拒，activity.tsx::GALLERY 的 reads 回调声明本次调用要读哪个函数）；⑤ tool-call-time 再授权 = app/src/lib/copilot/gallery-tools.tsx::GrantedTool 的 handler 调 decideComponent，服务端 server/src/components/routes.ts 的 POST /:name/decision 与 POST /:name/call 各自复核 canUseBot + store.decide + store.mayCall 并写 audit。本条实测 grep -c callComponentFunction 命中 3 次，是判定沙箱侧为零的正向对照。上游刻意不给它 preview（Admin 画廊里显示为不可预览），Leptos 版必须保留这个缺省，否则 Admin 页会用当前活跃 Bot 的身份发起一次真实读取。"
 
