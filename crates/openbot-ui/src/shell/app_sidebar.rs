@@ -124,7 +124,9 @@ pub fn AppSidebar() -> impl IntoView {
     let roster_location = location.clone();
     let agents_location = location.clone();
     let approvals_location = location.clone();
-    let memory_location = location;
+    let memory_location = location.clone();
+    let settings_location = location.clone();
+    let preference_status_location = location;
     view! {
         <span
             hidden
@@ -242,6 +244,14 @@ pub fn AppSidebar() -> impl IntoView {
                         memory_location.pathname.get() == "/settings/memory"
                     })
                 />
+                <SidebarNavLink
+                    href="/settings".to_owned()
+                    icon=Icon::Settings
+                    label=move || t_string!(i18n, shell.nav_settings).to_owned()
+                    current=Signal::derive(move || {
+                        settings_location.pathname.get() == "/settings"
+                    })
+                />
             </SidebarNavList>
             <Show when=move || current_user.get().is_some()>
                 {move || current_user.get().map(|user| {
@@ -281,8 +291,10 @@ pub fn AppSidebar() -> impl IntoView {
             </Show>
             <div class="ob-sidebar-preferences">
                 <ThemeToggle />
-                <LocaleSwitch />
-                <PreferenceSaveStatus />
+                <LocaleSwitch id="sidebar-locale-switch" />
+                <Show when=move || preference_status_location.pathname.get() != "/settings">
+                    <PreferenceSaveStatus />
+                </Show>
             </div>
         </SidebarFooter>
     }

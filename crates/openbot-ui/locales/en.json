@@ -60,6 +60,7 @@
     "language_english": "English",
     "language_simplified_chinese": "Simplified Chinese",
     "preference_save_error": "Could not save this preference. Try again.",
+    "preference_saving": "Saving preferences",
     "detail_panel_open": "Show details",
     "detail_panel_close": "Hide details",
     "keyboard_shortcuts": "Keyboard shortcuts",
@@ -211,6 +212,8 @@
   },
   "settings": {
     "title": "Settings",
+    "preferences_title": "Preferences",
+    "preferences_description": "Choose how OpenBot looks and reads for you. These preferences follow your account across devices in this deployment.",
     "nav_general": "General",
     "nav_appearance": "Appearance",
     "nav_language": "Language",

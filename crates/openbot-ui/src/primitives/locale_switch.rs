@@ -12,12 +12,17 @@ use super::{IconSize, IconView};
 
 /// Switch between the two first-release locales without reloading the bundle.
 #[component]
-pub fn LocaleSwitch() -> impl IntoView {
+pub fn LocaleSwitch(#[prop(into)] id: String) -> impl IntoView {
+    assert_dom_id(&id);
     let i18n = use_i18n();
     let open = RwSignal::new(false);
     let trigger_ref = NodeRef::<html::Button>::new();
     let en_ref = NodeRef::<html::Button>::new();
     let zh_ref = NodeRef::<html::Button>::new();
+    let label_id = format!("{id}-label");
+    let current_id = format!("{id}-current");
+    let labelled_by = format!("{label_id} {current_id}");
+    let menu_label_id = label_id.clone();
 
     let toggle = move |_| {
         if open.get_untracked() {
@@ -27,8 +32,8 @@ pub fn LocaleSwitch() -> impl IntoView {
         }
     };
     view! {
-        <div class="ob-locale-switch">
-            <span id="locale-switch-label" class="ob-visually-hidden">
+        <div id=id class="ob-locale-switch">
+            <span id=label_id class="ob-visually-hidden">
                 {move || t!(i18n, shell.language_label)}
             </span>
             <button
@@ -37,7 +42,7 @@ pub fn LocaleSwitch() -> impl IntoView {
                 node_ref=trigger_ref
                 aria-haspopup="menu"
                 aria-expanded=move || if open.get() { "true" } else { "false" }
-                aria-labelledby="locale-switch-label locale-switch-current"
+                aria-labelledby=labelled_by
                 on:click=toggle
                 on:keydown=move |event| {
                     match event.key().as_str() {
@@ -51,13 +56,13 @@ pub fn LocaleSwitch() -> impl IntoView {
                 }
             >
                 <IconView icon=Icon::Languages size=IconSize::Inline />
-                <span id="locale-switch-current">
+                <span id=current_id>
                     {move || locale_label(i18n, i18n.get_locale())}
                 </span>
                 <IconView icon=Icon::ChevronDown size=IconSize::Inline />
             </button>
             <Show when=move || open.get()>
-                <div class="ob-locale-menu" role="menu" aria-labelledby="locale-switch-label">
+                <div class="ob-locale-menu" role="menu" aria-labelledby=menu_label_id.clone()>
                     <button
                         type="button"
                         class="ob-locale-option"
@@ -202,4 +207,41 @@ fn focus_button(reference: NodeRef<html::Button>) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = reference;
+}
+
+fn assert_dom_id(id: &str) {
+    assert!(
+        !id.is_empty()
+            && id.len() <= 96
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        "LocaleSwitch id must be one bounded DOM token"
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_instances_have_disjoint_bounded_dom_id_families() {
+        for id in ["sidebar-locale-switch", "settings-locale-switch"] {
+            assert_dom_id(id);
+        }
+        assert_ne!(
+            "sidebar-locale-switch-label",
+            "settings-locale-switch-label"
+        );
+        assert_ne!(
+            "sidebar-locale-switch-current",
+            "settings-locale-switch-current"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "bounded DOM token")]
+    fn split_or_selector_controlled_id_is_rejected() {
+        assert_dom_id("settings locale#switch");
+    }
 }

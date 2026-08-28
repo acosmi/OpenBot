@@ -60,6 +60,7 @@
     "language_english": "英语",
     "language_simplified_chinese": "简体中文",
     "preference_save_error": "无法保存此偏好，请重试。",
+    "preference_saving": "正在保存偏好设置",
     "detail_panel_open": "显示详情",
     "detail_panel_close": "隐藏详情",
     "keyboard_shortcuts": "快捷键",
@@ -211,6 +212,8 @@
   },
   "settings": {
     "title": "设置",
+    "preferences_title": "偏好设置",
+    "preferences_description": "选择 OpenBot 为你呈现和朗读内容的方式。这些偏好会在当前部署中随你的账户跨设备同步。",
     "nav_general": "通用",
     "nav_appearance": "外观",
     "nav_language": "语言",

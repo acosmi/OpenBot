@@ -1173,6 +1173,10 @@ impl UiPreferenceAdministration for FixturePreferences {
         _auth: &AuthContext,
         update: UpdateUiPreferences,
     ) -> Result<UiPreferences, UiPreferenceAdministrationError> {
+        // Keep the deterministic browser fixture slow enough to exercise the serialized/coalesced
+        // client queue and its visible pending state across browser-control round trips instead of
+        // letting loopback finish before the next assertion can observe it.
+        tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
         let mut stored = self
             .stored
             .lock()

@@ -16,6 +16,8 @@ pub struct UiPreferenceContext {
     saving: RwSignal<bool>,
     save_error: RwSignal<bool>,
     interaction_revision: RwSignal<u64>,
+    #[cfg(target_arch = "wasm32")]
+    worker_owner: StoredValue<Option<Owner>>,
 }
 
 /// Install one preference context and start the authenticated cross-device read.
@@ -26,6 +28,8 @@ pub fn provide_ui_preferences(i18n: I18nContext<Locale>) -> UiPreferenceContext 
         saving: RwSignal::new(false),
         save_error: RwSignal::new(false),
         interaction_revision: RwSignal::new(0),
+        #[cfg(target_arch = "wasm32")]
+        worker_owner: StoredValue::new(Owner::current()),
     };
     provide_context(context);
     load_stored_preferences(context, i18n);
@@ -42,6 +46,12 @@ impl UiPreferenceContext {
     #[must_use]
     pub fn theme(self) -> UiTheme {
         self.theme.get()
+    }
+
+    /// Whether one or more preference updates are still awaiting a server receipt.
+    #[must_use]
+    pub fn is_saving(self) -> bool {
+        self.saving.get()
     }
 
     /// Apply and enqueue one explicit theme choice without reloading.
@@ -80,19 +90,31 @@ impl UiPreferenceContext {
         }
         self.saving.set(true);
         #[cfg(target_arch = "wasm32")]
-        leptos::task::spawn_local_scoped_with_cancellation(async move {
-            loop {
-                let next = self.pending.get_untracked();
-                self.pending.set(UpdateUiPreferences::default());
-                if next.is_empty() {
-                    self.saving.set(false);
-                    break;
-                }
-                if save_ui_preferences(next).await.is_err() {
-                    self.save_error.set(true);
-                }
+        {
+            // Enqueue can run inside ThemeToggle/LocaleSwitch event owners. A locale change may
+            // reconstruct that child owner while the PUT is in flight; binding the worker there
+            // would cancel the receipt path and leave `saving=true` forever. The AppShell owner
+            // captured by `provide_ui_preferences` survives those child reconstructions.
+            let start_worker = || {
+                leptos::task::spawn_local_scoped_with_cancellation(async move {
+                    loop {
+                        let next = self.pending.get_untracked();
+                        self.pending.set(UpdateUiPreferences::default());
+                        if next.is_empty() {
+                            self.saving.set(false);
+                            break;
+                        }
+                        if save_ui_preferences(next).await.is_err() {
+                            self.save_error.set(true);
+                        }
+                    }
+                });
+            };
+            match self.worker_owner.get_value() {
+                Some(owner) => owner.with(start_worker),
+                None => start_worker(),
             }
-        });
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.pending.set(UpdateUiPreferences::default());
@@ -108,6 +130,11 @@ pub fn PreferenceSaveStatus() -> impl IntoView {
     let i18n = use_i18n();
     let preferences = use_ui_preferences();
     view! {
+        <Show when=move || preferences.is_saving()>
+            <p class="ob-preference-saving" role="status">
+                {move || t!(i18n, shell.preference_saving)}
+            </p>
+        </Show>
         <Show when=move || preferences.save_error.get()>
             <p class="ob-preference-error" role="alert">
                 {move || t!(i18n, shell.preference_save_error)}
