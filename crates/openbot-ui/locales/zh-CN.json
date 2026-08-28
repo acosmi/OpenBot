@@ -339,6 +339,8 @@
     "tone_positive": "正向",
     "tone_caution": "提醒",
     "tone_negative": "负向",
+    "chart_data": "图表数据",
+    "no_chart_data": "没有可绘制的数据。",
     "not_shown": "未显示：{{ title }}",
     "renderer_unavailable": "此已发布组件在当前构建中已没有可用渲染器。",
     "empty_title": "还没有组件",

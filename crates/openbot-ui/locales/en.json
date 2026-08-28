@@ -339,6 +339,8 @@
     "tone_positive": "Positive",
     "tone_caution": "Caution",
     "tone_negative": "Negative",
+    "chart_data": "Chart data",
+    "no_chart_data": "There is no data to chart.",
     "not_shown": "Not shown: {{ title }}",
     "renderer_unavailable": "This published component no longer has a renderer in this build.",
     "empty_title": "No components yet",

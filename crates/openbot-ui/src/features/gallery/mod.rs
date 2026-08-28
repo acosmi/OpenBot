@@ -1,6 +1,7 @@
 //! Compiled component renderers and truthful preview/refusal surfaces.
 
 mod cards;
+mod charts;
 mod frame;
 mod preview;
 mod quote;
@@ -8,6 +9,10 @@ mod refused;
 
 pub use cards::{
     ChecklistCard, ChecklistItem, HeadlineMetric, MetricsCard, NoticeCard, RecordCard, RecordField,
+};
+pub use charts::{
+    AreaChartCard, BarChartCard, ChartPoint, ChartSeries, LineChartCard, PieChartCard,
+    ProgressChartCard, ProgressPoint,
 };
 pub use frame::{GalleryBadge, GalleryFrame, GalleryTone};
 pub use preview::{ComponentPreview, component_has_renderer, renderer_names};

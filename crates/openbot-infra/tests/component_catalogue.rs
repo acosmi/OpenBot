@@ -109,7 +109,9 @@ async fn catalogue_sync_is_exact_additive_audited_and_list_is_closed() {
             let rolled_back: i64 = client
                 .query_one(
                     "SELECT count(*)::bigint FROM public.components
-                      WHERE name IN ('showChecklist','showMetrics','showNotice','showQuote','showRecord')",
+                      WHERE name IN ('showAreaChart','showBarChart','showChecklist','showLineChart',
+                                     'showMetrics','showNotice','showPieChart','showProgress',
+                                     'showQuote','showRecord')",
                     &[],
                 )
                 .await
@@ -220,7 +222,7 @@ async fn catalogue_sync_is_exact_additive_audited_and_list_is_closed() {
             let quote_audits: i64 = audit_row
                 .try_get(1)
                 .map_err(|error| error.to_string())?;
-            if audits != 5 || quote_audits != 1 {
+            if audits != 10 || quote_audits != 1 {
                 return Err(format!(
                     "component catalogue audit count drift: total={audits} quote={quote_audits}"
                 ));

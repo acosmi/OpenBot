@@ -4,21 +4,29 @@ use leptos::prelude::*;
 #[cfg(test)]
 use openbot_contracts::components::compiled_component_manifest;
 use openbot_contracts::components::{
-    SHOW_CHECKLIST_COMPONENT_NAME, SHOW_METRICS_COMPONENT_NAME, SHOW_NOTICE_COMPONENT_NAME,
-    SHOW_QUOTE_COMPONENT_NAME, SHOW_RECORD_COMPONENT_NAME,
+    SHOW_AREA_CHART_COMPONENT_NAME, SHOW_BAR_CHART_COMPONENT_NAME, SHOW_CHECKLIST_COMPONENT_NAME,
+    SHOW_LINE_CHART_COMPONENT_NAME, SHOW_METRICS_COMPONENT_NAME, SHOW_NOTICE_COMPONENT_NAME,
+    SHOW_PIE_CHART_COMPONENT_NAME, SHOW_PROGRESS_COMPONENT_NAME, SHOW_QUOTE_COMPONENT_NAME,
+    SHOW_RECORD_COMPONENT_NAME,
 };
 
 use crate::i18n::{t, use_i18n};
 
 use super::{
-    ChecklistCard, ChecklistItem, GalleryTone, HeadlineMetric, MetricsCard, NoticeCard, QuoteCard,
-    RecordCard, RecordField,
+    AreaChartCard, BarChartCard, ChartPoint, ChartSeries, ChecklistCard, ChecklistItem,
+    GalleryTone, HeadlineMetric, LineChartCard, MetricsCard, NoticeCard, PieChartCard,
+    ProgressChartCard, ProgressPoint, QuoteCard, RecordCard, RecordField,
 };
 
-const RENDERER_NAMES: [&str; 5] = [
+const RENDERER_NAMES: [&str; 10] = [
+    SHOW_AREA_CHART_COMPONENT_NAME,
+    SHOW_BAR_CHART_COMPONENT_NAME,
     SHOW_CHECKLIST_COMPONENT_NAME,
+    SHOW_LINE_CHART_COMPONENT_NAME,
     SHOW_METRICS_COMPONENT_NAME,
     SHOW_NOTICE_COMPONENT_NAME,
+    SHOW_PIE_CHART_COMPONENT_NAME,
+    SHOW_PROGRESS_COMPONENT_NAME,
     SHOW_QUOTE_COMPONENT_NAME,
     SHOW_RECORD_COMPONENT_NAME,
 ];
@@ -40,6 +48,25 @@ pub fn component_has_renderer(name: &str) -> bool {
 pub fn ComponentPreview(name: String) -> AnyView {
     let i18n = use_i18n();
     let content = match name.as_str() {
+        SHOW_AREA_CHART_COMPONENT_NAME => view! {
+            <AreaChartCard
+                title="Storage used".to_owned()
+                caption=Some("Growing steadily since the migration.".to_owned())
+                labels=vec!["Jan".to_owned(), "Feb".to_owned(), "Mar".to_owned(), "Apr".to_owned(), "May".to_owned()]
+                series=vec![ChartSeries { name: "TB".to_owned(), values: vec![12.0, 19.0, 26.0, 31.0, 44.0] }]
+            />
+        }.into_any(),
+        SHOW_BAR_CHART_COMPONENT_NAME => view! {
+            <BarChartCard
+                title="Revenue by team".to_owned()
+                caption=Some("Sales leads, and Engineering is closing the gap.".to_owned())
+                points=vec![
+                    ChartPoint { label: "Sales".to_owned(), value: 120.0 },
+                    ChartPoint { label: "Engineering".to_owned(), value: 80.0 },
+                    ChartPoint { label: "Support".to_owned(), value: 45.0 },
+                ]
+            />
+        }.into_any(),
         SHOW_CHECKLIST_COMPONENT_NAME => view! {
             <ChecklistCard
                 title="Before the release".to_owned()
@@ -52,6 +79,14 @@ pub fn ComponentPreview(name: String) -> AnyView {
             />
         }
         .into_any(),
+        SHOW_LINE_CHART_COMPONENT_NAME => view! {
+            <LineChartCard
+                title="Signups".to_owned()
+                caption=Some("Six weeks, one release.".to_owned())
+                labels=vec!["W1".to_owned(), "W2".to_owned(), "W3".to_owned(), "W4".to_owned(), "W5".to_owned(), "W6".to_owned()]
+                series=vec![ChartSeries { name: "Signups".to_owned(), values: vec![120.0, 180.0, 160.0, 240.0, 300.0, 420.0] }]
+            />
+        }.into_any(),
         SHOW_METRICS_COMPONENT_NAME => view! {
             <MetricsCard
                 title="This month".to_owned()
@@ -73,6 +108,27 @@ pub fn ComponentPreview(name: String) -> AnyView {
             />
         }
         .into_any(),
+        SHOW_PIE_CHART_COMPONENT_NAME => view! {
+            <PieChartCard
+                title="Where the month went".to_owned()
+                caption=None
+                points=vec![
+                    ChartPoint { label: "Build".to_owned(), value: 48.0 },
+                    ChartPoint { label: "Support".to_owned(), value: 26.0 },
+                    ChartPoint { label: "Meetings".to_owned(), value: 26.0 },
+                ]
+            />
+        }.into_any(),
+        SHOW_PROGRESS_COMPONENT_NAME => view! {
+            <ProgressChartCard
+                title="Migration to the new runtime".to_owned()
+                caption=Some("Two services left.".to_owned())
+                points=vec![
+                    ProgressPoint { label: "Services moved".to_owned(), value: 18.0, target: 20.0 },
+                    ProgressPoint { label: "Tests ported".to_owned(), value: 240.0, target: 240.0 },
+                ]
+            />
+        }.into_any(),
         SHOW_QUOTE_COMPONENT_NAME => view! {
             <QuoteCard
                 quote="Meals under $75 need no receipt. Anything above needs one, and anything above $500 needs your manager before you spend it.".to_owned()
@@ -120,9 +176,14 @@ mod tests {
         assert_eq!(
             renderer_names(),
             [
+                SHOW_AREA_CHART_COMPONENT_NAME,
+                SHOW_BAR_CHART_COMPONENT_NAME,
                 SHOW_CHECKLIST_COMPONENT_NAME,
+                SHOW_LINE_CHART_COMPONENT_NAME,
                 SHOW_METRICS_COMPONENT_NAME,
                 SHOW_NOTICE_COMPONENT_NAME,
+                SHOW_PIE_CHART_COMPONENT_NAME,
+                SHOW_PROGRESS_COMPONENT_NAME,
                 SHOW_QUOTE_COMPONENT_NAME,
                 SHOW_RECORD_COMPONENT_NAME,
             ]
