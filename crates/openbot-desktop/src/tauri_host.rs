@@ -10,8 +10,9 @@ use http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE};
 use http::{Method, Request, Response, StatusCode};
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
-use openbot_contracts::components::ComponentCatalogueRequest;
+use openbot_contracts::components::{ComponentCatalogueRequest, ComponentDecisionRequest};
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
+use openbot_contracts::ids::BotId;
 use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme, UpdateUiPreferences};
 use serde_json::json;
@@ -23,6 +24,7 @@ const INDEX_MAX_BYTES: u64 = 1024 * 1024;
 const ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const API_BODY_MAX_BYTES: usize = 4096;
 const COMPONENT_CATALOGUE_BODY_MAX_BYTES: usize = 256 * 1024;
+const COMPONENT_DECISION_BODY_MAX_BYTES: usize = 256 * 1024;
 const HTML_ROOT_MARKER: &str = "<html lang=\"en\">";
 const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
                    connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; \
@@ -156,6 +158,17 @@ impl DesktopTauriProtocol {
         if path == "/api/components/catalogue" {
             return self.component_catalogue(request, authority).await;
         }
+        if let Some(raw_agent_id) = path.strip_prefix("/api/components/for-agent/") {
+            return self
+                .components_for_agent(request, authority, raw_agent_id)
+                .await;
+        }
+        if let Some(raw_name) = path
+            .strip_prefix("/api/components/")
+            .and_then(|rest| rest.strip_suffix("/decision"))
+        {
+            return self.component_decision(request, authority, raw_name).await;
+        }
         if let Some(raw_id) = path.strip_prefix("/api/tool-approvals/") {
             return self.approval_decision(request, authority, raw_id).await;
         }
@@ -273,6 +286,74 @@ impl DesktopTauriProtocol {
             .await
         {
             Ok(AppReply::ComponentCatalogueAdded(added)) => json_response(&added),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn components_for_agent(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_agent_id: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let agent_id = match percent_decode_segment(raw_agent_id) {
+            Some(agent_id) => BotId::new(agent_id),
+            None => return error_response(AppError::MalformedPayload { field: "agent_id" }),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::ListComponentsForAgent { agent_id },
+            )
+            .await
+        {
+            Ok(AppReply::GrantedComponents(components)) => json_response(&components),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn component_decision(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_name: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if request.body().len() > COMPONENT_DECISION_BODY_MAX_BYTES {
+            return payload_too_large();
+        }
+        let component_name = match percent_decode_segment(raw_name) {
+            Some(name) => name,
+            None => {
+                return error_response(AppError::MalformedPayload {
+                    field: "component_name",
+                });
+            }
+        };
+        let decision = match serde_json::from_slice::<ComponentDecisionRequest>(request.body()) {
+            Ok(decision) => decision,
+            Err(_) => return error_response(AppError::MalformedPayload { field: "body" }),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::DecideComponent {
+                    component_name,
+                    request: decision,
+                },
+            )
+            .await
+        {
+            Ok(AppReply::ComponentDecision(decision)) => json_response(&decision),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -581,17 +662,19 @@ mod tests {
     use async_trait::async_trait;
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
-        ChannelReader, ComponentAdministration, ComponentAdministrationError, OpenBotApplication,
-        PortError, ToolApprovalAdministration, ToolApprovalAdministrationError,
-        UiPreferenceAdministration, UiPreferenceAdministrationError,
+        ChannelReader, ComponentAdministration, ComponentAdministrationError,
+        ComponentRuntimeScope, OpenBotApplication, PortError, ToolApprovalAdministration,
+        ToolApprovalAdministrationError, UiPreferenceAdministration,
+        UiPreferenceAdministrationError,
     };
     use openbot_contracts::auth::{AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
     use openbot_contracts::components::{
-        CompiledComponentManifestEntry, ComponentCatalogueAdded, ComponentRecords,
-        compiled_component_manifest,
+        CompiledComponentManifestEntry, ComponentCatalogueAdded, ComponentDecision,
+        ComponentDecisionRequest, ComponentRecords, GrantedCompiledComponent,
+        GrantedCompiledComponents, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
-    use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
+    use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
     use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalResolved};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -656,6 +739,29 @@ mod tests {
             Ok(ComponentCatalogueAdded {
                 added: entries.iter().map(|entry| entry.name.clone()).collect(),
             })
+        }
+
+        async fn list_components_for_agent(
+            &self,
+            _scope: &ComponentRuntimeScope,
+            _renderer_names: &[String],
+        ) -> Result<GrantedCompiledComponents, ComponentAdministrationError> {
+            Ok(GrantedCompiledComponents {
+                components: vec![GrantedCompiledComponent {
+                    name: SHOW_QUOTE_COMPONENT_NAME.to_owned(),
+                    description: "published quote".to_owned(),
+                }],
+            })
+        }
+
+        async fn decide_component(
+            &self,
+            _scope: &ComponentRuntimeScope,
+            _component_name: &str,
+            _build_has_renderer: bool,
+            _functions: &[String],
+        ) -> Result<ComponentDecision, ComponentAdministrationError> {
+            Ok(ComponentDecision::allowed())
         }
     }
 
@@ -839,6 +945,48 @@ mod tests {
                 .unwrap()
                 .added,
             expected
+        );
+
+        let runtime_grants = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .uri("/api/components/for-agent/agent%2Done")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(runtime_grants.status(), StatusCode::OK);
+        assert_eq!(runtime_grants.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<GrantedCompiledComponents>(runtime_grants.body())
+                .unwrap()
+                .components[0]
+                .name,
+            SHOW_QUOTE_COMPONENT_NAME
+        );
+
+        let component_decision = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/components/showQuote/decision")
+                    .body(
+                        serde_json::to_vec(&ComponentDecisionRequest {
+                            agent_id: BotId::new("agent-one"),
+                            functions: Vec::new(),
+                        })
+                        .unwrap(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(component_decision.status(), StatusCode::OK);
+        assert_eq!(component_decision.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<ComponentDecision>(component_decision.body()).unwrap(),
+            ComponentDecision::allowed()
         );
 
         let stale = protocol

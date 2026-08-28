@@ -30,7 +30,8 @@ use crate::approval_admin::{
     list_pending_tool_approvals,
 };
 use crate::components::{
-    ComponentAdministration, NoComponentAdministration, list_components, sync_component_catalogue,
+    ComponentAdministration, NoComponentAdministration, decide_component, list_components,
+    list_components_for_agent, sync_component_catalogue,
 };
 use crate::mcp_connections::{
     McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
@@ -440,6 +441,15 @@ where
             )),
             AppCommand::SyncComponentCatalogue(request) => Ok(AppReply::ComponentCatalogueAdded(
                 sync_component_catalogue(self.components.as_ref(), auth, request).await?,
+            )),
+            AppCommand::ListComponentsForAgent { agent_id } => Ok(AppReply::GrantedComponents(
+                list_components_for_agent(self.components.as_ref(), auth, agent_id).await?,
+            )),
+            AppCommand::DecideComponent {
+                component_name,
+                request,
+            } => Ok(AppReply::ComponentDecision(
+                decide_component(self.components.as_ref(), auth, component_name, request).await?,
             )),
             AppCommand::GetCurrentUser => Ok(AppReply::CurrentUser(
                 current_user(&self.people, auth).await?,

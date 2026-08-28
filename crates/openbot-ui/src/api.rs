@@ -16,12 +16,13 @@ use openbot_contracts::command::{
     ChannelDetail, ChannelPage, ChannelRoutingDecision, ThreadConversationSnapshot,
     ThreadRunCancellation, ThreadRunStarted,
 };
-#[cfg(any(target_arch = "wasm32", test))]
-use openbot_contracts::components::ComponentRecord;
 use openbot_contracts::components::{
-    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentRecords,
+    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDecision,
+    ComponentDecisionRequest, ComponentRecords, GrantedCompiledComponents,
     compiled_component_manifest,
 };
+#[cfg(any(target_arch = "wasm32", test))]
+use openbot_contracts::components::{ComponentDecisionRefusal, ComponentRecord};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::mcp::{McpConnectionDisconnected, McpConnections, McpOAuthAuthorization};
 #[cfg(target_arch = "wasm32")]
@@ -125,6 +126,98 @@ pub async fn load_components() -> Result<ComponentRecords, ApiError> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load the current build's published, non-withheld renderer grants for one Agent.
+pub async fn load_components_for_agent(
+    agent_id: &BotId,
+) -> Result<GrantedCompiledComponents, ApiError> {
+    validate_bounded_identifier(agent_id.as_str(), 256)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = format!(
+            "/api/components/for-agent/{}",
+            encode_url_component(agent_id.as_str())
+        );
+        let response = Request::get(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let granted = response
+            .json::<GrantedCompiledComponents>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_granted_components(&granted)?;
+        Ok(granted)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Re-authorize one compiled renderer immediately before accepting its tool call.
+pub async fn decide_component(
+    name: &str,
+    agent_id: &BotId,
+    functions: &[String],
+) -> Result<ComponentDecision, ApiError> {
+    validate_component_name(name)?;
+    validate_bounded_identifier(agent_id.as_str(), 256)?;
+    if functions.len() > 1024 {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut previous = None::<&str>;
+    for function in functions {
+        validate_component_name(function)?;
+        if previous.is_some_and(|previous| previous >= function.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+        previous = Some(function);
+    }
+    let request = ComponentDecisionRequest {
+        agent_id: agent_id.clone(),
+        functions: functions.to_vec(),
+    };
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = format!("/api/components/{}/decision", encode_url_component(name));
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&request)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let decision = response
+            .json::<ComponentDecision>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_component_decision(&decision, functions)?;
+        Ok(decision)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = request;
         Err(ApiError::Unavailable)
     }
 }
@@ -1116,6 +1209,45 @@ fn validate_component_record(record: &ComponentRecord) -> Result<(), ApiError> {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn validate_granted_components(granted: &GrantedCompiledComponents) -> Result<(), ApiError> {
+    let renderers = compiled_component_manifest()
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    if granted.components.len() > renderers.len() {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut previous = None::<&str>;
+    for component in &granted.components {
+        validate_component_name(&component.name)?;
+        validate_component_description(&component.description)?;
+        if !renderers.contains(&component.name)
+            || previous.is_some_and(|previous| previous >= component.name.as_str())
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        previous = Some(&component.name);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_component_decision(
+    decision: &ComponentDecision,
+    requested_functions: &[String],
+) -> Result<(), ApiError> {
+    if !decision.is_consistent() {
+        return Err(ApiError::InvalidResponse);
+    }
+    if let Some(ComponentDecisionRefusal::FunctionNotGranted { function }) = &decision.refusal
+        && requested_functions.binary_search(function).is_err()
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn validate_component_description(value: &str) -> Result<(), ApiError> {
     if value.is_empty() || value.len() > 64 * 1024 || value.as_bytes().contains(&0) {
         Err(ApiError::InvalidResponse)
@@ -1126,6 +1258,10 @@ fn validate_component_description(value: &str) -> Result<(), ApiError> {
 
 #[cfg(any(target_arch = "wasm32", test))]
 fn validate_component_identifier(value: &str, max: usize) -> Result<(), ApiError> {
+    validate_bounded_identifier(value, max)
+}
+
+fn validate_bounded_identifier(value: &str, max: usize) -> Result<(), ApiError> {
     if value.is_empty() || value.len() > max || value.chars().any(char::is_control) {
         Err(ApiError::InvalidResponse)
     } else {
@@ -1621,6 +1757,53 @@ mod tests {
         duplicate_functions.functions = vec!["read".to_owned(), "read".to_owned()];
         assert_eq!(
             validate_component_record(&duplicate_functions).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let grants = GrantedCompiledComponents {
+            components: vec![openbot_contracts::components::GrantedCompiledComponent {
+                name: SHOW_QUOTE_COMPONENT_NAME.to_owned(),
+                description: "published quote".to_owned(),
+            }],
+        };
+        assert!(validate_granted_components(&grants).is_ok());
+        let mut stale = grants.clone();
+        stale.components[0].name = "showStale".to_owned();
+        assert_eq!(
+            validate_granted_components(&stale).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let requested = vec!["recentRefusals".to_owned()];
+        assert!(validate_component_decision(&ComponentDecision::allowed(), &requested).is_ok());
+        assert!(
+            validate_component_decision(
+                &ComponentDecision::refused(ComponentDecisionRefusal::FunctionNotGranted {
+                    function: "recentRefusals".to_owned(),
+                },),
+                &requested,
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            validate_component_decision(
+                &ComponentDecision::refused(ComponentDecisionRefusal::FunctionNotGranted {
+                    function: "botActivity".to_owned(),
+                },),
+                &requested,
+            )
+            .unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        assert_eq!(
+            validate_component_decision(
+                &ComponentDecision {
+                    allowed: true,
+                    refusal: Some(ComponentDecisionRefusal::Unpublished),
+                },
+                &[],
+            )
+            .unwrap_err(),
             ApiError::InvalidResponse
         );
     }

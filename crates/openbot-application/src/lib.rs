@@ -109,8 +109,9 @@ pub use builtin_tools::{
 };
 pub use chunk::{SEMANTIC_CHUNK_MAX_BYTES, SEMANTIC_CHUNK_MAX_DELAY, SemanticChunkAccumulator};
 pub use components::{
-    ComponentAdministration, ComponentAdministrationError, NoComponentAdministration,
-    list_components, sync_component_catalogue, validate_manifest_entries,
+    ComponentAdministration, ComponentAdministrationError, ComponentRuntimeScope,
+    NoComponentAdministration, decide_component, list_components, list_components_for_agent,
+    sync_component_catalogue, validate_manifest_entries,
 };
 pub use cursor::{ChannelCursor, channel_recency};
 pub use intelligence_import::{

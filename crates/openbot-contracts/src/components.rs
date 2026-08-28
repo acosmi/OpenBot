@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 
+use crate::ids::BotId;
+
 /// Stable tool/catalogue identity for the first compiled Rust renderer slice.
 pub const SHOW_QUOTE_COMPONENT_NAME: &str = "showQuote";
 /// Human-facing title stored when the build first announces the renderer.
@@ -155,6 +157,102 @@ pub struct ComponentRecord {
 pub struct ComponentRecords {
     /// All durable compiled-component governance rows in stable kind/title/name order.
     pub components: Vec<ComponentRecord>,
+}
+
+/// One published compiled component actually available to one verified Agent runtime.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrantedCompiledComponent {
+    /// Stable renderer/tool identity.
+    pub name: String,
+    /// Published model-facing description; drafts never cross this boundary.
+    pub description: String,
+}
+
+/// Closed runtime grant snapshot for one Agent.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrantedCompiledComponents {
+    /// Published, non-withheld components in stable name order.
+    pub components: Vec<GrantedCompiledComponent>,
+}
+
+/// Call-time authorization input for one compiled component invocation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComponentDecisionRequest {
+    /// Untrusted Agent identity; authority is still derived from the verified session.
+    pub agent_id: BotId,
+    /// Data functions this exact invocation will read; empty for argument-only renderers.
+    #[serde(default)]
+    pub functions: Vec<String>,
+}
+
+/// Stable, localizable reason a component invocation was refused.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "code", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ComponentDecisionRefusal {
+    /// No durable compiled-component governance row exists for the requested name.
+    UnknownComponent,
+    /// The component is unpublished or lacks a published model-facing description.
+    Unpublished,
+    /// This otherwise-open component is explicitly withheld from the Agent.
+    WithheldFromAgent,
+    /// The component lacks a grant for one data function declared by this invocation.
+    FunctionNotGranted {
+        /// Stable data-function identity; never arguments or returned data.
+        function: String,
+    },
+}
+
+impl ComponentDecisionRefusal {
+    /// Stable audit/UI classification without user-facing prose.
+    #[must_use]
+    pub const fn code_str(&self) -> &'static str {
+        match self {
+            Self::UnknownComponent => "component_unknown",
+            Self::Unpublished => "component_unpublished",
+            Self::WithheldFromAgent => "component_withheld",
+            Self::FunctionNotGranted { .. } => "component_function_not_granted",
+        }
+    }
+}
+
+/// Result of the mandatory authorization check immediately before one component call.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentDecision {
+    /// Whether the invocation may continue.
+    pub allowed: bool,
+    /// Present exactly when `allowed` is false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<ComponentDecisionRefusal>,
+}
+
+impl ComponentDecision {
+    /// Construct the only valid allowed shape.
+    #[must_use]
+    pub const fn allowed() -> Self {
+        Self {
+            allowed: true,
+            refusal: None,
+        }
+    }
+
+    /// Construct the only valid refused shape.
+    #[must_use]
+    pub const fn refused(refusal: ComponentDecisionRefusal) -> Self {
+        Self {
+            allowed: false,
+            refusal: Some(refusal),
+        }
+    }
+
+    /// Whether the two wire fields form one valid closed result.
+    #[must_use]
+    pub const fn is_consistent(&self) -> bool {
+        self.allowed == self.refusal.is_none()
+    }
 }
 
 /// The exact compiled renderer manifest for this build.
@@ -568,5 +666,53 @@ mod tests {
         assert!(encoded.get("source").is_none());
         assert!(encoded.get("arguments").is_none());
         assert!(encoded.get("secret").is_none());
+    }
+
+    #[test]
+    fn runtime_grants_and_decisions_have_closed_payload_free_wire_shapes() {
+        let request = ComponentDecisionRequest {
+            agent_id: BotId::new("agent-one"),
+            functions: vec!["recentRefusals".to_owned()],
+        };
+        assert_eq!(
+            serde_json::to_string(&request).unwrap(),
+            r#"{"agentId":"agent-one","functions":["recentRefusals"]}"#
+        );
+        assert!(
+            serde_json::from_str::<ComponentDecisionRequest>(
+                r#"{"agentId":"agent-one","functions":[],"actor":"admin"}"#
+            )
+            .is_err()
+        );
+
+        let allowed = ComponentDecision::allowed();
+        assert!(allowed.is_consistent());
+        assert_eq!(
+            serde_json::to_string(&allowed).unwrap(),
+            r#"{"allowed":true}"#
+        );
+        let refused = ComponentDecision::refused(ComponentDecisionRefusal::FunctionNotGranted {
+            function: "recentRefusals".to_owned(),
+        });
+        assert!(refused.is_consistent());
+        assert_eq!(
+            serde_json::to_string(&refused).unwrap(),
+            r#"{"allowed":false,"refusal":{"code":"function_not_granted","function":"recentRefusals"}}"#
+        );
+        assert_eq!(
+            refused.refusal.as_ref().unwrap().code_str(),
+            "component_function_not_granted"
+        );
+
+        let grants = GrantedCompiledComponents {
+            components: vec![GrantedCompiledComponent {
+                name: SHOW_QUOTE_COMPONENT_NAME.to_owned(),
+                description: SHOW_QUOTE_COMPONENT_DESCRIPTION.to_owned(),
+            }],
+        };
+        let encoded = serde_json::to_value(grants).unwrap();
+        assert_eq!(encoded["components"][0]["name"], SHOW_QUOTE_COMPONENT_NAME);
+        assert!(encoded["components"][0].get("draft").is_none());
+        assert!(encoded["components"][0].get("arguments").is_none());
     }
 }

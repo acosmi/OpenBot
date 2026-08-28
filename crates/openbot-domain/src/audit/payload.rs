@@ -220,6 +220,8 @@ impl TakeoverPhase {
 pub enum AuditFact {
     /// 被调用工具在 catalog 中的稳定名。
     ToolName(AuditIdentifier),
+    /// Compiled component声明并被服务端复核的data-function稳定名。
+    ComponentFunction(AuditIdentifier),
     /// 该次工具调用的权威 Bot；绝不取自模型或 callback body。
     Bot(AuditIdentifier),
     /// 该次调用的 effect 分类结果。
@@ -323,6 +325,7 @@ impl AuditFact {
     pub const fn field(&self) -> &'static str {
         match self {
             Self::ToolName(_) => "tool_name",
+            Self::ComponentFunction(_) => "function",
             Self::Bot(_) => "bot",
             Self::EffectClass(_) => "effect_class",
             Self::EffectDowngraded(_) => "effect_downgraded",
@@ -368,6 +371,7 @@ impl AuditFact {
     fn to_json(&self) -> Value {
         match self {
             Self::ToolName(value)
+            | Self::ComponentFunction(value)
             | Self::Bot(value)
             | Self::TargetId(value)
             | Self::RoutingChosen(value)
@@ -446,6 +450,7 @@ impl AuditFact {
         writer.str(self.field());
         match self {
             Self::ToolName(value)
+            | Self::ComponentFunction(value)
             | Self::Bot(value)
             | Self::TargetId(value)
             | Self::RoutingChosen(value)
@@ -511,6 +516,7 @@ impl AuditFact {
 /// `field_ledger_is_disjoint_from_upstream_sensitive_keys`（台账 → 上游敏感键黑名单）。
 pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "tool_name",
+    "function",
     "bot",
     "effect_class",
     "effect_downgraded",
@@ -661,6 +667,7 @@ mod tests {
     fn every_variant() -> Vec<AuditFact> {
         vec![
             AuditFact::ToolName(identifier("browser.click")),
+            AuditFact::ComponentFunction(identifier("recentRefusals")),
             AuditFact::Bot(identifier("bot-1")),
             AuditFact::EffectClass(AuditLabel::new("execute")),
             AuditFact::EffectDowngraded(true),

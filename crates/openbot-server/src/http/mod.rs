@@ -496,6 +496,14 @@ pub fn router(state: ServerState) -> Router {
             "/api/components/catalogue",
             axum::routing::put(components::catalogue_put),
         )
+        .route(
+            "/api/components/for-agent/{agent_id}",
+            get(components::for_agent_get),
+        )
+        .route(
+            "/api/components/{name}/decision",
+            post(components::decision_post),
+        )
         .route("/api/tool-approvals", get(approvals::pending_get))
         .route(
             "/api/tool-approvals/{approval_id}",

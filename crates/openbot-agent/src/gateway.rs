@@ -213,6 +213,8 @@ impl AgentToolGateway {
                 | AppReply::Agent(_)
                 | AppReply::Components(_)
                 | AppReply::ComponentCatalogueAdded(_)
+                | AppReply::GrantedComponents(_)
+                | AppReply::ComponentDecision(_)
                 | AppReply::CurrentUser(_)
                 | AppReply::AdminStatus(_)
                 | AppReply::People(_)

@@ -33,7 +33,10 @@ use time::OffsetDateTime;
 use crate::agent::{AgentProfile, CallbackTokenIssued, CallbackTokenRevoked};
 use crate::audit::AuditPage;
 use crate::auth::Role;
-use crate::components::{ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentRecords};
+use crate::components::{
+    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDecision,
+    ComponentDecisionRequest, ComponentRecords, GrantedCompiledComponents,
+};
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::mcp::{
     McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
@@ -134,6 +137,20 @@ pub enum AppCommand {
 
     /// Add build-owned compiled-component catalogue entries without changing existing governance.
     SyncComponentCatalogue(ComponentCatalogueRequest),
+
+    /// List only the published compiled components one current-actor-usable Agent actually holds.
+    ListComponentsForAgent {
+        /// Untrusted Agent identity; current session authority remains the only actor source.
+        agent_id: BotId,
+    },
+
+    /// Re-authorize one compiled component immediately before its tool call is accepted.
+    DecideComponent {
+        /// Untrusted path identity for the compiled renderer/tool.
+        component_name: String,
+        /// Agent and declared data reads for this exact invocation.
+        request: ComponentDecisionRequest,
+    },
 
     /// 返回当前已验证 actor 的公开资料。
     GetCurrentUser,
@@ -358,6 +375,10 @@ pub enum AppReply {
     Components(ComponentRecords),
     /// [`AppCommand::SyncComponentCatalogue`] response.
     ComponentCatalogueAdded(ComponentCatalogueAdded),
+    /// [`AppCommand::ListComponentsForAgent`] response.
+    GrantedComponents(GrantedCompiledComponents),
+    /// [`AppCommand::DecideComponent`] response.
+    ComponentDecision(ComponentDecision),
     /// [`AppCommand::GetCurrentUser`] 应答。
     CurrentUser(CurrentUser),
     /// [`AppCommand::AdminStatus`] 应答。

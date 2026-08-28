@@ -1,15 +1,17 @@
 //! Compiled-component list and additive build-catalogue HTTP framing.
 
 use axum::Json;
-use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::extract::{Path, State};
 use http::header::CACHE_CONTROL;
 use http::{HeaderMap, HeaderValue};
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::components::{
-    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentRecords,
+    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDecision,
+    ComponentDecisionRequest, ComponentRecords, GrantedCompiledComponents,
 };
 use openbot_contracts::error::AppError;
+use openbot_contracts::ids::BotId;
 
 use crate::auth::{Authenticated, OriginAuthenticated};
 use crate::error::HttpError;
@@ -50,6 +52,54 @@ pub async fn catalogue_put(
     }
 }
 
+/// `GET /api/components/for-agent/{agent_id}`; returns only current-build grants for a runnable Agent.
+pub async fn for_agent_get(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+    Path(agent_id): Path<String>,
+) -> Result<(HeaderMap, Json<GrantedCompiledComponents>), HttpError> {
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::ListComponentsForAgent {
+                agent_id: BotId::new(agent_id),
+            },
+        )
+        .await?
+    {
+        AppReply::GrantedComponents(components) => Ok((no_store(), Json(components))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/components/{name}/decision`; mandatory re-authorization for one exact tool call.
+pub async fn decision_post(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    Path(name): Path<String>,
+    body: Result<Json<ComponentDecisionRequest>, JsonRejection>,
+) -> Result<(HeaderMap, Json<ComponentDecision>), HttpError> {
+    let Json(request) = body.map_err(|error| {
+        tracing::debug!(error = %error, "component decision body rejected");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::DecideComponent {
+                component_name: name,
+                request,
+            },
+        )
+        .await?
+    {
+        AppReply::ComponentDecision(decision) => Ok((no_store(), Json(decision))),
+        _ => Err(application_contract_error()),
+    }
+}
+
 fn no_store() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -75,13 +125,14 @@ mod tests {
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
         ApplicationService, ChannelReader, ComponentAdministration, ComponentAdministrationError,
-        OpenBotApplication, PortError,
+        ComponentRuntimeScope, OpenBotApplication, PortError,
     };
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
     use openbot_contracts::components::{
-        CompiledComponentKind, CompiledComponentManifestEntry, ComponentRecord,
-        SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
+        CompiledComponentKind, CompiledComponentManifestEntry, ComponentDecision, ComponentRecord,
+        GrantedCompiledComponent, GrantedCompiledComponents, SHOW_QUOTE_COMPONENT_NAME,
+        compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
     use openbot_domain::identity::session::TrustedOrigins;
@@ -109,6 +160,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeComponents {
         syncs: Arc<Mutex<Vec<Vec<CompiledComponentManifestEntry>>>>,
+        runtime: Arc<Mutex<Vec<String>>>,
     }
 
     #[async_trait]
@@ -144,6 +196,38 @@ mod tests {
             Ok(ComponentCatalogueAdded {
                 added: entries.iter().map(|entry| entry.name.clone()).collect(),
             })
+        }
+
+        async fn list_components_for_agent(
+            &self,
+            scope: &ComponentRuntimeScope,
+            _renderer_names: &[String],
+        ) -> Result<GrantedCompiledComponents, ComponentAdministrationError> {
+            self.runtime
+                .lock()
+                .unwrap()
+                .push(format!("list:{}", scope.agent_id));
+            Ok(GrantedCompiledComponents {
+                components: vec![GrantedCompiledComponent {
+                    name: SHOW_QUOTE_COMPONENT_NAME.to_owned(),
+                    description: "published quote".to_owned(),
+                }],
+            })
+        }
+
+        async fn decide_component(
+            &self,
+            scope: &ComponentRuntimeScope,
+            component_name: &str,
+            build_has_renderer: bool,
+            functions: &[String],
+        ) -> Result<ComponentDecision, ComponentAdministrationError> {
+            self.runtime.lock().unwrap().push(format!(
+                "decide:{}:{component_name}:{build_has_renderer}:{}",
+                scope.agent_id,
+                functions.join(",")
+            ));
+            Ok(ComponentDecision::allowed())
         }
     }
 
@@ -230,5 +314,63 @@ mod tests {
         assert_eq!(accepted.status(), StatusCode::OK);
         assert_eq!(accepted.headers()[CACHE_CONTROL], "no-store");
         assert_eq!(components.syncs.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn runtime_grants_and_decision_are_typed_no_store_and_fail_before_port_without_origin() {
+        let components = FakeComponents::default();
+        let grants = send(
+            app(components.clone()),
+            Method::GET,
+            "/api/components/for-agent/agent-one",
+            None,
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(grants.status(), StatusCode::OK);
+        assert_eq!(grants.headers()[CACHE_CONTROL], "no-store");
+        let grants_body = to_bytes(grants.into_body(), 4096).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<GrantedCompiledComponents>(&grants_body)
+                .unwrap()
+                .components[0]
+                .name,
+            SHOW_QUOTE_COMPONENT_NAME
+        );
+
+        let body = serde_json::to_vec(&ComponentDecisionRequest {
+            agent_id: BotId::new("agent-one"),
+            functions: vec!["readA".to_owned()],
+        })
+        .unwrap();
+        let no_origin = send(
+            app(components.clone()),
+            Method::POST,
+            "/api/components/showQuote/decision",
+            None,
+            Body::from(body.clone()),
+        )
+        .await;
+        assert_eq!(no_origin.status(), StatusCode::FORBIDDEN);
+        assert_eq!(components.runtime.lock().unwrap().len(), 1);
+
+        let decision = send(
+            app(components.clone()),
+            Method::POST,
+            "/api/components/showQuote/decision",
+            Some("https://app.example.test"),
+            Body::from(body),
+        )
+        .await;
+        assert_eq!(decision.status(), StatusCode::OK);
+        assert_eq!(decision.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<ComponentDecision>(
+                &to_bytes(decision.into_body(), 4096).await.unwrap()
+            )
+            .unwrap(),
+            ComponentDecision::allowed()
+        );
+        assert_eq!(components.runtime.lock().unwrap().len(), 2);
     }
 }
