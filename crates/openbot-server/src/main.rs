@@ -462,10 +462,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         stall_timeout: server.agent_budgets.stall_timeout,
     })?;
     let channels = ChannelRepo::new(pool.clone());
-    let components = Arc::new(PostgresComponentAdministration::new(
-        pool.clone(),
-        audit_key.to_vec(),
-    )?);
+    let components = Arc::new(
+        PostgresComponentAdministration::new(pool.clone(), audit_key.to_vec())?
+            .with_policy(policy_store.clone()),
+    );
     let application = OpenBotApplication::new(channels.clone())
         .with_people(people)
         .with_audit(PostgresAuditReader::new(pool.clone()))

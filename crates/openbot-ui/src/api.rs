@@ -16,13 +16,16 @@ use openbot_contracts::command::{
     ChannelDetail, ChannelPage, ChannelRoutingDecision, ThreadConversationSnapshot,
     ThreadRunCancellation, ThreadRunStarted,
 };
-use openbot_contracts::components::{
-    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDecision,
-    ComponentDecisionRequest, ComponentRecords, GrantedCompiledComponents,
-    compiled_component_manifest,
-};
 #[cfg(any(target_arch = "wasm32", test))]
-use openbot_contracts::components::{ComponentDecisionRefusal, ComponentRecord};
+use openbot_contracts::components::{
+    BOT_ACTIVITY_FUNCTION_NAME, ComponentDecisionRefusal, ComponentFunctionData, ComponentRecord,
+    RECENT_REFUSALS_FUNCTION_NAME, component_data_function_manifest,
+};
+use openbot_contracts::components::{
+    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
+    ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
+    ComponentRecords, GrantedCompiledComponents, compiled_component_manifest,
+};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::mcp::{McpConnectionDisconnected, McpConnections, McpOAuthAuthorization};
 #[cfg(target_arch = "wasm32")]
@@ -214,6 +217,83 @@ pub async fn decide_component(
             .map_err(|_| ApiError::InvalidResponse)?;
         validate_component_decision(&decision, functions)?;
         Ok(decision)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = request;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load the exact build-owned component data-function registry.
+pub async fn load_component_data_functions() -> Result<ComponentDataFunctions, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/components/functions")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let functions = response
+            .json::<ComponentDataFunctions>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_component_data_functions(&functions)?;
+        Ok(functions)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Execute one component-owned data read through the deployment's runtime checks.
+pub async fn call_component_function(
+    component: &str,
+    agent_id: &BotId,
+    function: &str,
+    args: serde_json::Value,
+) -> Result<ComponentFunctionCall, ApiError> {
+    validate_component_name(component)?;
+    validate_bounded_identifier(agent_id.as_str(), 256)?;
+    validate_component_name(function)?;
+    let request = ComponentFunctionCallRequest {
+        agent_id: agent_id.clone(),
+        function: function.to_owned(),
+        args,
+    };
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = format!("/api/components/{}/call", encode_url_component(component));
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&request)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !matches!(response.status(), 200 | 502) {
+            return Err(status_error(response.status()));
+        }
+        let result = response
+            .json::<ComponentFunctionCall>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_component_function_call(&result, function, response.status())?;
+        Ok(result)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1239,10 +1319,77 @@ fn validate_component_decision(
     if !decision.is_consistent() {
         return Err(ApiError::InvalidResponse);
     }
-    if let Some(ComponentDecisionRefusal::FunctionNotGranted { function }) = &decision.refusal
-        && requested_functions.binary_search(function).is_err()
+    if let Some(function) = decision
+        .refusal
+        .as_ref()
+        .and_then(ComponentDecisionRefusal::function)
+        && requested_functions
+            .binary_search_by(|candidate| candidate.as_str().cmp(function))
+            .is_err()
     {
         return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_component_data_functions(functions: &ComponentDataFunctions) -> Result<(), ApiError> {
+    if functions.functions != component_data_function_manifest() {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_component_function_call(
+    result: &ComponentFunctionCall,
+    requested_function: &str,
+    status: u16,
+) -> Result<(), ApiError> {
+    if !result.is_consistent() || (result.error.is_some()) != (status == 502) {
+        return Err(ApiError::InvalidResponse);
+    }
+    if let Some(function) = result
+        .refusal
+        .as_ref()
+        .and_then(ComponentDecisionRefusal::function)
+        && function != requested_function
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    match (&result.data, requested_function) {
+        (Some(ComponentFunctionData::BotActivity(report)), BOT_ACTIVITY_FUNCTION_NAME) => {
+            if !(1..=90).contains(&report.days) || report.rows.len() > 12 {
+                return Err(ApiError::InvalidResponse);
+            }
+            let mut previous = None::<(u64, &str)>;
+            for row in &report.rows {
+                validate_bounded_identifier(&row.bot, 256)?;
+                let current = (row.actions, row.bot.as_str());
+                if previous.is_some_and(|previous| {
+                    previous.0 < current.0 || (previous.0 == current.0 && previous.1 > current.1)
+                }) {
+                    return Err(ApiError::InvalidResponse);
+                }
+                previous = Some(current);
+            }
+        }
+        (Some(ComponentFunctionData::RecentRefusals(report)), RECENT_REFUSALS_FUNCTION_NAME) => {
+            if report.rows.len() > 50 {
+                return Err(ApiError::InvalidResponse);
+            }
+            for row in &report.rows {
+                if let Some(bot) = row.bot.as_deref() {
+                    validate_bounded_identifier(bot, 256)?;
+                }
+                validate_bounded_identifier(&row.what, 128)?;
+                if let Some(reason) = row.reason.as_deref() {
+                    validate_bounded_identifier(reason, 256)?;
+                }
+            }
+        }
+        (None, _) => {}
+        _ => return Err(ApiError::InvalidResponse),
     }
     Ok(())
 }
@@ -1802,6 +1949,39 @@ mod tests {
                     refusal: Some(ComponentDecisionRefusal::Unpublished),
                 },
                 &[],
+            )
+            .unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let functions = ComponentDataFunctions {
+            functions: component_data_function_manifest(),
+        };
+        assert!(validate_component_data_functions(&functions).is_ok());
+        let valid_call = ComponentFunctionCall::succeeded(ComponentFunctionData::BotActivity(
+            openbot_contracts::components::BotActivityReport {
+                days: 7,
+                rows: vec![openbot_contracts::components::BotActivityRow {
+                    bot: "agent-one".to_owned(),
+                    actions: 3,
+                }],
+            },
+        ));
+        assert!(
+            validate_component_function_call(&valid_call, BOT_ACTIVITY_FUNCTION_NAME, 200).is_ok()
+        );
+        assert_eq!(
+            validate_component_function_call(&valid_call, RECENT_REFUSALS_FUNCTION_NAME, 200)
+                .unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        assert_eq!(
+            validate_component_function_call(
+                &ComponentFunctionCall::failed(
+                    openbot_contracts::components::ComponentFunctionError::ReadFailed,
+                ),
+                BOT_ACTIVITY_FUNCTION_NAME,
+                200,
             )
             .unwrap_err(),
             ApiError::InvalidResponse

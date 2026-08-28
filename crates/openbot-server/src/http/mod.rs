@@ -504,6 +504,8 @@ pub fn router(state: ServerState) -> Router {
             "/api/components/{name}/decision",
             post(components::decision_post),
         )
+        .route("/api/components/functions", get(components::functions_get))
+        .route("/api/components/{name}/call", post(components::call_post))
         .route("/api/tool-approvals", get(approvals::pending_get))
         .route(
             "/api/tool-approvals/{approval_id}",

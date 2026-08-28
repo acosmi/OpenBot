@@ -222,6 +222,8 @@ pub enum AuditFact {
     ToolName(AuditIdentifier),
     /// Compiled component声明并被服务端复核的data-function稳定名。
     ComponentFunction(AuditIdentifier),
+    /// Build-owned description of the data source read by a component function.
+    ComponentReads(AuditLabel),
     /// 该次工具调用的权威 Bot；绝不取自模型或 callback body。
     Bot(AuditIdentifier),
     /// 该次调用的 effect 分类结果。
@@ -326,6 +328,7 @@ impl AuditFact {
         match self {
             Self::ToolName(_) => "tool_name",
             Self::ComponentFunction(_) => "function",
+            Self::ComponentReads(_) => "reads",
             Self::Bot(_) => "bot",
             Self::EffectClass(_) => "effect_class",
             Self::EffectDowngraded(_) => "effect_downgraded",
@@ -381,6 +384,7 @@ impl AuditFact {
             | Self::RefusedByRule(value)
             | Self::CredentialOwner(value) => Value::String(value.as_str().to_owned()),
             Self::EffectClass(label)
+            | Self::ComponentReads(label)
             | Self::TargetKind(label)
             | Self::RoutingReason(label)
             | Self::ErrorCode(label)
@@ -460,6 +464,7 @@ impl AuditFact {
             | Self::RefusedByRule(value)
             | Self::CredentialOwner(value) => writer.str(value.as_str()),
             Self::EffectClass(label)
+            | Self::ComponentReads(label)
             | Self::TargetKind(label)
             | Self::RoutingReason(label)
             | Self::ErrorCode(label)
@@ -517,6 +522,7 @@ impl AuditFact {
 pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "tool_name",
     "function",
+    "reads",
     "bot",
     "effect_class",
     "effect_downgraded",
@@ -668,6 +674,7 @@ mod tests {
         vec![
             AuditFact::ToolName(identifier("browser.click")),
             AuditFact::ComponentFunction(identifier("recentRefusals")),
+            AuditFact::ComponentReads(AuditLabel::new("audit_trail")),
             AuditFact::Bot(identifier("bot-1")),
             AuditFact::EffectClass(AuditLabel::new("execute")),
             AuditFact::EffectDowngraded(true),

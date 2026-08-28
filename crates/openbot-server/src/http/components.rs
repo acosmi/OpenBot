@@ -3,12 +3,14 @@
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
+use http::StatusCode;
 use http::header::CACHE_CONTROL;
 use http::{HeaderMap, HeaderValue};
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::components::{
-    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDecision,
-    ComponentDecisionRequest, ComponentRecords, GrantedCompiledComponents,
+    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
+    ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
+    ComponentRecords, GrantedCompiledComponents,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::BotId;
@@ -100,6 +102,55 @@ pub async fn decision_post(
     }
 }
 
+/// `GET /api/components/functions`; exact build-owned data-function registry.
+pub async fn functions_get(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+) -> Result<(HeaderMap, Json<ComponentDataFunctions>), HttpError> {
+    match state
+        .application()
+        .execute(auth, AppCommand::ListComponentDataFunctions)
+        .await?
+    {
+        AppReply::ComponentDataFunctions(functions) => Ok((no_store(), Json(functions))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/components/{name}/call`; authorized, policy-governed component data read.
+pub async fn call_post(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    Path(name): Path<String>,
+    body: Result<Json<ComponentFunctionCallRequest>, JsonRejection>,
+) -> Result<(StatusCode, HeaderMap, Json<ComponentFunctionCall>), HttpError> {
+    let Json(request) = body.map_err(|error| {
+        tracing::debug!(error = %error, "component function body rejected");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::CallComponentFunction {
+                component_name: name,
+                request,
+            },
+        )
+        .await?
+    {
+        AppReply::ComponentFunctionCall(result) => {
+            let status = if result.error.is_some() {
+                StatusCode::BAD_GATEWAY
+            } else {
+                StatusCode::OK
+            };
+            Ok((status, no_store(), Json(result)))
+        }
+        _ => Err(application_contract_error()),
+    }
+}
+
 fn no_store() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -125,14 +176,16 @@ mod tests {
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
         ApplicationService, ChannelReader, ComponentAdministration, ComponentAdministrationError,
-        ComponentRuntimeScope, OpenBotApplication, PortError,
+        ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentRuntimeScope,
+        OpenBotApplication, PortError,
     };
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
     use openbot_contracts::components::{
-        CompiledComponentKind, CompiledComponentManifestEntry, ComponentDecision, ComponentRecord,
-        GrantedCompiledComponent, GrantedCompiledComponents, SHOW_QUOTE_COMPONENT_NAME,
-        compiled_component_manifest,
+        BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, CompiledComponentKind,
+        CompiledComponentManifestEntry, ComponentDecision, ComponentFunctionCall,
+        ComponentFunctionData, ComponentRecord, GrantedCompiledComponent,
+        GrantedCompiledComponents, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
     use openbot_domain::identity::session::TrustedOrigins;
@@ -228,6 +281,34 @@ mod tests {
                 functions.join(",")
             ));
             Ok(ComponentDecision::allowed())
+        }
+
+        async fn call_component_function(
+            &self,
+            scope: &ComponentRuntimeScope,
+            component_name: &str,
+            build_has_renderer: bool,
+            plan: &ComponentFunctionCallPlan,
+        ) -> Result<ComponentFunctionCall, ComponentAdministrationError> {
+            self.runtime.lock().unwrap().push(format!(
+                "call:{}:{component_name}:{build_has_renderer}:{}",
+                scope.agent_id, plan.function
+            ));
+            let days = match plan.arguments {
+                Some(ComponentFunctionArguments::BotActivity { days }) => days,
+                _ => return Err(ComponentAdministrationError::Corrupt { field: "arguments" }),
+            };
+            if days == 13 {
+                return Ok(ComponentFunctionCall::failed(
+                    openbot_contracts::components::ComponentFunctionError::ReadFailed,
+                ));
+            }
+            Ok(ComponentFunctionCall::succeeded(
+                ComponentFunctionData::BotActivity(BotActivityReport {
+                    days,
+                    rows: Vec::new(),
+                }),
+            ))
         }
     }
 
@@ -340,7 +421,7 @@ mod tests {
 
         let body = serde_json::to_vec(&ComponentDecisionRequest {
             agent_id: BotId::new("agent-one"),
-            functions: vec!["readA".to_owned()],
+            functions: Vec::new(),
         })
         .unwrap();
         let no_origin = send(
@@ -370,6 +451,96 @@ mod tests {
             )
             .unwrap(),
             ComponentDecision::allowed()
+        );
+        assert_eq!(components.runtime.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn function_registry_and_call_are_typed_no_store_and_origin_precedes_read() {
+        let components = FakeComponents::default();
+        let functions = send(
+            app(components.clone()),
+            Method::GET,
+            "/api/components/functions",
+            None,
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(functions.status(), StatusCode::OK);
+        assert_eq!(functions.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<ComponentDataFunctions>(
+                &to_bytes(functions.into_body(), 4096).await.unwrap()
+            )
+            .unwrap()
+            .functions[0]
+                .name,
+            BOT_ACTIVITY_FUNCTION_NAME
+        );
+
+        let body = serde_json::to_vec(&ComponentFunctionCallRequest {
+            agent_id: BotId::new("agent-one"),
+            function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+            args: serde_json::json!({"days": 30}),
+        })
+        .unwrap();
+        let no_origin = send(
+            app(components.clone()),
+            Method::POST,
+            "/api/components/showActivityReport/call",
+            None,
+            Body::from(body.clone()),
+        )
+        .await;
+        assert_eq!(no_origin.status(), StatusCode::FORBIDDEN);
+        assert!(components.runtime.lock().unwrap().is_empty());
+
+        let called = send(
+            app(components.clone()),
+            Method::POST,
+            "/api/components/showActivityReport/call",
+            Some("https://app.example.test"),
+            Body::from(body),
+        )
+        .await;
+        assert_eq!(called.status(), StatusCode::OK);
+        assert_eq!(called.headers()[CACHE_CONTROL], "no-store");
+        let result = serde_json::from_slice::<ComponentFunctionCall>(
+            &to_bytes(called.into_body(), 4096).await.unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            result.data,
+            Some(ComponentFunctionData::BotActivity(BotActivityReport {
+                days: 30,
+                ..
+            }))
+        ));
+        assert_eq!(components.runtime.lock().unwrap().len(), 1);
+
+        let failed_body = serde_json::to_vec(&ComponentFunctionCallRequest {
+            agent_id: BotId::new("agent-one"),
+            function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+            args: serde_json::json!({"days": 13}),
+        })
+        .unwrap();
+        let failed = send(
+            app(components.clone()),
+            Method::POST,
+            "/api/components/showActivityReport/call",
+            Some("https://app.example.test"),
+            Body::from(failed_body),
+        )
+        .await;
+        assert_eq!(failed.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(failed.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<ComponentFunctionCall>(
+                &to_bytes(failed.into_body(), 4096).await.unwrap()
+            )
+            .unwrap()
+            .error,
+            Some(openbot_contracts::components::ComponentFunctionError::ReadFailed)
         );
         assert_eq!(components.runtime.lock().unwrap().len(), 2);
     }

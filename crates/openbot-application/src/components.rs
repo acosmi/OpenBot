@@ -4,10 +4,14 @@ use std::collections::BTreeSet;
 
 use async_trait::async_trait;
 use openbot_contracts::auth::AuthContext;
+#[cfg(test)]
+use openbot_contracts::components::ComponentDecisionRefusal;
 use openbot_contracts::components::{
-    CompiledComponentManifestEntry, ComponentCatalogueAdded, ComponentCatalogueRequest,
-    ComponentDecision, ComponentDecisionRefusal, ComponentDecisionRequest, ComponentRecords,
-    GrantedCompiledComponents, compiled_component_manifest,
+    BOT_ACTIVITY_FUNCTION_NAME, CompiledComponentManifestEntry, ComponentCatalogueAdded,
+    ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision, ComponentDecisionRequest,
+    ComponentFunctionCall, ComponentFunctionCallRequest, ComponentFunctionData, ComponentRecords,
+    GrantedCompiledComponents, RECENT_REFUSALS_FUNCTION_NAME, SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
+    compiled_component_manifest, component_data_function_manifest,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::{ActorId, BotId, TenantId};
@@ -26,6 +30,30 @@ pub struct ComponentRuntimeScope {
     pub admin: bool,
     /// Untrusted Agent target after bounded identifier validation.
     pub agent_id: BotId,
+}
+
+/// Validated, bounded arguments for one build-owned component data function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComponentFunctionArguments {
+    /// Effective lookback for `botActivity`.
+    BotActivity {
+        /// Integer days in `1..=90`.
+        days: u16,
+    },
+    /// Effective row cap for `recentRefusals`.
+    RecentRefusals {
+        /// Integer limit in `1..=50`.
+        limit: u16,
+    },
+}
+
+/// Application-validated call plan; `None` arguments means the function is absent from this build.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComponentFunctionCallPlan {
+    /// Stable requested function identity.
+    pub function: String,
+    /// Bounded function arguments, or `None` for an unknown build function that must be audited.
+    pub arguments: Option<ComponentFunctionArguments>,
 }
 
 /// Stable component-catalogue failures without SQL values or model/user source.
@@ -103,6 +131,17 @@ pub trait ComponentAdministration: Send + Sync {
         _build_has_renderer: bool,
         _functions: &[String],
     ) -> Result<ComponentDecision, ComponentAdministrationError> {
+        Err(ComponentAdministrationError::Unavailable)
+    }
+
+    /// Repeat every runtime check, execute one bounded data read and append called/failed audit.
+    async fn call_component_function(
+        &self,
+        _scope: &ComponentRuntimeScope,
+        _component_name: &str,
+        _build_has_renderer: bool,
+        _plan: &ComponentFunctionCallPlan,
+    ) -> Result<ComponentFunctionCall, ComponentAdministrationError> {
         Err(ComponentAdministrationError::Unavailable)
     }
 }
@@ -190,6 +229,8 @@ pub async fn decide_component(
     let build_has_renderer = compiled_component_manifest()
         .iter()
         .any(|entry| entry.name == component_name);
+    validate_component_function_mapping(&component_name, build_has_renderer, &functions)
+        .map_err(ComponentAdministrationError::into_app_error)?;
     let scope = runtime_scope(auth, request.agent_id);
     let decision = port
         .decide_component(&scope, &component_name, build_has_renderer, &functions)
@@ -198,6 +239,55 @@ pub async fn decide_component(
     validate_decision(&decision, &functions)
         .map_err(ComponentAdministrationError::into_app_error)?;
     Ok(decision)
+}
+
+/// List the exact build-owned component data-function registry.
+#[must_use]
+pub fn list_component_data_functions() -> ComponentDataFunctions {
+    ComponentDataFunctions {
+        functions: component_data_function_manifest(),
+    }
+}
+
+/// Execute one component-owned read after the authority port repeats every runtime check.
+pub async fn call_component_function(
+    port: &dyn ComponentAdministration,
+    auth: &AuthContext,
+    component_name: String,
+    request: ComponentFunctionCallRequest,
+) -> Result<ComponentFunctionCall, AppError> {
+    validate_component_name(&component_name)
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_runtime_identifier(request.agent_id.as_str(), "agent_id")
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_component_name(&request.function)
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    let build_has_renderer = compiled_component_manifest()
+        .iter()
+        .any(|entry| entry.name == component_name);
+    if build_has_renderer && !component_accepts_function(&component_name, &request.function) {
+        return Err(
+            ComponentAdministrationError::InvalidInput { field: "function" }.into_app_error(),
+        );
+    }
+    let ComponentFunctionCallRequest {
+        agent_id,
+        function,
+        args,
+    } = request;
+    let arguments = normalize_function_arguments(&function, &args)
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    let plan = ComponentFunctionCallPlan {
+        function,
+        arguments,
+    };
+    let scope = runtime_scope(auth, agent_id);
+    let result = port
+        .call_component_function(&scope, &component_name, build_has_renderer, &plan)
+        .await
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_function_call(&result, &plan).map_err(ComponentAdministrationError::into_app_error)?;
+    Ok(result)
 }
 
 /// Check that every repeated entry is a unique, byte-exact member of this build's manifest.
@@ -247,6 +337,78 @@ fn canonicalize_functions(
         unique.insert(function);
     }
     Ok(unique.into_iter().collect())
+}
+
+fn validate_component_function_mapping(
+    component: &str,
+    build_has_renderer: bool,
+    functions: &[String],
+) -> Result<(), ComponentAdministrationError> {
+    if !build_has_renderer {
+        return Ok(());
+    }
+    let valid = if component == SHOW_ACTIVITY_REPORT_COMPONENT_NAME {
+        functions.len() == 1 && component_accepts_function(component, &functions[0])
+    } else {
+        functions.is_empty()
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(ComponentAdministrationError::InvalidInput { field: "functions" })
+    }
+}
+
+fn component_accepts_function(component: &str, function: &str) -> bool {
+    component == SHOW_ACTIVITY_REPORT_COMPONENT_NAME
+        && matches!(
+            function,
+            BOT_ACTIVITY_FUNCTION_NAME | RECENT_REFUSALS_FUNCTION_NAME
+        )
+}
+
+fn normalize_function_arguments(
+    function: &str,
+    args: &serde_json::Value,
+) -> Result<Option<ComponentFunctionArguments>, ComponentAdministrationError> {
+    let object = match args {
+        serde_json::Value::Object(object) => Some(object),
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_)
+        | serde_json::Value::Array(_) => None,
+    };
+    if let Some(object) = object
+        && object
+            .keys()
+            .any(|key| !matches!(key.as_str(), "days" | "limit"))
+    {
+        return Err(ComponentAdministrationError::InvalidInput { field: "args" });
+    }
+    Ok(match function {
+        BOT_ACTIVITY_FUNCTION_NAME => Some(ComponentFunctionArguments::BotActivity {
+            days: bounded_integer(object.and_then(|args| args.get("days")), 7, 1, 90),
+        }),
+        RECENT_REFUSALS_FUNCTION_NAME => Some(ComponentFunctionArguments::RecentRefusals {
+            limit: bounded_integer(object.and_then(|args| args.get("limit")), 10, 1, 50),
+        }),
+        _ => None,
+    })
+}
+
+fn bounded_integer(value: Option<&serde_json::Value>, fallback: u16, min: u16, max: u16) -> u16 {
+    let Some(value) = value.and_then(serde_json::Value::as_f64) else {
+        return fallback;
+    };
+    let truncated = value.trunc();
+    if truncated <= f64::from(min) {
+        min
+    } else if truncated >= f64::from(max) {
+        max
+    } else {
+        truncated as u16
+    }
 }
 
 fn validate_component_name(value: &str) -> Result<(), ComponentAdministrationError> {
@@ -322,14 +484,54 @@ fn validate_decision(
             field: "component_decision",
         });
     }
-    if let Some(ComponentDecisionRefusal::FunctionNotGranted { function }) = &decision.refusal
-        && functions.binary_search(function).is_err()
+    if let Some(function) = decision
+        .refusal
+        .as_ref()
+        .and_then(openbot_contracts::components::ComponentDecisionRefusal::function)
+        && functions
+            .binary_search_by(|candidate| candidate.as_str().cmp(function))
+            .is_err()
     {
         return Err(ComponentAdministrationError::Corrupt {
             field: "component_function",
         });
     }
     Ok(())
+}
+
+fn validate_function_call(
+    result: &ComponentFunctionCall,
+    plan: &ComponentFunctionCallPlan,
+) -> Result<(), ComponentAdministrationError> {
+    if !result.is_consistent() {
+        return Err(ComponentAdministrationError::Corrupt {
+            field: "component_function_call",
+        });
+    }
+    if let Some(function) = result
+        .refusal
+        .as_ref()
+        .and_then(openbot_contracts::components::ComponentDecisionRefusal::function)
+        && function != plan.function
+    {
+        return Err(ComponentAdministrationError::Corrupt {
+            field: "component_function",
+        });
+    }
+    match (&result.data, plan.arguments) {
+        (
+            Some(ComponentFunctionData::BotActivity(_)),
+            Some(ComponentFunctionArguments::BotActivity { .. }),
+        )
+        | (
+            Some(ComponentFunctionData::RecentRefusals(_)),
+            Some(ComponentFunctionArguments::RecentRefusals { .. }),
+        )
+        | (None, _) => Ok(()),
+        _ => Err(ComponentAdministrationError::Corrupt {
+            field: "component_function_data",
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -352,6 +554,14 @@ mod tests {
         syncs: Mutex<Vec<Vec<CompiledComponentManifestEntry>>>,
         runtime_lists: Mutex<Vec<(ComponentRuntimeScope, Vec<String>)>>,
         runtime_decisions: Mutex<Vec<RuntimeDecisionCall>>,
+        function_calls: Mutex<
+            Vec<(
+                ComponentRuntimeScope,
+                String,
+                bool,
+                ComponentFunctionCallPlan,
+            )>,
+        >,
     }
 
     #[async_trait]
@@ -432,6 +642,41 @@ mod tests {
                 ));
             }
             Ok(ComponentDecision::allowed())
+        }
+
+        async fn call_component_function(
+            &self,
+            scope: &ComponentRuntimeScope,
+            component_name: &str,
+            build_has_renderer: bool,
+            plan: &ComponentFunctionCallPlan,
+        ) -> Result<ComponentFunctionCall, ComponentAdministrationError> {
+            self.function_calls.lock().unwrap().push((
+                scope.clone(),
+                component_name.to_owned(),
+                build_has_renderer,
+                plan.clone(),
+            ));
+            match plan.arguments {
+                Some(ComponentFunctionArguments::BotActivity { days }) => Ok(
+                    ComponentFunctionCall::succeeded(ComponentFunctionData::BotActivity(
+                        openbot_contracts::components::BotActivityReport {
+                            days,
+                            rows: Vec::new(),
+                        },
+                    )),
+                ),
+                Some(ComponentFunctionArguments::RecentRefusals { .. }) => Ok(
+                    ComponentFunctionCall::succeeded(ComponentFunctionData::RecentRefusals(
+                        openbot_contracts::components::RecentRefusalsReport { rows: Vec::new() },
+                    )),
+                ),
+                None => Ok(ComponentFunctionCall::refused(
+                    openbot_contracts::components::ComponentDecisionRefusal::FunctionUnavailable {
+                        function: plan.function.clone(),
+                    },
+                )),
+            }
         }
     }
 
@@ -519,10 +764,13 @@ mod tests {
         let allowed = decide_component(
             &port,
             &auth(),
-            SHOW_QUOTE_COMPONENT_NAME.to_owned(),
+            SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
             ComponentDecisionRequest {
                 agent_id: BotId::new("agent-one"),
-                functions: vec!["readZ".to_owned(), "readA".to_owned(), "readA".to_owned()],
+                functions: vec![
+                    BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+                    BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+                ],
             },
         )
         .await
@@ -544,7 +792,7 @@ mod tests {
             ComponentDecision::refused(ComponentDecisionRefusal::UnknownComponent)
         );
         let decisions = port.runtime_decisions.lock().unwrap();
-        assert_eq!(decisions[0].3, ["readA", "readZ"]);
+        assert_eq!(decisions[0].3, [BOT_ACTIVITY_FUNCTION_NAME]);
         assert!(decisions[0].2);
         assert!(!decisions[1].2);
     }
@@ -570,7 +818,93 @@ mod tests {
             .await
             .is_err()
         );
+        assert!(
+            decide_component(
+                &port,
+                &auth(),
+                SHOW_QUOTE_COMPONENT_NAME.to_owned(),
+                ComponentDecisionRequest {
+                    agent_id: BotId::new("agent-one"),
+                    functions: vec![BOT_ACTIVITY_FUNCTION_NAME.to_owned()],
+                },
+            )
+            .await
+            .is_err()
+        );
         assert!(port.runtime_lists.lock().unwrap().is_empty());
         assert!(port.runtime_decisions.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn function_registry_arguments_and_result_shape_are_closed_before_and_after_the_port() {
+        let port = FakeComponents::default();
+        assert_eq!(
+            list_component_data_functions()
+                .functions
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            [BOT_ACTIVITY_FUNCTION_NAME, RECENT_REFUSALS_FUNCTION_NAME]
+        );
+        let result = call_component_function(
+            &port,
+            &auth(),
+            SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+            ComponentFunctionCallRequest {
+                agent_id: BotId::new("agent-one"),
+                function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+                args: serde_json::json!({"days": 120.9}),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            result.data,
+            Some(ComponentFunctionData::BotActivity(
+                openbot_contracts::components::BotActivityReport { days: 90, .. }
+            ))
+        ));
+        assert_eq!(
+            port.function_calls.lock().unwrap()[0].3.arguments,
+            Some(ComponentFunctionArguments::BotActivity { days: 90 })
+        );
+
+        let fallback = call_component_function(
+            &port,
+            &auth(),
+            SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+            ComponentFunctionCallRequest {
+                agent_id: BotId::new("agent-one"),
+                function: RECENT_REFUSALS_FUNCTION_NAME.to_owned(),
+                args: serde_json::json!({"days": 30}),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            fallback.data,
+            Some(ComponentFunctionData::RecentRefusals(_))
+        ));
+        assert_eq!(
+            port.function_calls.lock().unwrap()[1].3.arguments,
+            Some(ComponentFunctionArguments::RecentRefusals { limit: 10 })
+        );
+
+        let malformed = call_component_function(
+            &port,
+            &auth(),
+            SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+            ComponentFunctionCallRequest {
+                agent_id: BotId::new("agent-one"),
+                function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+                args: serde_json::json!({"query": "untrusted"}),
+            },
+        )
+        .await;
+        assert!(matches!(
+            malformed,
+            Err(AppError::MalformedPayload { field: "args" })
+        ));
+        assert_eq!(port.function_calls.lock().unwrap().len(), 2);
     }
 }

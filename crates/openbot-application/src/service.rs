@@ -110,6 +110,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::SyncComponentCatalogue(_) => "sync_component_catalogue",
         AppCommand::ListComponentsForAgent { .. } => "list_components_for_agent",
         AppCommand::DecideComponent { .. } => "decide_component",
+        AppCommand::ListComponentDataFunctions => "list_component_data_functions",
+        AppCommand::CallComponentFunction { .. } => "call_component_function",
         AppCommand::GetCurrentUser => "get_current_user",
         AppCommand::AdminStatus => "admin_status",
         AppCommand::ListPeople { .. } => "list_people",

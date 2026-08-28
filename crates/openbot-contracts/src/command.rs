@@ -34,8 +34,9 @@ use crate::agent::{AgentProfile, CallbackTokenIssued, CallbackTokenRevoked};
 use crate::audit::AuditPage;
 use crate::auth::Role;
 use crate::components::{
-    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDecision,
-    ComponentDecisionRequest, ComponentRecords, GrantedCompiledComponents,
+    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
+    ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
+    ComponentRecords, GrantedCompiledComponents,
 };
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::mcp::{
@@ -150,6 +151,17 @@ pub enum AppCommand {
         component_name: String,
         /// Agent and declared data reads for this exact invocation.
         request: ComponentDecisionRequest,
+    },
+
+    /// List the build-owned component data functions available for administration.
+    ListComponentDataFunctions,
+
+    /// Execute one component-owned data read after all runtime checks are repeated.
+    CallComponentFunction {
+        /// Untrusted path identity for the compiled renderer/tool.
+        component_name: String,
+        /// Agent, function and bounded arguments for this exact read.
+        request: ComponentFunctionCallRequest,
     },
 
     /// 返回当前已验证 actor 的公开资料。
@@ -379,6 +391,10 @@ pub enum AppReply {
     GrantedComponents(GrantedCompiledComponents),
     /// [`AppCommand::DecideComponent`] response.
     ComponentDecision(ComponentDecision),
+    /// [`AppCommand::ListComponentDataFunctions`] response.
+    ComponentDataFunctions(ComponentDataFunctions),
+    /// [`AppCommand::CallComponentFunction`] response.
+    ComponentFunctionCall(ComponentFunctionCall),
     /// [`AppCommand::GetCurrentUser`] 应答。
     CurrentUser(CurrentUser),
     /// [`AppCommand::AdminStatus`] 应答。

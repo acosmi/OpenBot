@@ -10,7 +10,9 @@ use http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE};
 use http::{Method, Request, Response, StatusCode};
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
-use openbot_contracts::components::{ComponentCatalogueRequest, ComponentDecisionRequest};
+use openbot_contracts::components::{
+    ComponentCatalogueRequest, ComponentDecisionRequest, ComponentFunctionCallRequest,
+};
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::BotId;
 use openbot_contracts::tool::ToolApprovalDecision;
@@ -158,6 +160,9 @@ impl DesktopTauriProtocol {
         if path == "/api/components/catalogue" {
             return self.component_catalogue(request, authority).await;
         }
+        if path == "/api/components/functions" {
+            return self.component_functions(request, authority).await;
+        }
         if let Some(raw_agent_id) = path.strip_prefix("/api/components/for-agent/") {
             return self
                 .components_for_agent(request, authority, raw_agent_id)
@@ -168,6 +173,12 @@ impl DesktopTauriProtocol {
             .and_then(|rest| rest.strip_suffix("/decision"))
         {
             return self.component_decision(request, authority, raw_name).await;
+        }
+        if let Some(raw_name) = path
+            .strip_prefix("/api/components/")
+            .and_then(|rest| rest.strip_suffix("/call"))
+        {
+            return self.component_call(request, authority, raw_name).await;
         }
         if let Some(raw_id) = path.strip_prefix("/api/tool-approvals/") {
             return self.approval_decision(request, authority, raw_id).await;
@@ -359,6 +370,73 @@ impl DesktopTauriProtocol {
         }
     }
 
+    async fn component_functions(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::ListComponentDataFunctions)
+            .await
+        {
+            Ok(AppReply::ComponentDataFunctions(functions)) => json_response(&functions),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn component_call(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_name: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if request.body().len() > COMPONENT_DECISION_BODY_MAX_BYTES {
+            return payload_too_large();
+        }
+        let component_name = match percent_decode_segment(raw_name) {
+            Some(name) => name,
+            None => {
+                return error_response(AppError::MalformedPayload {
+                    field: "component_name",
+                });
+            }
+        };
+        let call = match serde_json::from_slice::<ComponentFunctionCallRequest>(request.body()) {
+            Ok(call) => call,
+            Err(_) => return error_response(AppError::MalformedPayload { field: "body" }),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::CallComponentFunction {
+                    component_name,
+                    request: call,
+                },
+            )
+            .await
+        {
+            Ok(AppReply::ComponentFunctionCall(result)) => {
+                let status = if result.error.is_some() {
+                    StatusCode::BAD_GATEWAY
+                } else {
+                    StatusCode::OK
+                };
+                json_response_with_status(&result, status)
+            }
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
     async fn approval_decision(
         &self,
         request: Request<Vec<u8>>,
@@ -517,8 +595,15 @@ fn index_response(index: &str, stored: UiPreferences, os_locale: UiLocale) -> Re
 }
 
 fn json_response<T: serde::Serialize>(value: &T) -> Response<Vec<u8>> {
+    json_response_with_status(value, StatusCode::OK)
+}
+
+fn json_response_with_status<T: serde::Serialize>(
+    value: &T,
+    status: StatusCode,
+) -> Response<Vec<u8>> {
     match serde_json::to_vec(value) {
-        Ok(body) => response(StatusCode::OK, "application/json", body, true),
+        Ok(body) => response(status, "application/json", body, true),
         Err(_) => dependency_response(),
     }
 }
@@ -663,16 +748,18 @@ mod tests {
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
         ChannelReader, ComponentAdministration, ComponentAdministrationError,
-        ComponentRuntimeScope, OpenBotApplication, PortError, ToolApprovalAdministration,
-        ToolApprovalAdministrationError, UiPreferenceAdministration,
-        UiPreferenceAdministrationError,
+        ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentRuntimeScope,
+        OpenBotApplication, PortError, ToolApprovalAdministration, ToolApprovalAdministrationError,
+        UiPreferenceAdministration, UiPreferenceAdministrationError,
     };
     use openbot_contracts::auth::{AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
     use openbot_contracts::components::{
-        CompiledComponentManifestEntry, ComponentCatalogueAdded, ComponentDecision,
-        ComponentDecisionRequest, ComponentRecords, GrantedCompiledComponent,
-        GrantedCompiledComponents, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
+        BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, CompiledComponentManifestEntry,
+        ComponentCatalogueAdded, ComponentDataFunctions, ComponentDecision,
+        ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionData, ComponentRecords,
+        GrantedCompiledComponent, GrantedCompiledComponents, SHOW_QUOTE_COMPONENT_NAME,
+        compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
     use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalResolved};
@@ -762,6 +849,25 @@ mod tests {
             _functions: &[String],
         ) -> Result<ComponentDecision, ComponentAdministrationError> {
             Ok(ComponentDecision::allowed())
+        }
+
+        async fn call_component_function(
+            &self,
+            _scope: &ComponentRuntimeScope,
+            _component_name: &str,
+            _build_has_renderer: bool,
+            plan: &ComponentFunctionCallPlan,
+        ) -> Result<ComponentFunctionCall, ComponentAdministrationError> {
+            let days = match plan.arguments {
+                Some(ComponentFunctionArguments::BotActivity { days }) => days,
+                _ => return Err(ComponentAdministrationError::Corrupt { field: "arguments" }),
+            };
+            Ok(ComponentFunctionCall::succeeded(
+                ComponentFunctionData::BotActivity(BotActivityReport {
+                    days,
+                    rows: Vec::new(),
+                }),
+            ))
         }
     }
 
@@ -988,6 +1094,54 @@ mod tests {
             serde_json::from_slice::<ComponentDecision>(component_decision.body()).unwrap(),
             ComponentDecision::allowed()
         );
+
+        let component_functions = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .uri("/api/components/functions")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(component_functions.status(), StatusCode::OK);
+        assert_eq!(component_functions.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<ComponentDataFunctions>(component_functions.body())
+                .unwrap()
+                .functions[0]
+                .name,
+            BOT_ACTIVITY_FUNCTION_NAME
+        );
+
+        let component_call = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/components/showActivityReport/call")
+                    .body(
+                        serde_json::to_vec(&ComponentFunctionCallRequest {
+                            agent_id: BotId::new("agent-one"),
+                            function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+                            args: serde_json::json!({"days": 14}),
+                        })
+                        .unwrap(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(component_call.status(), StatusCode::OK);
+        assert_eq!(component_call.headers()[CACHE_CONTROL], "no-store");
+        assert!(matches!(
+            serde_json::from_slice::<ComponentFunctionCall>(component_call.body())
+                .unwrap()
+                .data,
+            Some(ComponentFunctionData::BotActivity(BotActivityReport {
+                days: 14,
+                ..
+            }))
+        ));
 
         let stale = protocol
             .handle(

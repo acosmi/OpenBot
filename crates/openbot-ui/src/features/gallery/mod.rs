@@ -1,5 +1,6 @@
 //! Compiled component renderers and truthful preview/refusal surfaces.
 
+mod activity;
 mod cards;
 mod charts;
 mod frame;
@@ -7,6 +8,7 @@ mod preview;
 mod quote;
 mod refused;
 
+pub use activity::{ActivityReportCard, ActivityReportKind};
 pub use cards::{
     ChecklistCard, ChecklistItem, HeadlineMetric, MetricsCard, NoticeCard, RecordCard, RecordField,
 };

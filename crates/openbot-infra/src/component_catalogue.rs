@@ -3,32 +3,39 @@
 use async_trait::async_trait;
 use deadpool_postgres::Pool;
 use openbot_application::{
-    ComponentAdministration, ComponentAdministrationError, ComponentRuntimeScope,
-    validate_manifest_entries,
+    ComponentAdministration, ComponentAdministrationError, ComponentFunctionArguments,
+    ComponentFunctionCallPlan, ComponentRuntimeScope, validate_manifest_entries,
 };
 use openbot_contracts::agent::AgentVisibility;
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::components::{
+    AUDIT_TRAIL_READS_DESCRIPTION, BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, BotActivityRow,
     CompiledComponentKind, CompiledComponentManifestEntry, ComponentCatalogueAdded,
-    ComponentDecision, ComponentDecisionRefusal, ComponentRecord, ComponentRecords,
-    GrantedCompiledComponent, GrantedCompiledComponents,
+    ComponentDecision, ComponentDecisionRefusal, ComponentFunctionCall, ComponentFunctionData,
+    ComponentFunctionError, ComponentRecord, ComponentRecords, GrantedCompiledComponent,
+    GrantedCompiledComponents, RECENT_REFUSALS_FUNCTION_NAME, RecentRefusalRow,
+    RecentRefusalsReport, component_data_function_manifest,
 };
 use openbot_domain::agent::profile_policy::{AgentActor, AgentProfileFacts, can_run_agent};
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
+use openbot_domain::audit::hash::Sha256Digest;
 use openbot_domain::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
 use openbot_domain::components::{
     ComponentGrantDecision, ComponentGrantFacts, ComponentGrantRefusal,
     decide_component_function_grant, decide_component_grant,
 };
+use openbot_domain::policy::{ActorRef, BotRef, Intent, PageRef, PolicyContext, ToolRef, evaluate};
 use openbot_domain::vault::SecretBytes;
 use tokio_postgres::{IsolationLevel, Row, Transaction};
 
+use crate::policy::PolicyStore;
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 
 /// Production PostgreSQL adapter for compiled-component read/sync operations.
 pub struct PostgresComponentAdministration {
     pool: Pool,
     checkpoint_key: SecretBytes,
+    policy: PolicyStore,
 }
 
 impl PostgresComponentAdministration {
@@ -40,7 +47,98 @@ impl PostgresComponentAdministration {
         Ok(Self {
             pool,
             checkpoint_key: SecretBytes::new(checkpoint_key),
+            policy: PolicyStore::in_memory(None),
         })
+    }
+
+    /// Attach the deployment's hot, precompiled action-policy source.
+    #[must_use]
+    pub fn with_policy(mut self, policy: PolicyStore) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    fn authorize_function(
+        &self,
+        scope: &ComponentRuntimeScope,
+        function: &str,
+    ) -> FunctionAuthorization {
+        if !component_data_function_manifest()
+            .iter()
+            .any(|entry| entry.name == function)
+        {
+            return FunctionAuthorization::refused(ComponentDecisionRefusal::FunctionUnavailable {
+                function: function.to_owned(),
+            });
+        }
+        if !scope.admin {
+            return FunctionAuthorization::refused(
+                ComponentDecisionRefusal::FunctionActorNotAuthorized {
+                    function: function.to_owned(),
+                },
+            );
+        }
+        let compiled = self.policy.compiled();
+        let decision = evaluate(
+            &compiled,
+            &PolicyContext {
+                tool: ToolRef {
+                    name: format!("component_data__{function}"),
+                },
+                bot: BotRef {
+                    id: scope.agent_id.as_str().to_owned(),
+                },
+                page: PageRef {
+                    url: String::new(),
+                    host: String::new(),
+                },
+                actor: ActorRef {
+                    id: scope.actor.as_str().to_owned(),
+                },
+                element: None,
+                key: None,
+                intent: Some(Intent::ReadTool),
+                file: None,
+                mcp: None,
+                command: None,
+            },
+        );
+        let policy_version = decision.policy_version.to_hex();
+        if !decision.forward {
+            let refused_rule = decision.matched.map_or_else(
+                || "policy.default_deny".to_owned(),
+                |rule| format!("policy.rule.{}", Sha256Digest::of(rule.as_bytes()).to_hex()),
+            );
+            return FunctionAuthorization {
+                refusal: Some(ComponentDecisionRefusal::FunctionPolicyRefused {
+                    function: function.to_owned(),
+                }),
+                policy_version: Some(policy_version),
+                refused_rule: Some(refused_rule),
+            };
+        }
+        FunctionAuthorization {
+            refusal: None,
+            policy_version: Some(policy_version),
+            refused_rule: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FunctionAuthorization {
+    refusal: Option<ComponentDecisionRefusal>,
+    policy_version: Option<String>,
+    refused_rule: Option<String>,
+}
+
+impl FunctionAuthorization {
+    fn refused(refusal: ComponentDecisionRefusal) -> Self {
+        Self {
+            refusal: Some(refusal),
+            policy_version: None,
+            refused_rule: None,
+        }
     }
 }
 
@@ -202,33 +300,8 @@ impl ComponentAdministration for PostgresComponentAdministration {
             .await
             .map_err(query_unavailable)?;
         ensure_runnable_agent(&transaction, scope).await?;
-        let row = transaction
-            .query_one(
-                "SELECT (c.name IS NOT NULL) AS component_exists,
-                        coalesce(c.published,false) AS published,
-                        (c.published_description IS NOT NULL) AS has_published_description,
-                        (e.agent_id IS NOT NULL) AS withheld_from_agent
-                   FROM (VALUES(1)) AS singleton(value)
-              LEFT JOIN public.components c ON c.name=$1
-              LEFT JOIN public.component_exclusions e
-                     ON e.component_name=c.name AND e.agent_id=$2",
-                &[&component_name, &scope.agent_id.as_str()],
-            )
-            .await
-            .map_err(query_unavailable)?;
-        let facts = ComponentGrantFacts {
-            exists: build_has_renderer
-                && row
-                    .try_get::<_, bool>("component_exists")
-                    .map_err(|_| corrupt("component_exists"))?,
-            published: row.try_get("published").map_err(|_| corrupt("published"))?,
-            has_published_description: row
-                .try_get("has_published_description")
-                .map_err(|_| corrupt("published_description"))?,
-            withheld_from_agent: row
-                .try_get("withheld_from_agent")
-                .map_err(|_| corrupt("component_exclusion"))?,
-        };
+        let facts =
+            component_grant_facts(&transaction, scope, component_name, build_has_renderer).await?;
         if let ComponentGrantDecision::Refused(reason) = decide_component_grant(facts) {
             let refusal = component_refusal(reason, None)?;
             append_component_refusal(
@@ -236,10 +309,11 @@ impl ComponentAdministration for PostgresComponentAdministration {
                 scope,
                 component_name,
                 &refusal,
+                None,
                 self.checkpoint_key.expose(),
             )
             .await?;
-            commit_refusal(transaction).await?;
+            commit_component_runtime(transaction, "component_refusal").await?;
             return Ok(ComponentDecision::refused(refusal));
         }
 
@@ -263,6 +337,20 @@ impl ComponentAdministration for PostgresComponentAdministration {
                 })
                 .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
             for function in functions {
+                let authorization = self.authorize_function(scope, function);
+                if let Some(refusal) = authorization.refusal.clone() {
+                    append_component_refusal(
+                        &transaction,
+                        scope,
+                        component_name,
+                        &refusal,
+                        Some(&authorization),
+                        self.checkpoint_key.expose(),
+                    )
+                    .await?;
+                    commit_component_runtime(transaction, "function_authorization_refusal").await?;
+                    return Ok(ComponentDecision::refused(refusal));
+                }
                 if let ComponentGrantDecision::Refused(reason) =
                     decide_component_function_grant(granted.contains(function))
                 {
@@ -272,10 +360,11 @@ impl ComponentAdministration for PostgresComponentAdministration {
                         scope,
                         component_name,
                         &refusal,
+                        Some(&authorization),
                         self.checkpoint_key.expose(),
                     )
                     .await?;
-                    commit_refusal(transaction).await?;
+                    commit_component_runtime(transaction, "function_grant_refusal").await?;
                     return Ok(ComponentDecision::refused(refusal));
                 }
             }
@@ -284,6 +373,168 @@ impl ComponentAdministration for PostgresComponentAdministration {
         transaction.commit().await.map_err(query_unavailable)?;
         Ok(ComponentDecision::allowed())
     }
+
+    async fn call_component_function(
+        &self,
+        scope: &ComponentRuntimeScope,
+        component_name: &str,
+        build_has_renderer: bool,
+        plan: &ComponentFunctionCallPlan,
+    ) -> Result<ComponentFunctionCall, ComponentAdministrationError> {
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await
+            .map_err(query_unavailable)?;
+        ensure_runnable_agent(&transaction, scope).await?;
+        let component_facts =
+            component_grant_facts(&transaction, scope, component_name, build_has_renderer).await?;
+        if let ComponentGrantDecision::Refused(reason) = decide_component_grant(component_facts) {
+            let refusal = component_refusal(reason, None)?;
+            append_component_refusal(
+                &transaction,
+                scope,
+                component_name,
+                &refusal,
+                None,
+                self.checkpoint_key.expose(),
+            )
+            .await?;
+            commit_component_runtime(transaction, "call_component_refusal").await?;
+            return Ok(ComponentFunctionCall::refused(refusal));
+        }
+
+        let authorization = self.authorize_function(scope, &plan.function);
+        if let Some(refusal) = authorization.refusal.clone() {
+            append_component_refusal(
+                &transaction,
+                scope,
+                component_name,
+                &refusal,
+                Some(&authorization),
+                self.checkpoint_key.expose(),
+            )
+            .await?;
+            commit_component_runtime(transaction, "call_function_authorization_refusal").await?;
+            return Ok(ComponentFunctionCall::refused(refusal));
+        }
+
+        let granted = transaction
+            .query_opt(
+                "SELECT function_name
+                   FROM public.component_functions
+                  WHERE component_name=$1 AND function_name=$2",
+                &[&component_name, &plan.function],
+            )
+            .await
+            .map_err(query_unavailable)?
+            .is_some();
+        if let ComponentGrantDecision::Refused(reason) = decide_component_function_grant(granted) {
+            let refusal = component_refusal(reason, Some(plan.function.clone()))?;
+            append_component_refusal(
+                &transaction,
+                scope,
+                component_name,
+                &refusal,
+                Some(&authorization),
+                self.checkpoint_key.expose(),
+            )
+            .await?;
+            commit_component_runtime(transaction, "call_function_grant_refusal").await?;
+            return Ok(ComponentFunctionCall::refused(refusal));
+        }
+
+        let Some(arguments) = plan.arguments else {
+            return Err(corrupt("component_function_arguments"));
+        };
+        transaction
+            .batch_execute("SAVEPOINT component_function_read")
+            .await
+            .map_err(query_unavailable)?;
+        match execute_component_function(&transaction, &plan.function, arguments).await {
+            Ok(data) => {
+                transaction
+                    .batch_execute("RELEASE SAVEPOINT component_function_read")
+                    .await
+                    .map_err(query_unavailable)?;
+                append_component_function_outcome(
+                    &transaction,
+                    scope,
+                    component_name,
+                    &plan.function,
+                    &authorization,
+                    "component.function_called",
+                    None,
+                    self.checkpoint_key.expose(),
+                )
+                .await?;
+                commit_component_runtime(transaction, "component_function_called").await?;
+                Ok(ComponentFunctionCall::succeeded(data))
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "component data function read failed");
+                transaction
+                    .batch_execute(
+                        "ROLLBACK TO SAVEPOINT component_function_read; \
+                         RELEASE SAVEPOINT component_function_read",
+                    )
+                    .await
+                    .map_err(query_unavailable)?;
+                append_component_function_outcome(
+                    &transaction,
+                    scope,
+                    component_name,
+                    &plan.function,
+                    &authorization,
+                    "component.function_failed",
+                    Some("component_function_read_failed"),
+                    self.checkpoint_key.expose(),
+                )
+                .await?;
+                commit_component_runtime(transaction, "component_function_failed").await?;
+                Ok(ComponentFunctionCall::failed(
+                    ComponentFunctionError::ReadFailed,
+                ))
+            }
+        }
+    }
+}
+
+async fn component_grant_facts(
+    transaction: &Transaction<'_>,
+    scope: &ComponentRuntimeScope,
+    component_name: &str,
+    build_has_renderer: bool,
+) -> Result<ComponentGrantFacts, ComponentAdministrationError> {
+    let row = transaction
+        .query_one(
+            "SELECT (c.name IS NOT NULL) AS component_exists,
+                    coalesce(c.published,false) AS published,
+                    (c.published_description IS NOT NULL) AS has_published_description,
+                    (e.agent_id IS NOT NULL) AS withheld_from_agent
+               FROM (VALUES(1)) AS singleton(value)
+          LEFT JOIN public.components c ON c.name=$1
+          LEFT JOIN public.component_exclusions e
+                 ON e.component_name=c.name AND e.agent_id=$2",
+            &[&component_name, &scope.agent_id.as_str()],
+        )
+        .await
+        .map_err(query_unavailable)?;
+    Ok(ComponentGrantFacts {
+        exists: build_has_renderer
+            && row
+                .try_get::<_, bool>("component_exists")
+                .map_err(|_| corrupt("component_exists"))?,
+        published: row.try_get("published").map_err(|_| corrupt("published"))?,
+        has_published_description: row
+            .try_get("has_published_description")
+            .map_err(|_| corrupt("published_description"))?,
+        withheld_from_agent: row
+            .try_get("withheld_from_agent")
+            .map_err(|_| corrupt("component_exclusion"))?,
+    })
 }
 
 async fn ensure_runnable_agent(
@@ -343,6 +594,178 @@ async fn ensure_runnable_agent(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+enum FunctionReadError {
+    #[error("component_function_query_failed")]
+    Query,
+    #[error("component_function_data_corrupt field={0}")]
+    Corrupt(&'static str),
+}
+
+async fn execute_component_function(
+    transaction: &Transaction<'_>,
+    function: &str,
+    arguments: ComponentFunctionArguments,
+) -> Result<ComponentFunctionData, FunctionReadError> {
+    match (function, arguments) {
+        (BOT_ACTIVITY_FUNCTION_NAME, ComponentFunctionArguments::BotActivity { days }) => {
+            let days_i32 = i32::from(days);
+            let rows = transaction
+                .query(
+                    "SELECT payload->>'bot' AS bot,count(*)::bigint AS actions
+                       FROM public.audit_events
+                      WHERE payload->>'bot' IS NOT NULL
+                        AND created_at > clock_timestamp() - make_interval(days => $1)
+                   GROUP BY 1
+                   ORDER BY actions DESC,bot
+                      LIMIT 12",
+                    &[&days_i32],
+                )
+                .await
+                .map_err(|_| FunctionReadError::Query)?;
+            let rows = rows
+                .iter()
+                .map(|row| {
+                    let bot = row
+                        .try_get::<_, String>("bot")
+                        .map_err(|_| FunctionReadError::Corrupt("bot"))?;
+                    validate_function_value(&bot, 256, "bot")?;
+                    let actions = row
+                        .try_get::<_, i64>("actions")
+                        .map_err(|_| FunctionReadError::Corrupt("actions"))?;
+                    Ok(BotActivityRow {
+                        bot,
+                        actions: u64::try_from(actions)
+                            .map_err(|_| FunctionReadError::Corrupt("actions"))?,
+                    })
+                })
+                .collect::<Result<Vec<_>, FunctionReadError>>()?;
+            Ok(ComponentFunctionData::BotActivity(BotActivityReport {
+                days,
+                rows,
+            }))
+        }
+        (RECENT_REFUSALS_FUNCTION_NAME, ComponentFunctionArguments::RecentRefusals { limit }) => {
+            let limit_i64 = i64::from(limit);
+            let rows = transaction
+                .query(
+                    "SELECT created_at AS at,payload->>'bot' AS bot,event_type AS what,
+                            coalesce(payload->>'error_code',payload->>'refused_by_rule',
+                                     payload->>'reason') AS reason
+                       FROM public.audit_events
+                      WHERE event_type IN (
+                            'computer.action_refused','component.refused',
+                            'component.function_refused','bot.declined')
+                   ORDER BY created_at DESC,id DESC
+                      LIMIT $1",
+                    &[&limit_i64],
+                )
+                .await
+                .map_err(|_| FunctionReadError::Query)?;
+            let rows = rows
+                .iter()
+                .map(|row| {
+                    let bot = row
+                        .try_get::<_, Option<String>>("bot")
+                        .map_err(|_| FunctionReadError::Corrupt("bot"))?;
+                    if let Some(bot) = bot.as_deref() {
+                        validate_function_value(bot, 256, "bot")?;
+                    }
+                    let what = row
+                        .try_get::<_, String>("what")
+                        .map_err(|_| FunctionReadError::Corrupt("event_type"))?;
+                    if AuditEventType::parse(&what).is_none() {
+                        return Err(FunctionReadError::Corrupt("event_type"));
+                    }
+                    let reason = row
+                        .try_get::<_, Option<String>>("reason")
+                        .map_err(|_| FunctionReadError::Corrupt("reason"))?;
+                    if let Some(reason) = reason.as_deref() {
+                        validate_function_value(reason, 256, "reason")?;
+                    }
+                    Ok(RecentRefusalRow {
+                        at: row
+                            .try_get("at")
+                            .map_err(|_| FunctionReadError::Corrupt("created_at"))?,
+                        bot,
+                        what,
+                        reason,
+                    })
+                })
+                .collect::<Result<Vec<_>, FunctionReadError>>()?;
+            Ok(ComponentFunctionData::RecentRefusals(
+                RecentRefusalsReport { rows },
+            ))
+        }
+        _ => Err(FunctionReadError::Corrupt("arguments")),
+    }
+}
+
+fn validate_function_value(
+    value: &str,
+    max: usize,
+    field: &'static str,
+) -> Result<(), FunctionReadError> {
+    if value.is_empty() || value.len() > max || value.chars().any(char::is_control) {
+        Err(FunctionReadError::Corrupt(field))
+    } else {
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn append_component_function_outcome(
+    transaction: &Transaction<'_>,
+    scope: &ComponentRuntimeScope,
+    component_name: &str,
+    function: &str,
+    authorization: &FunctionAuthorization,
+    event_type: &'static str,
+    error_code: Option<&'static str>,
+    checkpoint_key: &[u8],
+) -> Result<(), ComponentAdministrationError> {
+    let policy_version = authorization
+        .policy_version
+        .as_ref()
+        .ok_or_else(|| corrupt("policy_version"))?;
+    let mut facts = vec![
+        AuditFact::Bot(
+            AuditIdentifier::new(scope.agent_id.as_str().to_owned())
+                .map_err(|_| corrupt("agent_id"))?,
+        ),
+        AuditFact::ComponentFunction(
+            AuditIdentifier::new(function.to_owned()).map_err(|_| corrupt("component_function"))?,
+        ),
+        AuditFact::ComponentReads(AuditLabel::new(AUDIT_TRAIL_READS_DESCRIPTION)),
+        AuditFact::PolicyVersion(
+            AuditIdentifier::new(policy_version.clone()).map_err(|_| corrupt("policy_version"))?,
+        ),
+    ];
+    if let Some(error_code) = error_code {
+        facts.push(AuditFact::ErrorCode(AuditLabel::new(error_code)));
+    }
+    let payload = AuditPayload::from_facts(facts).map_err(|_| corrupt("audit_payload"))?;
+    let (id, created_at) = next_event_coordinates(transaction)
+        .await
+        .map_err(infra_unavailable)?;
+    let event = AuditEvent {
+        id,
+        actor: Some(scope.actor.clone()),
+        event_type: AuditEventType::parse(event_type).ok_or_else(|| corrupt("audit_event"))?,
+        target_kind: AuditLabel::new("component"),
+        target_id: Some(
+            AuditIdentifier::new(component_name.to_owned())
+                .map_err(|_| corrupt("component_name"))?,
+        ),
+        payload,
+        created_at,
+    };
+    append_event_in_transaction(transaction, &event, checkpoint_key)
+        .await
+        .map_err(infra_unavailable)?;
+    Ok(())
+}
+
 fn component_refusal(
     reason: ComponentGrantRefusal,
     function: Option<String>,
@@ -362,6 +785,7 @@ async fn append_component_refusal(
     scope: &ComponentRuntimeScope,
     component_name: &str,
     refusal: &ComponentDecisionRefusal,
+    authorization: Option<&FunctionAuthorization>,
     checkpoint_key: &[u8],
 ) -> Result<(), ComponentAdministrationError> {
     let mut facts = vec![
@@ -371,10 +795,22 @@ async fn append_component_refusal(
         ),
         AuditFact::ErrorCode(AuditLabel::new(refusal.code_str())),
     ];
-    let event_type = if let ComponentDecisionRefusal::FunctionNotGranted { function } = refusal {
+    let event_type = if let Some(function) = refusal.function() {
         facts.push(AuditFact::ComponentFunction(
-            AuditIdentifier::new(function.clone()).map_err(|_| corrupt("component_function"))?,
+            AuditIdentifier::new(function.to_owned()).map_err(|_| corrupt("component_function"))?,
         ));
+        if let Some(policy_version) = authorization.and_then(|value| value.policy_version.as_ref())
+        {
+            facts.push(AuditFact::PolicyVersion(
+                AuditIdentifier::new(policy_version.clone())
+                    .map_err(|_| corrupt("policy_version"))?,
+            ));
+        }
+        if let Some(refused_rule) = authorization.and_then(|value| value.refused_rule.as_ref()) {
+            facts.push(AuditFact::RefusedByRule(
+                AuditIdentifier::new(refused_rule.clone()).map_err(|_| corrupt("policy_rule"))?,
+            ));
+        }
         "component.function_refused"
     } else {
         "component.refused"
@@ -401,11 +837,12 @@ async fn append_component_refusal(
     Ok(())
 }
 
-async fn commit_refusal(
+async fn commit_component_runtime(
     transaction: deadpool_postgres::Transaction<'_>,
+    operation: &'static str,
 ) -> Result<(), ComponentAdministrationError> {
     transaction.commit().await.map_err(|error| {
-        tracing::error!(error = %error, "component refusal commit result unknown");
+        tracing::error!(operation, error = %error, "component runtime commit result unknown");
         ComponentAdministrationError::CommitUnknown
     })
 }

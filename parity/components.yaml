@@ -141,7 +141,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0006"
     migration_rule: "preserve: 不可预览组件显示为不可预览瓦片而非渲染失败"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch44 renderer/manifest加入无preview的showActivityReport；ComponentPreview对该current renderer走专用localized不可预览句子，不实例化ActivityReportCard。release浏览器index/detail/hard reload均实得Activity tile1、figure/runtime DOM0、unavailable句子true；12 published tiles中stale仍走另一renderer_unavailable文案，unpublished future为0，overflow/duplicate/nested/console均0。"
     evidence: "grep -l '^export const GALLERY' app/src/components/gallery/*.tsx 不含 preview.tsx；preview.tsx::PreviewOf 与 firstSentence 是其内部符号"
     notes: "支撑件，不是注册项（无 GALLERY 导出，不占工具名）。它消费 gallery-registry.ts::GalleryComponent 的可选 preview 字段：省略 preview 的组件（当前只有 activity）必须画成不可预览瓦片，而不是当成渲染失败——这是①参数 schema 之外唯一与五项能力相关的行为，且是 Admin 页避免以活跃 Bot 身份发起真实读取的那道闸。Leptos 版的 preview 数据来源同样必须与组件定义同处一地，否则新增组件时可以忘记决定它怎么自我介绍。"
 

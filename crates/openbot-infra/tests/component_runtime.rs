@@ -4,17 +4,21 @@ mod harness;
 
 use harness::{admin_config, with_temp_database};
 use openbot_application::{
-    ComponentAdministration, ComponentRuntimeScope, decide_component, list_components_for_agent,
+    ComponentAdministration, ComponentRuntimeScope, call_component_function, decide_component,
+    list_components_for_agent,
 };
 use openbot_contracts::auth::{AuthContext, AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::components::{
-    ComponentDecision, ComponentDecisionRefusal, ComponentDecisionRequest,
-    SHOW_NOTICE_COMPONENT_NAME, SHOW_QUOTE_COMPONENT_NAME, SHOW_RECORD_COMPONENT_NAME,
-    compiled_component_manifest,
+    BOT_ACTIVITY_FUNCTION_NAME, ComponentDecision, ComponentDecisionRefusal,
+    ComponentDecisionRequest, ComponentFunctionCallRequest, ComponentFunctionData,
+    RECENT_REFUSALS_FUNCTION_NAME, SHOW_ACTIVITY_REPORT_COMPONENT_NAME, SHOW_NOTICE_COMPONENT_NAME,
+    SHOW_QUOTE_COMPONENT_NAME, SHOW_RECORD_COMPONENT_NAME, compiled_component_manifest,
 };
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
+use openbot_domain::policy::{ActionPolicy, PolicyMode};
 use openbot_infra::component_catalogue::PostgresComponentAdministration;
 use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::policy::PolicyStore;
 
 fn auth(actor: &str, roles: impl IntoIterator<Item = Role>) -> AuthContext {
     AuthContextBuilder::from_verified_session(
@@ -79,12 +83,12 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
 
             let actor = auth("actor-a", [Role::User]);
             let admin_actor = auth("actor-admin", [Role::User, Role::Admin]);
-            let components = PostgresComponentAdministration::new(
+            let unconfigured = PostgresComponentAdministration::new(
                 pool.clone(),
                 b"component-runtime-audit-key".to_vec(),
             )
             .map_err(|error| error.to_string())?;
-            components
+            unconfigured
                 .sync_catalogue(&actor, &compiled_component_manifest())
                 .await
                 .map_err(|error| error.to_string())?;
@@ -99,11 +103,25 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
                      INSERT INTO public.component_exclusions(component_name,agent_id,withheld_by)
                        VALUES('showRecord','agent-public','actor-admin');
                      INSERT INTO public.component_functions(component_name,function_name,granted_by)
-                       VALUES('showQuote','readA','actor-admin');",
+                       VALUES('showActivityReport','botActivity','actor-admin');",
                 )
                 .await
                 .map_err(|error| error.to_string())?;
             drop(client);
+
+            let components = PostgresComponentAdministration::new(
+                pool.clone(),
+                b"component-runtime-audit-key".to_vec(),
+            )
+            .map_err(|error| error.to_string())?
+            .with_policy(PolicyStore::in_memory(Some(ActionPolicy {
+                mode: PolicyMode::Enforce,
+                deny: Vec::new(),
+                allow: vec![
+                    "tool.name == \"component_data__botActivity\"".to_owned(),
+                    "tool.name == \"component_data__recentRefusals\"".to_owned(),
+                ],
+            })));
 
             let initial = list_components_for_agent(
                 &components,
@@ -117,7 +135,7 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
                 .iter()
                 .map(|component| component.name.as_str())
                 .collect::<Vec<_>>();
-            if initial_names.len() != 7
+            if initial_names.len() != 8
                 || initial_names.contains(&SHOW_NOTICE_COMPONENT_NAME)
                 || initial_names.contains(&SHOW_RECORD_COMPONENT_NAME)
                 || initial_names.contains(&"showMetrics")
@@ -145,7 +163,7 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
             )
             .await
             .map_err(|error| error.to_string())?;
-            if admin_private.components.len() != 8 {
+            if admin_private.components.len() != 9 {
                 return Err(format!(
                     "admin private-Agent grants drifted: {admin_private:?}"
                 ));
@@ -164,30 +182,68 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
             .await
             .map_err(|error| error.to_string())?
                 != ComponentDecision::allowed()
-                || decide_component(
-                    &components,
-                    &actor,
-                    SHOW_QUOTE_COMPONENT_NAME.to_owned(),
-                    decide(vec!["readA".to_owned()]),
-                )
-                .await
-                .map_err(|error| error.to_string())?
-                    != ComponentDecision::allowed()
             {
-                return Err("published component or granted function was refused".to_owned());
+                return Err("published component was refused".to_owned());
+            }
+
+            let policy_refused = decide_component(
+                &unconfigured,
+                &admin_actor,
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+                decide(vec![BOT_ACTIVITY_FUNCTION_NAME.to_owned()]),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            if policy_refused
+                != ComponentDecision::refused(ComponentDecisionRefusal::FunctionPolicyRefused {
+                    function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+                })
+            {
+                return Err(format!("default policy decision drifted: {policy_refused:?}"));
+            }
+
+            let actor_refused = decide_component(
+                &components,
+                &actor,
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+                decide(vec![BOT_ACTIVITY_FUNCTION_NAME.to_owned()]),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            if actor_refused
+                != ComponentDecision::refused(
+                    ComponentDecisionRefusal::FunctionActorNotAuthorized {
+                        function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+                    },
+                )
+            {
+                return Err(format!("actor ACL decision drifted: {actor_refused:?}"));
+            }
+
+            if decide_component(
+                &components,
+                &admin_actor,
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+                decide(vec![BOT_ACTIVITY_FUNCTION_NAME.to_owned()]),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+                != ComponentDecision::allowed()
+            {
+                return Err("admin+policy+function grant was refused".to_owned());
             }
 
             let missing_function = decide_component(
                 &components,
-                &actor,
-                SHOW_QUOTE_COMPONENT_NAME.to_owned(),
-                decide(vec!["readB".to_owned()]),
+                &admin_actor,
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+                decide(vec![RECENT_REFUSALS_FUNCTION_NAME.to_owned()]),
             )
             .await
             .map_err(|error| error.to_string())?;
             if missing_function
                 != ComponentDecision::refused(ComponentDecisionRefusal::FunctionNotGranted {
-                    function: "readB".to_owned(),
+                    function: RECENT_REFUSALS_FUNCTION_NAME.to_owned(),
                 })
             {
                 return Err(format!(
@@ -219,6 +275,62 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
                 != ComponentDecision::refused(ComponentDecisionRefusal::UnknownComponent)
             {
                 return Err(format!("stale renderer decision drifted: {stale:?}"));
+            }
+
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "INSERT INTO public.component_functions(component_name,function_name,granted_by)
+                     VALUES('showActivityReport','recentRefusals','actor-admin')",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            drop(client);
+            let activity = call_component_function(
+                &components,
+                &admin_actor,
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+                ComponentFunctionCallRequest {
+                    agent_id: BotId::new("agent-public"),
+                    function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+                    args: serde_json::json!({"days": 120.9}),
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            let Some(ComponentFunctionData::BotActivity(activity)) = activity.data else {
+                return Err(format!("botActivity result drifted: {activity:?}"));
+            };
+            if activity.days != 90
+                || activity.rows.len() != 1
+                || activity.rows[0].bot != "agent-public"
+                || activity.rows[0].actions != 5
+            {
+                return Err(format!("botActivity data drifted: {activity:?}"));
+            }
+            let refusals = call_component_function(
+                &components,
+                &admin_actor,
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+                ComponentFunctionCallRequest {
+                    agent_id: BotId::new("agent-public"),
+                    function: RECENT_REFUSALS_FUNCTION_NAME.to_owned(),
+                    args: serde_json::json!({"limit": 2}),
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            let Some(ComponentFunctionData::RecentRefusals(refusals)) = refusals.data else {
+                return Err(format!("recentRefusals result drifted: {refusals:?}"));
+            };
+            if refusals.rows.len() != 2
+                || refusals.rows.iter().any(|row| {
+                    row.bot.as_deref() != Some("agent-public")
+                        || row.reason.as_deref().is_none_or(str::is_empty)
+                })
+            {
+                return Err(format!("recentRefusals data drifted: {refusals:?}"));
             }
 
             let client = pool.get().await.map_err(|error| error.to_string())?;
@@ -256,7 +368,7 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
                 )
                 .await
                 .map_err(|error| error.to_string())?;
-            if audit_rows.len() != 4 {
+            if audit_rows.len() != 6 {
                 return Err(format!("runtime refusal audit count drifted: {}", audit_rows.len()));
             }
             for row in &audit_rows {
@@ -269,14 +381,89 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
                 {
                     return Err(format!("runtime audit payload drifted: {payload}"));
                 }
-                let event_type: String = row
-                    .try_get("event_type")
-                    .map_err(|error| error.to_string())?;
-                if event_type == "component.function_refused"
-                    && payload.get("function").and_then(serde_json::Value::as_str) != Some("readB")
-                {
-                    return Err(format!("function refusal audit drifted: {payload}"));
+                let event_type: String = row.try_get("event_type").map_err(|error| error.to_string())?;
+                if event_type == "component.function_refused" {
+                    let function = payload.get("function").and_then(serde_json::Value::as_str);
+                    if !matches!(
+                        function,
+                        Some(BOT_ACTIVITY_FUNCTION_NAME | RECENT_REFUSALS_FUNCTION_NAME)
+                    ) {
+                        return Err(format!("function refusal audit drifted: {payload}"));
+                    }
                 }
+            }
+            let called_rows = client
+                .query(
+                    "SELECT payload FROM public.audit_events
+                      WHERE event_type='component.function_called' ORDER BY created_at,id",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if called_rows.len() != 2 {
+                return Err(format!("function called audit count drifted: {}", called_rows.len()));
+            }
+            for row in called_rows {
+                let payload: serde_json::Value =
+                    row.try_get("payload").map_err(|error| error.to_string())?;
+                if payload.get("reads").and_then(serde_json::Value::as_str)
+                    != Some("the audit trail")
+                    || payload.get("policy_version").is_none()
+                    || payload.get("reason").is_some()
+                {
+                    return Err(format!("function called audit payload drifted: {payload}"));
+                }
+            }
+            client
+                .execute(
+                    "INSERT INTO public.audit_events(
+                       actor_user_id,event_type,target_type,target_id,payload,created_at,
+                       prev_hash,row_hash
+                     ) VALUES(
+                       'actor-admin','component.function_called','component','showActivityReport',
+                       jsonb_build_object('bot',repeat('x',300)),
+                       clock_timestamp()+interval '1 second',
+                       (SELECT row_hash FROM public.audit_events
+                         ORDER BY created_at DESC,id DESC LIMIT 1),repeat('0',64)
+                     )",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            drop(client);
+            let failed = call_component_function(
+                &components,
+                &admin_actor,
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME.to_owned(),
+                ComponentFunctionCallRequest {
+                    agent_id: BotId::new("agent-public"),
+                    function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+                    args: serde_json::json!({"days": 90}),
+                },
+            )
+            .await
+            .map_err(|error| format!("corrupt component read application error: {error:?}"))?;
+            if failed.error
+                != Some(openbot_contracts::components::ComponentFunctionError::ReadFailed)
+            {
+                return Err(format!("corrupt data read did not return stable failure: {failed:?}"));
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let failed_payload: serde_json::Value = client
+                .query_one(
+                    "SELECT payload FROM public.audit_events
+                      WHERE event_type='component.function_failed'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get("payload")
+                .map_err(|error| error.to_string())?;
+            if failed_payload.get("error_code").and_then(serde_json::Value::as_str)
+                != Some("component_function_read_failed")
+                || failed_payload.to_string().contains(&"x".repeat(300))
+            {
+                return Err(format!("function failed audit drifted: {failed_payload}"));
             }
             let before_forced = audit_rows.len();
             client

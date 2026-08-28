@@ -4,10 +4,10 @@ use leptos::prelude::*;
 #[cfg(test)]
 use openbot_contracts::components::compiled_component_manifest;
 use openbot_contracts::components::{
-    SHOW_AREA_CHART_COMPONENT_NAME, SHOW_BAR_CHART_COMPONENT_NAME, SHOW_CHECKLIST_COMPONENT_NAME,
-    SHOW_LINE_CHART_COMPONENT_NAME, SHOW_METRICS_COMPONENT_NAME, SHOW_NOTICE_COMPONENT_NAME,
-    SHOW_PIE_CHART_COMPONENT_NAME, SHOW_PROGRESS_COMPONENT_NAME, SHOW_QUOTE_COMPONENT_NAME,
-    SHOW_RECORD_COMPONENT_NAME,
+    SHOW_ACTIVITY_REPORT_COMPONENT_NAME, SHOW_AREA_CHART_COMPONENT_NAME,
+    SHOW_BAR_CHART_COMPONENT_NAME, SHOW_CHECKLIST_COMPONENT_NAME, SHOW_LINE_CHART_COMPONENT_NAME,
+    SHOW_METRICS_COMPONENT_NAME, SHOW_NOTICE_COMPONENT_NAME, SHOW_PIE_CHART_COMPONENT_NAME,
+    SHOW_PROGRESS_COMPONENT_NAME, SHOW_QUOTE_COMPONENT_NAME, SHOW_RECORD_COMPONENT_NAME,
 };
 
 use crate::i18n::{t, use_i18n};
@@ -18,7 +18,8 @@ use super::{
     ProgressChartCard, ProgressPoint, QuoteCard, RecordCard, RecordField,
 };
 
-const RENDERER_NAMES: [&str; 10] = [
+const RENDERER_NAMES: [&str; 11] = [
+    SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
     SHOW_AREA_CHART_COMPONENT_NAME,
     SHOW_BAR_CHART_COMPONENT_NAME,
     SHOW_CHECKLIST_COMPONENT_NAME,
@@ -48,6 +49,12 @@ pub fn component_has_renderer(name: &str) -> bool {
 pub fn ComponentPreview(name: String) -> AnyView {
     let i18n = use_i18n();
     let content = match name.as_str() {
+        SHOW_ACTIVITY_REPORT_COMPONENT_NAME => view! {
+            <p class="ob-gallery-preview-unavailable">
+                {move || t!(i18n, gallery.preview_unavailable)}
+            </p>
+        }
+        .into_any(),
         SHOW_AREA_CHART_COMPONENT_NAME => view! {
             <AreaChartCard
                 title="Storage used".to_owned()
@@ -176,6 +183,7 @@ mod tests {
         assert_eq!(
             renderer_names(),
             [
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
                 SHOW_AREA_CHART_COMPONENT_NAME,
                 SHOW_BAR_CHART_COMPONENT_NAME,
                 SHOW_CHECKLIST_COMPONENT_NAME,

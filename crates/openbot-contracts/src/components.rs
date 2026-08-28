@@ -6,6 +6,25 @@ use time::OffsetDateTime;
 
 use crate::ids::BotId;
 
+/// Stable Activity report renderer identity.
+pub const SHOW_ACTIVITY_REPORT_COMPONENT_NAME: &str = "showActivityReport";
+/// Stable Activity report title.
+pub const SHOW_ACTIVITY_REPORT_COMPONENT_TITLE: &str = "Activity report";
+/// Default model-facing Activity report description.
+pub const SHOW_ACTIVITY_REPORT_COMPONENT_DESCRIPTION: &str = "Show what this deployment has actually been doing, read from its own records rather than from anything you know. Use for 'what have the Bots been up to' and 'what has been refused'. You choose the report and the period; the figures are read for you and you will not see them.";
+/// Stable data-function identity for per-Bot action counts.
+pub const BOT_ACTIVITY_FUNCTION_NAME: &str = "botActivity";
+/// Administrator-facing description for the Bot activity data function.
+pub const BOT_ACTIVITY_FUNCTION_DESCRIPTION: &str =
+    "How many actions each Bot has taken, counted from the audit trail.";
+/// Stable data-function identity for recent refusal rows.
+pub const RECENT_REFUSALS_FUNCTION_NAME: &str = "recentRefusals";
+/// Administrator-facing description for the recent-refusals data function.
+pub const RECENT_REFUSALS_FUNCTION_DESCRIPTION: &str =
+    "The most recent things this deployment refused, and the reason each was refused.";
+/// Stable source description shared by both first-party data functions.
+pub const AUDIT_TRAIL_READS_DESCRIPTION: &str = "the audit trail";
+
 /// Stable tool/catalogue identity for the first compiled Rust renderer slice.
 pub const SHOW_QUOTE_COMPONENT_NAME: &str = "showQuote";
 /// Human-facing title stored when the build first announces the renderer.
@@ -203,6 +222,21 @@ pub enum ComponentDecisionRefusal {
         /// Stable data-function identity; never arguments or returned data.
         function: String,
     },
+    /// The requested function is not shipped by this exact Server build.
+    FunctionUnavailable {
+        /// Stable requested function identity.
+        function: String,
+    },
+    /// The verified actor lacks the function's underlying data ACL.
+    FunctionActorNotAuthorized {
+        /// Stable requested function identity.
+        function: String,
+    },
+    /// The current action policy refused this data read.
+    FunctionPolicyRefused {
+        /// Stable requested function identity.
+        function: String,
+    },
 }
 
 impl ComponentDecisionRefusal {
@@ -214,6 +248,21 @@ impl ComponentDecisionRefusal {
             Self::Unpublished => "component_unpublished",
             Self::WithheldFromAgent => "component_withheld",
             Self::FunctionNotGranted { .. } => "component_function_not_granted",
+            Self::FunctionUnavailable { .. } => "component_function_unavailable",
+            Self::FunctionActorNotAuthorized { .. } => "component_function_actor_not_authorized",
+            Self::FunctionPolicyRefused { .. } => "component_function_policy_refused",
+        }
+    }
+
+    /// Function identity carried by any function-level refusal.
+    #[must_use]
+    pub fn function(&self) -> Option<&str> {
+        match self {
+            Self::FunctionNotGranted { function }
+            | Self::FunctionUnavailable { function }
+            | Self::FunctionActorNotAuthorized { function }
+            | Self::FunctionPolicyRefused { function } => Some(function),
+            Self::UnknownComponent | Self::Unpublished | Self::WithheldFromAgent => None,
         }
     }
 }
@@ -255,10 +304,192 @@ impl ComponentDecision {
     }
 }
 
+/// One build-owned data function shown on the component administration surface.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentDataFunctionSummary {
+    /// Stable function identity.
+    pub name: String,
+    /// Administrator-facing purpose; never read by the model.
+    pub description: String,
+    /// Bounded description of the underlying data source.
+    pub reads: String,
+}
+
+/// Exact data-function registry for this Server build.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentDataFunctions {
+    /// Build-owned summaries in stable name order.
+    pub functions: Vec<ComponentDataFunctionSummary>,
+}
+
+/// The build-owned data functions shipped by this exact binary.
+#[must_use]
+pub fn component_data_function_manifest() -> Vec<ComponentDataFunctionSummary> {
+    vec![
+        ComponentDataFunctionSummary {
+            name: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+            description: BOT_ACTIVITY_FUNCTION_DESCRIPTION.to_owned(),
+            reads: AUDIT_TRAIL_READS_DESCRIPTION.to_owned(),
+        },
+        ComponentDataFunctionSummary {
+            name: RECENT_REFUSALS_FUNCTION_NAME.to_owned(),
+            description: RECENT_REFUSALS_FUNCTION_DESCRIPTION.to_owned(),
+            reads: AUDIT_TRAIL_READS_DESCRIPTION.to_owned(),
+        },
+    ]
+}
+
+/// Untrusted call body for one component-owned data read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComponentFunctionCallRequest {
+    /// Agent on whose behalf the component is rendering.
+    pub agent_id: BotId,
+    /// Stable build-owned function identity.
+    pub function: String,
+    /// Function arguments; application normalizes and bounds them by the selected registry entry.
+    #[serde(default)]
+    pub args: Value,
+}
+
+/// One Bot's counted actions over a bounded window.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotActivityRow {
+    /// Stable Bot identity from the audit payload allowlist.
+    pub bot: String,
+    /// Non-negative number of actions.
+    pub actions: u64,
+}
+
+/// Data returned by `botActivity`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotActivityReport {
+    /// Effective bounded lookback.
+    pub days: u16,
+    /// At most twelve Bots, ordered by actions descending then identity.
+    pub rows: Vec<BotActivityRow>,
+}
+
+/// One bounded refusal projection from the audit trail.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecentRefusalRow {
+    /// Database-clock event time.
+    pub at: OffsetDateTime,
+    /// Authoritative Bot identity when the event has one.
+    pub bot: Option<String>,
+    /// Stable audit event type.
+    pub what: String,
+    /// Stable error/rule classification; never raw policy or user/model prose.
+    pub reason: Option<String>,
+}
+
+/// Data returned by `recentRefusals`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecentRefusalsReport {
+    /// At most fifty rows in reverse chronological order.
+    pub rows: Vec<RecentRefusalRow>,
+}
+
+/// Typed data returned by one build-owned function while preserving upstream's untagged `data` body.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ComponentFunctionData {
+    /// `botActivity` result.
+    BotActivity(BotActivityReport),
+    /// `recentRefusals` result.
+    RecentRefusals(RecentRefusalsReport),
+}
+
+/// Stable non-authorization failure after the read was permitted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComponentFunctionError {
+    /// The bounded local read failed; no vendor/database prose crosses the wire.
+    ReadFailed,
+}
+
+/// Result of a component-owned data read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentFunctionCall {
+    /// False only for an authorization refusal.
+    pub allowed: bool,
+    /// Present only for a successful read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<ComponentFunctionData>,
+    /// Present only when authorization refused before the read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<ComponentDecisionRefusal>,
+    /// Present only when an authorized read failed and was audited.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ComponentFunctionError>,
+}
+
+impl ComponentFunctionCall {
+    /// Successful authorized read.
+    #[must_use]
+    pub const fn succeeded(data: ComponentFunctionData) -> Self {
+        Self {
+            allowed: true,
+            data: Some(data),
+            refusal: None,
+            error: None,
+        }
+    }
+
+    /// Authorization refusal before reading data.
+    #[must_use]
+    pub const fn refused(refusal: ComponentDecisionRefusal) -> Self {
+        Self {
+            allowed: false,
+            data: None,
+            refusal: Some(refusal),
+            error: None,
+        }
+    }
+
+    /// Authorized read failed after permission checks.
+    #[must_use]
+    pub const fn failed(error: ComponentFunctionError) -> Self {
+        Self {
+            allowed: true,
+            data: None,
+            refusal: None,
+            error: Some(error),
+        }
+    }
+
+    /// Whether exactly one valid result shape is represented.
+    #[must_use]
+    pub const fn is_consistent(&self) -> bool {
+        matches!(
+            (
+                self.allowed,
+                self.data.is_some(),
+                self.refusal.is_some(),
+                self.error.is_some()
+            ),
+            (true, true, false, false) | (true, false, false, true) | (false, false, true, false)
+        )
+    }
+}
+
 /// The exact compiled renderer manifest for this build.
 #[must_use]
 pub fn compiled_component_manifest() -> Vec<CompiledComponentManifestEntry> {
     vec![
+        manifest_entry(
+            SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
+            SHOW_ACTIVITY_REPORT_COMPONENT_TITLE,
+            CompiledComponentKind::Card,
+            SHOW_ACTIVITY_REPORT_COMPONENT_DESCRIPTION,
+        ),
         manifest_entry(
             SHOW_AREA_CHART_COMPONENT_NAME,
             SHOW_AREA_CHART_COMPONENT_TITLE,
@@ -334,6 +565,31 @@ fn manifest_entry(
         kind,
         description: description.to_owned(),
     }
+}
+
+/// Exact JSON Schema for `showActivityReport`.
+#[must_use]
+pub fn show_activity_report_parameter_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "report": {
+                "type": "string",
+                "enum": ["activity", "refusals"],
+                "description": "Which report to show: 'activity' for how much each Bot has done, 'refusals' for what this deployment recently refused"
+            },
+            "title": {
+                "type": "string",
+                "description": "A heading for the report, in a few words"
+            },
+            "days": {
+                "type": "number",
+                "description": "For the activity report: how many days back to count. Defaults to 7"
+            }
+        },
+        "required": ["report"]
+    })
 }
 
 /// Exact JSON Schema for `showQuote`; renderer/tool registration share this single source.
@@ -577,13 +833,14 @@ mod tests {
     #[test]
     fn manifest_and_compiled_schemas_are_exact_closed_and_stable() {
         let manifest = compiled_component_manifest();
-        assert_eq!(manifest.len(), 10);
+        assert_eq!(manifest.len(), 11);
         assert_eq!(
             manifest
                 .iter()
                 .map(|entry| entry.name.as_str())
                 .collect::<Vec<_>>(),
             [
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
                 SHOW_AREA_CHART_COMPONENT_NAME,
                 SHOW_BAR_CHART_COMPONENT_NAME,
                 SHOW_CHECKLIST_COMPONENT_NAME,
@@ -602,6 +859,14 @@ mod tests {
                 .filter(|entry| entry.kind == CompiledComponentKind::Chart)
                 .count(),
             5
+        );
+        assert_eq!(
+            show_activity_report_parameter_schema()["properties"]["report"]["enum"],
+            json!(["activity", "refusals"])
+        );
+        assert_eq!(
+            show_activity_report_parameter_schema()["required"],
+            json!(["report"])
         );
         assert_eq!(
             show_quote_parameter_schema()["required"],
@@ -714,5 +979,71 @@ mod tests {
         assert_eq!(encoded["components"][0]["name"], SHOW_QUOTE_COMPONENT_NAME);
         assert!(encoded["components"][0].get("draft").is_none());
         assert!(encoded["components"][0].get("arguments").is_none());
+    }
+
+    #[test]
+    fn component_data_function_registry_and_call_wire_are_exact_and_consistent() {
+        let functions = component_data_function_manifest();
+        assert_eq!(
+            functions
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            [BOT_ACTIVITY_FUNCTION_NAME, RECENT_REFUSALS_FUNCTION_NAME]
+        );
+        assert!(
+            functions
+                .iter()
+                .all(|entry| entry.reads == AUDIT_TRAIL_READS_DESCRIPTION)
+        );
+        let request = ComponentFunctionCallRequest {
+            agent_id: BotId::new("agent-one"),
+            function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+            args: json!({"days": 7}),
+        };
+        assert!(
+            serde_json::from_value::<ComponentFunctionCallRequest>(json!({
+                "agentId": "agent-one",
+                "function": BOT_ACTIVITY_FUNCTION_NAME,
+                "args": {},
+                "actor": "admin"
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            json!({"agentId":"agent-one","function":"botActivity","args":{"days":7}})
+        );
+
+        let succeeded = ComponentFunctionCall::succeeded(ComponentFunctionData::BotActivity(
+            BotActivityReport {
+                days: 7,
+                rows: vec![BotActivityRow {
+                    bot: "agent-one".to_owned(),
+                    actions: 3,
+                }],
+            },
+        ));
+        let refused =
+            ComponentFunctionCall::refused(ComponentDecisionRefusal::FunctionActorNotAuthorized {
+                function: BOT_ACTIVITY_FUNCTION_NAME.to_owned(),
+            });
+        let failed = ComponentFunctionCall::failed(ComponentFunctionError::ReadFailed);
+        assert!(succeeded.is_consistent());
+        assert!(refused.is_consistent());
+        assert!(failed.is_consistent());
+        assert_eq!(
+            serde_json::to_value(&failed).unwrap(),
+            json!({"allowed":true,"error":"read_failed"})
+        );
+        assert!(
+            !ComponentFunctionCall {
+                allowed: true,
+                data: None,
+                refusal: None,
+                error: None,
+            }
+            .is_consistent()
+        );
     }
 }

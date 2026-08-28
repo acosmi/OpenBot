@@ -1000,6 +1000,109 @@ textarea:focus-visible,
 [data-series="3"] { --series-colour: var(--chart-4); }
 [data-series="4"] { --series-colour: var(--chart-5); }
 
+.ob-gallery-activity-state,
+.ob-gallery-activity-error,
+.ob-gallery-activity-refused p,
+.ob-gallery-activity-refused span {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+}
+
+.ob-gallery-activity-state { color: var(--fg-muted); }
+.ob-gallery-activity-error,
+.ob-gallery-activity-refused p { color: var(--danger); }
+
+.ob-gallery-activity-refused span {
+  display: block;
+  margin-block-start: var(--spacing);
+  color: var(--fg-secondary);
+}
+
+.ob-gallery-activity-bars,
+.ob-gallery-refusal-list {
+  display: grid;
+  gap: calc(var(--spacing) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-gallery-activity-bars li {
+  display: grid;
+  grid-template-columns: minmax(0, calc(var(--size-control-lg) * 4)) minmax(4rem, 1fr) 3rem;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  color: var(--fg);
+  font-size: var(--text-xs);
+}
+
+.ob-gallery-activity-bars li > span:first-child {
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-gallery-activity-bars strong {
+  color: var(--fg-secondary);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  text-align: end;
+}
+
+.ob-gallery-activity-track {
+  height: calc(var(--spacing) * 4);
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--bg-chip);
+}
+
+.ob-gallery-activity-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--series-colour);
+}
+
+.ob-gallery-refusal-list li {
+  min-width: 0;
+  color: var(--fg);
+}
+
+.ob-gallery-refusal-list li + li {
+  padding-block-start: calc(var(--spacing) * 2);
+  border-block-start: 1px solid var(--border);
+}
+
+.ob-gallery-refusal-list div {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+}
+
+.ob-gallery-refusal-list code {
+  color: var(--fg);
+  font-family: var(--font-mono);
+}
+
+.ob-gallery-refusal-list span,
+.ob-gallery-refusal-list time,
+.ob-gallery-refusal-list p {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.ob-gallery-refusal-list time { margin-inline-start: auto; }
+
+.ob-gallery-refusal-list p {
+  margin: var(--spacing) 0 0;
+  overflow-wrap: anywhere;
+}
+
 .ob-gallery-refused {
   width: 100%;
   max-width: var(--size-content-max-chat);
