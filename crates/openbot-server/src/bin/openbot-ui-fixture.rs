@@ -13,14 +13,14 @@ use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
     AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, BeginThreadRunRequest,
     CancelThreadRunRequest, ChannelAdministration, ChannelAdministrationError,
-    ChannelCreateRequest, ChannelReadScope, ChannelReader, CorrectMemoryRequest,
-    McpConnectionAdministration, McpConnectionError, MemoryAdministration,
-    MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest, MutateMemoryRequest,
-    OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
-    RecallMemoriesRequest, RememberMemoryRequest, ThreadConversationRequest, ThreadDirectory,
-    ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
-    ToolApprovalAdministration, ToolApprovalAdministrationError, UiPreferenceAdministration,
-    UiPreferenceAdministrationError, UpdateMemoryControlRequest,
+    ChannelCreateRequest, ChannelReadScope, ChannelReader, ComponentAdministration,
+    ComponentAdministrationError, CorrectMemoryRequest, McpConnectionAdministration,
+    McpConnectionError, MemoryAdministration, MemoryAdministrationError, MemoryControlRequest,
+    MemoryPageRequest, MutateMemoryRequest, OpenBotApplication, PeopleAdministration,
+    PeoplePageRequest, PeoplePortError, PortError, RecallMemoriesRequest, RememberMemoryRequest,
+    ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
+    ThreadHistoryRequest, ToolApprovalAdministration, ToolApprovalAdministrationError,
+    UiPreferenceAdministration, UiPreferenceAdministrationError, UpdateMemoryControlRequest,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
@@ -29,6 +29,10 @@ use openbot_contracts::command::{
     ThreadForegroundRunState, ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole,
     ThreadRunCancellation, ThreadRunCancellationState, ThreadRunEvent, ThreadRunEventKind,
     ThreadRunStarted,
+};
+use openbot_contracts::components::{
+    CompiledComponentKind, CompiledComponentManifestEntry, ComponentCatalogueAdded,
+    ComponentRecord, ComponentRecords,
 };
 use openbot_contracts::ids::{
     ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
@@ -411,6 +415,107 @@ impl McpConnectionAdministration for FixtureConnections {
         _registration: &McpOAuthClientRegistration,
     ) -> Result<McpOAuthClientRegistered, McpConnectionError> {
         Err(McpConnectionError::Unavailable)
+    }
+}
+
+#[derive(Clone)]
+struct FixtureComponents {
+    rows: Arc<Mutex<Vec<ComponentRecord>>>,
+    now: OffsetDateTime,
+}
+
+impl FixtureComponents {
+    fn new(now: OffsetDateTime) -> Self {
+        Self {
+            rows: Arc::new(Mutex::new(vec![
+                ComponentRecord {
+                    name: "showLegacyWidget".to_owned(),
+                    title: "Legacy widget".to_owned(),
+                    kind: CompiledComponentKind::Card,
+                    draft_description: "A published row whose renderer left this build.".to_owned(),
+                    published_description: Some(
+                        "A published row whose renderer left this build.".to_owned(),
+                    ),
+                    published: true,
+                    published_at: Some(now - Duration::days(2)),
+                    updated_by: Some("fixture-admin".to_owned()),
+                    updated_at: now - Duration::days(2),
+                    has_unpublished_changes: false,
+                    withheld_from: Vec::new(),
+                    functions: Vec::new(),
+                },
+                ComponentRecord {
+                    name: "showNotice".to_owned(),
+                    title: "Notice".to_owned(),
+                    kind: CompiledComponentKind::Card,
+                    draft_description: "An unpublished fixture row.".to_owned(),
+                    published_description: None,
+                    published: false,
+                    published_at: None,
+                    updated_by: Some("fixture-admin".to_owned()),
+                    updated_at: now - Duration::days(1),
+                    has_unpublished_changes: true,
+                    withheld_from: vec!["fixture-owned-private".to_owned()],
+                    functions: vec!["readFixture".to_owned()],
+                },
+            ])),
+            now,
+        }
+    }
+}
+
+#[async_trait]
+impl ComponentAdministration for FixtureComponents {
+    async fn list_components(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<ComponentRecords, ComponentAdministrationError> {
+        let mut components = self
+            .rows
+            .lock()
+            .map_err(|_| ComponentAdministrationError::Unavailable)?
+            .clone();
+        components.sort_by(|left, right| {
+            (left.kind.as_str(), &left.title, &left.name).cmp(&(
+                right.kind.as_str(),
+                &right.title,
+                &right.name,
+            ))
+        });
+        Ok(ComponentRecords { components })
+    }
+
+    async fn sync_catalogue(
+        &self,
+        _auth: &AuthContext,
+        entries: &[CompiledComponentManifestEntry],
+    ) -> Result<ComponentCatalogueAdded, ComponentAdministrationError> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| ComponentAdministrationError::Unavailable)?;
+        let mut added = Vec::new();
+        for entry in entries {
+            if rows.iter().any(|row| row.name == entry.name) {
+                continue;
+            }
+            rows.push(ComponentRecord {
+                name: entry.name.clone(),
+                title: entry.title.clone(),
+                kind: entry.kind,
+                draft_description: entry.description.clone(),
+                published_description: Some(entry.description.clone()),
+                published: true,
+                published_at: Some(self.now),
+                updated_by: Some("the build".to_owned()),
+                updated_at: self.now,
+                has_unpublished_changes: false,
+                withheld_from: Vec::new(),
+                functions: Vec::new(),
+            });
+            added.push(entry.name.clone());
+        }
+        Ok(ComponentCatalogueAdded { added })
     }
 }
 
@@ -1412,10 +1517,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let threads = FixtureThreads::new(channels.clone());
     let memory = FixtureMemory::new(tenant, actor.clone(), now);
     let connections = FixtureConnections::new(actor, port, now);
+    let components = FixtureComponents::new(now);
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
             .with_agent_directory(Arc::new(FixtureAgents::new()))
+            .with_component_administration(Arc::new(components))
             .with_people(FixturePeople)
             .with_threads(threads)
             .with_memory(memory)

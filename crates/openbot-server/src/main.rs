@@ -44,6 +44,7 @@ use openbot_infra::auth::oidc::{
 };
 use openbot_infra::auth::single_user::initialize_single_user;
 use openbot_infra::auth::sso::DynamicSsoService;
+use openbot_infra::component_catalogue::PostgresComponentAdministration;
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{native, pool};
 use openbot_infra::google_drive::GoogleDriveRestTransport;
@@ -461,6 +462,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         stall_timeout: server.agent_budgets.stall_timeout,
     })?;
     let channels = ChannelRepo::new(pool.clone());
+    let components = Arc::new(PostgresComponentAdministration::new(
+        pool.clone(),
+        audit_key.to_vec(),
+    )?);
     let application = OpenBotApplication::new(channels.clone())
         .with_people(people)
         .with_audit(PostgresAuditReader::new(pool.clone()))
@@ -473,6 +478,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_channel_routing(Arc::new(channel_routing));
     let application = application
         .with_agent_directory(Arc::new(PostgresAgentDirectory::new(pool.clone())))
+        .with_component_administration(components)
         .with_mcp_connections(mcp_connections.clone())
         .with_tool_approvals(tool_approvals)
         .with_ui_preferences(Arc::new(PostgresUiPreferenceAdministration::new(

@@ -106,6 +106,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::RouteChannelMessage { .. } => "route_channel_message",
         AppCommand::ListVisibleAgents { .. } => "list_visible_agents",
         AppCommand::GetVisibleAgent { .. } => "get_visible_agent",
+        AppCommand::ListComponents => "list_components",
+        AppCommand::SyncComponentCatalogue(_) => "sync_component_catalogue",
         AppCommand::GetCurrentUser => "get_current_user",
         AppCommand::AdminStatus => "admin_status",
         AppCommand::ListPeople { .. } => "list_people",

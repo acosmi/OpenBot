@@ -211,6 +211,8 @@ impl AgentToolGateway {
                 | AppReply::ChannelRouting(_)
                 | AppReply::Agents(_)
                 | AppReply::Agent(_)
+                | AppReply::Components(_)
+                | AppReply::ComponentCatalogueAdded(_)
                 | AppReply::CurrentUser(_)
                 | AppReply::AdminStatus(_)
                 | AppReply::People(_)

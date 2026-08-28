@@ -16,6 +16,12 @@ use openbot_contracts::command::{
     ChannelDetail, ChannelPage, ChannelRoutingDecision, ThreadConversationSnapshot,
     ThreadRunCancellation, ThreadRunStarted,
 };
+#[cfg(any(target_arch = "wasm32", test))]
+use openbot_contracts::components::ComponentRecord;
+use openbot_contracts::components::{
+    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentRecords,
+    compiled_component_manifest,
+};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::mcp::{McpConnectionDisconnected, McpConnections, McpOAuthAuthorization};
 #[cfg(target_arch = "wasm32")]
@@ -56,6 +62,72 @@ pub enum ApiError {
 pub const CHANNEL_PAGE_SIZE: u32 = 50;
 /// Memory page size; the application owns the authoritative clamp.
 pub const MEMORY_PAGE_SIZE: u32 = 50;
+
+/// Announce the exact build-owned compiled component manifest; existing governance is untouched.
+pub async fn announce_component_catalogue() -> Result<ComponentCatalogueAdded, ApiError> {
+    let request = ComponentCatalogueRequest {
+        components: compiled_component_manifest(),
+    };
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::put("/api/components/catalogue")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&request)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let added = response
+            .json::<ComponentCatalogueAdded>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_catalogue_added(&request, &added)?;
+        Ok(added)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = request;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load all durable compiled-component governance rows for authenticated Settings/Admin views.
+pub async fn load_components() -> Result<ComponentRecords, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/components")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let records = response
+            .json::<ComponentRecords>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_component_records(&records)?;
+        Ok(records)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
 
 /// Load reviewed user-OAuth servers and the current actor's connection rows.
 pub async fn load_mcp_connections() -> Result<McpConnections, ApiError> {
@@ -948,6 +1020,135 @@ pub async fn sign_out_current_session() -> Result<(), ApiError> {
     }
 }
 
+/// Build one same-origin Settings gallery detail URL for a closed component name.
+pub fn component_gallery_href(name: &str) -> Result<String, ApiError> {
+    validate_component_name(name)?;
+    Ok(format!(
+        "/settings/components-gallery/{}",
+        encode_url_component(name)
+    ))
+}
+
+fn validate_component_name(name: &str) -> Result<(), ApiError> {
+    if name.is_empty()
+        || name.len() > 128
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_catalogue_added(
+    request: &ComponentCatalogueRequest,
+    added: &ComponentCatalogueAdded,
+) -> Result<(), ApiError> {
+    if added.added.len() > request.components.len() {
+        return Err(ApiError::InvalidResponse);
+    }
+    let requested = request
+        .components
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut unique = std::collections::BTreeSet::new();
+    for name in &added.added {
+        validate_component_name(name)?;
+        if !requested.contains(name.as_str()) || !unique.insert(name.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_component_records(records: &ComponentRecords) -> Result<(), ApiError> {
+    if records.components.len() > 256 {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut names = std::collections::BTreeSet::new();
+    let mut previous = None::<(&str, &str, &str)>;
+    for record in &records.components {
+        validate_component_record(record)?;
+        if !names.insert(record.name.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+        let key = (
+            record.kind.as_str(),
+            record.title.as_str(),
+            record.name.as_str(),
+        );
+        if previous.is_some_and(|previous| previous > key) {
+            return Err(ApiError::InvalidResponse);
+        }
+        previous = Some(key);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_component_record(record: &ComponentRecord) -> Result<(), ApiError> {
+    validate_component_name(&record.name)?;
+    validate_component_identifier(&record.title, 512)?;
+    validate_component_description(&record.draft_description)?;
+    if let Some(description) = record.published_description.as_deref() {
+        validate_component_description(description)?;
+    }
+    if record.published && (record.published_description.is_none() || record.published_at.is_none())
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    if record.has_unpublished_changes
+        != (record.draft_description != record.published_description.as_deref().unwrap_or(""))
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    if let Some(updated_by) = record.updated_by.as_deref() {
+        validate_component_identifier(updated_by, 512)?;
+    }
+    validate_component_identifier_list(&record.withheld_from)?;
+    validate_component_identifier_list(&record.functions)?;
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_component_description(value: &str) -> Result<(), ApiError> {
+    if value.is_empty() || value.len() > 64 * 1024 || value.as_bytes().contains(&0) {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_component_identifier(value: &str, max: usize) -> Result<(), ApiError> {
+    if value.is_empty() || value.len() > max || value.chars().any(char::is_control) {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_component_identifier_list(values: &[String]) -> Result<(), ApiError> {
+    if values.len() > 1024 {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut previous = None::<&str>;
+    for value in values {
+        validate_component_identifier(value, 512)?;
+        if previous.is_some_and(|previous| previous >= value.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+        previous = Some(value);
+    }
+    Ok(())
+}
+
 fn validate_mcp_server_id(server_id: &str) -> Result<(), ApiError> {
     if server_id.is_empty()
         || server_id.len() > 64
@@ -1313,6 +1514,7 @@ fn status_error(status: u16) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    use openbot_contracts::components::{CompiledComponentKind, SHOW_QUOTE_COMPONENT_NAME};
     use openbot_contracts::memory::{MemoryKind, MemoryOrigin, MemorySensitivity};
     use time::OffsetDateTime;
 
@@ -1348,6 +1550,79 @@ mod tests {
             }],
             redirect_uri: Some("http://127.0.0.1:39015/api/plugins/oauth/callback".to_owned()),
         }
+    }
+
+    fn component_record(name: &str, title: &str, published: bool) -> ComponentRecord {
+        ComponentRecord {
+            name: name.to_owned(),
+            title: title.to_owned(),
+            kind: CompiledComponentKind::Card,
+            draft_description: "Show one compiled component.".to_owned(),
+            published_description: published.then(|| "Show one compiled component.".to_owned()),
+            published,
+            published_at: published.then_some(OffsetDateTime::UNIX_EPOCH),
+            updated_by: Some("the build".to_owned()),
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+            has_unpublished_changes: !published,
+            withheld_from: Vec::new(),
+            functions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn component_records_catalogue_receipts_and_routes_are_closed() {
+        assert_eq!(
+            component_gallery_href(SHOW_QUOTE_COMPONENT_NAME).unwrap(),
+            "/settings/components-gallery/showQuote"
+        );
+        assert_eq!(
+            component_gallery_href("bad/name").unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let records = ComponentRecords {
+            components: vec![component_record(
+                SHOW_QUOTE_COMPONENT_NAME,
+                "Quotation",
+                true,
+            )],
+        };
+        assert!(validate_component_records(&records).is_ok());
+
+        let request = ComponentCatalogueRequest {
+            components: compiled_component_manifest(),
+        };
+        assert!(
+            validate_catalogue_added(
+                &request,
+                &ComponentCatalogueAdded {
+                    added: vec![SHOW_QUOTE_COMPONENT_NAME.to_owned()],
+                },
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            validate_catalogue_added(
+                &request,
+                &ComponentCatalogueAdded {
+                    added: vec!["showUnknown".to_owned()],
+                },
+            )
+            .unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let mut inconsistent = records.components[0].clone();
+        inconsistent.published_description = None;
+        assert_eq!(
+            validate_component_record(&inconsistent).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let mut duplicate_functions = records.components[0].clone();
+        duplicate_functions.functions = vec!["read".to_owned(), "read".to_owned()];
+        assert_eq!(
+            validate_component_record(&duplicate_functions).unwrap_err(),
+            ApiError::InvalidResponse
+        );
     }
 
     #[test]

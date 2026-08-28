@@ -10,6 +10,7 @@ use http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE};
 use http::{Method, Request, Response, StatusCode};
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
+use openbot_contracts::components::ComponentCatalogueRequest;
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme, UpdateUiPreferences};
@@ -21,6 +22,7 @@ use crate::InProcessTransport;
 const INDEX_MAX_BYTES: u64 = 1024 * 1024;
 const ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const API_BODY_MAX_BYTES: usize = 4096;
+const COMPONENT_CATALOGUE_BODY_MAX_BYTES: usize = 256 * 1024;
 const HTML_ROOT_MARKER: &str = "<html lang=\"en\">";
 const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
                    connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; \
@@ -148,6 +150,12 @@ impl DesktopTauriProtocol {
         if path == "/api/tool-approvals" {
             return self.approvals(request, authority).await;
         }
+        if path == "/api/components" {
+            return self.components(request, authority).await;
+        }
+        if path == "/api/components/catalogue" {
+            return self.component_catalogue(request, authority).await;
+        }
         if let Some(raw_id) = path.strip_prefix("/api/tool-approvals/") {
             return self.approval_decision(request, authority, raw_id).await;
         }
@@ -217,6 +225,54 @@ impl DesktopTauriProtocol {
             .await
         {
             Ok(AppReply::PendingToolApprovals(approvals)) => json_response(&approvals),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn components(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::ListComponents)
+            .await
+        {
+            Ok(AppReply::Components(components)) => json_response(&components),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn component_catalogue(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::PUT {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if request.body().len() > COMPONENT_CATALOGUE_BODY_MAX_BYTES {
+            return payload_too_large();
+        }
+        let catalogue = match serde_json::from_slice::<ComponentCatalogueRequest>(request.body()) {
+            Ok(catalogue) => catalogue,
+            Err(_) => return error_response(AppError::MalformedPayload { field: "body" }),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::SyncComponentCatalogue(catalogue),
+            )
+            .await
+        {
+            Ok(AppReply::ComponentCatalogueAdded(added)) => json_response(&added),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -525,12 +581,16 @@ mod tests {
     use async_trait::async_trait;
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
-        ChannelReader, OpenBotApplication, PortError, ToolApprovalAdministration,
-        ToolApprovalAdministrationError, UiPreferenceAdministration,
-        UiPreferenceAdministrationError,
+        ChannelReader, ComponentAdministration, ComponentAdministrationError, OpenBotApplication,
+        PortError, ToolApprovalAdministration, ToolApprovalAdministrationError,
+        UiPreferenceAdministration, UiPreferenceAdministrationError,
     };
     use openbot_contracts::auth::{AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
+    use openbot_contracts::components::{
+        CompiledComponentManifestEntry, ComponentCatalogueAdded, ComponentRecords,
+        SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
+    };
     use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
     use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalResolved};
     use std::sync::Mutex;
@@ -576,6 +636,28 @@ mod tests {
     }
 
     struct FakeApprovals;
+
+    struct FakeComponents;
+
+    #[async_trait]
+    impl ComponentAdministration for FakeComponents {
+        async fn list_components(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<ComponentRecords, ComponentAdministrationError> {
+            Ok(ComponentRecords::default())
+        }
+
+        async fn sync_catalogue(
+            &self,
+            _auth: &AuthContext,
+            entries: &[CompiledComponentManifestEntry],
+        ) -> Result<ComponentCatalogueAdded, ComponentAdministrationError> {
+            Ok(ComponentCatalogueAdded {
+                added: entries.iter().map(|entry| entry.name.clone()).collect(),
+            })
+        }
+    }
 
     #[async_trait]
     impl ToolApprovalAdministration for FakeApprovals {
@@ -632,6 +714,7 @@ mod tests {
         let application = Arc::new(
             OpenBotApplication::new(EmptyChannels)
                 .with_ui_preferences(preferences)
+                .with_component_administration(Arc::new(FakeComponents))
                 .with_tool_approvals(Arc::new(FakeApprovals)),
         );
         let transport = Arc::new(InProcessTransport::new(application));
@@ -716,6 +799,43 @@ mod tests {
             .await;
         assert_eq!(approvals.status(), StatusCode::OK);
         assert_eq!(approvals.body(), br#"{"approvals":[]}"#);
+
+        let components = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .uri("/api/components")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(components.status(), StatusCode::OK);
+        assert_eq!(components.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(components.body(), br#"{"components":[]}"#);
+
+        let catalogue = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/components/catalogue")
+                    .body(
+                        serde_json::to_vec(&ComponentCatalogueRequest {
+                            components: compiled_component_manifest(),
+                        })
+                        .unwrap(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(catalogue.status(), StatusCode::OK);
+        assert_eq!(catalogue.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<ComponentCatalogueAdded>(catalogue.body())
+                .unwrap()
+                .added,
+            [SHOW_QUOTE_COMPONENT_NAME]
+        );
 
         let stale = protocol
             .handle(

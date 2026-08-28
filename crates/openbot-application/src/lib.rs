@@ -76,6 +76,7 @@ mod app;
 pub mod approval_admin;
 pub mod builtin_tools;
 pub mod chunk;
+pub mod components;
 pub mod cursor;
 pub mod intelligence_import;
 pub mod mcp_connections;
@@ -107,6 +108,10 @@ pub use builtin_tools::{
     remember_provider_tool, remember_tool_metadata,
 };
 pub use chunk::{SEMANTIC_CHUNK_MAX_BYTES, SEMANTIC_CHUNK_MAX_DELAY, SemanticChunkAccumulator};
+pub use components::{
+    ComponentAdministration, ComponentAdministrationError, NoComponentAdministration,
+    list_components, sync_component_catalogue, validate_manifest_entries,
+};
 pub use cursor::{ChannelCursor, channel_recency};
 pub use intelligence_import::{
     INTELLIGENCE_SOURCE_COMMIT, IntelligenceImportCursorStatus, IntelligenceImportError,

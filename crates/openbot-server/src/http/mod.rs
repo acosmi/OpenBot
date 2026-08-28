@@ -47,6 +47,7 @@ pub mod approvals;
 pub mod auth_oidc;
 pub mod auth_sso;
 pub mod channels;
+pub mod components;
 pub mod computers;
 pub mod health;
 pub mod memories;
@@ -489,6 +490,11 @@ pub fn router(state: ServerState) -> Router {
         .route("/api/route", post(routing::choose))
         .route("/api/agents", get(agents::list_get))
         .route("/api/agents/{agent_id}", get(agents::get))
+        .route("/api/components", get(components::list_get))
+        .route(
+            "/api/components/catalogue",
+            axum::routing::put(components::catalogue_put),
+        )
         .route("/api/tool-approvals", get(approvals::pending_get))
         .route(
             "/api/tool-approvals/{approval_id}",

@@ -76,6 +76,7 @@ pub mod agent_callback;
 pub mod agent_tools;
 pub mod auth;
 mod channel_activity;
+pub mod component_catalogue;
 pub mod db;
 pub mod google_drive;
 pub mod google_drive_oauth;

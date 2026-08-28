@@ -30,14 +30,15 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# Batch 15–35 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 85 条：
+# Batch 15–40 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 86 条：
 # Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
 # Batch22 Combobox/Select + Batch23 Sidebar，27 条 primitive 子账全 done；Batch24 又关闭46条
 # Lucide映射；Batch25 layout 4条；Batch26 AgentPresence 2条；Batch27 共享占位线稿2条；
 # Batch30 ChannelRow；Batch31 又关闭 abstract-avatar→Avatar 与 AgentCard；Batch32关闭RecipientField。
 # Batch33–35虽已接draft/queue纯状态、plain conversation与durable Stop/production queue，但完整
 # Composer/channel组件仍缺sources/markdown/Screen等判据，未倒算整条。Google Drive品牌标、其余33业务、
-# 6 runtime 与27 golden保持 todo；不能用已有地基冒充全量完成。
+# Batch40关闭SettingsSidebar；Google Drive品牌标、其余32业务、6 runtime与27 golden保持todo；
+# 不能用已有地基冒充全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）
@@ -141,16 +142,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch32累计完成前述地基、ChannelRow、AgentCard与RecipientField；其余todo
+  # Batch40累计完成前述地基与SettingsSidebar；其余todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 67
+    expect: 66
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 85
+    expect: 86
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 85
+    expect: 86
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -930,13 +931,14 @@ entries:
   - id: "biz-settings-settings-sidebar"
     upstream: "app/src/components/settings/settings-sidebar.tsx"
     label: "parity"
-    target: "openbot_ui::features::settings::settings_sidebar"
+    target: "openbot_ui::features::settings::SettingsShell"
     owner: "openbot-ui"
     test_id: "T-UI-0066"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch38建立200px SettingsShell，Batch39/40在对应真实route完成后依次加入Connected accounts与Gallery；当前上游顺序Back、General exact、Connected prefix、Gallery prefix完整保留，并新增Memory exact。aside+named nav不嵌第二main，四destination全为bounded同源真实链接；index/detail hard reload均current恰1。release 1280实得subnav200、nav2/main1/h1 1、overflow/duplicate/alerts/console0；既有Batch38四视口堆叠证据保持。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `settings`（该组上游文件数 2）。同名保留；内容填进 primitives::sidebar::Sidebar。上游用 IconPlug 等。"
+    notes: "§6.2 组 `settings`（该组上游文件数 2）。职责保留在SettingsShell的secondary aside+named nav；上游General/Connected accounts/Components gallery顺序与IconPlug/IconLayoutGrid保持，Memory是v3新增destination。全局App shell仍是唯一main/SidebarProvider。"
 
   - id: "biz-skills-edit-skill"
     upstream: "app/src/components/skills/edit-skill.tsx"

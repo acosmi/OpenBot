@@ -314,21 +314,23 @@ entries:
   - id: settings-components-gallery-index
     upstream: app/src/routes/_authed/settings/components-gallery/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_components_gallery_index -> /settings/components-gallery"
+    target: "openbot_ui::features::settings::ComponentsGalleryPage -> /settings/components-gallery"
     owner: openbot-ui
     test_id: T-ROUTE-0027
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch40 release route先PUT逐字build manifest再GET权威ComponentRecords；announcement失败不掩盖既有治理读面。fixture起始published stale+unpublished，页面最终恰Legacy fallback+真实Quotation preview两tile，unpublished构造性不出现；tile preview aria-hidden且nested interactive0。中英、Settings current1、main1/nav2/h1 1、subnav200、overflow/duplicate/alerts/console0；Axum与Desktop custom protocol同一typed command均已接。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/settings/components-gallery/index.tsx 得 title=\"Components gallery\" + description=\"The pieces a Bot can draw in a conversation instead of describing something in prose...\""
     notes: "模板 List。journey：任何用户浏览 Bot 可以画出来的组件清单（只读画廊，能不能用由管理员决定）。权限：已登录即可见。"
   - id: settings-components-gallery-detail
     upstream: app/src/routes/_authed/settings/components-gallery/$name.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_components_gallery_detail -> /settings/components-gallery/:name"
+    target: "openbot_ui::features::settings::ComponentGalleryDetailPage -> /settings/components-gallery/:name"
     owner: openbot-ui
     test_id: T-ROUTE-0028
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch40 detail只从权威list找published exact name；showQuote显示真实Rust Quote renderer、published description、localized Kind=Card与Called as=showQuote，hard reload保持；stale published row显示诚实renderer unavailable fallback仍保留identity facts；unpublished showNotice/unknown统一No such component、preview/facts0且返回gallery。current1、overflow0、visible alerts/console0。"
     evidence: "grep -c useMutation app/src/routes/_authed/settings/components-gallery/$name.tsx 得 0（纯只读）；同文件 PageSection title=\"Details\" 下两行 FactRow（Kind / Called as）+ ComponentPreview，未知 name 走 title=\"No such component\""
     notes: "模板 List（只读详情：预览图 + FactRow 行；本页零 mutation，所以不按 Form 归类，这是按实测结构做的归类而非 §5.2 表里的点名项）。journey：从画廊点进一个组件，看它的预览、kind 与调用名。权限：已登录即可见。"
   - id: settings-connected-accounts-index

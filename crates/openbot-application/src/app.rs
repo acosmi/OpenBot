@@ -29,6 +29,9 @@ use crate::approval_admin::{
     NoToolApprovalAdministration, ToolApprovalAdministration, decide_tool_approval,
     list_pending_tool_approvals,
 };
+use crate::components::{
+    ComponentAdministration, NoComponentAdministration, list_components, sync_component_catalogue,
+};
 use crate::mcp_connections::{
     McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
     begin_mcp_oauth, disconnect_mcp_connection, list_mcp_connections, refresh_mcp_server,
@@ -83,6 +86,7 @@ pub struct OpenBotApplication<
     memory: M,
     callback_tokens: B,
     agents: std::sync::Arc<dyn AgentDirectory>,
+    components: std::sync::Arc<dyn ComponentAdministration>,
     channel_administration: std::sync::Arc<dyn ChannelAdministration>,
     channel_routing: std::sync::Arc<dyn ChannelRoutingBackend>,
     mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
@@ -117,6 +121,7 @@ impl<R>
             memory: NoMemoryAdministration,
             callback_tokens: NoAgentCallbackTokenAdministration,
             agents: std::sync::Arc::new(NoAgentDirectory),
+            components: std::sync::Arc::new(NoComponentAdministration),
             channel_administration: std::sync::Arc::new(NoChannelAdministration),
             channel_routing: std::sync::Arc::new(NoChannelRoutingBackend),
             mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
@@ -142,6 +147,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            components: self.components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -165,6 +171,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            components: self.components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -188,6 +195,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            components: self.components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -215,6 +223,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            components: self.components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -238,6 +247,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            components: self.components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -261,6 +271,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            components: self.components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -287,6 +298,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens,
             agents: self.agents,
+            components: self.components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -300,6 +312,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
     #[must_use]
     pub fn with_agent_directory(mut self, agents: std::sync::Arc<dyn AgentDirectory>) -> Self {
         self.agents = agents;
+        self
+    }
+
+    /// Attach authenticated component governance reads and additive build catalogue sync.
+    #[must_use]
+    pub fn with_component_administration(
+        mut self,
+        components: std::sync::Arc<dyn ComponentAdministration>,
+    ) -> Self {
+        self.components = components;
         self
     }
 
@@ -412,6 +434,12 @@ where
             )),
             AppCommand::GetVisibleAgent { agent_id } => Ok(AppReply::Agent(
                 get_visible_agent(self.agents.as_ref(), auth, agent_id).await?,
+            )),
+            AppCommand::ListComponents => Ok(AppReply::Components(
+                list_components(self.components.as_ref(), auth).await?,
+            )),
+            AppCommand::SyncComponentCatalogue(request) => Ok(AppReply::ComponentCatalogueAdded(
+                sync_component_catalogue(self.components.as_ref(), auth, request).await?,
             )),
             AppCommand::GetCurrentUser => Ok(AppReply::CurrentUser(
                 current_user(&self.people, auth).await?,

@@ -33,6 +33,7 @@ use time::OffsetDateTime;
 use crate::agent::{AgentProfile, CallbackTokenIssued, CallbackTokenRevoked};
 use crate::audit::AuditPage;
 use crate::auth::Role;
+use crate::components::{ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentRecords};
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::mcp::{
     McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
@@ -127,6 +128,12 @@ pub enum AppCommand {
         /// Untrusted path identity.
         agent_id: BotId,
     },
+
+    /// List durable compiled-component governance rows for any authenticated actor.
+    ListComponents,
+
+    /// Add build-owned compiled-component catalogue entries without changing existing governance.
+    SyncComponentCatalogue(ComponentCatalogueRequest),
 
     /// 返回当前已验证 actor 的公开资料。
     GetCurrentUser,
@@ -347,6 +354,10 @@ pub enum AppReply {
     Agents(Vec<AgentProfile>),
     /// [`AppCommand::GetVisibleAgent`] response.
     Agent(AgentProfile),
+    /// [`AppCommand::ListComponents`] response.
+    Components(ComponentRecords),
+    /// [`AppCommand::SyncComponentCatalogue`] response.
+    ComponentCatalogueAdded(ComponentCatalogueAdded),
     /// [`AppCommand::GetCurrentUser`] 应答。
     CurrentUser(CurrentUser),
     /// [`AppCommand::AdminStatus`] 应答。

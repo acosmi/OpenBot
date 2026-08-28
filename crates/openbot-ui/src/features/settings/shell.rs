@@ -9,6 +9,7 @@ use crate::primitives::{IconSize, IconView};
 
 const GENERAL_PATH: &str = "/settings";
 const CONNECTED_ACCOUNTS_PATH: &str = "/settings/connected-accounts";
+const COMPONENTS_GALLERY_PATH: &str = "/settings/components-gallery";
 const MEMORY_PATH: &str = "/settings/memory";
 
 /// Settings secondary shell. The global App shell remains the only owner of `<main>`.
@@ -18,6 +19,7 @@ pub fn SettingsShell(children: Children) -> impl IntoView {
     let location = use_location();
     let general_location = location.clone();
     let connected_accounts_location = location.clone();
+    let components_gallery_location = location.clone();
     let memory_location = location;
     view! {
         <div class="ob-settings-shell">
@@ -71,6 +73,29 @@ pub fn SettingsShell(children: Children) -> impl IntoView {
                         <li>
                             <a
                                 class="ob-settings-subnav-link"
+                                href=COMPONENTS_GALLERY_PATH
+                                data-state=move || {
+                                    is_section_current(
+                                        &components_gallery_location.pathname.get(),
+                                        COMPONENTS_GALLERY_PATH,
+                                    )
+                                    .then_some("current")
+                                }
+                                aria-current=move || {
+                                    is_section_current(
+                                        &components_gallery_location.pathname.get(),
+                                        COMPONENTS_GALLERY_PATH,
+                                    )
+                                    .then_some("page")
+                                }
+                            >
+                                <IconView icon=Icon::LayoutGrid size=IconSize::Inline />
+                                <span>{move || t!(i18n, settings.nav_gallery)}</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a
+                                class="ob-settings-subnav-link"
                                 href=MEMORY_PATH
                                 data-state=move || {
                                     is_current(&memory_location.pathname.get(), MEMORY_PATH)
@@ -113,8 +138,14 @@ mod tests {
     #[test]
     fn only_real_settings_destinations_exist_and_general_is_exact() {
         assert_eq!(
-            [GENERAL_PATH, CONNECTED_ACCOUNTS_PATH, MEMORY_PATH].len(),
-            3
+            [
+                GENERAL_PATH,
+                CONNECTED_ACCOUNTS_PATH,
+                COMPONENTS_GALLERY_PATH,
+                MEMORY_PATH,
+            ]
+            .len(),
+            4
         );
         assert!(is_current("/settings", GENERAL_PATH));
         assert!(!is_current("/settings/memory", GENERAL_PATH));
@@ -131,6 +162,10 @@ mod tests {
         assert!(!is_section_current(
             "/settings/connected-accounts-legacy",
             CONNECTED_ACCOUNTS_PATH
+        ));
+        assert!(is_section_current(
+            "/settings/components-gallery/showQuote",
+            COMPONENTS_GALLERY_PATH
         ));
     }
 }

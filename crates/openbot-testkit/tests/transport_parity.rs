@@ -474,6 +474,8 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::RouteChannelMessage { .. }
         | AppCommand::ListVisibleAgents { .. }
         | AppCommand::GetVisibleAgent { .. }
+        | AppCommand::ListComponents
+        | AppCommand::SyncComponentCatalogue(_)
         | AppCommand::AdminStatus
         | AppCommand::ListPeople { .. }
         | AppCommand::ChangePersonRole { .. }

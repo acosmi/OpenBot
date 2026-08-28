@@ -11,7 +11,8 @@ use crate::features::approvals::ApprovalPage;
 use crate::features::channels::{ChannelDetailPage, ChannelNewPage};
 use crate::features::memory::MemoryPage;
 use crate::features::settings::{
-    ConnectedAccountDetailPage, ConnectedAccountsPage, SettingsPage, SettingsShell,
+    ComponentGalleryDetailPage, ComponentsGalleryPage, ConnectedAccountDetailPage,
+    ConnectedAccountsPage, SettingsPage, SettingsShell,
 };
 use crate::i18n::{I18nContextProvider, t, t_string, use_i18n};
 use crate::preferences::provide_ui_preferences;
@@ -109,6 +110,8 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
                 <Route path=path!("/settings/connected-accounts/:server_id") view=SettingsConnectedAccountDetailRoute />
                 <Route path=path!("/settings/connected-accounts") view=SettingsConnectedAccountsRoute />
+                <Route path=path!("/settings/components-gallery/:name") view=SettingsComponentGalleryDetailRoute />
+                <Route path=path!("/settings/components-gallery") view=SettingsComponentsGalleryRoute />
                 <Route path=path!("/settings/memory") view=SettingsMemoryRoute />
                 <Route path=path!("/settings") view=SettingsPreferencesRoute />
             </Routes>
@@ -125,6 +128,8 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
                 <Route path=path!("/settings/connected-accounts/:server_id") view=SettingsConnectedAccountDetailRoute />
                 <Route path=path!("/settings/connected-accounts") view=SettingsConnectedAccountsRoute />
+                <Route path=path!("/settings/components-gallery/:name") view=SettingsComponentGalleryDetailRoute />
+                <Route path=path!("/settings/components-gallery") view=SettingsComponentsGalleryRoute />
                 <Route path=path!("/settings/memory") view=SettingsMemoryRoute />
                 <Route path=path!("/settings") view=SettingsPreferencesRoute />
             </Routes>
@@ -164,6 +169,24 @@ fn SettingsConnectedAccountDetailRoute() -> impl IntoView {
     view! {
         <SettingsShell>
             <ConnectedAccountDetailPage />
+        </SettingsShell>
+    }
+}
+
+#[component]
+fn SettingsComponentsGalleryRoute() -> impl IntoView {
+    view! {
+        <SettingsShell>
+            <ComponentsGalleryPage />
+        </SettingsShell>
+    }
+}
+
+#[component]
+fn SettingsComponentGalleryDetailRoute() -> impl IntoView {
+    view! {
+        <SettingsShell>
+            <ComponentGalleryDetailPage />
         </SettingsShell>
     }
 }

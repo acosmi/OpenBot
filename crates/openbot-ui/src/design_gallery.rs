@@ -5,6 +5,7 @@ use leptos::prelude::*;
 
 use crate::features::agents::{AgentPresence, AgentPresenceState};
 use crate::features::computer::ComputerPlaceholder;
+use crate::features::gallery::{GalleryBadge, GalleryFrame, GalleryTone, QuoteCard, RefusedCard};
 use crate::features::layout::{
     DetailPanel, DetailPanelLayout, DetailPanelMain, PageEmpty, PageRows, PageSection, PageShell,
     PageTopbar, PageWidth, RowMark, StaggerItem,
@@ -948,6 +949,38 @@ pub fn DesignGallery() -> impl IntoView {
                             <ComputerPlaceholderArt />
                         </div>
                         <ComputerPlaceholder />
+                    </div>
+                </section>
+
+                <section class="ob-design-section" aria-labelledby="design-compiled-gallery-title">
+                    <h2 id="design-compiled-gallery-title">
+                        {move || t!(i18n, gallery.frame)}
+                    </h2>
+                    <div class="ob-design-stack" id="design-compiled-gallery">
+                        <GalleryFrame
+                            title=move || t_string!(i18n, gallery.cards).to_owned()
+                            caption=move || t_string!(i18n, gallery.preview).to_owned()
+                            action=view! {
+                                <GalleryBadge tone=GalleryTone::Positive>
+                                    {move || t!(i18n, common.enabled)}
+                                </GalleryBadge>
+                            }.into_any()
+                        >
+                            <div class="ob-design-row">
+                                <GalleryBadge tone=GalleryTone::Neutral>"Neutral"</GalleryBadge>
+                                <GalleryBadge tone=GalleryTone::Caution>"Caution"</GalleryBadge>
+                                <GalleryBadge tone=GalleryTone::Negative>"Negative"</GalleryBadge>
+                            </div>
+                        </GalleryFrame>
+                        <QuoteCard
+                            quote="The exact words remain attached to their source.".to_owned()
+                            attribution="the fixture".to_owned()
+                            context="Compiled Rust renderer".to_owned()
+                        />
+                        <RefusedCard
+                            title="Quotation".to_owned()
+                            reason="This component is not available to this coworker.".to_owned()
+                        />
                     </div>
                 </section>
             </div>

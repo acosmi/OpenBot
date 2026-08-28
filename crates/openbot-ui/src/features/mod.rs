@@ -5,6 +5,7 @@ pub mod app_sidebar;
 pub mod approvals;
 pub mod channels;
 pub mod computer;
+pub mod gallery;
 pub mod layout;
 pub mod memory;
 pub mod settings;

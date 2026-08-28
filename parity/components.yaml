@@ -12,7 +12,7 @@
 #            覆盖到了沙箱调用点，而不是"命令根本没扫到那里"）；
 #   替代   = 同一能力换实现（React → Leptos）。
 #
-# 未验证项一律 status: todo 并在 notes 里写明缺什么。本仓此刻零实现代码，因此不存在 done。
+# 未验证项一律 status: todo 并在 notes 里写明缺什么；Batch40起只按完整证据逐条推进done。
 
 schema: "components"
 schema_version: 1
@@ -129,7 +129,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0005"
     migration_rule: "preserve: 外框与 Badge 的语义色调词表不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch40 `GalleryFrame`保留optional title/caption/action/children语义，figure+figcaption命名结构；`GalleryTone`恰neutral/positive/caution/negative四值并由单测逐项锁定。视觉按本项目第一真源改为中性无边框chrome，语义色只落GalleryBadge文字+状态点；design-lint/CSS check/reduced-motion全绿。release Quote index/detail真实复用同一Frame，preview aria-hidden、nested interactive0、overflow0。"
     evidence: "grep -l '^export const GALLERY' app/src/components/gallery/*.tsx 不含 frame.tsx（5 个文件命中，frame/preview/refused 不在其中）"
     notes: "支撑件，不是注册项：它没有 GALLERY 导出，因此不占工具名、没有参数 schema、不参与 published/withholding/grant/再授权这四项——五项能力在这条上只有第①项以 props 形式存在（frame.tsx::GalleryFrame 的 title/caption/action/children）。frame.tsx::Tone 是固定四值语义色调词表（neutral/positive/caution/negative），Leptos 版必须仍是封闭枚举，落到 design token 而不是硬编码 Tailwind 颜色类。"
 
