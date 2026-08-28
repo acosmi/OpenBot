@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 164
+    expect: 165
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 18
+    expect: 19
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 164
+    expect: 165
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1773,3 +1773,14 @@ entries:
     done_evidence: "Batch34: authenticated no-store handler takes only path thread id and AuthContext scope; PostgreSQL one-statement snapshot returns ordered typed messages, at most one foreground run, unmaterialized active text tail and last event cursor. Server2/0/0; PG17.11 SCRAM1/0/0 proves snapshot cursor→SSE live chunk/terminal→materialized history with outsider default-empty."
     evidence: "docs/2026-08-26-G3-G6-ChannelTranscript与IdleSend-batch34.md"
     notes: "新增 native DTO；不调用 CopilotKit compatibility URL。The cursor is the initial EventSource query only; standard Last-Event-ID wins on reconnect, and durable PostgreSQL replay remains authoritative."
+  - id: "api-thread-run-cancel-post"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::threads::cancel_run (POST /api/threads/{thread_id}/runs/{run_id}/cancel)"
+    owner: "openbot-server"
+    test_id: "T-API-0165"
+    migration_rule: "n/a: GUI第一真源§6.5的Stop必须先持久化并可跨Server副本到达lease owner"
+    status: "done"
+    done_evidence: "Batch35: trusted Origin precedes the typed ApplicationService call; path contributes only thread/run candidates while AuthContext and PostgreSQL bind deployment/tenant/requesting actor/current membership/run owner. New/exact replay return 202 requested/already_requested, terminal race returns 200 already_terminal, all no-store. Server1/0/0; PG17.11 host-SCRAM2/0/0 prove durable internal outbox before signalling, missed-NOTIFY poll, dispatch-before-start settlement, cross-replica child drop before the single Cancelled terminal and exact replay without duplicate control rows."
+    evidence: "docs/2026-08-27-G3-G6-DurableCancel与Queue-batch35.md"
+    notes: "新增 framing，不新增第二套 run business path。Cancelling remains a durable projection until children-stopped terminal; a request acknowledgement never claims Cancelled. RMCP/computer/file/shell protocol-level cancellation remains independently todo."

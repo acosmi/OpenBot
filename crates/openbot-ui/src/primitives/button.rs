@@ -77,6 +77,9 @@ pub fn Button(
     /// Optional stable DOM ID for focus choreography.
     #[prop(optional, into)]
     id: Option<String>,
+    /// Optional accessible name when visible content alone is ambiguous (for example repeated rows).
+    #[prop(optional, into)]
+    aria_label: Option<TextProp>,
     /// Visual treatment.
     #[prop(optional)]
     variant: ButtonVariant,
@@ -112,6 +115,7 @@ pub fn Button(
     view! {
         <button
             id=id
+            aria-label=move || aria_label.as_ref().map(TextProp::get)
             type="button"
             class="ob-button"
             data-variant=variant.as_str()

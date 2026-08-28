@@ -8,7 +8,8 @@ use openbot_contracts::agent::AgentProfile;
 use openbot_contracts::audit::AuditPage;
 use openbot_contracts::auth::Role;
 use openbot_contracts::command::{
-    BeginThreadRun, ChannelDetail, ChannelSummary, ThreadHistory, ThreadRunStarted,
+    BeginThreadRun, CancelThreadRun, ChannelDetail, ChannelSummary, ThreadHistory,
+    ThreadRunCancellation, ThreadRunStarted,
 };
 use openbot_contracts::error::{AppError, IdentityConflictReason};
 use openbot_contracts::ids::{ActorId, BotId, ChannelId, DeploymentId, TenantId, ThreadId};
@@ -464,6 +465,19 @@ pub struct BeginThreadRunRequest {
     pub command: BeginThreadRun,
 }
 
+/// Authoritative scope combined with one durable cancellation candidate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CancelThreadRunRequest {
+    /// Authoritative deployment.
+    pub deployment: DeploymentId,
+    /// Authoritative tenant.
+    pub tenant: TenantId,
+    /// Authoritative actor; the port must also bind this to the run owner.
+    pub actor: ActorId,
+    /// Untrusted thread/run identities after application shape validation.
+    pub command: CancelThreadRun,
+}
+
 /// 权威 scope 与 durable cursor 合并后的 thread event 订阅请求。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThreadEventSubscription {
@@ -544,6 +558,14 @@ pub trait ThreadDirectory: Send + Sync {
         &self,
         _request: BeginThreadRunRequest,
     ) -> Result<ThreadRunStarted, ThreadDirectoryError> {
+        Err(ThreadDirectoryError::Unavailable)
+    }
+
+    /// Persist a replay-safe internal cancellation request before signalling any local child.
+    async fn cancel_thread_run(
+        &self,
+        _request: CancelThreadRunRequest,
+    ) -> Result<ThreadRunCancellation, ThreadDirectoryError> {
         Err(ThreadDirectoryError::Unavailable)
     }
 

@@ -5,7 +5,7 @@ mod harness {
 }
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -17,12 +17,14 @@ use openbot_agent::{
     RetryingProviderConfig,
 };
 use openbot_application::{
-    ApplicationService, BeginThreadRunRequest, MemoryAdministrationError, OpenBotApplication,
-    ProviderAdapter, ProviderEvent, ProviderMessage, ProviderPortError, ProviderRequest,
-    ProviderSession, ProviderUsage, RememberToolMemory, RememberToolMemoryRequest,
+    ApplicationService, BeginThreadRunRequest, CancelThreadRunRequest, MemoryAdministrationError,
+    OpenBotApplication, ProviderAdapter, ProviderEvent, ProviderMessage, ProviderPortError,
+    ProviderRequest, ProviderSession, ProviderUsage, RememberToolMemory, RememberToolMemoryRequest,
     RunExecutionLease, RunRuntime, RunToolExchange, ThreadDirectory, remember_provider_tool,
 };
-use openbot_contracts::command::{BeginThreadRun, ThreadRunAnchor};
+use openbot_contracts::command::{
+    BeginThreadRun, CancelThreadRun, ThreadRunAnchor, ThreadRunCancellationState,
+};
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
 use openbot_contracts::memory::MemoryRecord;
@@ -275,6 +277,29 @@ struct RejectingPackageProvider {
 }
 
 struct HoldingAgentContext;
+
+struct CancellationHoldingContext {
+    dropped: Arc<AtomicBool>,
+}
+
+struct ContextDropProbe(Arc<AtomicBool>);
+
+impl Drop for ContextDropProbe {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl openbot_application::AgentContextSource for CancellationHoldingContext {
+    async fn load(
+        &self,
+        _lease: &openbot_application::RunExecutionLease,
+    ) -> Result<ProviderRequest, openbot_application::AgentContextError> {
+        let _probe = ContextDropProbe(self.dropped.clone());
+        std::future::pending().await
+    }
+}
 
 #[async_trait]
 impl openbot_application::AgentContextSource for HoldingAgentContext {
@@ -1589,6 +1614,175 @@ async fn managed_route_runs_anthropic_and_google_without_touching_package_provid
                 .map_err(|error| error.to_string())?;
             if invoked != 2 {
                 return Err(format!("managed invoked audit count 漂移：{invoked}"));
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn cross_replica_durable_cancel_drops_the_active_child_before_cancelled_terminal() {
+    let admin = batch6_admin_config(
+        "cross_replica_durable_cancel_drops_the_active_child_before_cancelled_terminal",
+    );
+    with_temp_database(&admin, "agentcancel", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let owner = "runtime-user-cancel".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config.clone(),
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner,
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let child_dropped = Arc::new(AtomicBool::new(false));
+            let agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                Arc::new(CancellationHoldingContext {
+                    dropped: child_dropped.clone(),
+                }),
+                Arc::new(RejectingPackageProvider::default()),
+                Arc::new(NoAgentToolInvoker),
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xa5; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 1,
+                    lease_renew_interval: Duration::from_millis(10),
+                    run_deadline: Some(Duration::from_secs(5)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let relay = RunRelay::start_with_database(
+                runtime,
+                agent.consumer(),
+                config.with_application_name("test-run-control-listener"),
+            );
+            let thread = begin_test_run(
+                &directory,
+                &deployment,
+                &tenant,
+                6,
+                "run-user-cancel",
+                "hold until user stop",
+            )
+            .await?;
+
+            let mut invoked = false;
+            for _ in 0..100 {
+                let client = pool.get().await.map_err(|error| error.to_string())?;
+                let row = client
+                    .query_one(
+                        "SELECT o.status,
+                                EXISTS(SELECT 1 FROM public.audit_events
+                                  WHERE event_type='agent.invoked'
+                                    AND target_id='run-user-cancel')
+                         FROM public.outbox o
+                         WHERE o.outbox_id='run-user-cancel:agent_run_dispatch'",
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let dispatch: String = row.try_get(0).map_err(|error| error.to_string())?;
+                let audited: bool = row.try_get(1).map_err(|error| error.to_string())?;
+                if dispatch == "delivered" && audited {
+                    invoked = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            if !invoked || child_dropped.load(Ordering::SeqCst) {
+                return Err(format!(
+                    "active child precondition drifted: invoked={invoked} dropped={}",
+                    child_dropped.load(Ordering::SeqCst)
+                ));
+            }
+
+            let request = directory
+                .cancel_thread_run(CancelThreadRunRequest {
+                    deployment: deployment.clone(),
+                    tenant: tenant.clone(),
+                    actor: ActorId::new("actor-a"),
+                    command: CancelThreadRun {
+                        thread_id: thread,
+                        run_id: RunId::new("run-user-cancel"),
+                    },
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            if request.state != ThreadRunCancellationState::Requested {
+                return Err(format!("cancel request was not newly durable: {request:?}"));
+            }
+            wait_for_status(&pool, "run-user-cancel", "cancelled", None).await?;
+            let mut cancel_delivered = false;
+            for _ in 0..100 {
+                let client = pool.get().await.map_err(|error| error.to_string())?;
+                let status: String = client
+                    .query_one(
+                        "SELECT status FROM public.outbox
+                         WHERE outbox_id='run-user-cancel:agent_run_cancel'",
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .try_get(0)
+                    .map_err(|error| error.to_string())?;
+                if status == "delivered" {
+                    cancel_delivered = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            relay.stop().await;
+            agent.stop().await;
+            if !child_dropped.load(Ordering::SeqCst) || !cancel_delivered {
+                return Err(format!(
+                    "cancel child/order did not settle: dropped={} delivered={cancel_delivered}",
+                    child_dropped.load(Ordering::SeqCst)
+                ));
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let shape: (i64, i64) = {
+                let row = client
+                    .query_one(
+                        "SELECT
+                           (SELECT count(*)::bigint FROM public.run_events
+                             WHERE run_id='run-user-cancel' AND event_type='cancelled'),
+                           (SELECT count(*)::bigint FROM public.run_events
+                             WHERE run_id='run-user-cancel' AND terminal)",
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                (
+                    row.try_get(0).map_err(|error| error.to_string())?,
+                    row.try_get(1).map_err(|error| error.to_string())?,
+                )
+            };
+            if shape != (1, 1) {
+                return Err(format!("cancel terminal cardinality drifted: {shape:?}"));
             }
             Ok(())
         }

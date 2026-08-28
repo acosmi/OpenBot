@@ -7,13 +7,14 @@ use std::future::poll_fn;
 use async_trait::async_trait;
 use futures_core::Stream;
 use openbot_application::{
-    AppEventStream, BeginThreadRunRequest, ChannelActivitySubscription, ThreadConversationRequest,
-    ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
+    AppEventStream, BeginThreadRunRequest, CancelThreadRunRequest, ChannelActivitySubscription,
+    ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
+    ThreadHistoryRequest,
 };
 use openbot_contracts::command::{
-    AppEvent, ChannelActivityEvent, ThreadConversationSnapshot, ThreadHistory,
-    ThreadHistoryMessage, ThreadHistoryRole, ThreadRunAnchor, ThreadRunEvent, ThreadRunEventKind,
-    ThreadRunStarted,
+    AppEvent, ChannelActivityEvent, ThreadConversationSnapshot, ThreadForegroundRunState,
+    ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole, ThreadRunAnchor, ThreadRunCancellation,
+    ThreadRunCancellationState, ThreadRunEvent, ThreadRunEventKind, ThreadRunStarted,
 };
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
@@ -26,6 +27,7 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{AsyncMessage, Client, Connection, NoTls, Socket, Transaction};
 
 use crate::db::pool::DatabaseConfig;
+use crate::run_runtime::{RUN_CANCEL_DESTINATION, RUN_CONTROL_TOPIC, run_cancel_outbox_id};
 use crate::thread_id::mint_thread_id;
 
 /// foreground writer lease 的新增默认值；每 30 秒失效，后续 runtime 必须在 10 秒内续租。
@@ -178,6 +180,45 @@ impl ThreadDirectory for PostgresThreadDirectory {
         }
     }
 
+    async fn cancel_thread_run(
+        &self,
+        request: CancelThreadRunRequest,
+    ) -> Result<ThreadRunCancellation, ThreadDirectoryError> {
+        if self.runtime.is_none() {
+            return Err(ThreadDirectoryError::Unavailable);
+        }
+        let mut client = self.pool.get().await.map_err(|error| {
+            tracing::error!(error = %error, "cancel thread run 获取数据库连接失败");
+            ThreadDirectoryError::Unavailable
+        })?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|error| unavailable("cancel thread run 开始事务失败", error))?;
+        let outcome = request_run_cancellation(&transaction, &request).await;
+        match outcome {
+            Ok(CancelRequestOutcome::Created(reply)) => {
+                transaction.commit().await.map_err(|error| {
+                    tracing::error!(error = %error, "cancel thread run commit 结果未知");
+                    ThreadDirectoryError::CommitUnknown
+                })?;
+                Ok(reply)
+            }
+            Ok(CancelRequestOutcome::Observed(reply)) => {
+                if let Err(error) = transaction.rollback().await {
+                    tracing::warn!(error = %error, "cancel replay只读事务rollback失败");
+                }
+                Ok(reply)
+            }
+            Err(error) => {
+                if let Err(rollback_error) = transaction.rollback().await {
+                    tracing::warn!(error = %rollback_error, "cancel thread run失败rollback未确认");
+                }
+                Err(error)
+            }
+        }
+    }
+
     async fn subscribe_thread_events(
         &self,
         request: ThreadEventSubscription,
@@ -291,12 +332,21 @@ impl ThreadDirectory for PostgresThreadDirectory {
         let rows = client
             .query(
                 "SELECT t.next_event_seq,coalesce(a.run_ids,'{}'::text[]) AS active_run_ids, \
+                        coalesce(a.run_statuses,'{}'::text[]) AS active_run_statuses, \
+                        coalesce(a.run_actors,'{}'::text[]) AS active_run_actors, \
+                        coalesce(a.cancel_requested,'{}'::boolean[]) AS cancel_requested, \
                         coalesce(a.run_texts,'{}'::text[]) AS active_run_texts, \
                         m.message_id,m.role,m.content \
                  FROM public.threads t \
                  LEFT JOIN public.messages m ON m.thread_id=t.thread_id \
                  LEFT JOIN LATERAL ( \
                    SELECT array_agg(r.run_id ORDER BY r.created_at,r.run_id) AS run_ids, \
+                          array_agg(r.status ORDER BY r.created_at,r.run_id) AS run_statuses, \
+                          array_agg(r.actor_id ORDER BY r.created_at,r.run_id) AS run_actors, \
+                          array_agg(EXISTS(SELECT 1 FROM public.outbox o \
+                            WHERE o.aggregate_id=r.run_id AND o.destination=$5 \
+                              AND o.status<>'dead_letter') \
+                            ORDER BY r.created_at,r.run_id) AS cancel_requested, \
                           array_agg(coalesce(( \
                             SELECT string_agg(e.payload->>'delta','' ORDER BY e.seq) \
                             FROM public.run_events e WHERE e.run_id=r.run_id \
@@ -326,6 +376,7 @@ impl ThreadDirectory for PostgresThreadDirectory {
                     &request.deployment.as_str(),
                     &request.tenant.as_str(),
                     &request.actor.as_str(),
+                    &RUN_CANCEL_DESTINATION,
                 ],
             )
             .await
@@ -340,12 +391,42 @@ impl ThreadDirectory for PostgresThreadDirectory {
             });
         }
         let active: Vec<String> = decode(first, "active_run_ids")?;
+        let active_statuses: Vec<String> = decode(first, "active_run_statuses")?;
+        let active_actors: Vec<String> = decode(first, "active_run_actors")?;
+        let cancel_requested: Vec<bool> = decode(first, "cancel_requested")?;
         let active_texts: Vec<String> = decode(first, "active_run_texts")?;
-        if active.len() > 1 || active.len() != active_texts.len() {
+        if active.len() > 1
+            || active.len() != active_statuses.len()
+            || active.len() != active_actors.len()
+            || active.len() != cancel_requested.len()
+            || active.len() != active_texts.len()
+        {
             return Err(ThreadDirectoryError::Corrupt {
                 field: "active_foreground",
             });
         }
+        let active_run_state = match (
+            active_statuses.first().map(String::as_str),
+            cancel_requested.first().copied().unwrap_or(false),
+        ) {
+            (None, false) => None,
+            (Some("queued"), false) => Some(ThreadForegroundRunState::Queued),
+            (Some("running"), false) => Some(ThreadForegroundRunState::Running),
+            (Some("queued" | "running"), true) => Some(ThreadForegroundRunState::Cancelling),
+            (Some("reconciliation_required"), false) => {
+                Some(ThreadForegroundRunState::ReconciliationRequired)
+            }
+            _ => {
+                return Err(ThreadDirectoryError::Corrupt {
+                    field: "active_run_state",
+                });
+            }
+        };
+        let active_run_cancellable =
+            matches!(active_run_state, Some(ThreadForegroundRunState::Running))
+                && active_actors
+                    .first()
+                    .is_some_and(|actor| actor == request.actor.as_str());
         let mut messages = Vec::with_capacity(rows.len());
         for row in &rows {
             let message_id: Option<String> = decode(row, "message_id")?;
@@ -359,6 +440,8 @@ impl ThreadDirectory for PostgresThreadDirectory {
                 .into_iter()
                 .next()
                 .map(openbot_contracts::ids::RunId::new),
+            active_run_state,
+            active_run_cancellable,
             active_run_text: active_texts.into_iter().next().unwrap_or_default(),
             last_event_sequence: next_event_sequence
                 .checked_sub(1)
@@ -366,6 +449,125 @@ impl ThreadDirectory for PostgresThreadDirectory {
                 .transpose()?,
         })
     }
+}
+
+enum CancelRequestOutcome {
+    Created(ThreadRunCancellation),
+    Observed(ThreadRunCancellation),
+}
+
+async fn request_run_cancellation(
+    transaction: &Transaction<'_>,
+    request: &CancelThreadRunRequest,
+) -> Result<CancelRequestOutcome, ThreadDirectoryError> {
+    let row = transaction
+        .query_opt(
+            "SELECT r.status \
+             FROM public.runs r JOIN public.threads t ON t.thread_id=r.thread_id \
+             WHERE r.run_id=$1 AND r.thread_id=$2 AND r.actor_id=$5 \
+               AND t.deployment_id=$3 AND t.tenant_id=$4 AND t.status<>'deleted' AND ( \
+                 (t.anchor_kind='direct_bot' AND EXISTS( \
+                   SELECT 1 FROM public.thread_memberships tm \
+                   WHERE tm.thread_id=t.thread_id AND tm.user_id=$5 \
+                 )) OR (t.anchor_kind='channel' AND EXISTS( \
+                   SELECT 1 FROM public.channel_memberships cm \
+                   WHERE cm.channel_id=t.anchor_id AND cm.user_id=$5 \
+                 )) \
+               ) \
+             FOR UPDATE OF r",
+            &[
+                &request.command.run_id.as_str(),
+                &request.command.thread_id.as_str(),
+                &request.deployment.as_str(),
+                &request.tenant.as_str(),
+                &request.actor.as_str(),
+            ],
+        )
+        .await
+        .map_err(|error| unavailable("锁定 cancellation run 失败", error))?;
+    let Some(row) = row else {
+        return Err(ThreadDirectoryError::NotVisible);
+    };
+    let status: String = decode(&row, "status")?;
+    let reply = |state| ThreadRunCancellation {
+        thread_id: request.command.thread_id.clone(),
+        run_id: request.command.run_id.clone(),
+        state,
+    };
+    if matches!(
+        status.as_str(),
+        "completed" | "failed" | "cancelled" | "reconciliation_required"
+    ) {
+        return Ok(CancelRequestOutcome::Observed(reply(
+            ThreadRunCancellationState::AlreadyTerminal,
+        )));
+    }
+    // Production BeginThreadRun creates a running row and a lease in one transaction. A legacy or
+    // corrupt queued row has no proven child/lease owner, so this path must not manufacture one.
+    if status != "running" {
+        return Err(ThreadDirectoryError::LeaseConflict);
+    }
+
+    let outbox_id = run_cancel_outbox_id(request.command.run_id.as_str());
+    let payload = json!({
+        "runId": request.command.run_id.as_str(),
+        "threadId": request.command.thread_id.as_str(),
+        "requestedBy": request.actor.as_str(),
+    });
+    if let Some(existing) = transaction
+        .query_opt(
+            "SELECT aggregate_kind,aggregate_id,seq,destination,delivery_class,payload,status \
+             FROM public.outbox WHERE outbox_id=$1 FOR UPDATE",
+            &[&outbox_id],
+        )
+        .await
+        .map_err(|error| unavailable("读取 cancellation outbox 失败", error))?
+    {
+        let aggregate_kind: String = decode(&existing, "aggregate_kind")?;
+        let aggregate_id: String = decode(&existing, "aggregate_id")?;
+        let seq: i64 = decode(&existing, "seq")?;
+        let destination: String = decode(&existing, "destination")?;
+        let delivery_class: String = decode(&existing, "delivery_class")?;
+        let stored_payload: Value = decode(&existing, "payload")?;
+        let outbox_status: String = decode(&existing, "status")?;
+        if aggregate_kind != "run"
+            || aggregate_id != request.command.run_id.as_str()
+            || seq != 0
+            || destination != RUN_CANCEL_DESTINATION
+            || delivery_class != "internal"
+            || stored_payload != payload
+            || !matches!(outbox_status.as_str(), "pending" | "delivering")
+        {
+            return Err(ThreadDirectoryError::Corrupt {
+                field: "run_cancel_outbox",
+            });
+        }
+        return Ok(CancelRequestOutcome::Observed(reply(
+            ThreadRunCancellationState::AlreadyRequested,
+        )));
+    }
+
+    transaction
+        .execute(
+            "INSERT INTO public.outbox( \
+               outbox_id,aggregate_kind,aggregate_id,seq,destination,delivery_class,payload \
+             ) VALUES($1,'run',$2,0,$3,'internal',$4)",
+            &[
+                &outbox_id,
+                &request.command.run_id.as_str(),
+                &RUN_CANCEL_DESTINATION,
+                &payload,
+            ],
+        )
+        .await
+        .map_err(|error| write_error("写 cancellation outbox 失败", error))?;
+    transaction
+        .query_one("SELECT pg_notify($1,'')", &[&RUN_CONTROL_TOPIC])
+        .await
+        .map_err(|error| write_error("发送 cancellation notify 失败", error))?;
+    Ok(CancelRequestOutcome::Created(reply(
+        ThreadRunCancellationState::Requested,
+    )))
 }
 
 fn decode_history_message(

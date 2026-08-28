@@ -10,29 +10,34 @@ use core::fmt::Write as _;
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::command::AppEvent;
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::command::ThreadRunCancellationState;
 use openbot_contracts::command::{
-    ChannelDetail, ThreadConversationSnapshot, ThreadHistoryMessage, ThreadHistoryRole,
-    ThreadRunEvent, ThreadRunEventKind,
+    ChannelDetail, ThreadConversationSnapshot, ThreadForegroundRunState, ThreadHistoryMessage,
+    ThreadHistoryRole, ThreadRunEvent, ThreadRunEventKind,
 };
 use openbot_contracts::ids::{RunId, ThreadId};
 use openbot_contracts::text::trim_ecmascript;
 use sha2::{Digest, Sha256};
 
+use crate::api::mint_run_id;
 #[cfg(target_arch = "wasm32")]
 use crate::api::{
-    begin_channel_run, load_thread_conversation, mint_run_id, mint_thread_id,
+    begin_channel_run, cancel_thread_run, load_thread_conversation, mint_thread_id,
     thread_event_stream_path,
 };
 use crate::features::agents::{AgentPresence, AgentPresenceState};
+use crate::features::channels::composer::draft::{Segment, to_draft};
+use crate::features::channels::composer::queue::{QueueAction, QueuedMessage, reduce_queue};
 use crate::features::threads::tool_name::read_tool_name;
 use crate::features::threads::tool_result::for_display;
 use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
 use crate::primitives::{
     Avatar, AvatarSize, Bubble, BubbleKind, Button, ButtonSize, ButtonVariant, IconSize, IconView,
-    Message, MessageAlign, MessageAvatar, MessageContent, MessageHeader, MessageScroller,
-    MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerViewport,
-    Textarea,
+    Message, MessageAlign, MessageAvatar, MessageContent, MessageFooter, MessageHeader,
+    MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem,
+    MessageScrollerViewport, Textarea,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -65,6 +70,7 @@ enum TerminalNotice {
 }
 
 impl TerminalNotice {
+    #[cfg(test)]
     const fn as_str(self) -> &'static str {
         match self {
             Self::Failed => "failed",
@@ -78,6 +84,8 @@ impl TerminalNotice {
 struct ConversationState {
     messages: Vec<TranscriptLine>,
     active_run_id: Option<RunId>,
+    active_run_state: Option<ThreadForegroundRunState>,
+    active_run_cancellable: bool,
     streaming_text: String,
     cursor: Option<u64>,
     terminal_notice: Option<TerminalNotice>,
@@ -89,14 +97,67 @@ enum LiveEffect {
     ReloadSnapshot,
 }
 
+/// Closed composer Stop inputs. Every field is a fact this mount already holds; the control is
+/// never derived from a raw provider/HTTP error or from an actor identity sent by the client.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StopControl {
+    /// A local send is in flight or awaiting retry, so no new control may be minted.
+    input_locked: bool,
+    /// A durable cancellation request minted by this mount is still unacknowledged.
+    cancelling_request: bool,
+    /// An empty draft is what turns the primary control from Send into Stop.
+    draft_empty: bool,
+    /// Snapshot fact: this actor may mint the **first** durable cancellation request.
+    cancellable: bool,
+    /// Durable foreground projection; `Cancelling` keeps Stop visible but inert.
+    run_state: Option<ThreadForegroundRunState>,
+}
+
+impl StopControl {
+    /// Stop replaces Send exactly while the durable facts show a stoppable or stopping foreground.
+    const fn visible(self) -> bool {
+        self.draft_empty
+            && (self.cancellable
+                || matches!(self.run_state, Some(ThreadForegroundRunState::Cancelling))
+                || self.cancelling_request)
+    }
+
+    /// Stop is actionable only for the first request this actor is allowed to mint; a run already
+    /// `Cancelling` (here or on another replica) is observable but not re-requestable from the GUI.
+    const fn enabled(self) -> bool {
+        !self.input_locked && !self.cancelling_request && self.draft_empty && self.cancellable
+    }
+}
+
+/// A parked queue drains on exactly one busy -> idle edge, never into an inactive channel and
+/// never twice for the same edge. `previous` is the last observed in-flight fact of this mount.
+const fn should_drain_queue(
+    previous: bool,
+    in_flight: bool,
+    channel_active: bool,
+    queue_empty: bool,
+) -> bool {
+    previous && !in_flight && channel_active && !queue_empty
+}
+
 impl ConversationState {
     fn install_snapshot(&mut self, snapshot: ThreadConversationSnapshot) {
         self.messages = project_history(&snapshot.messages);
         self.active_run_id = snapshot.active_run_id;
+        self.active_run_state = snapshot.active_run_state;
+        self.active_run_cancellable = snapshot.active_run_cancellable;
         self.streaming_text = snapshot.active_run_text;
         self.cursor = snapshot.last_event_sequence;
-        if self.active_run_id.is_some() {
-            self.terminal_notice = None;
+        match self.active_run_state {
+            Some(ThreadForegroundRunState::ReconciliationRequired) => {
+                self.terminal_notice = Some(TerminalNotice::ReconciliationRequired);
+            }
+            Some(
+                ThreadForegroundRunState::Queued
+                | ThreadForegroundRunState::Running
+                | ThreadForegroundRunState::Cancelling,
+            ) => self.terminal_notice = None,
+            None => {}
         }
     }
 }
@@ -124,10 +185,22 @@ fn apply_live_event(
     state.cursor = Some(event.event_sequence);
     match event.event_type {
         ThreadRunEventKind::Started => {
+            // 本 mount 已经从 durable begin receipt 学到过这个 run 的 cancellable 事实。若在这里
+            // 抹掉再靠一次全量 reload 恢复，每个 turn 都要多拆一次 SSE、多闪一次 loading，并在
+            // 那一帧里把 Send/Stop 一起禁用 —— 事实没变，不该有这次往返。
+            let already_tracked = state.active_run_id.as_ref() == Some(&event.run_id);
             state.active_run_id = Some(event.run_id.clone());
+            state.active_run_state = Some(ThreadForegroundRunState::Running);
             state.streaming_text.clear();
             state.terminal_notice = None;
-            Ok(LiveEffect::None)
+            if already_tracked {
+                Ok(LiveEffect::None)
+            } else {
+                // 另一 tab / 另一副本发起的 run：本 mount 没有权威依据，cancellable 只能来自
+                // durable snapshot，绝不沿用上一个 run 的值。
+                state.active_run_cancellable = false;
+                Ok(LiveEffect::ReloadSnapshot)
+            }
         }
         ThreadRunEventKind::SemanticChunk => {
             if state.active_run_id.as_ref() != Some(&event.run_id) {
@@ -157,21 +230,29 @@ fn apply_live_event(
         ThreadRunEventKind::Checkpoint => Ok(LiveEffect::None),
         ThreadRunEventKind::Completed => {
             state.active_run_id = None;
+            state.active_run_state = None;
+            state.active_run_cancellable = false;
             state.terminal_notice = None;
             Ok(LiveEffect::ReloadSnapshot)
         }
         ThreadRunEventKind::Failed => {
             state.active_run_id = None;
+            state.active_run_state = None;
+            state.active_run_cancellable = false;
             state.terminal_notice = Some(TerminalNotice::Failed);
             Ok(LiveEffect::ReloadSnapshot)
         }
         ThreadRunEventKind::Cancelled => {
             state.active_run_id = None;
+            state.active_run_state = None;
+            state.active_run_cancellable = false;
             state.terminal_notice = Some(TerminalNotice::Cancelled);
             Ok(LiveEffect::ReloadSnapshot)
         }
         ThreadRunEventKind::ReconciliationRequired => {
             state.active_run_id = Some(event.run_id.clone());
+            state.active_run_state = Some(ThreadForegroundRunState::ReconciliationRequired);
+            state.active_run_cancellable = false;
             state.terminal_notice = Some(TerminalNotice::ReconciliationRequired);
             Ok(LiveEffect::ReloadSnapshot)
         }
@@ -238,7 +319,7 @@ struct PendingTurn {
     message: String,
 }
 
-/// Data-backed channel transcript and idle-send surface. Queue/Stop remain absent until cancellation lands.
+/// Data-backed channel transcript, durable Stop and transient in-mount queue surface.
 #[component]
 pub fn ChannelConversation(
     /// Current membership-authorized channel projection from the Server.
@@ -274,8 +355,11 @@ pub fn ChannelConversation(
     );
 
     let draft = RwSignal::new(String::new());
+    let queued = RwSignal::new(Vec::<QueuedMessage>::new());
     let submitting = RwSignal::new(false);
+    let cancelling_request = RwSignal::new(false);
     let send_error = RwSignal::new(false);
+    let cancel_error = RwSignal::new(false);
     let resumable = RwSignal::new(None::<PendingTurn>);
     Effect::new(move |_| {
         let Some(attempt) = resumable.get() else {
@@ -291,21 +375,37 @@ pub fn ChannelConversation(
     let input_locked = Signal::derive(move || submitting.get() || resumable.get().is_some());
     let textarea_disabled = Signal::derive(move || input_locked.get() || !channel_active);
     let send_disabled = Signal::derive(move || {
-        busy.get()
+        input_locked.get()
             || !channel_active
             || agent_id.get_value().is_none()
             || snapshot_error.get()
             || loading.get()
             || trim_ecmascript(&draft.get()).is_empty()
     });
-    let submit = UnsyncCallback::new(move |_| {
-        if send_disabled.get_untracked() {
+    let stop_control = Signal::derive(move || {
+        let snapshot = state.get();
+        StopControl {
+            input_locked: input_locked.get(),
+            cancelling_request: cancelling_request.get(),
+            draft_empty: trim_ecmascript(&draft.get()).is_empty(),
+            cancellable: snapshot.active_run_cancellable,
+            run_state: snapshot.active_run_state,
+        }
+    });
+    let can_stop = Signal::derive(move || stop_control.get().enabled());
+    let show_stop = Signal::derive(move || stop_control.get().visible());
+    let stop_disabled = Signal::derive(move || !can_stop.get());
+    let send_now = UnsyncCallback::new(move |message: String| {
+        if submitting.get_untracked()
+            || resumable.get_untracked().is_some()
+            || state.get_untracked().active_run_id.is_some()
+            || !channel_active
+        {
             return;
         }
         let Some(agent_id) = agent_id.get_value() else {
             return;
         };
-        let message = draft.get_untracked();
         if trim_ecmascript(&message).is_empty() {
             return;
         }
@@ -349,10 +449,14 @@ pub fn ChannelConversation(
                     thread_id.set(Some(attempt.thread_id));
                     state.update(|state| {
                         state.active_run_id = Some(attempt.run_id);
+                        state.active_run_state = Some(ThreadForegroundRunState::Running);
+                        state.active_run_cancellable = true;
                         state.streaming_text.clear();
                         state.terminal_notice = None;
                     });
-                    draft.set(String::new());
+                    if draft.get_untracked() == attempt.message {
+                        draft.set(String::new());
+                    }
                     resumable.set(None);
                     reload_generation.update(|value| *value = value.saturating_add(1));
                 }
@@ -368,6 +472,111 @@ pub fn ChannelConversation(
             let _ = (agent_id, message);
             submitting.set(false);
             send_error.set(true);
+        }
+    });
+    let submit = UnsyncCallback::new(move |_| {
+        if send_disabled.get_untracked() {
+            return;
+        }
+        let message = draft.get_untracked();
+        let composer_draft = to_draft(&[Segment::text(message)]);
+        if composer_draft.is_empty {
+            return;
+        }
+        let queue_id = mint_run_id().as_str().to_owned();
+        let current = queued.get_untracked();
+        let transition = reduce_queue(
+            &current,
+            QueueAction::Submit {
+                id: &queue_id,
+                draft: &composer_draft,
+                busy: busy.get_untracked(),
+            },
+        );
+        let next_queue = transition.queue.into_owned();
+        let run = transition.run.map(|run| run.into_owned());
+        queued.set(next_queue);
+        if busy.get_untracked() {
+            draft.set(String::new());
+        }
+        if let Some(run) = run {
+            send_now.run(run.text);
+        }
+    });
+    let stop = UnsyncCallback::new(move |_| {
+        if !can_stop.get_untracked() {
+            return;
+        }
+        let Some(thread) = thread_id.get_untracked() else {
+            return;
+        };
+        let Some(run) = state.get_untracked().active_run_id else {
+            return;
+        };
+        cancelling_request.set(true);
+        cancel_error.set(false);
+        #[cfg(target_arch = "wasm32")]
+        leptos::task::spawn_local_scoped_with_cancellation(async move {
+            match cancel_thread_run(&thread, &run).await {
+                Ok(reply) => {
+                    if matches!(
+                        reply.state,
+                        ThreadRunCancellationState::Requested
+                            | ThreadRunCancellationState::AlreadyRequested
+                    ) {
+                        state.update(|state| {
+                            if state.active_run_id.as_ref() == Some(&run) {
+                                state.active_run_state = Some(ThreadForegroundRunState::Cancelling);
+                                state.active_run_cancellable = false;
+                            }
+                        });
+                    }
+                    reload_generation.update(|value| *value = value.saturating_add(1));
+                }
+                Err(_) => {
+                    cancel_error.set(true);
+                    reload_generation.update(|value| *value = value.saturating_add(1));
+                }
+            }
+            cancelling_request.set(false);
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = (thread, run);
+            cancelling_request.set(false);
+            cancel_error.set(true);
+        }
+    });
+    // `send_now` 用 `spawn_local_scoped_with_cancellation`，任务绑定的是**调用时**的 reactive
+    // owner。若从 Effect 体内调用，这个 owner 就是该 Effect 本次运行的 owner；而 send 本身会写
+    // `submitting` 与 `state.active_run_id`，两者都被下面 Effect 追踪的 `busy` 依赖 —— Effect 立刻
+    // 重跑并 dispose 上一次的 owner，把刚发出的 send 连同末尾的 `submitting.set(false)` 一起取消。
+    // 结果是排队消息永远发不出去，且 `submitting` 卡在 true 让整个 Composer 死锁。改成在组件 owner
+    // 里执行：它活过每一次 Effect 运行，与用户点击 Send 走的是同一个 owner。
+    let composer_owner = Owner::current();
+    let was_in_flight = RwSignal::new(false);
+    Effect::new(move |_| {
+        let in_flight = busy.get();
+        let previous = was_in_flight.get_untracked();
+        was_in_flight.set(in_flight);
+        if !should_drain_queue(
+            previous,
+            in_flight,
+            channel_active,
+            queued.get_untracked().is_empty(),
+        ) {
+            return;
+        }
+        let current = queued.get_untracked();
+        let transition = reduce_queue(&current, QueueAction::Settle);
+        let next_queue = transition.queue.into_owned();
+        let run = transition.run.map(|run| run.into_owned());
+        queued.set(next_queue);
+        if let Some(run) = run {
+            match composer_owner.as_ref() {
+                Some(owner) => owner.with(|| send_now.run(run.text)),
+                None => send_now.run(run.text),
+            }
         }
     });
     let retry_snapshot = move |_| {
@@ -449,15 +658,85 @@ pub fn ChannelConversation(
                                 </MessageScrollerItem>
                             })}
                         </Show>
-                        <Show when=move || busy.get() && state.get().streaming_text.is_empty()>
+                        <Show when=move || {
+                            busy.get()
+                                && state.get().streaming_text.is_empty()
+                                && !matches!(
+                                    state.get().active_run_state,
+                                    Some(
+                                        ThreadForegroundRunState::Cancelling
+                                            | ThreadForegroundRunState::ReconciliationRequired
+                                    )
+                                )
+                        }>
                             <div class="ob-conversation-thinking" role="status">
                                 <AgentPresence state=Signal::derive(move || AgentPresenceState::Thinking) />
                                 <span>{move || t!(i18n, channels.tool_running)}</span>
                             </div>
                         </Show>
+                        <Show when=move || {
+                            cancelling_request.get()
+                                || matches!(
+                                    state.get().active_run_state,
+                                    Some(ThreadForegroundRunState::Cancelling)
+                                )
+                        }>
+                            <p class="ob-conversation-cancelling" role="status">
+                                {move || t!(i18n, channels.cancelling)}
+                            </p>
+                        </Show>
                         <Show when=move || state.get().terminal_notice.is_some()>
                             <p class="ob-alert" role="status">{move || terminal_text(i18n, state.get().terminal_notice)}</p>
                         </Show>
+                        <For
+                            each=move || queued.get()
+                            key=|message| message.id.clone()
+                            children=move |message| {
+                                let queue_id = message.id.clone();
+                                let text = message.text.clone();
+                                let visible_text = text.clone();
+                                let remove_label = t_string!(
+                                    i18n,
+                                    channels.queued_remove_label,
+                                    message = text
+                                )
+                                .to_owned();
+                                view! {
+                                    <MessageScrollerItem
+                                        message_id=transcript_dom_id(&format!("queue:{queue_id}"))
+                                    >
+                                        <div class="ob-queued-message" data-queued-message="">
+                                            <Message
+                                                align=MessageAlign::End
+                                                aria_label=move || t_string!(i18n, channels.queued_message_label).to_owned()
+                                            >
+                                                <MessageContent>
+                                                    <Bubble kind=BubbleKind::User>
+                                                        <p class="ob-transcript-text">{visible_text}</p>
+                                                    </Bubble>
+                                                    <MessageFooter>
+                                                        <span role="status">{move || t!(i18n, channels.queued_status)}</span>
+                                                        <Button
+                                                            variant=ButtonVariant::Ghost
+                                                            size=ButtonSize::Small
+                                                            aria_label=remove_label
+                                                            on_activate=move |_| {
+                                                                let current = queued.get_untracked();
+                                                                let transition = reduce_queue(
+                                                                    &current,
+                                                                    QueueAction::Remove { id: &queue_id },
+                                                                );
+                                                                queued.set(transition.queue.into_owned());
+                                                            }
+                                                        >{move || t!(i18n, channels.queued_remove)}</Button>
+                                                    </MessageFooter>
+                                                </MessageContent>
+                                            </Message>
+                                        </div>
+                                    </MessageScrollerItem>
+                                }
+                            }
+                        />
                     </MessageScrollerContent>
                 </MessageScrollerViewport>
                 <MessageScrollerButton
@@ -473,23 +752,53 @@ pub fn ChannelConversation(
                     disabled=textarea_disabled
                     on_submit=submit
                 />
-                <Button
-                    variant=ButtonVariant::Primary
-                    size=ButtonSize::Medium
-                    disabled=send_disabled
-                    loading=submitting
-                    on_activate=submit
+                <Show
+                    when=move || show_stop.get()
+                    fallback=move || view! {
+                        <Button
+                            variant=ButtonVariant::Primary
+                            size=ButtonSize::Medium
+                            disabled=send_disabled
+                            loading=submitting
+                            on_activate=submit
+                        >
+                            <IconView icon=Icon::Send size=IconSize::Inline />
+                            <span>{move || if resumable.get().is_some() {
+                                t_string!(i18n, common.retry).to_owned()
+                            } else if busy.get() {
+                                t_string!(i18n, channels.composer_queue).to_owned()
+                            } else {
+                                t_string!(i18n, channels.composer_send).to_owned()
+                            }}</span>
+                        </Button>
+                    }
                 >
-                    <IconView icon=Icon::Send size=IconSize::Inline />
-                    <span>{move || if resumable.get().is_some() {
-                        t_string!(i18n, common.retry).to_owned()
-                    } else {
-                        t_string!(i18n, channels.composer_send).to_owned()
-                    }}</span>
-                </Button>
+                    <Button
+                        variant=ButtonVariant::Ghost
+                        size=ButtonSize::Medium
+                        disabled=stop_disabled
+                        loading=cancelling_request
+                        aria_label=move || t_string!(i18n, channels.composer_stop).to_owned()
+                        on_activate=stop
+                    >
+                        <IconView icon=Icon::CircleStop size=IconSize::Inline />
+                        <span>{move || if cancelling_request.get()
+                            || matches!(
+                                state.get().active_run_state,
+                                Some(ThreadForegroundRunState::Cancelling)
+                            ) {
+                                t_string!(i18n, channels.cancelling).to_owned()
+                            } else {
+                                t_string!(i18n, channels.composer_stop).to_owned()
+                            }}</span>
+                    </Button>
+                </Show>
             </div>
             <Show when=move || send_error.get()>
                 <p class="ob-alert" role="alert">{move || t!(i18n, channels.send_error)}</p>
+            </Show>
+            <Show when=move || cancel_error.get()>
+                <p class="ob-alert" role="alert">{move || t!(i18n, channels.cancel_error)}</p>
             </Show>
             <Show when=move || !channel_active>
                 <p class="ob-page-empty">{move || t!(i18n, channels.detail_inactive)}</p>
@@ -764,6 +1073,8 @@ mod tests {
                 tool_calls: None,
             }],
             active_run_id: Some(RunId::new("run-1")),
+            active_run_state: Some(ThreadForegroundRunState::Running),
+            active_run_cancellable: true,
             active_run_text: "partial".to_owned(),
             last_event_sequence: Some(3),
         });
@@ -919,5 +1230,164 @@ mod tests {
             "reconciliation_required"
         );
         assert_eq!(core::mem::size_of::<TerminalNotice>(), 1);
+    }
+
+    #[test]
+    fn stop_is_visible_only_on_durable_facts_and_actionable_only_for_the_first_request() {
+        let stoppable = StopControl {
+            input_locked: false,
+            cancelling_request: false,
+            draft_empty: true,
+            cancellable: true,
+            run_state: Some(ThreadForegroundRunState::Running),
+        };
+        assert!(stoppable.visible() && stoppable.enabled());
+
+        // 草稿非空时主控件仍是 Send，Stop 既不显示也不可点。
+        let drafting = StopControl {
+            draft_empty: false,
+            ..stoppable
+        };
+        assert!(!drafting.visible() && !drafting.enabled());
+
+        // 非 run 发起者拿到的 snapshot `cancellable=false`：GUI 不得给出可点的假 Stop，
+        // 与 durable_cancel_is_scoped_idempotent_… 的 PostgreSQL 拒绝面一致。
+        let bystander = StopControl {
+            cancellable: false,
+            ..stoppable
+        };
+        assert!(!bystander.visible() && !bystander.enabled());
+
+        // 本地 send 在飞 / 本 mount 请求未确认：可见但 inert，不会重复铸造请求。
+        for inert in [
+            StopControl {
+                input_locked: true,
+                ..stoppable
+            },
+            StopControl {
+                cancelling_request: true,
+                ..stoppable
+            },
+        ] {
+            assert!(inert.visible() && !inert.enabled());
+        }
+
+        // 已经 Cancelling（可能来自另一副本）：只观察，不再请求。
+        let cancelling = StopControl {
+            cancellable: false,
+            run_state: Some(ThreadForegroundRunState::Cancelling),
+            ..stoppable
+        };
+        assert!(cancelling.visible() && !cancelling.enabled());
+
+        assert!(!StopControl::default().visible() && !StopControl::default().enabled());
+    }
+
+    #[test]
+    fn cancelling_snapshot_holds_the_foreground_without_claiming_children_stopped() {
+        let mut state = ConversationState::default();
+        state.install_snapshot(ThreadConversationSnapshot {
+            messages: Vec::new(),
+            active_run_id: Some(RunId::new("run-1")),
+            active_run_state: Some(ThreadForegroundRunState::Cancelling),
+            active_run_cancellable: false,
+            active_run_text: "partial".to_owned(),
+            last_event_sequence: Some(4),
+        });
+        // Cancelling 不是 terminal：foreground 仍被占，且不得提前投影 Cancelled。
+        assert_eq!(state.active_run_id, Some(RunId::new("run-1")));
+        assert!(!state.active_run_cancellable);
+        assert_eq!(state.terminal_notice, None);
+
+        assert_eq!(
+            apply_live_event(
+                &mut state,
+                &ThreadId::new("thread-1"),
+                &event(
+                    5,
+                    ThreadRunEventKind::Cancelled,
+                    serde_json::json!({"status":"cancelled"})
+                ),
+            ),
+            Ok(LiveEffect::ReloadSnapshot)
+        );
+        assert!(state.active_run_id.is_none());
+        assert_eq!(state.terminal_notice, Some(TerminalNotice::Cancelled));
+
+        // commit 未知时 foreground 继续被占，Cancelled 不得抹掉不确定性。
+        let mut unknown = ConversationState::default();
+        unknown.install_snapshot(ThreadConversationSnapshot {
+            messages: Vec::new(),
+            active_run_id: Some(RunId::new("run-2")),
+            active_run_state: Some(ThreadForegroundRunState::ReconciliationRequired),
+            active_run_cancellable: false,
+            active_run_text: String::new(),
+            last_event_sequence: Some(9),
+        });
+        assert_eq!(unknown.active_run_id, Some(RunId::new("run-2")));
+        assert_eq!(
+            unknown.terminal_notice,
+            Some(TerminalNotice::ReconciliationRequired)
+        );
+    }
+
+    #[test]
+    fn started_for_an_already_tracked_run_costs_no_reload_and_keeps_cancellable() {
+        // 本地 send：begin receipt 先把 run 与 cancellable 落进 state，随后 SSE 才送到 Started。
+        let mut local = ConversationState {
+            active_run_id: Some(RunId::new("run-1")),
+            active_run_state: Some(ThreadForegroundRunState::Running),
+            active_run_cancellable: true,
+            cursor: Some(0),
+            ..ConversationState::default()
+        };
+        assert_eq!(
+            apply_live_event(
+                &mut local,
+                &ThreadId::new("thread-1"),
+                &event(
+                    1,
+                    ThreadRunEventKind::Started,
+                    serde_json::json!({"runId":"run-1"})
+                ),
+            ),
+            Ok(LiveEffect::None)
+        );
+        assert!(local.active_run_cancellable);
+
+        // 别处发起的 run：不得沿用上一个 run 的 cancellable，必须回 durable snapshot 取。
+        let mut foreign = ConversationState {
+            active_run_id: None,
+            active_run_cancellable: true,
+            cursor: Some(0),
+            ..ConversationState::default()
+        };
+        assert_eq!(
+            apply_live_event(
+                &mut foreign,
+                &ThreadId::new("thread-1"),
+                &event(
+                    1,
+                    ThreadRunEventKind::Started,
+                    serde_json::json!({"runId":"run-1"})
+                ),
+            ),
+            Ok(LiveEffect::ReloadSnapshot)
+        );
+        assert!(!foreign.active_run_cancellable);
+        assert_eq!(foreign.active_run_id, Some(RunId::new("run-1")));
+    }
+
+    #[test]
+    fn parked_queue_drains_on_exactly_one_busy_to_idle_edge() {
+        // 唯一排空点 = busy -> idle 边沿。
+        assert!(should_drain_queue(true, false, true, false));
+        // 从未 busy、仍 busy、频道不可用、队列为空：四条都不排空。
+        assert!(!should_drain_queue(false, false, true, false));
+        assert!(!should_drain_queue(true, true, true, false));
+        assert!(!should_drain_queue(true, false, false, false));
+        assert!(!should_drain_queue(true, false, true, true));
+        // 同一边沿只触发一次：上一拍记下 in_flight=false 后 previous 变 false。
+        assert!(!should_drain_queue(false, false, true, false));
     }
 }

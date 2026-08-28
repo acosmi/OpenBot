@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-26，Batch 15–34）
+### 15.1 当前实施勾选（2026-08-27，Batch 15–35）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -677,16 +677,19 @@ G6 重写后的文本（替换 v3 原四条）：
   console绿；未实现的Enter提示已删除，完整Composer仍todo；
 - [x] Composer draft/queue纯状态：固定上游10+16条逐项Rust移植；`Cow`保留no-op identity，
   single Agent、command prompt/chip/deferred action effect、busy park/settle/remove/一次turn合并与command
-  首次顺序去重均闭合。Queue刻意只活在当前mount，不写PG；release hashed asset与Batch32相同。
-  production owner/DOM/stop/cancel尚未落，故T-UI-0043/0123与channel route继续todo；
+  首次顺序去重均闭合。Queue刻意只活在当前mount、不写PG；Batch35已把text-only busy park、逐条
+  remove、busy→idle单次settle与Stop后drain接进production conversation，并以hard reload 1→0证明
+  mount边界。sources/附件/per-channel draft/steer仍未落，故T-UI-0043/0123与channel route继续todo；
 - [x] Channel conversation production slice：原子PG snapshot携history/foreground/active tail/cursor，
   EventSource从cursor接durable replay/live并在terminal后refetch；Message/Bubble/Scroller呈现durable
   user/assistant/tool activity，Enter/ShiftEnter/IME与idle send/无thread mint均接真实API。浏览器硬刷新
-  历史不丢、四视口X/Y overflow0；raw error只按closed terminal本地化。Markdown、完整tool boundary、
-  queue/stop/sources/Screen未落，故ChannelChat/ChatTranscript/ConversationView/Composer条目仍todo；
+  历史不丢、四视口X/Y overflow0；raw error只按closed terminal本地化。Batch35又接actor-owned durable
+  Stop→Cancelling→Cancelled、跨副本host cancel与mount-local queue/remove/settle。Markdown、完整tool
+  boundary、sources/附件/per-channel draft/steer/Screen未落，故ChannelChat/ChatTranscript/
+  ConversationView/Composer条目仍todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents已接，但skills/settings/admin真实destinations尚未迁移；完整channel route也仍缺
-  transcript/composer/stop/steer/screen，不得用data shell冒充journey；
+  markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
 - [ ] 其余31个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
@@ -709,7 +712,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-26-G4-G6-AgentRoster与AgentsRoute-batch31.md`、
 `docs/2026-08-26-G3-G6-ChannelCreate与Routing-batch32.md`、
 `docs/2026-08-26-G6-ComposerDraft与Queue-batch33.md`、
-`docs/2026-08-26-G3-G6-ChannelTranscript与IdleSend-batch34.md`；
+`docs/2026-08-26-G3-G6-ChannelTranscript与IdleSend-batch34.md`、
+`docs/2026-08-27-G3-G6-DurableCancel与Queue-batch35.md`；
 G6 整关继续不勾。
 
 ---

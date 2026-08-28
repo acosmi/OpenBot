@@ -10,7 +10,9 @@ use openbot_application::{
     AppEventStream, BeginThreadRunRequest, RunRuntime, RunSemanticChannel, RunTerminal,
     ThreadConversationRequest, ThreadDirectory, ThreadEventSubscription,
 };
-use openbot_contracts::command::{AppEvent, BeginThreadRun, ThreadRunAnchor, ThreadRunEventKind};
+use openbot_contracts::command::{
+    AppEvent, BeginThreadRun, ThreadForegroundRunState, ThreadRunAnchor, ThreadRunEventKind,
+};
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId};
 use openbot_infra::db::{baseline, native, pool};
@@ -104,6 +106,8 @@ async fn atomic_snapshot_bridges_active_text_cursor_live_terminal_and_materializ
             if started.messages.len() != 1
                 || started.messages[0].content != "hello"
                 || started.active_run_id != Some(RunId::new("run-1"))
+                || started.active_run_state != Some(ThreadForegroundRunState::Running)
+                || !started.active_run_cancellable
                 || !started.active_run_text.is_empty()
                 || started.last_event_sequence != Some(0)
             {
@@ -177,6 +181,8 @@ async fn atomic_snapshot_bridges_active_text_cursor_live_terminal_and_materializ
                 || completed.messages[0].content != "hello"
                 || completed.messages[1].content != "hello"
                 || completed.active_run_id.is_some()
+                || completed.active_run_state.is_some()
+                || completed.active_run_cancellable
                 || !completed.active_run_text.is_empty()
                 || completed.last_event_sequence != Some(3)
             {
