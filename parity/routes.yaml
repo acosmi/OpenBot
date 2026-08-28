@@ -367,10 +367,11 @@ entries:
   - id: memory-controls
     upstream: "-"
     label: 新增
-    target: "openbot_ui::shell::routes::settings_memory -> /settings/memory"
+    target: "openbot_ui::features::memory::MemoryPage -> /settings/memory"
     owner: openbot-ui
     test_id: T-ROUTE-0032
     migration_rule: "n/a: 无上游对应物，不参与 31 的 parity 计数"
-    status: todo
+    status: done
+    done_evidence: "Batch36 release WASM/browser：owner-only首屏50条、keyset 50→52且ID零重复；writesEnabled关闭跨reload保持并只禁remember/correct，forbid/delete继续可用；correct生成replacement并supersede旧行，forbid/delete均显示content erased；取消返原按钮、成功权威refetch后聚焦replacement行；中英双语、1440/1024/900/600 overflow0、duplicate IDs/visible alerts/console error-warn均0。PG17.11 SCRAM同时证明跨tenant/actor隔离与GUI/tool写拒绝。"
     evidence: "正向对照已跑：`grep -rniE 'memory' app/src/routes | wc -l` 与 `git ls-files 'app/src/**' | grep -i memory | wc -l` 均为 0，而同一条 grep 在 v3 文档里能命中 §3.1 条 7 与 §4.3 的 native memory 段落 —— 即命令本身有效，只是上游确实没有这个面"
-    notes: "模板 List（记忆条目列表 + 每条删除 + 全局禁用开关）。journey：用户查看 native memory 里关于自己的条目、删除单条、整体禁用记忆写入（v3 §3.1 条 7、§4.3）。权限：只本人可见自己的条目。**这是 31 之外的第 32 条，label 必须是新增**：上游 memory 只存在于 Intelligence 托管侧，v3 §4.1 退出 Intelligence 后本页是其替代面；golden 截图对象因此是 26 页 + 本页 = 27 页（设计系统文档 §10.1）。"
+    notes: "模板 List（记忆条目列表 + correct/forbid/delete + 全局禁用开关）。journey：用户查看 native memory 的status/kind/sensitivity/scope/source/origin/tags，keyset加载更多，纠正生成replacement，禁止/删除擦除content，并整体禁用后续GUI/tool写入；关闭写入不妨碍查看与擦除（v3 §3.1 条 7、§4.3）。权限：只本人可见自己的条目。**这是 31 之外的第 32 条，label 必须是新增**：上游 memory 只存在于 Intelligence 托管侧，v3 §4.1 退出 Intelligence 后本页是其替代面；golden截图对象仍为26页+本页=27页，T-UI-0152正式golden矩阵尚todo。"

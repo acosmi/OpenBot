@@ -687,10 +687,15 @@ G6 重写后的文本（替换 v3 原四条）：
   Stop→Cancelling→Cancelled、跨副本host cancel与mount-local queue/remove/settle。Markdown、完整tool
   boundary、sources/附件/per-channel draft/steer/Screen未落，故ChannelChat/ChatTranscript/
   ConversationView/Composer条目仍todo；
+- [x] `/settings/memory`新增route：native 0022以tenant/actor独立持久化writesEnabled，缺行默认开启；
+  disabled只拒绝GUI remember/correct与built-in remember tool，查看/recall/forbid/delete保持可用。
+  页面以typed no-store API呈现50→52 owner keyset、status/kind/sensitivity/scope/source/origin/tags，
+  correct生成replacement、forbid/delete擦除content；取消返原按钮，成功权威refetch后聚焦变更行。
+  release CSS真实445规则，中英、1440/1024/900/600 overflow0、duplicate IDs/visible alerts/console均0；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
-  new-channel/Agents已接，但skills/settings/admin真实destinations尚未迁移；完整channel route也仍缺
+  new-channel/Agents/Memory已接，但skills/settings-home/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
-- [ ] 其余31个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、compiled gallery、
+- [ ] 其余30个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -713,7 +718,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-26-G3-G6-ChannelCreate与Routing-batch32.md`、
 `docs/2026-08-26-G6-ComposerDraft与Queue-batch33.md`、
 `docs/2026-08-26-G3-G6-ChannelTranscript与IdleSend-batch34.md`、
-`docs/2026-08-27-G3-G6-DurableCancel与Queue-batch35.md`；
+`docs/2026-08-27-G3-G6-DurableCancel与Queue-batch35.md`、
+`docs/2026-08-27-G3-G6-MemoryControls-batch36.md`；
 G6 整关继续不勾。
 
 ---

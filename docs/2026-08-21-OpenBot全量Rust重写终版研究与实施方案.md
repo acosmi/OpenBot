@@ -1744,7 +1744,11 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] Rust Intelligence importer：signed+encrypted neutral bundle、独立 target mapping/claim、逐 thread 原子 cursor/resume、DB 重算 ordered checksum、observable memory provenance 与 staged tool→run FK finalize；最终 runtime 零 Intelligence 调用；
   - [x] 50ms/8KiB accumulator 已接真实 Rust OpenAI Responses/Chat producer；normalized text/reasoning 以 expected sequence 写 `DurableTextRun`/journal，terminal 只物化 text；
   - [x] built-in `remember` backend：explicit prompt→provider call→唯一 tool pipeline→`origin=remember_tool` preference/fact+DB provenance→durable tool pair→第二次 sampling；无后台抽取；
-  - [ ] Memory GUI，以及实际 legacy exporter/production bundle 三次演练尚未闭合。
+  - [x] Memory GUI与全局写入控制：native 0022把tenant/actor runtime control独立于memory记录持久化；
+    缺行默认enabled。disabled在同一事务拒绝GUI remember、correct与built-in `remember` tool，
+    但list/recall/forbid/delete始终可用。`/settings/memory`以owner keyset展示status/kind/sensitivity/
+    scope/provenance/tags，支持load-more、correct replacement、forbid/delete内容擦除与中英双语；
+  - [ ] 实际 legacy exporter/production bundle 三次演练尚未闭合。
 - [ ] **G4**：整关未通过；以下 Rust built-in Agent 子面已有本机机械证据：
   - [x] pure reducer + bounded dispatch consumer；reserve→durable ack→activate、activation 起算 absolute deadline/lease heartbeat、cancel 等 children stopped；
   - [x] OpenAI-compatible Responses + Chat adapter：safe dialer、SSE UTF-8/multiline、skeleton/延迟字段、partial JSON、交错 tool calls、未知扩展、真实 read-gap stall；
@@ -1780,7 +1784,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
-  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 417 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
+  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 452 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
   - [x] Axum `APP_DIST_DIR` 条件挂同一 bundle，唯一同源 external bootstrap、strict CSP/安全头、cookie/Accept-Language 首帧 `<html class lang>` Rust 改写、API/缺失 asset 不被 SPA fallback 隐藏；
   - [x] Approval 页面只展示服务端权威 effect/target/redacted arguments/change，GET poll + fresh POST grant/deny；真实 Chromium 已验证 APG ThemeToggle/LocaleSwitch、批准后 card 消失+status、1440×900 与 1024×640 无横向溢出、landmark/heading/id/name/remote-resource 审计；浏览器数据来自明确 test-only fixture，不冒充生产 PostgreSQL；
   - [x] Server 用户偏好经唯一 typed ApplicationService/PostgreSQL native 0021 持久化并镜像 closed `SameSite=Lax` cookie；Desktop Local closed file 原子写；Leptos startup read + serialized/coalescing partial PUT，失败显示本地化 `role=alert`；
@@ -1808,8 +1812,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] AppSidebar的production roster与独立ChannelRow已落：50条keyset页/load-more、只搜可见name/
     last-message、socket reconnect-refetch、current row、三断点同一children、current user/session/
     sign-out；真实data-backed `/channel/:id` 可直接硬刷新。ChannelRow已勾；Batch32接真实new-channel，
-    Batch34/35再接plain conversation、durable Stop与mount-local queue。AppSidebar总项仍因skills/
-    settings/admin destinations缺失不勾，完整channel route仍因markdown/sources/附件/per-channel draft/
+    Batch34/35再接plain conversation、durable Stop与mount-local queue；Batch36接Memory destination。
+    AppSidebar总项仍因skills/settings-home/admin destinations缺失不勾，完整channel route仍因markdown/sources/附件/per-channel draft/
     steer/screen journey缺失不勾；
   - [x] data-backed `/agents` read surface：固定上游`mine`与`!mine && public`两组、144×180
     AgentCard、URL-owned只读profile DetailPanel、同源percent-encoded id、404错误态与AppSidebar
@@ -1829,12 +1833,16 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     localized notice，Enter发送/Shift+Enter换行/IME Enter不提交，busy可写草稿但Send禁用。四视口X/Y
     overflow0；Batch35又接durable Stop→Cancelling→Cancelled与mount-local queue/remove/settle，hard reload
     queue丢失而foreground恢复；markdown/tool boundary/screen/sources与完整route保持todo；
+  - [x] `/settings/memory`新增route：只消费typed no-store API；50→52 owner keyset、四种状态、scope/
+    source/origin/tags、global writes switch、correct/forbid/delete均接production ApplicationService。
+    写入关闭跨reload保持，只禁新增/纠正而不禁擦除；dialog取消返原按钮，成功权威refetch后聚焦
+    replacement/变更行。release CSS 445规则真实加载，中英、1440/1024/900/600 overflow0、console0；
   - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及AppSidebar总项+其余32业务组件/30 route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
   - [ ] Tauri target-aware bans/sources 已绿；macOS/Windows 各仍有 5 个 MPL-2.0、5 个 runtime UNIC unmaintained（无 patched 版），Cargo Vet 为 macOS **270** / Windows **269** unvetted（既有 target 基线 181，净增 89/88）；未改 license/advisory/vet policy，故供应链与 G6 整关均不勾。
 - [ ] **G7**：Screen/Handover 性能、安全票据、human lease 未实施完成。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账：parity **639/1676 done（1037 todo）**，fixtures **15/37 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账：parity **642/1678 done（1036 todo）**，fixtures **16/38 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -2059,6 +2067,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R97 | §2.4#44 / §3.1条4 / §4.1–§4.3 / §5.2 / §6.4–§6.5（GUI第一真源）/ §13.1–§13.3 / §15.1–§15.4 / §21.1 / §24 G3、G6（2026-08-26 Channel Transcript/Idle Send batch34） | R96只有纯draft/queue，channel detail仍画“conversation unavailable”。若GUI先GET history再另查run/cursor，查询间事件会让busy与replay起点漂移；若从最新cursor连流又不带active chunks，会漏掉尚未terminal materialize的半段回复。沿用上游module seed/stash会在reload/双mount制造第二真源；直接显示watchdog/provider Error文字又违反stable code+i18n边界。Stop若只调用本进程consumer，HTTP落另一副本时会静默失效，故本批不能顺手画假Stop。 | 新增closed `ThreadConversationSnapshot(messages,activeRunId,activeRunText,lastEventSequence)`与typed command/port/native GET。PG单statement按deployment/tenant/current anchor membership投影；active tail只聚合最后tool checkpoint后的text，active>1 fail。SSE允许一次性query cursor，标准Last-Event-ID优先；Leptos snapshot后接EventSource durable replay/live，sequence去重、gap/坏thread/payload refetch或断流，terminal后再取PG。user/assistant/tool-call/tool-result用既有Message/Bubble/Scroller plain-text投影，system不显示、DOM id hash；raw error改fieldless terminal enum→en/zh-CN。Idle send有thread直接Begin、无thread先mint；同run-id重试，busy可写草稿但Send禁用。Textarea实现Enter/Shift+Enter/IME。真实浏览器发现Chat shell min-height+100%导致约96万px，改固定viewport flex后四视口X/Y overflow0。 | contracts=`1/0/0`；Server conversation/SSE=`2+1/0/0`；UI=`101/0/0`；PG17.11 host SCRAM=`1/0/0`：snapshot active tail/cursor1→subscribe after1→live event2/terminal3→history materialize、outsider empty。六crate Clippy、UI WASM绿；i18n410、design71 Rust/74 icons、CSS204，bundle wasm gzip781045/CSS71409/fonts740216/external-inline1/0。浏览器：durable initial/history、ShiftEnter、Enter busy、stream marker、terminal refetch、busy draft preserve、hard reload、thread-null mint/begin/hard reload；1440 transcript578、1024/900/600 transcript318，overflow0，avatar AX重复0、duplicate IDs/alerts/console0。API=`49/115/164`、tests=`372/675/1047`、parity=`638/1037/1675`，0 violation/warning；strict recount=`157/157/0`。关闭new API1+fixed tests12；完整Chat/Composer/markdown/tool boundary/Screen/queue/stop/cancel/route仍todo。Cargo.lock/package delta0，仅web-sys EventSource/MessageEvent feature；implementation `6013072529f22054599264296552fd474a9e6bf1`；未运行CI/Actions。详见Batch34文档。 |
 
 | R98 | §3.1条4 / §4.3 / §5.2 / §7.2 / §7.4 / §13.1–§13.3 / §15.3 / §21.1 / §24 G3、G4、G6 / §6.5（GUI第一真源）（2026-08-27 Durable Cancel/Production Queue batch35） | R97已接durable conversation与idle send，但Stop若直接调用当前Server进程的consumer，HTTP落另一副本会静默失效；若request ack直接画Cancelled，会在child仍运行时制造假终态；若无local child只写terminal而不收口原dispatch，会留下可再次claim的陈旧工作。Queue若写PG又会把固定上游“当前mount内存、reload丢失”偷换成durable outbox；在任意reactive Effect owner里直接发drain又会因busy写回dispose自己的异步send。 | 新增closed CancelThreadRun/reply与foreground queued/running/cancelling/reconciliation投影。Application只取AuthContext scope；PG锁run并验deployment/tenant/current anchor membership/run owner，先写唯一`agent_run_cancel` internal outbox再返回。RunRelay用LISTEN wake+100ms poll、lease owner/fencing claim且cancel先于dispatch/recovery；consumer返回ChildSignalled/NoLocalChild，前者等runtime child token真正停后journal terminal，后者同事务写Cancelled并逐字段校验/收口cancel+dispatch outbox。Axum POST只收path thread/run、trusted Origin先行，202不冒充terminal。Leptos空draft时Stop替Send，请求中/durable Cancelling可见但inert；terminal由SSE/snapshot决定。Batch33 reducer接production busy park/remove、busy→idle单次合并send、stop后同一路drain；组件owner承载异步send，hard reload清queue但恢复durable foreground。 | 首次PG实跑捕获`cancelled/delivered/pending/1`并据此补原子dispatch收口；tampered-dispatch恢复又暴露SQL三值逻辑会把NULL owned claim静默过滤，改用`IS NOT DISTINCT FROM $4`并验证claim后崩溃的新relay重放；修后PG17.11 host-SCRAM poll-only=`1/0/0`、cross-replica active child-drop=`1/0/0`。contracts/application/Agent/Server/UI=`76/137/28/202/105`全绿，infra=`306/0/0`、transport parity=`8/0/0`；六crate Clippy、contracts/UI WASM绿。i18n417、design71 Rust/74 icons、CSS206；bundle wasm gzip801086/CSS73154/fonts740216/external-inline1/0。浏览器实得Cancelling visible+disabled→Cancelled、queue remove 1→0、两条合成1 turn/standalone0、stop后drain1、reload queue1→0且foreground Stop恢复；1440/1024/900/600 overflow0、main/nav/h1各1、duplicate IDs/alerts/console0。API=`50/115/165`、tests=`372/675/1047`、UI=`85/67/152`、parity=`639/1037/1676`、fixtures=`15/22/37`，0 violation/warning；strict recount=`157/157/0`。只关闭新增T-API-0165；sources/附件/per-channel draft/steer、markdown/tool boundary/Screen、T-UI-0043/0123、T-ROUTE-0009与RMCP/computer/file/shell协议级cancel保持todo，G3/G4/G6整关不勾；implementation `86370626cebf3f78e87ac5b5a87e223377ff69ff`；未运行CI/Actions；详见Batch35正式文档。 |
+
+| R99 | §3.1条7 / §4.1–§4.3 / §5.2 / §6.1–§6.7（GUI第一真源）/ §13.1–§13.3 / §14.1–§14.3 / §15.3 / §21.1 / §24 G3、G6（2026-08-27 Memory Controls/GUI batch36） | R98后explicit memory已有六条API、PG事务与remember tool，但没有global write control和任何用户页面；用backend存在冒充Memory GUI会是安全假完成。控制若塞进`user_ui_preferences`会混淆runtime数据治理与渲染偏好；伪造成特殊memory又会进入list/recall。关闭写入若连forbid/delete一起禁，会让用户失去擦除既有数据的能力；只在GUI禁按钮则tool/correct仍可绕过。 | native 0022新建`user_memory_controls(tenant_id,actor_user_id,writes_enabled,updated_at)`，缺行默认enabled且FK actor cascade；它不是memory记录。新增closed MemoryControl command/reply/port与GET/PUT `/api/memories/control`，只从AuthContext铸scope、no-store，PUT trusted Origin先于body。PG在GUI remember、correct和remember tool各自原事务内复读control；disabled统一投影`policy_refused/memory_writes_disabled`，但list/recall/forbid/delete始终可用。Leptos `/settings/memory`只消费typed DTO，首屏50+keyset load-more、四状态/kind/sensitivity/scope/source/origin/tags、switch、correct replacement、forbid/delete；不optimistic改row，成功后权威refetch。取消返原按钮；correct后旧按钮消失，故聚焦新replacement行。AppSidebar只新增真实Memory destination。 | implementation `bec30ec52e3fbaabe3aa3f08a5de0d1e7bd4f991`。PG17.11 SCRAM验证password_encryption与role hash均SCRAM；schema0022 regeneration开/关各`1/0/0`，44表/408列/299 NOT NULL/225约束/87索引、ledger10、SHA `f7dfda29…c5ee25`；memory真库`3/0/0`覆盖GUI/tool/correct拒绝、delete仍擦除、重新启用与跨tenant隔离。contracts/application/Agent/Server/UI=`77/138/28/203/108`，infra=`306/0/0`，transport=`8/0/0`+memory parity=`1/0/0`；七crate Clippy、contracts/UI WASM、fmt/diff绿。i18n452、design72 Rust/74 icons、CSS215；最终bundle wasm gzip870212/CSS73367/fonts740216/external-inline1/0。浏览器先因用户清理dist实证旧CSS 404，重建并重启后HTTP CSS=200/text-css、445规则；最终50→52、disable跨reload、47 correct全disabled而48 forbid/49 delete可用、correct/supersede与两类焦点、forbid/delete擦除、中英、四视口overflow0、duplicate/visible-alert/console0。API=`52/115/167`、routes=`2/30/32`、parity=`642/1036/1678`、fixtures=`16/22/38`，0 violation；strict recount=`157/157/0`。T-ROUTE-0032、T-API-0166/0167、T-FIX-0038关闭；正式golden T-UI-0152、legacy production drills、AppSidebar其余destination与G3/G6整关保持todo。未运行`cargo xtask ci`/Actions；详见Batch36正式文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 

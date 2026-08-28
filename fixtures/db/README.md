@@ -256,6 +256,49 @@ baseline_0012.sql → native_0013.sql → … → native_0020.sql → schema_fac
 index；历史 call 不回填，生产 requiring-human decision 必须把仍 granted/未过期的 exact binding
 写入该列，approval id 同时进入 allowlisted audit。
 
+## schema-0021.json：actor UI preference
+
+schema-0021.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0021.sql → schema_facts.sql
+由 native_0021 的显式 regeneration guard 机械生成，SHA-256
+fab4e148cb4f847e2f7079eae95b158ff7d4d0ed740ca2007fbb2de8ab7e3531。
+
+| 项 | 0021 数量 | 相对 0020 |
+| --- | ---: | ---: |
+| public 表 | 43 | +1 |
+| 列 | 404 | +6 |
+| NOT NULL 列 | 295 | +4 |
+| 约束 | 222 | +5 |
+| 索引 | 86 | +1 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增 `user_ui_preferences`，以 deployment / tenant / actor 为复合 PK；theme 与 locale 独立 optional，
+但不允许同时为空，且各自只接受 closed 值。Server 用 PostgreSQL 原子合并跨设备偏好；Desktop
+Local 消费同一 contract 的 closed file，不建立第二套数据库语义。
+
+## schema-0022.json：runtime memory write control
+
+schema-0022.json 在 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0022.sql → schema_facts.sql
+由 native_0022 的显式 regeneration guard 机械生成，SHA-256
+f7dfda29296bb67f08bfa1c514b376a14dd403eb2f87ced26569d19614c5ee25。
+
+| 项 | 0022 数量 | 相对 0021 |
+| --- | ---: | ---: |
+| public 表 | 44 | +1 |
+| 列 | 408 | +4 |
+| NOT NULL 列 | 299 | +4 |
+| 约束 | 225 | +3 |
+| 索引 | 87 | +1 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增 `user_memory_controls(tenant_id, actor_user_id, writes_enabled, updated_at)`；缺行解释为
+enabled，保持升级兼容。它不是 memory 记录，不进入 list/recall。disabled 只拒绝 GUI remember、
+correct 与 built-in `remember` tool 这些会保留新 content 的入口；list/recall/forbid/delete 始终可用，
+因此关闭未来写入不能反过来阻止用户查看或擦除既有数据。
+
 ## 复算命令
 
 ```bash
@@ -291,6 +334,12 @@ python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0019.json',en
 
 # post-0020
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0020.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 42 398 291 217 85 4
+
+# post-0021
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0021.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 43 404 295 222 86 4
+
+# post-0022
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0022.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 44 408 299 225 87 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "
