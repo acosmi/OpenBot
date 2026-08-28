@@ -40,6 +40,7 @@
 //! | [`tool`] | Agent tool invocation 与脱敏结果；没有 actor/policy/target 自报字段 | §8.1 |
 //! | [`memory`] | explicit memory scope/provenance/lifecycle/recall DTO；wire 无 owner/origin 自报 | §4.3 / R66 |
 //! | [`components`] | compiled component治理record、build manifest/catalogue与Quote+Cards+Charts参数schema | §3.3 / R103–R105 |
+//! | [`sandboxed`] | sandboxed draft/published source、sample与发布响应的closed wire | §3.3 / R112 |
 //! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
 //!
 //! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：W-3a 只在 G1 的

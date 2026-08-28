@@ -64,6 +64,8 @@
 //!   target mapping、逐 thread 原子 import、四 cursor、DB 重算 checksum 与 staged FK finalize（R68）。
 //! - [`component_catalogue`] —— compiled component治理read与exact build manifest additive sync；
 //!   首次published insert与hash-chain audit同事务，既有管理员治理零覆盖（R103）。
+//! - [`sandboxed_components`] —— sandboxed source草稿、原子发布/revision、删除与共享治理/audit
+//!   同事务；published投影对双表漂移与残缺源fail-closed（R112）。
 //!
 //! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
 //! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
