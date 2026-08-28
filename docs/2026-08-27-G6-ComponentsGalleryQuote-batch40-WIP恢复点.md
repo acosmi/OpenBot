@@ -4,6 +4,9 @@
 > `bf4ebe1`。固定上游`CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`。
 > 本机定向测试；不运行`cargo xtask ci`，不派发Actions，不触碰`docs/assets/`。
 
+> 已完成：implementation `d5ca010231d1cfb6cc0950bddb84e7be7f651abf`；正式边界与证据见
+> `docs/2026-08-27-G6-ComponentsGalleryQuote-batch40.md`与R103。本文件保留为恢复点历史。
+
 ## 第一真源与缺口
 
 - 固定上游Settings Components Gallery只列`published=true`，tile/detail都渲染真实

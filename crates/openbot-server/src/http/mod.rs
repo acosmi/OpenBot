@@ -15,6 +15,7 @@
 //! thread-events-sse-get   target: "openbot-server::http::threads::events (GET /api/threads/{thread_id}/events)"
 //! thread-events-ws-get    target: "openbot-server::http::threads::websocket (GET /api/threads/{thread_id}/ws)"
 //! memory-list/remember/correct/delete/forbid/recall —— R66 新增 explicit memory API
+//! components list/catalogue —— R103 compiled component治理读面与exact additive build sync
 //! ```
 //!
 //! 所以 [`health`] / [`channels`] / [`metrics`] 这几个模块名、[`channels::list`] 这个函数名

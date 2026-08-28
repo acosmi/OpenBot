@@ -31,7 +31,7 @@
 //! | 模块 | 内容 | 方案出处 |
 //! | --- | --- | --- |
 //! | [`service`] | [`ApplicationService`] trait 与 [`AppEventStream`] | §5.2 |
-//! | [`ports`] | channel / people / credential / audit / native thread / explicit memory typed ports | §5.2 / §4.1–§4.3 / R40 / R56 / R59 / R64–R66 |
+//! | [`ports`] + [`components`] | channel / people / credential / audit / thread / memory / compiled component typed ports | §5.2 / §3.3 / §4.1–§4.3 / R40 / R56 / R59 / R64–R66 / R103 |
 //! | [`cursor`] | keyset 游标 [`ChannelCursor`] 的铸造与 fail-closed 解析 | §15.3 |
 //! | [`tenant`] | Tenant Package 五 YAML、audience 校验与 PostgreSQL 同步 port | §3.2 / §6.5 / R60 |
 //! | [`use_cases`] | health/channel、people/audit、thread/history、remember/list/correct/forbid/delete/recall | §4.1–§4.3 / R56 / R64–R66 |

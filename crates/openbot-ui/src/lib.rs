@@ -36,9 +36,10 @@
 //! AgentPresence 关闭orb/ai-core两条，Batch 27 以唯一中性线稿关闭ComputerPlaceholder/Art两条。
 //! Batch 28–35继续接通session sign-out、channel realtime/detail/roster/create/routing/conversation、
 //! durable Stop与mount-local queue；Batch36–39再落Memory Controls、Settings Preferences/stable
-//! owner、200px secondary shell与reviewed Connected Accounts index/detail。AppSidebar仍缺skills/admin
-//! destinations；完整Composer/Screen、其余route/业务/golden与可发布Tauri宿主仍按台账保持未完成，
-//! 不能由本 crate 存在而推导为G4/G6整关通过。
+//! owner、200px secondary shell与reviewed Connected Accounts index/detail；Batch40补齐SettingsSidebar、
+//! Components Gallery read model与首个真实Quote renderer。AppSidebar仍缺skills/admin destinations；
+//! 完整Composer/Screen、其余12 compiled renderer/runtime、sandbox、route/golden与可发布Tauri宿主仍按
+//! 台账保持未完成，不能由本 crate 存在而推导为G4/G6整关通过。
 
 #![deny(missing_docs)]
 

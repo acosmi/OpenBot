@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-27，Batch 15–39）
+### 15.1 当前实施勾选（2026-08-27，Batch 15–40）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -697,21 +697,25 @@ G6 重写后的文本（替换 v3 原四条）：
   快速theme+locale连续更新时页面唯一`role=status`，worker绑定AppShell稳定owner，locale重渲染不再
   取消receipt收尾；队列排空后status消失且reload保留合并值。Sidebar Settings真实导航、APG键盘、
   1440/1024/900/600 overflow0、console0；正式golden仍todo；
-- [x] Settings secondary shell：`/settings`、Connected Accounts index/detail与`/settings/memory`
-  共用aside+named nav，`--size-subnav`实得200px；Back/General exact/Connected前缀/Memory exact
-  四条同源且current恰1。未实现的gallery构造性不画断链。既有四视口shell证据保持；其余settings
-  route仍todo；
+- [x] Settings secondary shell：`/settings`、Connected Accounts、Components Gallery与
+  `/settings/memory`共用aside+named nav，`--size-subnav`实得200px；Back/General exact/Connected
+  prefix/Gallery prefix/Memory exact按上游顺序且current恰1。既有四视口shell证据保持；
 - [x] Connected Accounts index/detail：contract只传reviewed stable server id，PG要求管理员已add且
   Google Drive的url/vendor/provenance/transport与编译期identity逐字段相等；未知/custom不进入个人页。
   list/connect/disconnect均no-store，authorization receipt只接受同源根路径或安全HTTPS；full-page
   callback、Connected/Not connected、vendor实际scope/time、APG Menu与local-first disconnect已接。
   pending不冒充vendor revoked，权威refetch后返焦Connect；fixture不冒充真实Google OAuth。正式brand/
   golden、Desktop Local OAuth与restricted-scope发布验证仍todo；
+- [x] Components Gallery index/detail只消费typed治理DTO：build manifest由Server所有，browser复述必须
+  逐字段相等；PG additive sync首次published且insert+audit同事务，existing管理员治理零覆盖。当前只登记
+  真实`showQuote` renderer；stale published有诚实fallback，unpublished按不存在。`GalleryFrame`遵守中性
+  chrome与四值语义tone；Axum/Tauri同一typed command。Quote conversation runtime grant/decision、另12个
+  renderer、Refused双路径接线与formal golden仍todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
-- [ ] 其余26个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、compiled gallery、
-  multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
+- [ ] 其余24个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、其余12个
+  compiled renderer/runtime与sandboxed gallery、multi-window lifecycle/ACL及真实macOS/Windows binary尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
 - [ ] Tauri 图的 MPL-2.0×5、runtime UNIC unmaintained×5、Cargo Vet macOS 270/Windows 269
