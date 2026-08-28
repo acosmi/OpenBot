@@ -4,13 +4,18 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use openbot_application::{
-    AgentContextError, AgentContextSource, ProviderMessage, ProviderMessageRole, ProviderRequest,
-    ProviderRoute, ProviderToolCall, ProviderToolDefinition, RemoteAguiRoute, RunExecutionLease,
+    AgentContextError, AgentContextSource, ComponentAdministration, ComponentRuntimeScope,
+    ProviderMessage, ProviderMessageRole, ProviderRequest, ProviderRoute, ProviderToolCall,
+    ProviderToolDefinition, RemoteAguiRoute, RunExecutionLease,
+};
+use openbot_contracts::components::{
+    compiled_component_manifest, compiled_component_parameter_schema,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use openbot_domain::remote_callback::{RemoteRunAssertionSigner, RemoteRunScope, RemoteToolSet};
 use serde_json::Value;
 
+use crate::component_catalogue::PostgresComponentAdministration;
 use crate::mcp_catalog::{GrantedMcpTool, McpCatalogError, PostgresMcpCatalog};
 
 // SPDX-License-Identifier: MIT
@@ -48,6 +53,7 @@ pub struct PostgresAgentContextSource {
     tools: Vec<ProviderToolDefinition>,
     remote_assertions: Option<std::sync::Arc<RemoteRunAssertionSigner>>,
     mcp_catalog: Option<std::sync::Arc<PostgresMcpCatalog>>,
+    components: Option<std::sync::Arc<PostgresComponentAdministration>>,
 }
 
 impl PostgresAgentContextSource {
@@ -71,6 +77,7 @@ impl PostgresAgentContextSource {
             tools: Vec::new(),
             remote_assertions: None,
             mcp_catalog: None,
+            components: None,
         })
     }
 
@@ -97,6 +104,16 @@ impl PostgresAgentContextSource {
         self.mcp_catalog = Some(catalog);
         self
     }
+
+    /// Attach the same compiled-component authority used by HTTP/Tauri call-time checks.
+    #[must_use]
+    pub fn with_components(
+        mut self,
+        components: std::sync::Arc<PostgresComponentAdministration>,
+    ) -> Self {
+        self.components = Some(components);
+        self
+    }
 }
 
 #[async_trait]
@@ -110,6 +127,8 @@ impl AgentContextSource for PostgresAgentContextSource {
         let visible = client
             .query_opt(
                 "SELECT a.type::text AS agent_type,a.name,a.configuration,p.title,p.role_description, \
+                        EXISTS(SELECT 1 FROM public.user_roles ur \
+                                WHERE ur.user_id=$4 AND ur.role='admin') AS actor_admin, \
                         floor(extract(epoch FROM clock_timestamp())*1000)::bigint \
                           AS assertion_issued_at_millis \
                    FROM public.runs r \
@@ -157,9 +176,52 @@ impl AgentContextSource for PostgresAgentContextSource {
                 .map_err(map_mcp_catalog_error)?,
             None => Vec::new(),
         };
+        let actor_admin: bool =
+            visible
+                .try_get("actor_admin")
+                .map_err(|_| AgentContextError::Corrupt {
+                    field: "actor_admin",
+                })?;
+        let component_tools = match &self.components {
+            Some(components) => {
+                let renderer_names = compiled_component_manifest()
+                    .into_iter()
+                    .map(|entry| entry.name)
+                    .collect::<Vec<_>>();
+                let granted = components
+                    .list_components_for_agent(
+                        &ComponentRuntimeScope {
+                            tenant: self.tenant.clone(),
+                            actor: lease.actor_id().clone(),
+                            admin: actor_admin,
+                            agent_id: lease.bot_id().clone(),
+                        },
+                        &renderer_names,
+                    )
+                    .await
+                    .map_err(map_component_error)?;
+                granted
+                    .components
+                    .into_iter()
+                    .map(|component| {
+                        let input_schema = compiled_component_parameter_schema(&component.name)
+                            .ok_or(AgentContextError::Corrupt {
+                                field: "component_schema",
+                            })?;
+                        Ok(ProviderToolDefinition {
+                            name: component.name,
+                            description: component.description,
+                            input_schema,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, AgentContextError>>()?
+            }
+            None => Vec::new(),
+        };
         let (route, standing_prompt, tools, max_output_tokens) = match agent_type.as_str() {
             "built_in" => {
                 let mut tools = self.tools.clone();
+                tools.extend(component_tools.clone());
                 tools.extend(granted_mcp.iter().map(|tool| tool.provider_definition()));
                 (
                     provider_route(&configuration)?,
@@ -238,9 +300,9 @@ impl AgentContextSource for PostgresAgentContextSource {
                         remote_standing_prompt(&name, &title, &role_description)?,
                         &granted_mcp,
                     ),
-                    granted_mcp
-                        .iter()
-                        .map(|tool| tool.provider_definition())
+                    component_tools
+                        .into_iter()
+                        .chain(granted_mcp.iter().map(|tool| tool.provider_definition()))
                         .collect(),
                     None,
                 )
@@ -406,6 +468,24 @@ impl AgentContextSource for PostgresAgentContextSource {
             tools,
             max_output_tokens,
         })
+    }
+}
+
+fn map_component_error(
+    error: openbot_application::ComponentAdministrationError,
+) -> AgentContextError {
+    match error {
+        openbot_application::ComponentAdministrationError::NotVisible => AgentContextError::Stale,
+        openbot_application::ComponentAdministrationError::Corrupt { .. }
+        | openbot_application::ComponentAdministrationError::InvalidInput { .. } => {
+            AgentContextError::Corrupt {
+                field: "component_catalogue",
+            }
+        }
+        openbot_application::ComponentAdministrationError::Unavailable
+        | openbot_application::ComponentAdministrationError::CommitUnknown => {
+            AgentContextError::Unavailable
+        }
     }
 }
 

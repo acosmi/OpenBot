@@ -359,6 +359,7 @@
     "activity_refusals_title": "近期拒绝",
     "activity_refusals_caption": "读取自此部署的审计记录",
     "activity_refusals_empty": "此部署尚未拒绝任何操作。",
+    "runtime_refused": "此次组件调用已被拒绝，或保存的参数无效。",
     "empty_title": "还没有组件",
     "empty_body": "同事渲染出来的组件会出现在这里。",
     "preview": "预览",

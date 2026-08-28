@@ -17,7 +17,7 @@ use openbot_contracts::command::{
     ThreadRunCancellationState, ThreadRunEvent, ThreadRunEventKind, ThreadRunStarted,
 };
 use openbot_contracts::ids::thread::ThreadIdentity;
-use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
+use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId, ThreadId};
 use openbot_domain::run::{Run, RunEvent, RunEventKind};
 use openbot_domain::thread::{FencingToken, Message, MessageId, MessageRole};
 use serde_json::{Value, json};
@@ -291,9 +291,10 @@ impl ThreadDirectory for PostgresThreadDirectory {
         })?;
         let rows = client
             .query(
-                "SELECT m.message_id,m.role,m.content \
+                "SELECT m.message_id,m.role,m.content,r.bot_id AS agent_id \
                  FROM public.messages m \
                  JOIN public.threads t ON t.thread_id=m.thread_id \
+                 LEFT JOIN public.runs r ON r.run_id=m.run_id \
                  WHERE t.thread_id=$1 AND t.deployment_id=$2 AND t.tenant_id=$3 \
                    AND t.status<>'deleted' AND ( \
                      (t.anchor_kind='direct_bot' AND EXISTS( \
@@ -336,9 +337,10 @@ impl ThreadDirectory for PostgresThreadDirectory {
                         coalesce(a.run_actors,'{}'::text[]) AS active_run_actors, \
                         coalesce(a.cancel_requested,'{}'::boolean[]) AS cancel_requested, \
                         coalesce(a.run_texts,'{}'::text[]) AS active_run_texts, \
-                        m.message_id,m.role,m.content \
+                        m.message_id,m.role,m.content,mr.bot_id AS agent_id \
                  FROM public.threads t \
                  LEFT JOIN public.messages m ON m.thread_id=t.thread_id \
+                 LEFT JOIN public.runs mr ON mr.run_id=m.run_id \
                  LEFT JOIN LATERAL ( \
                    SELECT array_agg(r.run_id ORDER BY r.created_at,r.run_id) AS run_ids, \
                           array_agg(r.status ORDER BY r.created_at,r.run_id) AS run_statuses, \
@@ -584,6 +586,7 @@ fn decode_history_message(
         _ => return Err(ThreadDirectoryError::Corrupt { field: "role" }),
     };
     let content = history_text(&value).ok_or(ThreadDirectoryError::Corrupt { field: "content" })?;
+    let agent_id = decode::<Option<String>>(row, "agent_id")?.map(BotId::new);
     let tool_call_id = if role == ThreadHistoryRole::Tool {
         Some(
             value
@@ -597,6 +600,29 @@ fn decode_history_message(
     } else {
         None
     };
+    let tool_name = if role == ThreadHistoryRole::Tool {
+        Some(
+            value
+                .get("toolName")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .ok_or(ThreadDirectoryError::Corrupt { field: "toolName" })?,
+        )
+    } else {
+        None
+    };
+    let tool_error_code = if role == ThreadHistoryRole::Tool {
+        match value.get("errorCode") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) if !value.is_empty() && !value.as_bytes().contains(&0) => {
+                Some(value.clone())
+            }
+            _ => return Err(ThreadDirectoryError::Corrupt { field: "errorCode" }),
+        }
+    } else {
+        None
+    };
     let tool_calls = if role == ThreadHistoryRole::Assistant {
         value.get("toolCalls").and_then(Value::as_array).cloned()
     } else {
@@ -606,7 +632,10 @@ fn decode_history_message(
         id,
         role,
         content,
+        agent_id,
         tool_call_id,
+        tool_name,
+        tool_error_code,
         tool_calls,
     })
 }

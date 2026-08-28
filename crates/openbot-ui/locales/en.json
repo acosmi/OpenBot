@@ -359,6 +359,7 @@
     "activity_refusals_title": "Recent refusals",
     "activity_refusals_caption": "Read from this deployment's audit trail",
     "activity_refusals_empty": "This deployment has refused nothing.",
+    "runtime_refused": "This component call was refused or its saved arguments were invalid.",
     "empty_title": "No components yet",
     "empty_body": "Components a coworker renders show up here.",
     "preview": "Preview",

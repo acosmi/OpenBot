@@ -96,7 +96,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0002"
     migration_rule: "preserve: showRecord / showMetrics / showChecklist / showNotice 四个工具名与参数 schema 不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch45 把 showRecord/showMetrics/showChecklist/showNotice 四个独立名字、closed 参数 schema、上游逐字确认语句注册进共享 Rust registry；PostgreSQL provider-context 实测只向模型发当前 published 且未按 Agent withheld 的定义，下一次上下文立即反映撤权。每次调用重新校验参数并走 fresh component decision，拒绝形成单个 durable error tool reply；会话投影把 assistant tool-call + tool result 合成一个安全 Leptos renderer，拒绝时只画共享 RefusedCard。contracts5/0/0、gateway5/0/0、UI conversation11/0/0、runtime1/0/0、PG provider1/0/0；release 真浏览器成功 Quote/拒绝 Notice 证明同一生产投影、拒绝正文不泄露、hard reload/1440/1024/600 overflow0。"
     evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献 showRecord / showMetrics / showChecklist / showNotice 四条"
     notes: "一个文件四个注册项，Leptos 版必须仍是四个独立工具名而不是一个带 kind 参数的合并组件（工具名是目录键、Admin 行键与 grant 键，合并会静默改掉三处身份）。① 参数 schema = RecordCardProps / MetricsCardProps / ChecklistCardProps / NoticeCardProps；②③④⑤ 与 gallery-activity 同一套：components.publishedDescription / componentExclusions / componentFunctions / gallery-tools.tsx::GrantedTool 的 handler + routes.ts 的 /decision 与 /call。本文件无 reads 回调，即不读部署数据，只画模型给的参数。"
 
@@ -107,7 +108,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0003"
     migration_rule: "preserve: showBarChart / showPieChart / showLineChart / showAreaChart / showProgress 五个工具名与参数 schema 不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch45 把 showBarChart/showPieChart/showLineChart/showAreaChart/showProgress 五个独立工具定义接入与 renderer 同源的共享 registry；Line/Area 复用同一 points schema，所有 schema closed，未知/多余/越界参数在 fresh decision 前拒绝。真实 PostgreSQL provider-context 证明 definition 与 current published/per-Agent withholding exact 且撤权下一次 load 生效；gateway 每次调用复核 component decision，durable history 按 call id 合并后由 Leptos 安全画图或共享 RefusedCard。contracts5/0/0、gateway5/0/0、UI conversation11/0/0、runtime1/0/0、PG provider1/0/0；8-crate Clippy、WASM、release bundle 五闸门全绿。"
     evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献五条，是 8 个文件里注册项最多的一个"
     notes: "五个注册项，其中 AreaChartProps 直接等于 LineChartProps（charts.tsx::AreaChartProps），Leptos 版要保留这层复用而不是抄两份 schema，否则两个工具的参数会各自漂移。① 参数 schema = BarChartProps / PieChartProps / LineChartProps / AreaChartProps / ProgressChartProps；②③④⑤ 同 gallery-activity。上游图表是手写 SVG（charts.tsx::Plot / Legend / Empty），不依赖 JS 图表库，因此 Leptos 版不需要引入运行时库；这一点与设计系统文档 §6.3〈六个运行时 JavaScript 库的替代〉不冲突，本轮未逐库核对，见本文件末尾未验证项。"
 
@@ -153,7 +155,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0007"
     migration_rule: "preserve: showQuote 工具名与参数 schema 不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch45 保留 showQuote 与 quote/attribution/optional context 的 closed schema、逐字 confirmation、published/per-Agent withholding 和 call-time fresh decision；成功/拒绝均写成一个可重放 tool result，ThreadHistoryMessage 显式携带 toolName/errorCode，UI 按 provider call id 合并为唯一 Quote 或共享 RefusedCard。contracts/gateway/UI/PG 全绿；真实 release 浏览器实得 Quote figure1、文案1、拒绝 Notice status1且 Refused fixture 不可见，普通 assistant 文本仍在，hard reload 后一致，duplicate id/nested article/1440/1024/600 overflow 均0。"
     evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献 showQuote 一条"
     notes: "① 参数 schema = quote.tsx::QuoteCardProps；②③④⑤ 同 gallery-activity（components.publishedDescription / componentExclusions / componentFunctions / gallery-tools.tsx::GrantedTool 的 handler + routes.ts 的 /decision 与 /call）。无 reads 回调，不读部署数据。"
 

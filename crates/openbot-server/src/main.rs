@@ -129,6 +129,7 @@ struct BuiltInAgentAssemblyInput {
     audit: Arc<dyn AgentAudit>,
     remote_assertions: Arc<RemoteRunAssertionSigner>,
     mcp_catalog: Arc<PostgresMcpCatalog>,
+    components: Arc<PostgresComponentAdministration>,
     budgets: AgentBudgets,
 }
 
@@ -478,7 +479,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_channel_routing(Arc::new(channel_routing));
     let application = application
         .with_agent_directory(Arc::new(PostgresAgentDirectory::new(pool.clone())))
-        .with_component_administration(components)
+        .with_component_administration(components.clone())
         .with_mcp_connections(mcp_connections.clone())
         .with_tool_approvals(tool_approvals)
         .with_ui_preferences(Arc::new(PostgresUiPreferenceAdministration::new(
@@ -517,6 +518,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         audit: agent_audit,
         remote_assertions: remote_assertions.clone(),
         mcp_catalog,
+        components,
         budgets: server.agent_budgets,
     })?;
     let built_in_agent_ready = built_in_agent.is_some() || !requires_agent_runtime;
@@ -621,6 +623,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         audit,
         remote_assertions,
         mcp_catalog,
+        components,
         budgets,
     } = input;
     if !required {
@@ -691,7 +694,8 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         PostgresAgentContextSource::new(pool, deployment, tenant, Some(budgets.max_output_tokens))?
             .with_tools(vec![remember_provider_tool()])
             .with_remote_assertions(remote_assertions)
-            .with_mcp_catalog(mcp_catalog),
+            .with_mcp_catalog(mcp_catalog)
+            .with_components(components),
     );
     let agent = BuiltInAgentRuntime::start(
         runtime,

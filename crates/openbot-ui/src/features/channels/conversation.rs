@@ -6,6 +6,7 @@
 )]
 
 use core::fmt::Write as _;
+use std::collections::BTreeMap;
 
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
@@ -16,7 +17,8 @@ use openbot_contracts::command::{
     ChannelDetail, ThreadConversationSnapshot, ThreadForegroundRunState, ThreadHistoryMessage,
     ThreadHistoryRole, ThreadRunEvent, ThreadRunEventKind,
 };
-use openbot_contracts::ids::{RunId, ThreadId};
+use openbot_contracts::components::compiled_component_parameter_schema;
+use openbot_contracts::ids::{BotId, RunId, ThreadId};
 use openbot_contracts::text::trim_ecmascript;
 use sha2::{Digest, Sha256};
 
@@ -29,6 +31,7 @@ use crate::api::{
 use crate::features::agents::{AgentPresence, AgentPresenceState};
 use crate::features::channels::composer::draft::{Segment, to_draft};
 use crate::features::channels::composer::queue::{QueueAction, QueuedMessage, reduce_queue};
+use crate::features::gallery::ConversationComponent;
 use crate::features::threads::tool_name::read_tool_name;
 use crate::features::threads::tool_result::for_display;
 use crate::i18n::{t, t_string, use_i18n};
@@ -53,6 +56,15 @@ enum TranscriptKind {
     Assistant,
     ToolCall,
     ToolResult,
+    Component,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TranscriptComponent {
+    name: String,
+    arguments: serde_json::Value,
+    error_code: Option<String>,
+    agent_id: Option<BotId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +72,7 @@ struct TranscriptLine {
     id: String,
     kind: TranscriptKind,
     content: String,
+    component: Option<TranscriptComponent>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,6 +274,7 @@ fn apply_live_event(
 
 fn project_history(messages: &[ThreadHistoryMessage]) -> Vec<TranscriptLine> {
     let mut projected = Vec::new();
+    let mut pending_components = BTreeMap::<String, usize>::new();
     for message in messages {
         match message.role {
             ThreadHistoryRole::System => {}
@@ -268,6 +282,7 @@ fn project_history(messages: &[ThreadHistoryMessage]) -> Vec<TranscriptLine> {
                 id: message.id.clone(),
                 kind: TranscriptKind::User,
                 content: message.content.clone(),
+                component: None,
             }),
             ThreadHistoryRole::Assistant => {
                 if !message.content.is_empty() {
@@ -275,40 +290,82 @@ fn project_history(messages: &[ThreadHistoryMessage]) -> Vec<TranscriptLine> {
                         id: message.id.clone(),
                         kind: TranscriptKind::Assistant,
                         content: message.content.clone(),
+                        component: None,
                     });
                 }
                 if let Some(tool_calls) = &message.tool_calls {
-                    let names = tool_calls
-                        .iter()
-                        .filter_map(|call| {
-                            call.get("function")
-                                .and_then(|function| function.get("name"))
-                                .and_then(serde_json::Value::as_str)
-                        })
-                        .map(|name| {
-                            let display = read_tool_name(name);
-                            display.detail.map_or(display.label.clone(), |detail| {
+                    let mut names = Vec::new();
+                    for call in tool_calls {
+                        let Some((call_id, name, arguments)) = durable_tool_call(call) else {
+                            continue;
+                        };
+                        if compiled_component_parameter_schema(&name).is_some() {
+                            let index = projected.len();
+                            projected.push(TranscriptLine {
+                                id: format!("{}:{call_id}", message.id),
+                                kind: TranscriptKind::Component,
+                                content: name.clone(),
+                                component: Some(TranscriptComponent {
+                                    name,
+                                    arguments,
+                                    error_code: Some("component_result_missing".to_owned()),
+                                    agent_id: message.agent_id.clone(),
+                                }),
+                            });
+                            pending_components.insert(call_id, index);
+                        } else {
+                            let display = read_tool_name(&name);
+                            names.push(display.detail.map_or(display.label.clone(), |detail| {
                                 format!("{} · {detail}", display.label)
-                            })
-                        })
-                        .collect::<Vec<_>>();
+                            }));
+                        }
+                    }
                     if !names.is_empty() {
                         projected.push(TranscriptLine {
                             id: format!("{}:tools", message.id),
                             kind: TranscriptKind::ToolCall,
                             content: names.join("\n"),
+                            component: None,
                         });
                     }
                 }
             }
-            ThreadHistoryRole::Tool => projected.push(TranscriptLine {
-                id: message.id.clone(),
-                kind: TranscriptKind::ToolResult,
-                content: for_display(&message.content),
-            }),
+            ThreadHistoryRole::Tool => {
+                if let Some(index) = message
+                    .tool_call_id
+                    .as_ref()
+                    .and_then(|call_id| pending_components.remove(call_id))
+                {
+                    if let Some(component) = projected[index].component.as_mut() {
+                        component.error_code = if message.tool_name.as_deref()
+                            == Some(component.name.as_str())
+                            && message.agent_id == component.agent_id
+                        {
+                            message.tool_error_code.clone()
+                        } else {
+                            Some("component_result_mismatch".to_owned())
+                        };
+                    }
+                } else {
+                    projected.push(TranscriptLine {
+                        id: message.id.clone(),
+                        kind: TranscriptKind::ToolResult,
+                        content: for_display(&message.content),
+                        component: None,
+                    });
+                }
+            }
         }
     }
     projected
+}
+
+fn durable_tool_call(call: &serde_json::Value) -> Option<(String, String, serde_json::Value)> {
+    let call_id = call.get("id")?.as_str()?.to_owned();
+    let function = call.get("function")?.as_object()?;
+    let name = function.get("name")?.as_str()?.to_owned();
+    let arguments = function.get("arguments")?.clone();
+    Some((call_id, name, arguments))
 }
 
 #[derive(Clone)]
@@ -817,6 +874,25 @@ fn TranscriptMessage(
     let user = message.kind == TranscriptKind::User;
     let kind = message.kind;
     let content = message.content;
+    let body = match message.component {
+        Some(component) => view! {
+            <ConversationComponent
+                name=component.name
+                arguments=component.arguments
+                error_code=component.error_code.or_else(|| {
+                    component.agent_id.is_none().then(|| "component_agent_missing".to_owned())
+                })
+                agent_id=component.agent_id.unwrap_or_else(|| BotId::new("unavailable"))
+            />
+        }
+        .into_any(),
+        None => view! {
+            <Bubble kind=if user { BubbleKind::User } else { BubbleKind::Assistant }>
+                <p class="ob-transcript-text">{content}</p>
+            </Bubble>
+        }
+        .into_any(),
+    };
     let avatar_seed = StoredValue::new(agent_seed);
     let avatar_name = StoredValue::new(agent_name);
     let label = move || match kind {
@@ -824,6 +900,7 @@ fn TranscriptMessage(
         TranscriptKind::Assistant => t_string!(i18n, channels.assistant_message_label).to_owned(),
         TranscriptKind::ToolCall => t_string!(i18n, channels.tool_call_label).to_owned(),
         TranscriptKind::ToolResult => t_string!(i18n, channels.tool_result_label).to_owned(),
+        TranscriptKind::Component => t_string!(i18n, channels.assistant_message_label).to_owned(),
     };
     view! {
         <MessageScrollerItem
@@ -853,9 +930,7 @@ fn TranscriptMessage(
                     } else {
                         avatar_name.get_value()
                     }}</MessageHeader>
-                    <Bubble kind=if user { BubbleKind::User } else { BubbleKind::Assistant }>
-                        <p class="ob-transcript-text">{content}</p>
-                    </Bubble>
+                    {body}
                 </MessageContent>
             </Message>
         </MessageScrollerItem>
@@ -1069,7 +1144,10 @@ mod tests {
                 id: "user-1".to_owned(),
                 role: ThreadHistoryRole::User,
                 content: "hello".to_owned(),
+                agent_id: None,
                 tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
                 tool_calls: None,
             }],
             active_run_id: Some(RunId::new("run-1")),
@@ -1091,30 +1169,42 @@ mod tests {
                 id: "system".to_owned(),
                 role: ThreadHistoryRole::System,
                 content: "secret standing instruction".to_owned(),
+                agent_id: None,
                 tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
                 tool_calls: None,
             },
             ThreadHistoryMessage {
                 id: "user".to_owned(),
                 role: ThreadHistoryRole::User,
                 content: "hello".to_owned(),
+                agent_id: None,
                 tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
                 tool_calls: None,
             },
             ThreadHistoryMessage {
                 id: "assistant".to_owned(),
                 role: ThreadHistoryRole::Assistant,
                 content: String::new(),
+                agent_id: None,
                 tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
                 tool_calls: Some(vec![
-                    serde_json::json!({"function":{"name":"mcp__notes__search_notes"}}),
+                    serde_json::json!({"id":"call-1","function":{"name":"mcp__notes__search_notes","arguments":{}}}),
                 ]),
             },
             ThreadHistoryMessage {
                 id: "tool".to_owned(),
                 role: ThreadHistoryRole::Tool,
                 content: serde_json::to_string("found it").unwrap(),
+                agent_id: None,
                 tool_call_id: Some("call-1".to_owned()),
+                tool_name: Some("mcp__notes__search_notes".to_owned()),
+                tool_error_code: None,
                 tool_calls: None,
             },
         ]);
@@ -1123,6 +1213,71 @@ mod tests {
         assert_eq!(lines[1].content, "Search notes");
         assert_eq!(lines[2].content, "found it");
         assert!(!format!("{lines:?}").contains("secret standing instruction"));
+    }
+
+    #[test]
+    fn durable_component_call_and_result_pair_into_one_transcript_renderer() {
+        let messages = [
+            ThreadHistoryMessage {
+                id: "component-call".to_owned(),
+                role: ThreadHistoryRole::Assistant,
+                content: String::new(),
+                agent_id: Some(BotId::new("bot-1")),
+                tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
+                tool_calls: Some(vec![serde_json::json!({
+                    "id":"provider-call-1",
+                    "type":"function",
+                    "function":{
+                        "name":"showQuote",
+                        "arguments":{"quote":"Exact words","attribution":"the report"}
+                    }
+                })]),
+            },
+            ThreadHistoryMessage {
+                id: "component-result".to_owned(),
+                role: ThreadHistoryRole::Tool,
+                content: "The quotation is now on screen for the person.".to_owned(),
+                agent_id: Some(BotId::new("bot-1")),
+                tool_call_id: Some("provider-call-1".to_owned()),
+                tool_name: Some("showQuote".to_owned()),
+                tool_error_code: None,
+                tool_calls: None,
+            },
+        ];
+        let lines = project_history(&messages);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].kind, TranscriptKind::Component);
+        let component = lines[0].component.as_ref().unwrap();
+        assert_eq!(component.name, "showQuote");
+        assert_eq!(component.arguments["quote"], "Exact words");
+        assert_eq!(component.error_code, None);
+        assert_eq!(component.agent_id, Some(BotId::new("bot-1")));
+
+        let mut refused = messages;
+        refused[1].tool_error_code = Some("component_withheld".to_owned());
+        assert_eq!(
+            project_history(&refused)[0]
+                .component
+                .as_ref()
+                .unwrap()
+                .error_code
+                .as_deref(),
+            Some("component_withheld")
+        );
+
+        refused[1].tool_error_code = None;
+        refused[1].agent_id = Some(BotId::new("bot-2"));
+        assert_eq!(
+            project_history(&refused)[0]
+                .component
+                .as_ref()
+                .unwrap()
+                .error_code
+                .as_deref(),
+            Some("component_result_mismatch")
+        );
     }
 
     #[test]

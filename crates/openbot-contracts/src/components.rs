@@ -567,6 +567,353 @@ fn manifest_entry(
     }
 }
 
+/// Stable validation failure for model-produced compiled-component arguments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ComponentArgumentsError {
+    /// This build has no ordinary compiled renderer by that name.
+    #[error("component_arguments_unknown_component")]
+    UnknownComponent,
+    /// Arguments do not satisfy the renderer's closed schema.
+    #[error("component_arguments_invalid field={field}")]
+    Invalid {
+        /// Static field only; model content never crosses the error boundary.
+        field: &'static str,
+    },
+}
+
+/// Exact parameter schema for one ordinary compiled renderer in this build.
+#[must_use]
+pub fn compiled_component_parameter_schema(name: &str) -> Option<Value> {
+    match name {
+        SHOW_ACTIVITY_REPORT_COMPONENT_NAME => Some(show_activity_report_parameter_schema()),
+        SHOW_AREA_CHART_COMPONENT_NAME => Some(show_area_chart_parameter_schema()),
+        SHOW_BAR_CHART_COMPONENT_NAME => Some(show_bar_chart_parameter_schema()),
+        SHOW_CHECKLIST_COMPONENT_NAME => Some(show_checklist_parameter_schema()),
+        SHOW_LINE_CHART_COMPONENT_NAME => Some(show_line_chart_parameter_schema()),
+        SHOW_METRICS_COMPONENT_NAME => Some(show_metrics_parameter_schema()),
+        SHOW_NOTICE_COMPONENT_NAME => Some(show_notice_parameter_schema()),
+        SHOW_PIE_CHART_COMPONENT_NAME => Some(show_pie_chart_parameter_schema()),
+        SHOW_PROGRESS_COMPONENT_NAME => Some(show_progress_parameter_schema()),
+        SHOW_QUOTE_COMPONENT_NAME => Some(show_quote_parameter_schema()),
+        SHOW_RECORD_COMPONENT_NAME => Some(show_record_parameter_schema()),
+        _ => None,
+    }
+}
+
+/// Exact upstream confirmation returned to the model after one ordinary component is authorized.
+#[must_use]
+pub fn compiled_component_confirmation(name: &str) -> Option<&'static str> {
+    match name {
+        SHOW_ACTIVITY_REPORT_COMPONENT_NAME => Some(
+            "The report is on screen for the person, filled with figures read from this deployment. You were not given the figures.",
+        ),
+        SHOW_AREA_CHART_COMPONENT_NAME => Some("The area chart is now on screen for the person."),
+        SHOW_BAR_CHART_COMPONENT_NAME => Some("The bar chart is now on screen for the person."),
+        SHOW_CHECKLIST_COMPONENT_NAME => Some("The checklist is now on screen for the person."),
+        SHOW_LINE_CHART_COMPONENT_NAME => Some("The line chart is now on screen for the person."),
+        SHOW_METRICS_COMPONENT_NAME => Some("The figures are now on screen for the person."),
+        SHOW_NOTICE_COMPONENT_NAME => Some("The notice is now on screen for the person."),
+        SHOW_PIE_CHART_COMPONENT_NAME => Some("The donut chart is now on screen for the person."),
+        SHOW_PROGRESS_COMPONENT_NAME => Some("The progress chart is now on screen for the person."),
+        SHOW_QUOTE_COMPONENT_NAME => Some("The quotation is now on screen for the person."),
+        SHOW_RECORD_COMPONENT_NAME => Some("The record is now on screen for the person."),
+        _ => None,
+    }
+}
+
+/// Human-facing title for one ordinary renderer; used only in a normalized refusal sentence.
+#[must_use]
+pub fn compiled_component_title(name: &str) -> Option<&'static str> {
+    match name {
+        SHOW_ACTIVITY_REPORT_COMPONENT_NAME => Some(SHOW_ACTIVITY_REPORT_COMPONENT_TITLE),
+        SHOW_AREA_CHART_COMPONENT_NAME => Some(SHOW_AREA_CHART_COMPONENT_TITLE),
+        SHOW_BAR_CHART_COMPONENT_NAME => Some(SHOW_BAR_CHART_COMPONENT_TITLE),
+        SHOW_CHECKLIST_COMPONENT_NAME => Some(SHOW_CHECKLIST_COMPONENT_TITLE),
+        SHOW_LINE_CHART_COMPONENT_NAME => Some(SHOW_LINE_CHART_COMPONENT_TITLE),
+        SHOW_METRICS_COMPONENT_NAME => Some(SHOW_METRICS_COMPONENT_TITLE),
+        SHOW_NOTICE_COMPONENT_NAME => Some(SHOW_NOTICE_COMPONENT_TITLE),
+        SHOW_PIE_CHART_COMPONENT_NAME => Some(SHOW_PIE_CHART_COMPONENT_TITLE),
+        SHOW_PROGRESS_COMPONENT_NAME => Some(SHOW_PROGRESS_COMPONENT_TITLE),
+        SHOW_QUOTE_COMPONENT_NAME => Some(SHOW_QUOTE_COMPONENT_TITLE),
+        SHOW_RECORD_COMPONENT_NAME => Some(SHOW_RECORD_COMPONENT_TITLE),
+        _ => None,
+    }
+}
+
+/// Validate one ordinary renderer call and derive its build-owned data functions from arguments.
+pub fn validate_compiled_component_arguments(
+    name: &str,
+    arguments: &Value,
+) -> Result<Vec<String>, ComponentArgumentsError> {
+    let object = arguments
+        .as_object()
+        .ok_or(invalid_component_arguments("arguments"))?;
+    match name {
+        SHOW_ACTIVITY_REPORT_COMPONENT_NAME => {
+            allowed_keys(object, &["report", "title", "days"])?;
+            optional_string(object, "title")?;
+            optional_number(object, "days")?;
+            match required_string(object, "report")? {
+                "activity" => Ok(vec![BOT_ACTIVITY_FUNCTION_NAME.to_owned()]),
+                "refusals" => Ok(vec![RECENT_REFUSALS_FUNCTION_NAME.to_owned()]),
+                _ => Err(invalid_component_arguments("report")),
+            }
+        }
+        SHOW_QUOTE_COMPONENT_NAME => {
+            allowed_keys(object, &["quote", "attribution", "context"])?;
+            required_string(object, "quote")?;
+            required_string(object, "attribution")?;
+            optional_string(object, "context")?;
+            Ok(Vec::new())
+        }
+        SHOW_RECORD_COMPONENT_NAME => {
+            allowed_keys(
+                object,
+                &["title", "subtitle", "status", "statusTone", "fields"],
+            )?;
+            required_string(object, "title")?;
+            optional_string(object, "subtitle")?;
+            optional_string(object, "status")?;
+            optional_tone(object, "statusTone")?;
+            object_array(object, "fields", |field| {
+                allowed_keys(field, &["label", "value"])?;
+                required_string(field, "label")?;
+                required_string(field, "value")?;
+                Ok(())
+            })?;
+            Ok(Vec::new())
+        }
+        SHOW_METRICS_COMPONENT_NAME => {
+            allowed_keys(object, &["title", "caption", "metrics"])?;
+            required_string(object, "title")?;
+            optional_string(object, "caption")?;
+            let metrics = required_array(object, "metrics")?;
+            if metrics.len() > 6 {
+                return Err(invalid_component_arguments("metrics"));
+            }
+            for metric in metrics {
+                let metric = metric
+                    .as_object()
+                    .ok_or(invalid_component_arguments("metrics"))?;
+                allowed_keys(metric, &["label", "value", "change", "changeTone"])?;
+                required_string(metric, "label")?;
+                required_string(metric, "value")?;
+                optional_string(metric, "change")?;
+                optional_tone(metric, "changeTone")?;
+            }
+            Ok(Vec::new())
+        }
+        SHOW_CHECKLIST_COMPONENT_NAME => {
+            allowed_keys(object, &["title", "caption", "items"])?;
+            required_string(object, "title")?;
+            optional_string(object, "caption")?;
+            object_array(object, "items", |item| {
+                allowed_keys(item, &["text", "done", "note"])?;
+                required_string(item, "text")?;
+                required_bool(item, "done")?;
+                optional_string(item, "note")?;
+                Ok(())
+            })?;
+            Ok(Vec::new())
+        }
+        SHOW_NOTICE_COMPONENT_NAME => {
+            allowed_keys(object, &["title", "body", "tone", "points"])?;
+            required_string(object, "title")?;
+            required_string(object, "body")?;
+            optional_tone(object, "tone")?;
+            optional_string_array(object, "points")?;
+            Ok(Vec::new())
+        }
+        SHOW_BAR_CHART_COMPONENT_NAME | SHOW_PIE_CHART_COMPONENT_NAME => {
+            point_chart_arguments(object, false)?;
+            Ok(Vec::new())
+        }
+        SHOW_PROGRESS_COMPONENT_NAME => {
+            point_chart_arguments(object, true)?;
+            Ok(Vec::new())
+        }
+        SHOW_LINE_CHART_COMPONENT_NAME | SHOW_AREA_CHART_COMPONENT_NAME => {
+            allowed_keys(object, &["title", "caption", "labels", "series"])?;
+            required_string(object, "title")?;
+            optional_string(object, "caption")?;
+            required_string_array(object, "labels")?;
+            object_array(object, "series", |series| {
+                allowed_keys(series, &["name", "values"])?;
+                required_string(series, "name")?;
+                required_number_array(series, "values")?;
+                Ok(())
+            })?;
+            Ok(Vec::new())
+        }
+        _ => Err(ComponentArgumentsError::UnknownComponent),
+    }
+}
+
+fn point_chart_arguments(
+    object: &serde_json::Map<String, Value>,
+    target: bool,
+) -> Result<(), ComponentArgumentsError> {
+    allowed_keys(object, &["title", "caption", "points"])?;
+    required_string(object, "title")?;
+    optional_string(object, "caption")?;
+    object_array(object, "points", |point| {
+        if target {
+            allowed_keys(point, &["label", "value", "target"])?;
+        } else {
+            allowed_keys(point, &["label", "value"])?;
+        }
+        required_string(point, "label")?;
+        required_number(point, "value")?;
+        if target {
+            required_number(point, "target")?;
+        }
+        Ok(())
+    })
+}
+
+fn allowed_keys(
+    object: &serde_json::Map<String, Value>,
+    allowed: &[&str],
+) -> Result<(), ComponentArgumentsError> {
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        Err(invalid_component_arguments("additional_properties"))
+    } else {
+        Ok(())
+    }
+}
+
+fn required_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<&'a str, ComponentArgumentsError> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or(invalid_component_arguments(field))
+}
+
+fn optional_string(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<(), ComponentArgumentsError> {
+    match object.get(field) {
+        None | Some(Value::String(_)) => Ok(()),
+        _ => Err(invalid_component_arguments(field)),
+    }
+}
+
+fn required_bool(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<(), ComponentArgumentsError> {
+    object
+        .get(field)
+        .filter(|value| value.is_boolean())
+        .map(|_| ())
+        .ok_or(invalid_component_arguments(field))
+}
+
+fn required_number(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<(), ComponentArgumentsError> {
+    object
+        .get(field)
+        .filter(|value| value.is_number())
+        .map(|_| ())
+        .ok_or(invalid_component_arguments(field))
+}
+
+fn optional_number(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<(), ComponentArgumentsError> {
+    match object.get(field) {
+        None | Some(Value::Number(_)) => Ok(()),
+        _ => Err(invalid_component_arguments(field)),
+    }
+}
+
+fn optional_tone(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<(), ComponentArgumentsError> {
+    match object.get(field) {
+        None => Ok(()),
+        Some(Value::String(value))
+            if matches!(
+                value.as_str(),
+                "neutral" | "positive" | "caution" | "negative"
+            ) =>
+        {
+            Ok(())
+        }
+        _ => Err(invalid_component_arguments(field)),
+    }
+}
+
+fn required_array<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<&'a Vec<Value>, ComponentArgumentsError> {
+    object
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or(invalid_component_arguments(field))
+}
+
+fn object_array(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+    validate: impl Fn(&serde_json::Map<String, Value>) -> Result<(), ComponentArgumentsError>,
+) -> Result<(), ComponentArgumentsError> {
+    for value in required_array(object, field)? {
+        validate(
+            value
+                .as_object()
+                .ok_or(invalid_component_arguments(field))?,
+        )?;
+    }
+    Ok(())
+}
+
+fn required_string_array(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<(), ComponentArgumentsError> {
+    if required_array(object, field)?.iter().all(Value::is_string) {
+        Ok(())
+    } else {
+        Err(invalid_component_arguments(field))
+    }
+}
+
+fn optional_string_array(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<(), ComponentArgumentsError> {
+    match object.get(field) {
+        None => Ok(()),
+        Some(Value::Array(values)) if values.iter().all(Value::is_string) => Ok(()),
+        _ => Err(invalid_component_arguments(field)),
+    }
+}
+
+fn required_number_array(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<(), ComponentArgumentsError> {
+    if required_array(object, field)?.iter().all(Value::is_number) {
+        Ok(())
+    } else {
+        Err(invalid_component_arguments(field))
+    }
+}
+
+const fn invalid_component_arguments(field: &'static str) -> ComponentArgumentsError {
+    ComponentArgumentsError::Invalid { field }
+}
+
 /// Exact JSON Schema for `showActivityReport`.
 #[must_use]
 pub fn show_activity_report_parameter_schema() -> Value {
@@ -1044,6 +1391,113 @@ mod tests {
                 error: None,
             }
             .is_consistent()
+        );
+    }
+
+    #[test]
+    fn ordinary_component_registry_validates_all_eleven_and_derives_only_activity_reads() {
+        let cases = [
+            (
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
+                json!({"report":"activity"}),
+                1,
+            ),
+            (
+                SHOW_AREA_CHART_COMPONENT_NAME,
+                json!({"title":"A","labels":[],"series":[]}),
+                0,
+            ),
+            (
+                SHOW_BAR_CHART_COMPONENT_NAME,
+                json!({"title":"B","points":[]}),
+                0,
+            ),
+            (
+                SHOW_CHECKLIST_COMPONENT_NAME,
+                json!({"title":"C","items":[]}),
+                0,
+            ),
+            (
+                SHOW_LINE_CHART_COMPONENT_NAME,
+                json!({"title":"L","labels":[],"series":[]}),
+                0,
+            ),
+            (
+                SHOW_METRICS_COMPONENT_NAME,
+                json!({"title":"M","metrics":[]}),
+                0,
+            ),
+            (
+                SHOW_NOTICE_COMPONENT_NAME,
+                json!({"title":"N","body":"Body"}),
+                0,
+            ),
+            (
+                SHOW_PIE_CHART_COMPONENT_NAME,
+                json!({"title":"P","points":[]}),
+                0,
+            ),
+            (
+                SHOW_PROGRESS_COMPONENT_NAME,
+                json!({"title":"P","points":[]}),
+                0,
+            ),
+            (
+                SHOW_QUOTE_COMPONENT_NAME,
+                json!({"quote":"Q","attribution":"A"}),
+                0,
+            ),
+            (
+                SHOW_RECORD_COMPONENT_NAME,
+                json!({"title":"R","fields":[]}),
+                0,
+            ),
+        ];
+        for (name, arguments, function_count) in cases {
+            assert!(
+                compiled_component_parameter_schema(name).is_some(),
+                "{name}"
+            );
+            assert!(compiled_component_confirmation(name).is_some(), "{name}");
+            assert!(compiled_component_title(name).is_some(), "{name}");
+            assert_eq!(
+                validate_compiled_component_arguments(name, &arguments)
+                    .unwrap()
+                    .len(),
+                function_count,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            validate_compiled_component_arguments(
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
+                &json!({"report":"refusals"}),
+            )
+            .unwrap(),
+            [RECENT_REFUSALS_FUNCTION_NAME]
+        );
+        for invalid in [
+            json!({"report":"unknown"}),
+            json!({"report":"activity","function":"botActivity"}),
+        ] {
+            assert!(
+                validate_compiled_component_arguments(
+                    SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
+                    &invalid,
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            validate_compiled_component_arguments(
+                SHOW_METRICS_COMPONENT_NAME,
+                &json!({"title":"M","metrics":[{},{},{},{},{},{},{}]}),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            validate_compiled_component_arguments("showStale", &json!({})),
+            Err(ComponentArgumentsError::UnknownComponent)
         );
     }
 }

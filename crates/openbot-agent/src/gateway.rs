@@ -10,6 +10,10 @@ use openbot_application::{
 };
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
+use openbot_contracts::components::{
+    ComponentDecisionRefusal, ComponentDecisionRequest, compiled_component_confirmation,
+    compiled_component_title, validate_compiled_component_arguments,
+};
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::{BotId, RunId, ToolCallId};
 use openbot_contracts::tool::{ToolInvocation, ToolResult};
@@ -295,6 +299,81 @@ impl AuthorizedAgentToolGateway {
             authorization,
         }
     }
+
+    async fn invoke_component(
+        &self,
+        auth: AuthContext,
+        lease: &RunExecutionLease,
+        name: &str,
+        arguments: &Value,
+    ) -> Option<Result<AgentToolReply, AgentToolInvokeError>> {
+        let confirmation = compiled_component_confirmation(name)?;
+        let call_id = ToolCallId::new(Uuid::now_v7().to_string());
+        let functions = match validate_compiled_component_arguments(name, arguments) {
+            Ok(functions) => functions,
+            Err(_) => {
+                return Some(Ok(normalized_error_reply(
+                    call_id,
+                    "invalid_arguments",
+                    "Component arguments were invalid, so nothing was shown.",
+                )));
+            }
+        };
+        let result = self
+            .gateway
+            .application()
+            .execute(
+                auth,
+                AppCommand::DecideComponent {
+                    component_name: name.to_owned(),
+                    request: ComponentDecisionRequest {
+                        agent_id: lease.bot_id().clone(),
+                        functions,
+                    },
+                },
+            )
+            .await;
+        Some(match result {
+            Ok(AppReply::ComponentDecision(decision)) if decision.allowed => {
+                AgentToolReply::new(call_id, confirmation.to_owned(), None)
+            }
+            Ok(AppReply::ComponentDecision(decision)) => match decision.refusal {
+                Some(refusal) => AgentToolReply::new(
+                    call_id,
+                    component_refusal_message(name, &refusal),
+                    Some(refusal.code_str().to_owned()),
+                ),
+                None => Err(AgentToolInvokeError::Unavailable),
+            },
+            Ok(_) => Err(AgentToolInvokeError::Unavailable),
+            Err(AppError::MalformedPayload { .. }) => Ok(normalized_error_reply(
+                call_id,
+                "invalid_arguments",
+                "Component arguments were invalid, so nothing was shown.",
+            )),
+            Err(AppError::NotVisible | AppError::ForbiddenRole { .. }) => {
+                Ok(normalized_error_reply(
+                    call_id,
+                    "component_not_available",
+                    "Component is not available, so nothing was shown.",
+                ))
+            }
+            Err(AppError::ReconciliationRequired { .. }) => {
+                Err(AgentToolInvokeError::ReconciliationRequired)
+            }
+            Err(
+                AppError::Unauthenticated
+                | AppError::DependencyUnavailable { .. }
+                | AppError::VendorFailure { .. }
+                | AppError::PolicyRefused { .. }
+                | AppError::StaleGeneration { .. }
+                | AppError::RequestConflict { .. }
+                | AppError::LeaseConflict { .. }
+                | AppError::IdentityConflict { .. }
+                | AppError::SensitiveWriteRefused { .. },
+            ) => Err(AgentToolInvokeError::Unavailable),
+        })
+    }
 }
 
 impl core::fmt::Debug for AuthorizedAgentToolGateway {
@@ -317,6 +396,12 @@ impl AgentToolInvoker for AuthorizedAgentToolGateway {
             .load(lease)
             .await
             .map_err(|_| AgentToolInvokeError::Unavailable)?;
+        if let Some(result) = self
+            .invoke_component(auth.clone(), lease, tool_name, &arguments)
+            .await
+        {
+            return result;
+        }
         let (call_id, result) = self
             .gateway
             .invoke_captured(
@@ -406,6 +491,28 @@ fn normalized_error_reply(call_id: ToolCallId, error_code: &str, content: &str) 
         .expect("static normalized tool reply is valid")
 }
 
+fn component_refusal_message(name: &str, refusal: &ComponentDecisionRefusal) -> String {
+    let title = compiled_component_title(name).unwrap_or("Component");
+    let reason = match refusal {
+        ComponentDecisionRefusal::UnknownComponent
+        | ComponentDecisionRefusal::Unpublished
+        | ComponentDecisionRefusal::WithheldFromAgent => "It is not available to this Bot now.",
+        ComponentDecisionRefusal::FunctionNotGranted { .. } => {
+            "An administrator has not granted the data function it needs."
+        }
+        ComponentDecisionRefusal::FunctionUnavailable { .. } => {
+            "This build does not provide the data function it needs."
+        }
+        ComponentDecisionRefusal::FunctionActorNotAuthorized { .. } => {
+            "The person is not allowed to read the underlying data."
+        }
+        ComponentDecisionRefusal::FunctionPolicyRefused { .. } => {
+            "The current action policy refused the underlying data read."
+        }
+    };
+    format!("Not shown: {title}. {reason} Nothing was displayed, so tell the person that.")
+}
+
 impl core::fmt::Debug for AgentToolGateway {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("AgentToolGateway")
@@ -447,11 +554,16 @@ mod tests {
     use core::time::Duration;
 
     use async_trait::async_trait;
-    use openbot_application::{AppEventStream, health};
+    use openbot_application::{AgentAuthorizationError, AppEventStream, health};
     use openbot_contracts::auth::Role;
     use openbot_contracts::command::{HealthReport, SubscriptionRequest};
-    use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
+    use openbot_contracts::components::{
+        BOT_ACTIVITY_FUNCTION_NAME, ComponentDecision, SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
+        SHOW_QUOTE_COMPONENT_NAME,
+    };
+    use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
     use openbot_contracts::tool::{ToolCommitState, ToolResult};
+    use openbot_domain::thread::FencingToken;
     use serde_json::json;
 
     use super::*;
@@ -459,6 +571,55 @@ mod tests {
     struct FakeApplication {
         calls: Mutex<Vec<(ActorId, ToolInvocation)>>,
         wrong_reply: bool,
+    }
+
+    struct ComponentApplication {
+        decision: ComponentDecision,
+        calls: Mutex<Vec<(ActorId, String, ComponentDecisionRequest)>>,
+    }
+
+    #[async_trait]
+    impl ApplicationService for ComponentApplication {
+        async fn execute(
+            &self,
+            auth: AuthContext,
+            command: AppCommand,
+        ) -> Result<AppReply, AppError> {
+            let AppCommand::DecideComponent {
+                component_name,
+                request,
+            } = command
+            else {
+                return Ok(AppReply::Health(HealthReport { ok: true }));
+            };
+            self.calls
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), component_name, request));
+            Ok(AppReply::ComponentDecision(self.decision.clone()))
+        }
+
+        async fn subscribe(
+            &self,
+            _auth: AuthContext,
+            _request: SubscriptionRequest,
+        ) -> Result<AppEventStream, AppError> {
+            Ok(openbot_application::use_cases::health_stream(
+                Duration::from_secs(1),
+            ))
+        }
+    }
+
+    struct FixedAuthorization;
+
+    #[async_trait]
+    impl AgentAuthorizationSource for FixedAuthorization {
+        async fn load(
+            &self,
+            lease: &RunExecutionLease,
+        ) -> Result<AuthContext, AgentAuthorizationError> {
+            Ok(auth(lease.actor_id().as_str()))
+        }
     }
 
     #[async_trait]
@@ -515,6 +676,18 @@ mod tests {
             calls: Mutex::new(Vec::new()),
             wrong_reply,
         })
+    }
+
+    fn lease() -> RunExecutionLease {
+        RunExecutionLease::new(
+            RunId::new("run-component"),
+            ThreadId::new("thread-component"),
+            BotId::new("bot-1"),
+            ActorId::new("actor-verified"),
+            FencingToken::new(1).unwrap(),
+            0,
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -596,5 +769,74 @@ mod tests {
             .await
             .expect_err("非 Tool reply 必须报契约破损");
         assert_eq!(error.code().as_str(), "dependency_unavailable");
+    }
+
+    #[tokio::test]
+    async fn ordinary_components_validate_derive_functions_and_use_fresh_decision() {
+        let application = Arc::new(ComponentApplication {
+            decision: ComponentDecision::allowed(),
+            calls: Mutex::new(Vec::new()),
+        });
+        let gateway =
+            AuthorizedAgentToolGateway::new(application.clone(), Arc::new(FixedAuthorization));
+        let quote = gateway
+            .invoke(
+                &lease(),
+                SHOW_QUOTE_COMPONENT_NAME,
+                json!({"quote":"Exact words","attribution":"the report"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            quote.content(),
+            "The quotation is now on screen for the person."
+        );
+        assert_eq!(quote.error_code(), None);
+        let activity = gateway
+            .invoke(
+                &lease(),
+                SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
+                json!({"report":"activity","days":7}),
+            )
+            .await
+            .unwrap();
+        assert!(activity.content().contains("filled with figures"));
+        {
+            let calls = application.calls.lock().unwrap();
+            assert_eq!(calls.len(), 2);
+            assert_eq!(calls[0].0.as_str(), "actor-verified");
+            assert!(calls[0].2.functions.is_empty());
+            assert_eq!(calls[1].2.functions, [BOT_ACTIVITY_FUNCTION_NAME]);
+        }
+
+        let invalid = gateway
+            .invoke(
+                &lease(),
+                SHOW_QUOTE_COMPONENT_NAME,
+                json!({"quote":"missing attribution"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.error_code(), Some("invalid_arguments"));
+        assert_eq!(application.calls.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn component_refusal_is_one_durable_model_visible_error_reply() {
+        let application = Arc::new(ComponentApplication {
+            decision: ComponentDecision::refused(ComponentDecisionRefusal::WithheldFromAgent),
+            calls: Mutex::new(Vec::new()),
+        });
+        let gateway = AuthorizedAgentToolGateway::new(application, Arc::new(FixedAuthorization));
+        let reply = gateway
+            .invoke(
+                &lease(),
+                SHOW_QUOTE_COMPONENT_NAME,
+                json!({"quote":"Exact words","attribution":"the report"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.error_code(), Some("component_withheld"));
+        assert!(reply.content().starts_with("Not shown: Quotation."));
     }
 }

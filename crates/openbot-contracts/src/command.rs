@@ -601,9 +601,18 @@ pub struct ThreadHistoryMessage {
     pub role: ThreadHistoryRole,
     /// 文本 content；assistant tool-only message 可为空。
     pub content: String,
+    /// Server-derived Agent identity for messages attached to a run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<BotId>,
     /// Tool result 指向的 call id；只对 role=tool 存在。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Tool result's authoritative catalog name; only role=tool may carry it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    /// Stable tool/component refusal code; only role=tool may carry it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_error_code: Option<String>,
     /// Assistant tool calls 的结构化 AG-UI 值；当前 begin slice 为空，G4 writer 接入后使用。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<serde_json::Value>>,
@@ -1103,7 +1112,10 @@ mod tests {
                 id: "message-1".to_owned(),
                 role: ThreadHistoryRole::User,
                 content: "hello".to_owned(),
+                agent_id: None,
                 tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
                 tool_calls: None,
             }],
             active_run_id: Some(RunId::new("run-1")),
@@ -1448,7 +1460,10 @@ mod tests {
                 id: "m-1".to_owned(),
                 role: ThreadHistoryRole::User,
                 content: "hello".to_owned(),
+                agent_id: None,
                 tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
                 tool_calls: None,
             }],
         });

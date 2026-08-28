@@ -899,14 +899,78 @@ impl FixtureThreads {
                         id: "fixture-user-message".to_owned(),
                         role: ThreadHistoryRole::User,
                         content: "Categorize these expenses.".to_owned(),
+                        agent_id: Some(BotId::new("bot-0")),
                         tool_call_id: None,
+                        tool_name: None,
+                        tool_error_code: None,
                         tool_calls: None,
                     },
                     ThreadHistoryMessage {
                         id: "fixture-assistant-message".to_owned(),
                         role: ThreadHistoryRole::Assistant,
                         content: "Categorized three expenses.".to_owned(),
+                        agent_id: Some(BotId::new("bot-0")),
                         tool_call_id: None,
+                        tool_name: None,
+                        tool_error_code: None,
+                        tool_calls: None,
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-component-call".to_owned(),
+                        role: ThreadHistoryRole::Assistant,
+                        content: String::new(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: None,
+                        tool_name: None,
+                        tool_error_code: None,
+                        tool_calls: Some(vec![serde_json::json!({
+                            "id":"fixture-provider-component",
+                            "type":"function",
+                            "function":{
+                                "name":"showQuote",
+                                "arguments":{
+                                    "quote":"Receipts are required above $75.",
+                                    "attribution":"the expense policy",
+                                    "context":"Fixture durable component"
+                                }
+                            }
+                        })]),
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-component-result".to_owned(),
+                        role: ThreadHistoryRole::Tool,
+                        content: "The quotation is now on screen for the person.".to_owned(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: Some("fixture-provider-component".to_owned()),
+                        tool_name: Some("showQuote".to_owned()),
+                        tool_error_code: None,
+                        tool_calls: None,
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-refused-component-call".to_owned(),
+                        role: ThreadHistoryRole::Assistant,
+                        content: String::new(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: None,
+                        tool_name: None,
+                        tool_error_code: None,
+                        tool_calls: Some(vec![serde_json::json!({
+                            "id":"fixture-provider-refused-component",
+                            "type":"function",
+                            "function":{
+                                "name":"showNotice",
+                                "arguments":{"title":"Would have shown","body":"Refused fixture"}
+                            }
+                        })]),
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-refused-component-result".to_owned(),
+                        role: ThreadHistoryRole::Tool,
+                        content: "Not shown: Notice.".to_owned(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: Some("fixture-provider-refused-component".to_owned()),
+                        tool_name: Some("showNotice".to_owned()),
+                        tool_error_code: Some("component_withheld".to_owned()),
                         tool_calls: None,
                     },
                 ],
@@ -1024,7 +1088,10 @@ impl ThreadDirectory for FixtureThreads {
                 id: format!("{}:user", run.as_str()),
                 role: ThreadHistoryRole::User,
                 content: request.command.message.clone(),
+                agent_id: Some(request.command.bot_id.clone()),
                 tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
                 tool_calls: None,
             });
             snapshot.active_run_id = Some(run.clone());
@@ -1105,7 +1172,10 @@ impl ThreadDirectory for FixtureThreads {
                     id: format!("{}:assistant", run.as_str()),
                     role: ThreadHistoryRole::Assistant,
                     content: "Fixture reply".to_owned(),
+                    agent_id: None,
                     tool_call_id: None,
+                    tool_name: None,
+                    tool_error_code: None,
                     tool_calls: None,
                 });
                 snapshot.active_run_id = None;
@@ -1201,7 +1271,10 @@ impl ThreadDirectory for FixtureThreads {
                         id: format!("{}:assistant", terminal_run.as_str()),
                         role: ThreadHistoryRole::Assistant,
                         content: snapshot.active_run_text.clone(),
+                        agent_id: None,
                         tool_call_id: None,
+                        tool_name: None,
+                        tool_error_code: None,
                         tool_calls: None,
                     });
                 }
