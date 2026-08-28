@@ -34,10 +34,11 @@
 //! Sidebar；27 条 primitive 子账全 done。Batch 24 关闭46条 Lucide mapping，Batch 25 闭合
 //! layout 组四条业务组件并把 PageShell 接入 production Approval，Batch 26 以同一
 //! AgentPresence 关闭orb/ai-core两条，Batch 27 以唯一中性线稿关闭ComputerPlaceholder/Art两条。
-//! Batch 28 接通生产session status/sign-out WASM helper，Batch29接通channel realtime，Batch30
-//! 又落真实channel detail destination shell、分页/search/reconnect-refetch roster与ChannelRow。
-//! AppSidebar仍缺未迁移nav destinations，完整channel transcript/composer route journey、其余业务/
-//! golden 与可发布 Tauri 宿主仍按台账保持未完成，不能由本 crate 存在而推导为 G6 整关通过。
+//! Batch 28–35继续接通session sign-out、channel realtime/detail/roster/create/routing/conversation、
+//! durable Stop与mount-local queue；Batch36–39再落Memory Controls、Settings Preferences/stable
+//! owner、200px secondary shell与reviewed Connected Accounts index/detail。AppSidebar仍缺skills/admin
+//! destinations；完整Composer/Screen、其余route/业务/golden与可发布Tauri宿主仍按台账保持未完成，
+//! 不能由本 crate 存在而推导为G4/G6整关通过。
 
 #![deny(missing_docs)]
 

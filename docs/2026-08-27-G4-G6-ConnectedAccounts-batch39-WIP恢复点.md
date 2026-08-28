@@ -4,6 +4,9 @@
 > `f083edc`。固定上游`CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`。
 > 本机定向测试；不运行`cargo xtask ci`，不派发Actions，不触碰`docs/assets/`。
 
+> 已完成：implementation `52b2c4f59906da58ae5d2d7db62adfcce90f9af5`；正式边界与证据见
+> `docs/2026-08-27-G4-G6-ConnectedAccounts-batch39.md`与R102。本文件保留为恢复点历史。
+
 ## 第一真源与缺口
 
 - 上游index只列`auth=user-oauth`且管理员已add的catalogue，join本人connection后显示Connected/
@@ -36,4 +39,3 @@
 - 不实现admin custom connector/catalogue UI、Google brand asset、connected accounts formal golden；
 - 不实现Desktop Local OAuth、restricted-scope外部verification/security assessment；
 - 证据不足时不关闭T-ROUTE-0029/0030。
-
