@@ -88,13 +88,14 @@ entries:
   - id: settings-shell-layout
     upstream: app/src/routes/_authed/settings/route.tsx
     label: parity
-    target: "openbot_ui::shell::layout::settings -> /settings（layout 段）"
+    target: "openbot_ui::features::settings::SettingsShell -> /settings（layout 段）"
     owner: openbot-ui
     test_id: T-ROUTE-0005
     migration_rule: "preserve: settings 二级侧栏保留；宽度改为设计系统 §5.1 的 200px（尺寸是新增契约）"
-    status: todo
+    status: done
+    done_evidence: "Batch38 release WASM/browser：SettingsShell只包裹/settings与/settings/memory；secondary nav按--size-subnav实得200px，named Settings nav含Back to app/General/Memory三条同源链接，connected accounts/gallery断链为0。General exact与Memory current始终恰1；两route点击+hard reload保持shell/current/h1，Back回/后secondary=0。1440/1024/900为200px双列，600堆叠单列；General与Memory均X overflow0、main1/nav2/h1 1、duplicate IDs/visible alerts/console 0。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/settings/route.tsx 得 createFileRoute(\"/_authed/settings\")；同文件渲染 SidebarProvider + SettingsSidebar + main"
-    notes: "模板 n/a（layout，非页面）。journey：进入个人设置区，左侧换成 SettingsSidebar。权限：无额外守卫，已登录即可见（上游 beforeLoad 在本文件 0 命中）。"
+    notes: "模板n/a（layout，非页面）。journey：进入个人设置区后在200px二级nav切General/Memory并可返回app；权限无额外守卫，已登录即可见。固定上游还列Connected accounts/Components gallery，但对应production route尚未实现，当前shell构造性不画断链；它们各自route与settings-sidebar业务/golden条目继续todo。"
 
   # ---------------------------------------------------------------------------
   # 26 个页面
