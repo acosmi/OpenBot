@@ -1748,7 +1748,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     缺行默认enabled。disabled在同一事务拒绝GUI remember、correct与built-in `remember` tool，
     但list/recall/forbid/delete始终可用。`/settings/memory`以owner keyset展示status/kind/sensitivity/
     scope/provenance/tags，支持load-more、correct replacement、forbid/delete内容擦除与中英双语；
-  - [ ] 实际 legacy exporter/production bundle 三次演练尚未闭合。
+  - [ ] 实际 legacy exporter/production bundle 三次演练尚未闭合：固定上游公开源码只有按已知
+    `(threadId,userId)`的`getThread`与单thread messages读取，没有thread枚举、semantic event或
+    observable memory export；不得猜managed private endpoint，等待合同/法务许可的customer API/数据。
 - [ ] **G4**：整关未通过；以下 Rust built-in Agent 子面已有本机机械证据：
   - [x] pure reducer + bounded dispatch consumer；reserve→durable ack→activate、activation 起算 absolute deadline/lease heartbeat、cancel 等 children stopped；
   - [x] OpenAI-compatible Responses + Chat adapter：safe dialer、SSE UTF-8/multiline、skeleton/延迟字段、partial JSON、交错 tool calls、未知扩展、真实 read-gap stall；
@@ -1784,7 +1786,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
-  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 452 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
+  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 455 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
   - [x] Axum `APP_DIST_DIR` 条件挂同一 bundle，唯一同源 external bootstrap、strict CSP/安全头、cookie/Accept-Language 首帧 `<html class lang>` Rust 改写、API/缺失 asset 不被 SPA fallback 隐藏；
   - [x] Approval 页面只展示服务端权威 effect/target/redacted arguments/change，GET poll + fresh POST grant/deny；真实 Chromium 已验证 APG ThemeToggle/LocaleSwitch、批准后 card 消失+status、1440×900 与 1024×640 无横向溢出、landmark/heading/id/name/remote-resource 审计；浏览器数据来自明确 test-only fixture，不冒充生产 PostgreSQL；
   - [x] Server 用户偏好经唯一 typed ApplicationService/PostgreSQL native 0021 持久化并镜像 closed `SameSite=Lax` cookie；Desktop Local closed file 原子写；Leptos startup read + serialized/coalescing partial PUT，失败显示本地化 `role=alert`；
@@ -1812,8 +1814,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] AppSidebar的production roster与独立ChannelRow已落：50条keyset页/load-more、只搜可见name/
     last-message、socket reconnect-refetch、current row、三断点同一children、current user/session/
     sign-out；真实data-backed `/channel/:id` 可直接硬刷新。ChannelRow已勾；Batch32接真实new-channel，
-    Batch34/35再接plain conversation、durable Stop与mount-local queue；Batch36接Memory destination。
-    AppSidebar总项仍因skills/settings-home/admin destinations缺失不勾，完整channel route仍因markdown/sources/附件/per-channel draft/
+    Batch34/35再接plain conversation、durable Stop与mount-local queue；Batch36接Memory destination，
+    Batch37接Settings Preferences destination。AppSidebar总项仍因skills/admin destinations缺失不勾，完整channel route仍因markdown/sources/附件/per-channel draft/
     steer/screen journey缺失不勾；
   - [x] data-backed `/agents` read surface：固定上游`mine`与`!mine && public`两组、144×180
     AgentCard、URL-owned只读profile DetailPanel、同源percent-encoded id、404错误态与AppSidebar
@@ -1837,12 +1839,17 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     source/origin/tags、global writes switch、correct/forbid/delete均接production ApplicationService。
     写入关闭跨reload保持，只禁新增/纠正而不禁擦除；dialog取消返原按钮，成功权威refetch后聚焦
     replacement/变更行。release CSS 445规则真实加载，中英、1440/1024/900/600 overflow0、console0；
-  - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及AppSidebar总项+其余32业务组件/30 route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
+  - [x] `/settings` Preferences真实route：复用Batch16唯一preference context/API/native0021，不造第二
+    store。ThemeToggle在页面与Sidebar均为system/light/dark APG radiogroup；LocaleSwitch由调用点提供
+    唯一bounded ID，双实例duplicate=0。快速theme+locale连续更新显示当前页面唯一`role=status`；
+    worker固定在AppShell稳定owner，locale重渲染不再取消receipt收尾，队列排空后status消失且reload
+    保留合并值。Sidebar Settings真实导航、键盘、四视口overflow0、console0；settings二级layout仍todo；
+  - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及AppSidebar总项+其余32业务组件/29 route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
   - [ ] Tauri target-aware bans/sources 已绿；macOS/Windows 各仍有 5 个 MPL-2.0、5 个 runtime UNIC unmaintained（无 patched 版），Cargo Vet 为 macOS **270** / Windows **269** unvetted（既有 target 基线 181，净增 89/88）；未改 license/advisory/vet policy，故供应链与 G6 整关均不勾。
 - [ ] **G7**：Screen/Handover 性能、安全票据、human lease 未实施完成。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账：parity **642/1678 done（1036 todo）**，fixtures **16/38 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账：parity **643/1678 done（1035 todo）**，fixtures **16/38 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -2069,6 +2076,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R98 | §3.1条4 / §4.3 / §5.2 / §7.2 / §7.4 / §13.1–§13.3 / §15.3 / §21.1 / §24 G3、G4、G6 / §6.5（GUI第一真源）（2026-08-27 Durable Cancel/Production Queue batch35） | R97已接durable conversation与idle send，但Stop若直接调用当前Server进程的consumer，HTTP落另一副本会静默失效；若request ack直接画Cancelled，会在child仍运行时制造假终态；若无local child只写terminal而不收口原dispatch，会留下可再次claim的陈旧工作。Queue若写PG又会把固定上游“当前mount内存、reload丢失”偷换成durable outbox；在任意reactive Effect owner里直接发drain又会因busy写回dispose自己的异步send。 | 新增closed CancelThreadRun/reply与foreground queued/running/cancelling/reconciliation投影。Application只取AuthContext scope；PG锁run并验deployment/tenant/current anchor membership/run owner，先写唯一`agent_run_cancel` internal outbox再返回。RunRelay用LISTEN wake+100ms poll、lease owner/fencing claim且cancel先于dispatch/recovery；consumer返回ChildSignalled/NoLocalChild，前者等runtime child token真正停后journal terminal，后者同事务写Cancelled并逐字段校验/收口cancel+dispatch outbox。Axum POST只收path thread/run、trusted Origin先行，202不冒充terminal。Leptos空draft时Stop替Send，请求中/durable Cancelling可见但inert；terminal由SSE/snapshot决定。Batch33 reducer接production busy park/remove、busy→idle单次合并send、stop后同一路drain；组件owner承载异步send，hard reload清queue但恢复durable foreground。 | 首次PG实跑捕获`cancelled/delivered/pending/1`并据此补原子dispatch收口；tampered-dispatch恢复又暴露SQL三值逻辑会把NULL owned claim静默过滤，改用`IS NOT DISTINCT FROM $4`并验证claim后崩溃的新relay重放；修后PG17.11 host-SCRAM poll-only=`1/0/0`、cross-replica active child-drop=`1/0/0`。contracts/application/Agent/Server/UI=`76/137/28/202/105`全绿，infra=`306/0/0`、transport parity=`8/0/0`；六crate Clippy、contracts/UI WASM绿。i18n417、design71 Rust/74 icons、CSS206；bundle wasm gzip801086/CSS73154/fonts740216/external-inline1/0。浏览器实得Cancelling visible+disabled→Cancelled、queue remove 1→0、两条合成1 turn/standalone0、stop后drain1、reload queue1→0且foreground Stop恢复；1440/1024/900/600 overflow0、main/nav/h1各1、duplicate IDs/alerts/console0。API=`50/115/165`、tests=`372/675/1047`、UI=`85/67/152`、parity=`639/1037/1676`、fixtures=`15/22/37`，0 violation/warning；strict recount=`157/157/0`。只关闭新增T-API-0165；sources/附件/per-channel draft/steer、markdown/tool boundary/Screen、T-UI-0043/0123、T-ROUTE-0009与RMCP/computer/file/shell协议级cancel保持todo，G3/G4/G6整关不勾；implementation `86370626cebf3f78e87ac5b5a87e223377ff69ff`；未运行CI/Actions；详见Batch35正式文档。 |
 
 | R99 | §3.1条7 / §4.1–§4.3 / §5.2 / §6.1–§6.7（GUI第一真源）/ §13.1–§13.3 / §14.1–§14.3 / §15.3 / §21.1 / §24 G3、G6（2026-08-27 Memory Controls/GUI batch36） | R98后explicit memory已有六条API、PG事务与remember tool，但没有global write control和任何用户页面；用backend存在冒充Memory GUI会是安全假完成。控制若塞进`user_ui_preferences`会混淆runtime数据治理与渲染偏好；伪造成特殊memory又会进入list/recall。关闭写入若连forbid/delete一起禁，会让用户失去擦除既有数据的能力；只在GUI禁按钮则tool/correct仍可绕过。 | native 0022新建`user_memory_controls(tenant_id,actor_user_id,writes_enabled,updated_at)`，缺行默认enabled且FK actor cascade；它不是memory记录。新增closed MemoryControl command/reply/port与GET/PUT `/api/memories/control`，只从AuthContext铸scope、no-store，PUT trusted Origin先于body。PG在GUI remember、correct和remember tool各自原事务内复读control；disabled统一投影`policy_refused/memory_writes_disabled`，但list/recall/forbid/delete始终可用。Leptos `/settings/memory`只消费typed DTO，首屏50+keyset load-more、四状态/kind/sensitivity/scope/source/origin/tags、switch、correct replacement、forbid/delete；不optimistic改row，成功后权威refetch。取消返原按钮；correct后旧按钮消失，故聚焦新replacement行。AppSidebar只新增真实Memory destination。 | implementation `bec30ec52e3fbaabe3aa3f08a5de0d1e7bd4f991`。PG17.11 SCRAM验证password_encryption与role hash均SCRAM；schema0022 regeneration开/关各`1/0/0`，44表/408列/299 NOT NULL/225约束/87索引、ledger10、SHA `f7dfda29…c5ee25`；memory真库`3/0/0`覆盖GUI/tool/correct拒绝、delete仍擦除、重新启用与跨tenant隔离。contracts/application/Agent/Server/UI=`77/138/28/203/108`，infra=`306/0/0`，transport=`8/0/0`+memory parity=`1/0/0`；七crate Clippy、contracts/UI WASM、fmt/diff绿。i18n452、design72 Rust/74 icons、CSS215；最终bundle wasm gzip870212/CSS73367/fonts740216/external-inline1/0。浏览器先因用户清理dist实证旧CSS 404，重建并重启后HTTP CSS=200/text-css、445规则；最终50→52、disable跨reload、47 correct全disabled而48 forbid/49 delete可用、correct/supersede与两类焦点、forbid/delete擦除、中英、四视口overflow0、duplicate/visible-alert/console0。API=`52/115/167`、routes=`2/30/32`、parity=`642/1036/1678`、fixtures=`16/22/38`，0 violation；strict recount=`157/157/0`。T-ROUTE-0032、T-API-0166/0167、T-FIX-0038关闭；正式golden T-UI-0152、legacy production drills、AppSidebar其余destination与G3/G6整关保持todo。未运行`cargo xtask ci`/Actions；详见Batch36正式文档。 |
+
+| R100 | §3.1条7 / §5.2 / §6.1、§6.2、§7–§9（GUI第一真源）/ §13.1–§13.3 / §15.3 / §21.1 / §24 G6（2026-08-27 Settings Preferences batch37） | R99后theme/locale只有Sidebar入口，`/settings`仍落404，不能用native0021/API存在冒充settings route。第一真源又要求ThemeToggle同时存在settings页与Sidebar；LocaleSwitch原实现使用全局固定`locale-switch-label/current`，双实例必然duplicate ID。浏览器快速连续theme+locale还暴露更深缺口：server已提交`dark/en`，但`Saving preferences`永久不消失；worker由触发ThemeToggle的child owner创建，locale重渲染会取消receipt后的`set(false)`，固定sleep会把这个竞态掩掉。 | 新建`SettingsPage`，保留上游Preferences/General与Theme journey，并按第一真源增加system第三态/locale；description按native0021真实scope写“当前deployment跨设备”，不伪称every deployment。页面与Sidebar复用同一preference context/API；LocaleSwitch改为调用点传入bounded ID前缀，label/current/menu family两实例不交叉。保存worker在AppShell提供context时捕获stable Owner，所有child event只在该owner下启动serialized/coalesced loop；locale重渲染不再取消收尾。`PreferenceSaveStatus`在pending期间显示localized`role=status`，`/settings`由页面唯一播报、Sidebar抑制重复；fixture固定1s延迟构造性覆盖pending与两次PUT。AppSidebar只在route存在后新增Settings destination；settings二级layout不冒充完成。 | implementation `5babb78483d0083085047b21760dbc963a418383`。UI=`110/0/0`；UI+fixture Server bin Clippy、UI WASM、fmt/diff绿。i18n455、design73 Rust/74 icons、CSS221；bundle wasm gzip885190/CSS74670/fonts740216/external-inline1/0。release浏览器CSS455规则：Sidebar→Settings真实导航/current；双实例2 radiogroup+2 locale switch、duplicate ID0；主题/语言即时同步两处，End/ArrowDown/Enter/返焦通过；快速system+en时页面唯一`Saving preferences`，stable owner排空后status0/alerts0，hard reload保持2个System/2个English；1440/1024/900/600 overflow0、main/nav/h1各1、console0。routes=`3/29/32`、parity=`643/1035/1678`，0 violation；strict recount=`157/157/0`。只关闭T-ROUTE-0026；settings layout T-ROUTE-0005、正式golden T-UI-0150、connected accounts/gallery/computer、AppSidebar skills/admin与G6整关保持todo。未运行`cargo xtask ci`/Actions；详见Batch37正式文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 

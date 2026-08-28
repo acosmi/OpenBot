@@ -303,13 +303,14 @@ entries:
   - id: settings-preferences
     upstream: app/src/routes/_authed/settings/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_index -> /settings"
+    target: "openbot_ui::features::settings::SettingsPage -> /settings"
     owner: openbot-ui
     test_id: T-ROUTE-0026
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch37 release WASM/browser：Sidebar Settings link从/settings/memory真实导航到/settings且aria-current=page；页面复用同一ThemeToggle/LocaleSwitch与native0021/API，Sidebar+页面双实例为2 radiogroup/2 locale switch且duplicate IDs=0。主题与语言即时同步两处，键盘End/ArrowDown/Enter与返焦通过；快速连续theme+locale更新时当前页面唯一role=status，稳定AppShell owner使serialized/coalesced队列完成后status消失，hard reload保留两项，alerts/console=0。1440/1024/900/600 overflow0、main/nav/h1各1。"
     evidence: "cat app/src/routes/_authed/settings/index.tsx 得 PageShell title=\"Preferences\" + PageSection title=\"General\" + 单个 Item「Dark theme」Switch（useTheme 的 dark/setDark）"
-    notes: "模板 List（Item 行 + 右侧控件）。journey：改自己的偏好；上游只有 Dark theme 一个开关（两态）。权限：已登录即可见，只影响本人。**新增登记**：主题的 system 第三态与 UI 双语（locale 切换）是新增，不得冒充 parity —— v3 §3.1 末段与设计系统文档 §7/§8 已裁决，本页会因此多出控件，具体项登记在 parity/ui.yaml。"
+    notes: "模板 List（静态row + 右侧控件）。journey：改自己的偏好；上游只有Dark theme两态，本页按第一真源增加system第三态与locale切换，并经既有deployment/tenant/actor scoped typed persistence跨设备保存。权限：已登录可见，只影响当前deployment内本人。settings二级Sidebar/layout仍是T-ROUTE-0005 todo；正式golden T-UI-0150也未因本轮目视截图而关闭。"
   - id: settings-components-gallery-index
     upstream: app/src/routes/_authed/settings/components-gallery/index.tsx
     label: parity

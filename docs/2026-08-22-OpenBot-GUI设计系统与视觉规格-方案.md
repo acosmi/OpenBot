@@ -692,10 +692,15 @@ G6 重写后的文本（替换 v3 原四条）：
   页面以typed no-store API呈现50→52 owner keyset、status/kind/sensitivity/scope/source/origin/tags，
   correct生成replacement、forbid/delete擦除content；取消返原按钮，成功权威refetch后聚焦变更行。
   release CSS真实445规则，中英、1440/1024/900/600 overflow0、duplicate IDs/visible alerts/console均0；
+- [x] `/settings` Preferences真实route：保留上游General/Theme，并按§7–§8增加system与locale；
+  页面/Sidebar复用同一native0021 context/API。LocaleSwitch由调用点传唯一bounded ID，双实例零重复；
+  快速theme+locale连续更新时页面唯一`role=status`，worker绑定AppShell稳定owner，locale重渲染不再
+  取消receipt收尾；队列排空后status消失且reload保留合并值。Sidebar Settings真实导航、APG键盘、
+  1440/1024/900/600 overflow0、console0；settings二级Sidebar/layout与正式golden仍todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
-  new-channel/Agents/Memory已接，但skills/settings-home/admin真实destinations尚未迁移；完整channel route也仍缺
+  new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
-- [ ] 其余30个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、compiled gallery、
+- [ ] 其余29个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、compiled gallery、
   multi-window lifecycle/ACL 与真实 macOS/Windows binary 尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -719,7 +724,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-26-G6-ComposerDraft与Queue-batch33.md`、
 `docs/2026-08-26-G3-G6-ChannelTranscript与IdleSend-batch34.md`、
 `docs/2026-08-27-G3-G6-DurableCancel与Queue-batch35.md`、
-`docs/2026-08-27-G3-G6-MemoryControls-batch36.md`；
+`docs/2026-08-27-G3-G6-MemoryControls-batch36.md`、
+`docs/2026-08-27-G6-SettingsPreferences-batch37.md`；
 G6 整关继续不勾。
 
 ---
