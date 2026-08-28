@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-28，Batch 15–48）
+### 15.1 当前实施勾选（2026-08-28，Batch 15–50）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -721,11 +721,22 @@ G6 重写后的文本（替换 v3 原四条）：
   Enter/Space，默认文案与Input placeholder即时i18n。release实得approve/decline/Choice Enter与hard
   reload、中英、四视口、Gallery14 tile/2 Decision；CSS96050B，预算余2254B。Refused sandbox共用与
   formal golden仍todo；
+- [x] Sandboxed component 已分两批接通可独立验收的子面：Batch49以SERIALIZABLE事务闭合admin
+  draft/save/publish/delete、revision、sample与Axum/Tauri同一ApplicationService；Batch50再把当前
+  published/未withheld定义接入per-Agent provider与call-time authorize，沙箱port结构上无data function，
+  current JSON Schema/args与external `$ref`均fail-closed。Web production conversation与
+  `/admin/playground`复用唯一`SandboxedComponentFrame`；iframe `sandbox`恰为`allow-scripts`、无srcdoc，
+  source/args/capability只在fragment，Server runner逐响应32-byte nonce与exact CSP。custom/Tauri scheme
+  直接复用RefusedCard且零iframe。release IAB实得Playground invalid sample抑制iframe、会话双拒绝卡、
+  sandbox/srcdoc/query随机与DOM/overflow/console负面边界；但该环境没有可用MessageChannel/postMessage且
+  Chrome不可用，所以args注入、作者JS、无网络/回调、channel正向握手和sample正向执行不提前标绿。
+  当前components=`13/9/22`、总parity=`686/1000/1686`；Desktop独立Chromium renderer、帧流/input broker、
+  CPU/内存硬隔离、具名a11y豁免、admin正式route journey/golden/AX仍todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
-- [ ] 其余24个route journey、AppSidebar总项+其余31个业务组件、1 brand icon、6 runtime替代、
-  sandboxed gallery、multi-window lifecycle/ACL及真实macOS/Windows binary
+- [ ] 其余24个route journey、AppSidebar总项与其余未完成业务组件、1 brand icon、6 runtime替代、
+  sandboxed正向执行/Desktop renderer、multi-window lifecycle/ACL及真实macOS/Windows binary
   尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -761,7 +772,9 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-28-G6-ComponentConversation-batch45.md`、
 `docs/2026-08-28-G6-ActivityFollowUp-batch46.md` 与
 `docs/2026-08-28-G6-ComponentHumanDecisions-batch47.md`、
-`docs/2026-08-28-G6-ComponentDecisionsRuntime-batch48.md`；
+`docs/2026-08-28-G6-ComponentDecisionsRuntime-batch48.md`、
+`docs/2026-08-28-G6-SandboxedComponentGovernance-batch49.md` 与
+`docs/2026-08-28-G6-WebSandboxRuntime-batch50.md`；
 G6 整关继续不勾。
 
 ---

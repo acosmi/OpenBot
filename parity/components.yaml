@@ -197,7 +197,7 @@ entries:
     migration_rule: "preserve: 注入语句与作者脚本之间的先后次序不变"
     status: "todo"
     evidence: "grep -c 'window.__args' app/src/lib/copilot/sandboxed-tools.tsx app/src/routes/_authed/admin/playground.tsx = sandboxed-tools.tsx:1 playground.tsx:2"
-    notes: "wrapper 先写 window.__args = <本次调用参数 JSON>，换行，再拼作者的 jsFunctions —— 两个调用点（会话渲染与 playground 预览）逐字同构，playground 侧注入的是 sampleArguments。作者脚本拿到的全部输入就是这一个全局变量；Rust wrapper 必须自己做 JSON 序列化并保证它在作者代码之前求值，顺序反了作者脚本读到的是 undefined。上游未对参数做转义以外的任何校验（parametersFor 在 schema 读不懂时退回 z.object({}).catchall(z.unknown())），这是**上游现状**，不是本 ledger 认可的目标状态；是否加校验属 v3 未裁决项，见末尾未验证项。"
+    notes: "wrapper 先写 window.__args = <本次调用参数 JSON>，换行，再拼作者的 jsFunctions —— 两个调用点（会话渲染与 playground 预览）逐字同构，playground 侧注入的是 sampleArguments。作者脚本拿到的全部输入就是这一个全局变量；Rust wrapper 必须自己做 JSON 序列化并保证它在作者代码之前求值，顺序反了作者脚本读到的是 undefined。上游未对参数做转义以外的任何校验（parametersFor 在 schema 读不懂时退回 z.object({}).catchall(z.unknown())），这是**上游现状**；R113已按第一真源安全边界裁决为保存时编译object schema、调用时按current schema验证并拒绝external $ref。T-CMP-0009仍需可用浏览器证明注入顺序，不能只凭源码标绿。"
 
   - id: "sandbox-jsfunctions-exec"
     upstream: "app/src/lib/copilot/sandboxed-tools.tsx::SandboxedTool"
@@ -388,8 +388,9 @@ entries:
 #     （openbot-ui 渲染 / openbot-application grant-policy-HITL）记为 openbot-ui。
 #     解除条件：主控裁决是否把这三条改挂 openbot-computer / openbot-desktop。
 #
-# U5. T-CMP-0009 里的参数校验缺口。
-#     缺什么：上游 sandboxed-tools.tsx::parametersFor 在作者 JSON Schema 读不懂时
-#     退回 z.object({}).catchall(z.unknown())，即模型可以给沙箱组件传任意参数。这是
-#     上游现状（已如实记为 parity），但 v3 没有对"是否加校验"下裁决。
-#     解除条件：主控裁决保留现状还是加严；加严即新开一条 label=新增 的 entry。
+# U5. T-CMP-0009 的参数校验已裁决，正向执行证据仍缺。
+#     R113/Batch50 已加严为保存时编译 object JSON Schema、拒绝 external $ref，并在每次
+#     authorize 时按 current schema 校验参数；这部分有 PG17.11 真库证据。缺的是可用浏览器中
+#     作者脚本实际读到 window.__args 且顺序先于 authored JS 的正向证据。
+#     解除条件：在具备真实 MessageChannel/postMessage 的 release 浏览器跑通同一 production
+#     wrapper 的 args/order 用例；在此之前 T-CMP-0009 保持 todo。
