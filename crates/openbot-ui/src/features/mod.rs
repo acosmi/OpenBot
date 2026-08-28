@@ -6,5 +6,6 @@ pub mod approvals;
 pub mod channels;
 pub mod computer;
 pub mod layout;
+pub mod memory;
 pub mod settings;
 pub mod threads;

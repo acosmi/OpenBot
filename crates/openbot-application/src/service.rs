@@ -122,6 +122,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::GetThreadHistory { .. } => "get_thread_history",
         AppCommand::GetThreadConversation { .. } => "get_thread_conversation",
         AppCommand::RememberMemory(_) => "remember_memory",
+        AppCommand::GetMemoryControl => "get_memory_control",
+        AppCommand::UpdateMemoryControl(_) => "update_memory_control",
         AppCommand::ListMemories { .. } => "list_memories",
         AppCommand::CorrectMemory { .. } => "correct_memory",
         AppCommand::MutateMemory { .. } => "mutate_memory",

@@ -520,6 +520,10 @@ pub fn router(state: ServerState) -> Router {
             "/api/memories",
             get(memories::list).post(memories::remember),
         )
+        .route(
+            "/api/memories/control",
+            get(memories::control_get).put(memories::control_put),
+        )
         .route("/api/memories/recall", post(memories::recall))
         .route(
             "/api/memories/{memory_id}",

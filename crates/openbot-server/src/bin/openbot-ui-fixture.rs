@@ -13,11 +13,13 @@ use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
     AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, BeginThreadRunRequest,
     CancelThreadRunRequest, ChannelAdministration, ChannelAdministrationError,
-    ChannelCreateRequest, ChannelReadScope, ChannelReader, OpenBotApplication,
-    PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError, ThreadConversationRequest,
-    ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
-    ToolApprovalAdministration, ToolApprovalAdministrationError, UiPreferenceAdministration,
-    UiPreferenceAdministrationError,
+    ChannelCreateRequest, ChannelReadScope, ChannelReader, CorrectMemoryRequest,
+    MemoryAdministration, MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest,
+    MutateMemoryRequest, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
+    PeoplePortError, PortError, RecallMemoriesRequest, RememberMemoryRequest,
+    ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
+    ThreadHistoryRequest, ToolApprovalAdministration, ToolApprovalAdministrationError,
+    UiPreferenceAdministration, UiPreferenceAdministrationError, UpdateMemoryControlRequest,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
@@ -29,6 +31,10 @@ use openbot_contracts::command::{
 };
 use openbot_contracts::ids::{
     ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
+};
+use openbot_contracts::memory::{
+    MemoryControl, MemoryKind, MemoryMutation, MemoryOrigin, MemoryPage, MemoryRecall,
+    MemoryRecord, MemoryScope, MemorySensitivity, MemorySource, MemoryStatus,
 };
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use openbot_contracts::tool::{
@@ -285,6 +291,320 @@ impl AgentDirectory for FixtureAgents {
             .iter()
             .find(|profile| &profile.id == agent_id)
             .cloned())
+    }
+}
+
+#[derive(Clone)]
+struct FixtureMemory {
+    tenant: TenantId,
+    actor: ActorId,
+    writes_enabled: Arc<AtomicBool>,
+    rows: Arc<Mutex<Vec<MemoryRecord>>>,
+    next: Arc<AtomicU64>,
+}
+
+impl FixtureMemory {
+    fn new(tenant: TenantId, actor: ActorId, now: OffsetDateTime) -> Self {
+        let rows = (0..52)
+            .map(|index| {
+                let status = match index {
+                    3 => MemoryStatus::Superseded,
+                    4 => MemoryStatus::Forbidden,
+                    5 => MemoryStatus::Deleted,
+                    _ => MemoryStatus::Active,
+                };
+                let memory_kind = if index == 1 {
+                    MemoryKind::Fact
+                } else {
+                    MemoryKind::Preference
+                };
+                let scope = match index {
+                    1 => MemoryScope::Thread {
+                        thread_id: ThreadId::new(FIXTURE_EXISTING_THREAD),
+                    },
+                    2 => MemoryScope::Bot {
+                        bot_id: BotId::new("fixture-owned-private"),
+                    },
+                    _ => MemoryScope::User,
+                };
+                let content = match index {
+                    0 => Some("Prefers concise answers with primary-source citations.".to_owned()),
+                    1 => Some("The finance review is scheduled for Friday.".to_owned()),
+                    2 => Some("Use the private research coworker for source audits.".to_owned()),
+                    3 => Some("Superseded fixture preference.".to_owned()),
+                    4 | 5 => None,
+                    _ => Some(format!("Fixture memory entry {index:02}")),
+                };
+                MemoryRecord {
+                    memory_id: format!("memory-{index:02}"),
+                    owner_user_id: actor.as_str().to_owned(),
+                    scope,
+                    memory_kind,
+                    content,
+                    tags: match index {
+                        0 => vec!["writing".to_owned(), "citations".to_owned()],
+                        1 => vec!["finance".to_owned()],
+                        2 => vec!["research".to_owned()],
+                        _ => vec!["fixture".to_owned()],
+                    },
+                    sensitivity: if index == 2 {
+                        MemorySensitivity::Sensitive
+                    } else {
+                        MemorySensitivity::Normal
+                    },
+                    source: (index == 1).then(|| MemorySource {
+                        thread_id: ThreadId::new(FIXTURE_EXISTING_THREAD),
+                        message_id: "fixture-user-message".to_owned(),
+                    }),
+                    origin: match index {
+                        1 | 2 => MemoryOrigin::RememberTool,
+                        6 => MemoryOrigin::VerifiedImport,
+                        _ => MemoryOrigin::UserAction,
+                    },
+                    created_by: actor.as_str().to_owned(),
+                    supersedes_id: None,
+                    status,
+                    expires_at: None,
+                    created_at: now - Duration::minutes(i64::from(index)),
+                    updated_at: now - Duration::minutes(i64::from(index)),
+                }
+            })
+            .collect();
+        Self {
+            tenant,
+            actor,
+            writes_enabled: Arc::new(AtomicBool::new(true)),
+            rows: Arc::new(Mutex::new(rows)),
+            next: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    fn ensure_scope(
+        &self,
+        tenant: &TenantId,
+        actor: &ActorId,
+    ) -> Result<(), MemoryAdministrationError> {
+        if tenant == &self.tenant && actor == &self.actor {
+            Ok(())
+        } else {
+            Err(MemoryAdministrationError::NotVisible)
+        }
+    }
+
+    fn ensure_writes_enabled(&self) -> Result<(), MemoryAdministrationError> {
+        if self.writes_enabled.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err(MemoryAdministrationError::WritesDisabled)
+        }
+    }
+
+    fn next_id(&self) -> String {
+        let sequence = self.next.fetch_add(1, Ordering::SeqCst);
+        format!("memory-fixture-{sequence}")
+    }
+}
+
+#[async_trait]
+impl MemoryAdministration for FixtureMemory {
+    async fn memory_control(
+        &self,
+        request: MemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError> {
+        self.ensure_scope(&request.tenant, &request.actor)?;
+        Ok(MemoryControl {
+            writes_enabled: self.writes_enabled.load(Ordering::SeqCst),
+        })
+    }
+
+    async fn update_memory_control(
+        &self,
+        request: UpdateMemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError> {
+        self.ensure_scope(&request.tenant, &request.actor)?;
+        self.writes_enabled
+            .store(request.update.writes_enabled, Ordering::SeqCst);
+        Ok(MemoryControl {
+            writes_enabled: request.update.writes_enabled,
+        })
+    }
+
+    async fn remember(
+        &self,
+        request: RememberMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError> {
+        self.ensure_scope(&request.tenant, &request.actor)?;
+        self.ensure_writes_enabled()?;
+        let now = OffsetDateTime::now_utc();
+        let mut tags = request.input.tags;
+        tags.sort();
+        tags.dedup();
+        let record = MemoryRecord {
+            memory_id: self.next_id(),
+            owner_user_id: request.actor.as_str().to_owned(),
+            scope: request.input.scope,
+            memory_kind: request.input.memory_kind,
+            content: Some(request.input.content),
+            tags,
+            sensitivity: request.input.sensitivity,
+            source: request.input.source,
+            origin: MemoryOrigin::UserAction,
+            created_by: request.actor.as_str().to_owned(),
+            supersedes_id: None,
+            status: MemoryStatus::Active,
+            expires_at: request.input.expires_at,
+            created_at: now,
+            updated_at: now,
+        };
+        self.rows
+            .lock()
+            .map_err(|_| MemoryAdministrationError::Unavailable)?
+            .insert(0, record.clone());
+        Ok(record)
+    }
+
+    async fn list_memories(
+        &self,
+        request: MemoryPageRequest,
+    ) -> Result<MemoryPage, MemoryAdministrationError> {
+        self.ensure_scope(&request.tenant, &request.actor)?;
+        let rows = self
+            .rows
+            .lock()
+            .map_err(|_| MemoryAdministrationError::Unavailable)?;
+        let start = if let Some(cursor) = request.cursor.as_deref() {
+            rows.iter()
+                .position(|record| record.memory_id == cursor)
+                .map(|position| position.saturating_add(1))
+                .ok_or(MemoryAdministrationError::InvalidInput { field: "cursor" })?
+        } else {
+            0
+        };
+        let limit = request.limit as usize;
+        let memories = rows
+            .iter()
+            .skip(start)
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        let next_cursor = (rows.len() > start.saturating_add(memories.len()))
+            .then(|| memories.last().map(|record| record.memory_id.clone()))
+            .flatten();
+        Ok(MemoryPage {
+            memories,
+            next_cursor,
+        })
+    }
+
+    async fn correct(
+        &self,
+        request: CorrectMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError> {
+        self.ensure_scope(&request.tenant, &request.actor)?;
+        self.ensure_writes_enabled()?;
+        let now = OffsetDateTime::now_utc();
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| MemoryAdministrationError::Unavailable)?;
+        let old = rows
+            .iter_mut()
+            .find(|record| record.memory_id == request.memory_id)
+            .ok_or(MemoryAdministrationError::NotVisible)?;
+        if old.status != MemoryStatus::Active {
+            return Err(MemoryAdministrationError::Conflict);
+        }
+        old.status = MemoryStatus::Superseded;
+        old.updated_at = now;
+        let old = old.clone();
+        let mut tags = request.correction.tags;
+        tags.sort();
+        tags.dedup();
+        let replacement = MemoryRecord {
+            memory_id: self.next_id(),
+            owner_user_id: request.actor.as_str().to_owned(),
+            scope: old.scope,
+            memory_kind: old.memory_kind,
+            content: Some(request.correction.content),
+            tags,
+            sensitivity: request.correction.sensitivity,
+            source: old.source,
+            origin: MemoryOrigin::UserAction,
+            created_by: request.actor.as_str().to_owned(),
+            supersedes_id: Some(old.memory_id),
+            status: MemoryStatus::Active,
+            expires_at: request.correction.expires_at,
+            created_at: now,
+            updated_at: now,
+        };
+        rows.insert(0, replacement.clone());
+        Ok(replacement)
+    }
+
+    async fn mutate(
+        &self,
+        request: MutateMemoryRequest,
+    ) -> Result<MemoryRecord, MemoryAdministrationError> {
+        self.ensure_scope(&request.tenant, &request.actor)?;
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| MemoryAdministrationError::Unavailable)?;
+        let record = rows
+            .iter_mut()
+            .find(|record| record.memory_id == request.memory_id)
+            .ok_or(MemoryAdministrationError::NotVisible)?;
+        record.status = match request.mutation {
+            MemoryMutation::Forbid if record.status == MemoryStatus::Deleted => {
+                MemoryStatus::Deleted
+            }
+            MemoryMutation::Forbid => MemoryStatus::Forbidden,
+            MemoryMutation::Delete => MemoryStatus::Deleted,
+        };
+        record.content = None;
+        record.updated_at = OffsetDateTime::now_utc();
+        Ok(record.clone())
+    }
+
+    async fn recall(
+        &self,
+        request: RecallMemoriesRequest,
+    ) -> Result<MemoryRecall, MemoryAdministrationError> {
+        self.ensure_scope(&request.tenant, &request.actor)?;
+        let query = request.input.query.to_lowercase();
+        let now = OffsetDateTime::now_utc();
+        let limit = request.input.limit.unwrap_or(50).clamp(1, 100) as usize;
+        let memories = self
+            .rows
+            .lock()
+            .map_err(|_| MemoryAdministrationError::Unavailable)?
+            .iter()
+            .filter(|record| record.status == MemoryStatus::Active)
+            .filter(|record| record.expires_at.is_none_or(|expiry| expiry > now))
+            .filter(|record| {
+                record
+                    .content
+                    .as_deref()
+                    .is_some_and(|content| content.to_lowercase().contains(&query))
+            })
+            .filter(|record| {
+                request
+                    .input
+                    .tags
+                    .iter()
+                    .all(|tag| record.tags.contains(tag))
+            })
+            .filter(|record| match &record.scope {
+                MemoryScope::User => true,
+                MemoryScope::Bot { bot_id } => request.input.bot_id.as_ref() == Some(bot_id),
+                MemoryScope::Thread { thread_id } => {
+                    request.input.thread_id.as_ref() == Some(thread_id)
+                }
+            })
+            .take(limit)
+            .cloned()
+            .collect();
+        Ok(MemoryRecall { memories })
     }
 }
 
@@ -939,10 +1259,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (dist, port) = arguments()?;
     let now = OffsetDateTime::now_utc();
     let generation = AuthGeneration::new(1);
+    let tenant = TenantId::new("fixture-tenant");
+    let actor = ActorId::new("fixture-actor");
     let context = AuthContext::for_test(
         DeploymentId::new("fixture-deployment"),
-        TenantId::new("fixture-tenant"),
-        ActorId::new("fixture-actor"),
+        tenant.clone(),
+        actor.clone(),
         [Role::User],
         generation,
         false,
@@ -964,12 +1286,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let channels = FixtureChannels::new(now);
     let threads = FixtureThreads::new(channels.clone());
+    let memory = FixtureMemory::new(tenant, actor, now);
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
             .with_agent_directory(Arc::new(FixtureAgents::new()))
             .with_people(FixturePeople)
             .with_threads(threads)
+            .with_memory(memory)
             .with_tool_approvals(Arc::new(FixtureApprovals::new(now)))
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );

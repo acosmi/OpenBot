@@ -489,6 +489,8 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::GetThreadHistory { .. }
         | AppCommand::GetThreadConversation { .. }
         | AppCommand::RememberMemory(_)
+        | AppCommand::GetMemoryControl
+        | AppCommand::UpdateMemoryControl(_)
         | AppCommand::ListMemories { .. }
         | AppCommand::CorrectMemory { .. }
         | AppCommand::MutateMemory { .. }

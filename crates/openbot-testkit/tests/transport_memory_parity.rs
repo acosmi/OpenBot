@@ -7,15 +7,16 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
 use openbot_application::{
     ApplicationService, ChannelCursor, ChannelReader, CorrectMemoryRequest, MemoryAdministration,
-    MemoryAdministrationError, MemoryPageRequest, MutateMemoryRequest, OpenBotApplication,
-    PortError, RecallMemoriesRequest, RememberMemoryRequest,
+    MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest, MutateMemoryRequest,
+    OpenBotApplication, PortError, RecallMemoriesRequest, RememberMemoryRequest,
+    UpdateMemoryControlRequest,
 };
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
 use openbot_contracts::command::{AppCommand, AppReply, ChannelSummary};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_contracts::memory::{
-    MemoryKind, MemoryOrigin, MemoryPage, MemoryRecall, MemoryRecord, MemoryScope,
-    MemorySensitivity, MemoryStatus, RecallMemories, RememberMemory,
+    MemoryControl, MemoryKind, MemoryOrigin, MemoryPage, MemoryRecall, MemoryRecord, MemoryScope,
+    MemorySensitivity, MemoryStatus, RecallMemories, RememberMemory, UpdateMemoryControl,
 };
 use openbot_desktop::InProcessTransport;
 use openbot_domain::identity::session::{SessionLifetimePolicy, TrustedOrigins};
@@ -64,6 +65,22 @@ fn record() -> MemoryRecord {
 
 #[async_trait]
 impl MemoryAdministration for FixedMemory {
+    async fn memory_control(
+        &self,
+        _request: MemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError> {
+        Ok(MemoryControl::default())
+    }
+
+    async fn update_memory_control(
+        &self,
+        request: UpdateMemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError> {
+        Ok(MemoryControl {
+            writes_enabled: request.update.writes_enabled,
+        })
+    }
+
     async fn remember(
         &self,
         _request: RememberMemoryRequest,
@@ -158,6 +175,18 @@ impl Fixture {
 
     async fn http(&self, command: &AppCommand) -> AppReply {
         let (method, uri, body, origin) = match command {
+            AppCommand::GetMemoryControl => (
+                Method::GET,
+                "/api/memories/control".to_owned(),
+                String::new(),
+                false,
+            ),
+            AppCommand::UpdateMemoryControl(update) => (
+                Method::PUT,
+                "/api/memories/control".to_owned(),
+                serde_json::to_string(update).unwrap(),
+                true,
+            ),
             AppCommand::ListMemories { limit, .. } => (
                 Method::GET,
                 format!("/api/memories?limit={}", limit.unwrap_or(50)),
@@ -176,7 +205,7 @@ impl Fixture {
                 serde_json::to_string(input).unwrap(),
                 false,
             ),
-            _ => panic!("本矩阵只接 memory list/remember/recall"),
+            _ => panic!("本矩阵只接 memory control/list/remember/recall"),
         };
         let mut request = Request::builder()
             .method(method)
@@ -196,6 +225,9 @@ impl Fixture {
         ));
         let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         match command {
+            AppCommand::GetMemoryControl | AppCommand::UpdateMemoryControl(_) => {
+                AppReply::MemoryControl(serde_json::from_slice(&bytes).unwrap())
+            }
             AppCommand::ListMemories { .. } => {
                 AppReply::Memories(serde_json::from_slice(&bytes).unwrap())
             }
@@ -214,6 +246,10 @@ impl Fixture {
 async fn memory_results_match_on_axum_and_typed_in_process() {
     let fixture = Fixture::new();
     for command in [
+        AppCommand::GetMemoryControl,
+        AppCommand::UpdateMemoryControl(UpdateMemoryControl {
+            writes_enabled: false,
+        }),
         AppCommand::ListMemories {
             cursor: None,
             limit: Some(10),

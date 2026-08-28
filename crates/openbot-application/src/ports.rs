@@ -14,8 +14,8 @@ use openbot_contracts::command::{
 use openbot_contracts::error::{AppError, IdentityConflictReason};
 use openbot_contracts::ids::{ActorId, BotId, ChannelId, DeploymentId, TenantId, ThreadId};
 use openbot_contracts::memory::{
-    CorrectMemory, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, RecallMemories,
-    RememberMemory,
+    CorrectMemory, MemoryControl, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord,
+    RecallMemories, RememberMemory, UpdateMemoryControl,
 };
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use openbot_domain::policy::ActionPolicy;
@@ -653,12 +653,15 @@ pub enum MemoryAdministrationError {
     /// Commit 结果未知。
     #[error("memory_commit_unknown")]
     CommitUnknown,
+    /// Actor disabled runtime writes through the authoritative memory control.
+    #[error("memory_writes_disabled")]
+    WritesDisabled,
 }
 
 impl MemoryAdministrationError {
     /// 稳定 AppError 投影。
     #[must_use]
-    pub const fn into_app_error(self) -> AppError {
+    pub fn into_app_error(self) -> AppError {
         match self {
             Self::Unavailable | Self::Corrupt { .. } => AppError::DependencyUnavailable {
                 dependency: "memory_store",
@@ -667,8 +670,32 @@ impl MemoryAdministrationError {
             Self::InvalidInput { field } => AppError::MalformedPayload { field },
             Self::Conflict => AppError::RequestConflict { resource: "memory" },
             Self::CommitUnknown => AppError::ReconciliationRequired { accepted: true },
+            Self::WritesDisabled => AppError::PolicyRefused {
+                rule: "memory_writes_disabled".to_owned(),
+                decision: None,
+            },
         }
     }
+}
+
+/// Authoritative scope for reading one actor's memory control.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryControlRequest {
+    /// Tenant matching the memory data plane.
+    pub tenant: TenantId,
+    /// Current actor/owner.
+    pub actor: ActorId,
+}
+
+/// Authoritative scope plus one closed memory-control update.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateMemoryControlRequest {
+    /// Tenant matching the memory data plane.
+    pub tenant: TenantId,
+    /// Current actor/owner.
+    pub actor: ActorId,
+    /// Closed renderer input with no identity fields.
+    pub update: UpdateMemoryControl,
 }
 
 /// GUI remember 的权威 scope 请求。
@@ -735,6 +762,16 @@ pub struct RecallMemoriesRequest {
 /// Explicit memory 的唯一 GUI application port；remember tool 必须经工具管线另接。
 #[async_trait]
 pub trait MemoryAdministration: Send + Sync {
+    /// Read the actor's runtime memory write control; absent rows default enabled.
+    async fn memory_control(
+        &self,
+        request: MemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError>;
+    /// Persist the actor's runtime memory write control.
+    async fn update_memory_control(
+        &self,
+        request: UpdateMemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError>;
     /// Create origin=user_action。
     async fn remember(
         &self,
@@ -768,6 +805,20 @@ pub struct NoMemoryAdministration;
 
 #[async_trait]
 impl MemoryAdministration for NoMemoryAdministration {
+    async fn memory_control(
+        &self,
+        _request: MemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError> {
+        Err(MemoryAdministrationError::Unavailable)
+    }
+
+    async fn update_memory_control(
+        &self,
+        _request: UpdateMemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError> {
+        Err(MemoryAdministrationError::Unavailable)
+    }
+
     async fn remember(
         &self,
         _request: RememberMemoryRequest,

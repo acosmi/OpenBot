@@ -224,6 +224,7 @@ impl AgentToolGateway {
                 | AppReply::ThreadHistory(_)
                 | AppReply::ThreadConversation(_)
                 | AppReply::Memory(_)
+                | AppReply::MemoryControl(_)
                 | AppReply::Memories(_)
                 | AppReply::MemoryRecall(_)
                 | AppReply::AgentCallbackToken(_)

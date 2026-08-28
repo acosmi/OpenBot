@@ -5,13 +5,13 @@ use openbot_contracts::command::MAX_MEMORY_PAGE;
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::memory::{
-    CorrectMemory, MemoryKind, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, MemoryScope,
-    RecallMemories, RememberMemory,
+    CorrectMemory, MemoryControl, MemoryKind, MemoryMutation, MemoryPage, MemoryRecall,
+    MemoryRecord, MemoryScope, RecallMemories, RememberMemory, UpdateMemoryControl,
 };
 
 use crate::ports::{
-    CorrectMemoryRequest, MemoryAdministration, MemoryPageRequest, MutateMemoryRequest,
-    RecallMemoriesRequest, RememberMemoryRequest,
+    CorrectMemoryRequest, MemoryAdministration, MemoryControlRequest, MemoryPageRequest,
+    MutateMemoryRequest, RecallMemoriesRequest, RememberMemoryRequest, UpdateMemoryControlRequest,
 };
 
 /// 默认 memory 页长。
@@ -24,6 +24,36 @@ pub const MAX_MEMORY_TAGS: usize = 32;
 pub const MAX_MEMORY_TAG_BYTES: usize = 64;
 /// FTS query 字节上限。
 pub const MAX_MEMORY_QUERY_BYTES: usize = 4096;
+
+/// Read the current actor's runtime memory write control.
+pub async fn get_memory_control<M: MemoryAdministration>(
+    memory: &M,
+    auth: &AuthContext,
+) -> Result<MemoryControl, AppError> {
+    memory
+        .memory_control(MemoryControlRequest {
+            tenant: auth.tenant().clone(),
+            actor: auth.actor().clone(),
+        })
+        .await
+        .map_err(|error| error.into_app_error())
+}
+
+/// Persist a closed runtime memory write control using only authoritative scope.
+pub async fn update_memory_control<M: MemoryAdministration>(
+    memory: &M,
+    auth: &AuthContext,
+    update: UpdateMemoryControl,
+) -> Result<MemoryControl, AppError> {
+    memory
+        .update_memory_control(UpdateMemoryControlRequest {
+            tenant: auth.tenant().clone(),
+            actor: auth.actor().clone(),
+            update,
+        })
+        .await
+        .map_err(|error| error.into_app_error())
+}
 
 /// GUI “记住这条”；origin 在 adapter 固定为 user_action。
 pub async fn remember_memory<M: MemoryAdministration>(
@@ -232,6 +262,8 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum Call {
+        GetControl(MemoryControlRequest),
+        UpdateControl(UpdateMemoryControlRequest),
         Remember(RememberMemoryRequest),
         List(MemoryPageRequest),
         Correct(CorrectMemoryRequest),
@@ -265,6 +297,30 @@ mod tests {
 
     #[async_trait]
     impl MemoryAdministration for FakeMemory {
+        async fn memory_control(
+            &self,
+            request: MemoryControlRequest,
+        ) -> Result<MemoryControl, MemoryAdministrationError> {
+            self.calls
+                .lock()
+                .expect("fake lock")
+                .push(Call::GetControl(request));
+            Ok(MemoryControl::default())
+        }
+
+        async fn update_memory_control(
+            &self,
+            request: UpdateMemoryControlRequest,
+        ) -> Result<MemoryControl, MemoryAdministrationError> {
+            self.calls
+                .lock()
+                .expect("fake lock")
+                .push(Call::UpdateControl(request.clone()));
+            Ok(MemoryControl {
+                writes_enabled: request.update.writes_enabled,
+            })
+        }
+
         async fn remember(
             &self,
             request: RememberMemoryRequest,
@@ -342,6 +398,44 @@ mod tests {
             source: None,
             expires_at: None,
         }
+    }
+
+    #[tokio::test]
+    async fn control_read_and_update_inject_only_authoritative_scope() {
+        let memory = FakeMemory {
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(
+            get_memory_control(&memory, &auth())
+                .await
+                .unwrap()
+                .writes_enabled
+        );
+        let update = UpdateMemoryControl {
+            writes_enabled: false,
+        };
+        assert_eq!(
+            update_memory_control(&memory, &auth(), update)
+                .await
+                .unwrap(),
+            MemoryControl {
+                writes_enabled: false,
+            }
+        );
+        assert_eq!(
+            memory.calls.lock().expect("fake lock").as_slice(),
+            &[
+                Call::GetControl(MemoryControlRequest {
+                    tenant: TenantId::new("tenant-memory"),
+                    actor: ActorId::new("actor-memory"),
+                }),
+                Call::UpdateControl(UpdateMemoryControlRequest {
+                    tenant: TenantId::new("tenant-memory"),
+                    actor: ActorId::new("actor-memory"),
+                    update,
+                }),
+            ]
+        );
     }
 
     #[tokio::test]

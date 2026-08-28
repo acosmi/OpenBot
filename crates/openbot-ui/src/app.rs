@@ -9,6 +9,7 @@ use leptos_router::path;
 use crate::features::agents::AgentsPage;
 use crate::features::approvals::ApprovalPage;
 use crate::features::channels::{ChannelDetailPage, ChannelNewPage};
+use crate::features::memory::MemoryPage;
 use crate::i18n::{I18nContextProvider, t, t_string, use_i18n};
 use crate::preferences::provide_ui_preferences;
 use crate::primitives::{Sidebar, SidebarProvider, SidebarTrigger};
@@ -103,6 +104,7 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/agents") view=AgentsPage />
                 <Route path=path!("/channel/new") view=ChannelNewPage />
                 <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
+                <Route path=path!("/settings/memory") view=MemoryPage />
             </Routes>
         }
     }
@@ -115,6 +117,7 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/agents") view=AgentsPage />
                 <Route path=path!("/channel/new") view=ChannelNewPage />
                 <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
+                <Route path=path!("/settings/memory") view=MemoryPage />
             </Routes>
         }
     }

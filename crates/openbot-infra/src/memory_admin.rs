@@ -2,14 +2,14 @@
 
 use async_trait::async_trait;
 use openbot_application::{
-    CorrectMemoryRequest, MemoryAdministration, MemoryAdministrationError, MemoryPageRequest,
-    MutateMemoryRequest, RecallMemoriesRequest, RememberMemoryRequest, RememberToolMemory,
-    RememberToolMemoryRequest, RememberToolScope,
+    CorrectMemoryRequest, MemoryAdministration, MemoryAdministrationError, MemoryControlRequest,
+    MemoryPageRequest, MutateMemoryRequest, RecallMemoriesRequest, RememberMemoryRequest,
+    RememberToolMemory, RememberToolMemoryRequest, RememberToolScope, UpdateMemoryControlRequest,
 };
 use openbot_contracts::ids::{ActorId, BotId, TenantId, ThreadId};
 use openbot_contracts::memory::{
-    MemoryKind, MemoryMutation, MemoryOrigin, MemoryPage, MemoryRecall, MemoryRecord, MemoryScope,
-    MemorySensitivity, MemorySource, MemoryStatus, RememberMemory,
+    MemoryControl, MemoryKind, MemoryMutation, MemoryOrigin, MemoryPage, MemoryRecall,
+    MemoryRecord, MemoryScope, MemorySensitivity, MemorySource, MemoryStatus, RememberMemory,
 };
 use openbot_domain::memory::{
     Memory as DomainMemory, MemoryId as DomainMemoryId, MemoryKind as DomainMemoryKind,
@@ -40,6 +40,73 @@ impl PostgresMemoryAdministration {
 
 #[async_trait]
 impl MemoryAdministration for PostgresMemoryAdministration {
+    async fn memory_control(
+        &self,
+        request: MemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|_| MemoryAdministrationError::Unavailable)?;
+        let row = client
+            .query_opt(
+                "SELECT writes_enabled FROM public.user_memory_controls \
+                 WHERE tenant_id=$1 AND actor_user_id=$2",
+                &[&request.tenant.as_str(), &request.actor.as_str()],
+            )
+            .await
+            .map_err(|error| unavailable("读取 memory control 失败", error))?;
+        row.map_or(Ok(MemoryControl::default()), |row| {
+            row.try_get("writes_enabled")
+                .map(|writes_enabled| MemoryControl { writes_enabled })
+                .map_err(|_| MemoryAdministrationError::Corrupt {
+                    field: "writes_enabled",
+                })
+        })
+    }
+
+    async fn update_memory_control(
+        &self,
+        request: UpdateMemoryControlRequest,
+    ) -> Result<MemoryControl, MemoryAdministrationError> {
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|_| MemoryAdministrationError::Unavailable)?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|_| MemoryAdministrationError::Unavailable)?;
+        let row = transaction
+            .query_one(
+                "INSERT INTO public.user_memory_controls( \
+                   tenant_id,actor_user_id,writes_enabled,updated_at \
+                 ) VALUES($1,$2,$3,statement_timestamp()) \
+                 ON CONFLICT (tenant_id,actor_user_id) DO UPDATE SET \
+                   writes_enabled=EXCLUDED.writes_enabled,updated_at=statement_timestamp() \
+                 RETURNING writes_enabled",
+                &[
+                    &request.tenant.as_str(),
+                    &request.actor.as_str(),
+                    &request.update.writes_enabled,
+                ],
+            )
+            .await
+            .map_err(|error| write_error("保存 memory control 失败", error))?;
+        let writes_enabled =
+            row.try_get("writes_enabled")
+                .map_err(|_| MemoryAdministrationError::Corrupt {
+                    field: "writes_enabled",
+                })?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| MemoryAdministrationError::CommitUnknown)?;
+        Ok(MemoryControl { writes_enabled })
+    }
+
     async fn remember(
         &self,
         request: RememberMemoryRequest,
@@ -54,6 +121,7 @@ impl MemoryAdministration for PostgresMemoryAdministration {
             .await
             .map_err(|_| MemoryAdministrationError::Unavailable)?;
         let result = async {
+            ensure_writes_enabled(&transaction, &request.tenant, &request.actor).await?;
             let now = database_now(&transaction).await?;
             validate_memory_targets(
                 &transaction,
@@ -176,6 +244,7 @@ impl MemoryAdministration for PostgresMemoryAdministration {
             .await
             .map_err(|_| MemoryAdministrationError::Unavailable)?;
         let result = async {
+            ensure_writes_enabled(&transaction, &request.tenant, &request.actor).await?;
             let now = database_now(&transaction).await?;
             let old = load_owned_for_update(
                 &transaction,
@@ -460,6 +529,7 @@ impl RememberToolMemory for PostgresMemoryAdministration {
             if !bound {
                 return Err(MemoryAdministrationError::NotVisible);
             }
+            ensure_writes_enabled(&transaction, &request.tenant, &request.actor).await?;
             let source = if request.arguments.memory_kind() == MemoryKind::Fact {
                 let row = transaction
                     .query_opt(
@@ -528,6 +598,32 @@ impl RememberToolMemory for PostgresMemoryAdministration {
         }
         .await;
         finish_transaction(transaction, result).await
+    }
+}
+
+async fn ensure_writes_enabled(
+    transaction: &Transaction<'_>,
+    tenant: &TenantId,
+    actor: &ActorId,
+) -> Result<(), MemoryAdministrationError> {
+    let enabled: bool = transaction
+        .query_one(
+            "SELECT coalesce(( \
+               SELECT writes_enabled FROM public.user_memory_controls \
+               WHERE tenant_id=$1 AND actor_user_id=$2 \
+             ),true)",
+            &[&tenant.as_str(), &actor.as_str()],
+        )
+        .await
+        .map_err(|error| unavailable("检查 memory writes control 失败", error))?
+        .try_get(0)
+        .map_err(|_| MemoryAdministrationError::Corrupt {
+            field: "writes_enabled",
+        })?;
+    if enabled {
+        Ok(())
+    } else {
+        Err(MemoryAdministrationError::WritesDisabled)
     }
 }
 

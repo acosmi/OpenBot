@@ -3,12 +3,13 @@
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use http::StatusCode;
+use http::header::{CACHE_CONTROL, HeaderValue};
+use http::{HeaderMap, StatusCode};
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
 use openbot_contracts::memory::{
-    CorrectMemory, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, RecallMemories,
-    RememberMemory,
+    CorrectMemory, MemoryControl, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord,
+    RecallMemories, RememberMemory, UpdateMemoryControl,
 };
 use serde::Deserialize;
 
@@ -26,12 +27,47 @@ pub struct ListMemoryQuery {
     pub limit: Option<u32>,
 }
 
+/// `GET /api/memories/control`; absent durable row projects the compatibility default enabled.
+pub async fn control_get(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+) -> Result<(HeaderMap, Json<MemoryControl>), HttpError> {
+    match state
+        .application()
+        .execute(auth, AppCommand::GetMemoryControl)
+        .await?
+    {
+        AppReply::MemoryControl(control) => Ok((no_store_headers(), Json(control))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `PUT /api/memories/control`; trusted Origin is resolved before body extraction.
+pub async fn control_put(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    body: Result<Json<UpdateMemoryControl>, JsonRejection>,
+) -> Result<(HeaderMap, Json<MemoryControl>), HttpError> {
+    let Json(update) = body.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "memory control body 解析失败");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(auth, AppCommand::UpdateMemoryControl(update))
+        .await?
+    {
+        AppReply::MemoryControl(control) => Ok((no_store_headers(), Json(control))),
+        _ => Err(application_contract_error()),
+    }
+}
+
 /// `GET /api/memories`。
 pub async fn list(
     State(state): State<ServerState>,
     Authenticated(auth): Authenticated,
     query: Result<Query<ListMemoryQuery>, QueryRejection>,
-) -> Result<Json<MemoryPage>, HttpError> {
+) -> Result<(HeaderMap, Json<MemoryPage>), HttpError> {
     let Query(query) = query.map_err(|rejection| {
         tracing::debug!(rejection = %rejection, "memory query 解析失败");
         AppError::MalformedPayload { field: "query" }
@@ -47,7 +83,7 @@ pub async fn list(
         )
         .await?
     {
-        AppReply::Memories(page) => Ok(Json(page)),
+        AppReply::Memories(page) => Ok((no_store_headers(), Json(page))),
         _ => Err(application_contract_error()),
     }
 }
@@ -57,7 +93,7 @@ pub async fn recall(
     State(state): State<ServerState>,
     Authenticated(auth): Authenticated,
     body: Result<Json<RecallMemories>, JsonRejection>,
-) -> Result<Json<MemoryRecall>, HttpError> {
+) -> Result<(HeaderMap, Json<MemoryRecall>), HttpError> {
     let Json(input) = body.map_err(|rejection| {
         tracing::debug!(rejection = %rejection, "memory recall body 解析失败");
         AppError::MalformedPayload { field: "body" }
@@ -67,7 +103,7 @@ pub async fn recall(
         .execute(auth, AppCommand::RecallMemories(input))
         .await?
     {
-        AppReply::MemoryRecall(recall) => Ok(Json(recall)),
+        AppReply::MemoryRecall(recall) => Ok((no_store_headers(), Json(recall))),
         _ => Err(application_contract_error()),
     }
 }
@@ -77,7 +113,7 @@ pub async fn remember(
     State(state): State<ServerState>,
     OriginAuthenticated(auth): OriginAuthenticated,
     body: Result<Json<RememberMemory>, JsonRejection>,
-) -> Result<(StatusCode, Json<MemoryRecord>), HttpError> {
+) -> Result<(StatusCode, HeaderMap, Json<MemoryRecord>), HttpError> {
     let Json(input) = body.map_err(|rejection| {
         tracing::debug!(rejection = %rejection, "remember memory body 解析失败");
         AppError::MalformedPayload { field: "body" }
@@ -87,7 +123,7 @@ pub async fn remember(
         .execute(auth, AppCommand::RememberMemory(input))
         .await?
     {
-        AppReply::Memory(memory) => Ok((StatusCode::CREATED, Json(memory))),
+        AppReply::Memory(memory) => Ok((StatusCode::CREATED, no_store_headers(), Json(memory))),
         _ => Err(application_contract_error()),
     }
 }
@@ -98,7 +134,7 @@ pub async fn correct(
     OriginAuthenticated(auth): OriginAuthenticated,
     Path(memory_id): Path<String>,
     body: Result<Json<CorrectMemory>, JsonRejection>,
-) -> Result<Json<MemoryRecord>, HttpError> {
+) -> Result<(HeaderMap, Json<MemoryRecord>), HttpError> {
     let Json(correction) = body.map_err(|rejection| {
         tracing::debug!(rejection = %rejection, "correct memory body 解析失败");
         AppError::MalformedPayload { field: "body" }
@@ -122,7 +158,7 @@ pub async fn forbid(
     State(state): State<ServerState>,
     OriginAuthenticated(auth): OriginAuthenticated,
     Path(memory_id): Path<String>,
-) -> Result<Json<MemoryRecord>, HttpError> {
+) -> Result<(HeaderMap, Json<MemoryRecord>), HttpError> {
     memory_reply(
         state
             .application()
@@ -142,7 +178,7 @@ pub async fn delete(
     State(state): State<ServerState>,
     OriginAuthenticated(auth): OriginAuthenticated,
     Path(memory_id): Path<String>,
-) -> Result<Json<MemoryRecord>, HttpError> {
+) -> Result<(HeaderMap, Json<MemoryRecord>), HttpError> {
     memory_reply(
         state
             .application()
@@ -157,9 +193,9 @@ pub async fn delete(
     )
 }
 
-fn memory_reply(reply: AppReply) -> Result<Json<MemoryRecord>, HttpError> {
+fn memory_reply(reply: AppReply) -> Result<(HeaderMap, Json<MemoryRecord>), HttpError> {
     match reply {
-        AppReply::Memory(memory) => Ok(Json(memory)),
+        AppReply::Memory(memory) => Ok((no_store_headers(), Json(memory))),
         _ => Err(application_contract_error()),
     }
 }
@@ -172,6 +208,12 @@ fn application_contract_error() -> HttpError {
     .into()
 }
 
+fn no_store_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -182,8 +224,9 @@ mod tests {
     use http::{Method, Request};
     use openbot_application::{
         ChannelCursor, ChannelReader, CorrectMemoryRequest, MemoryAdministration,
-        MemoryAdministrationError, MemoryPageRequest, MutateMemoryRequest, OpenBotApplication,
-        PortError, RecallMemoriesRequest, RememberMemoryRequest,
+        MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest, MutateMemoryRequest,
+        OpenBotApplication, PortError, RecallMemoriesRequest, RememberMemoryRequest,
+        UpdateMemoryControlRequest,
     };
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
@@ -217,6 +260,8 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum Call {
+        GetControl(MemoryControlRequest),
+        UpdateControl(UpdateMemoryControlRequest),
         Remember(RememberMemoryRequest),
         List(MemoryPageRequest),
         Correct(CorrectMemoryRequest),
@@ -257,6 +302,30 @@ mod tests {
 
     #[async_trait]
     impl MemoryAdministration for FakeMemory {
+        async fn memory_control(
+            &self,
+            request: MemoryControlRequest,
+        ) -> Result<MemoryControl, MemoryAdministrationError> {
+            self.calls
+                .lock()
+                .expect("fake lock")
+                .push(Call::GetControl(request));
+            Ok(MemoryControl::default())
+        }
+
+        async fn update_memory_control(
+            &self,
+            request: UpdateMemoryControlRequest,
+        ) -> Result<MemoryControl, MemoryAdministrationError> {
+            self.calls
+                .lock()
+                .expect("fake lock")
+                .push(Call::UpdateControl(request.clone()));
+            Ok(MemoryControl {
+                writes_enabled: request.update.writes_enabled,
+            })
+        }
+
         async fn remember(
             &self,
             request: RememberMemoryRequest,
@@ -390,6 +459,65 @@ mod tests {
                 cursor: None,
                 limit: openbot_contracts::command::MAX_MEMORY_PAGE,
             })]
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_control_is_closed_no_store_and_origin_guarded_before_body() {
+        let memory = FakeMemory::default();
+        let response = router(memory.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/memories/control")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            memory.calls(),
+            [Call::GetControl(MemoryControlRequest {
+                tenant: TenantId::new("tenant-memory"),
+                actor: ActorId::new("actor-memory"),
+            })]
+        );
+
+        let (missing_origin, _) = send(
+            router(memory.clone()),
+            Method::PUT,
+            "/api/memories/control",
+            None,
+            "not-json",
+        )
+        .await;
+        assert_eq!(missing_origin, StatusCode::FORBIDDEN);
+        assert_eq!(memory.calls().len(), 1);
+
+        let response = router(memory.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/memories/control")
+                    .header(http::header::ORIGIN, "https://app.example.test")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"writesEnabled":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            memory.calls().last(),
+            Some(&Call::UpdateControl(UpdateMemoryControlRequest {
+                tenant: TenantId::new("tenant-memory"),
+                actor: ActorId::new("actor-memory"),
+                update: UpdateMemoryControl {
+                    writes_enabled: false,
+                },
+            }))
         );
     }
 

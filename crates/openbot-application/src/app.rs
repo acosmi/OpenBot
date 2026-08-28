@@ -50,11 +50,11 @@ use crate::ui_preferences::{
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, begin_thread_run, cancel_thread_run,
     change_person_access, change_person_role, correct_memory, create_channel, current_user,
-    get_action_policy, get_thread_conversation, get_thread_history, get_thread_status,
-    get_visible_agent, get_visible_channel, health, health_stream, list_audit_events,
-    list_memories, list_people, list_visible_agents, list_visible_channels, mint_thread_id,
-    mutate_memory, recall_memories, remember_memory, route_channel_message, set_action_policy,
-    subscribe_channel_activity, subscribe_thread_events,
+    get_action_policy, get_memory_control, get_thread_conversation, get_thread_history,
+    get_thread_status, get_visible_agent, get_visible_channel, health, health_stream,
+    list_audit_events, list_memories, list_people, list_visible_agents, list_visible_channels,
+    mint_thread_id, mutate_memory, recall_memories, remember_memory, route_channel_message,
+    set_action_policy, subscribe_channel_activity, subscribe_thread_events, update_memory_control,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -483,6 +483,12 @@ where
             )),
             AppCommand::RememberMemory(input) => Ok(AppReply::Memory(
                 remember_memory(&self.memory, auth, input).await?,
+            )),
+            AppCommand::GetMemoryControl => Ok(AppReply::MemoryControl(
+                get_memory_control(&self.memory, auth).await?,
+            )),
+            AppCommand::UpdateMemoryControl(update) => Ok(AppReply::MemoryControl(
+                update_memory_control(&self.memory, auth, update).await?,
             )),
             AppCommand::ListMemories { cursor, limit } => Ok(AppReply::Memories(
                 list_memories(&self.memory, auth, cursor, limit).await?,

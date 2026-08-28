@@ -17,6 +17,13 @@ use openbot_contracts::command::{
     ThreadRunCancellation, ThreadRunStarted,
 };
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::memory::UpdateMemoryControl;
+use openbot_contracts::memory::{
+    CorrectMemory, MemoryControl, MemoryMutation, MemoryPage, MemoryRecord,
+};
+#[cfg(any(target_arch = "wasm32", test))]
+use openbot_contracts::memory::{MemoryScope, MemoryStatus};
 use openbot_contracts::people::CurrentUser;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::people::CurrentUserResponse;
@@ -46,6 +53,8 @@ pub enum ApiError {
 
 /// Roster page size; the application still owns the authoritative 1..=200 clamp.
 pub const CHANNEL_PAGE_SIZE: u32 = 50;
+/// Memory page size; the application owns the authoritative clamp.
+pub const MEMORY_PAGE_SIZE: u32 = 50;
 
 /// Create one private channel for a single URL-selected recipient.
 pub async fn create_channel(agent_id: &BotId) -> Result<ChannelDetail, ApiError> {
@@ -442,6 +451,185 @@ pub async fn load_channel(channel_id: &str) -> Result<ChannelDetail, ApiError> {
     }
 }
 
+/// Load the current actor's runtime memory write control.
+pub async fn load_memory_control() -> Result<MemoryControl, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/memories/control")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<MemoryControl>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Persist and verify the current actor's runtime memory write control.
+pub async fn save_memory_control(writes_enabled: bool) -> Result<MemoryControl, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let request = Request::put("/api/memories/control")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&UpdateMemoryControl { writes_enabled })
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let response = request.send().await.map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let control = response
+            .json::<MemoryControl>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if control.writes_enabled != writes_enabled {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(control)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = writes_enabled;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load one owner-scoped memory keyset page.
+pub async fn list_memories(cursor: Option<&str>) -> Result<MemoryPage, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = memory_list_path(cursor)?;
+        let response = Request::get(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let page = response
+            .json::<MemoryPage>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_memory_page(&page)?;
+        Ok(page)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = cursor;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Correct one active memory; the Server creates a replacement and preserves provenance.
+pub async fn correct_memory_record(
+    memory_id: &str,
+    correction: CorrectMemory,
+) -> Result<MemoryRecord, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = memory_detail_path(memory_id)?;
+        let request = Request::put(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&correction)
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let response = request.send().await.map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let record = response
+            .json::<MemoryRecord>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_memory_record(&record)?;
+        if record.status != MemoryStatus::Active
+            || record.supersedes_id.as_deref() != Some(memory_id)
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(record)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (memory_id, correction);
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Forbid or delete one owner memory and verify that retained content is erased.
+pub async fn mutate_memory_record(
+    memory_id: &str,
+    mutation: MemoryMutation,
+) -> Result<MemoryRecord, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = match mutation {
+            MemoryMutation::Forbid => format!("{}/forbid", memory_detail_path(memory_id)?),
+            MemoryMutation::Delete => memory_detail_path(memory_id)?,
+        };
+        let request = match mutation {
+            MemoryMutation::Forbid => Request::post(&path),
+            MemoryMutation::Delete => Request::delete(&path),
+        }
+        .cache(RequestCache::NoStore)
+        .credentials(RequestCredentials::SameOrigin)
+        .redirect(RequestRedirect::Error);
+        let response = request.send().await.map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let record = response
+            .json::<MemoryRecord>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_memory_record(&record)?;
+        let expected = match mutation {
+            MemoryMutation::Forbid => MemoryStatus::Forbidden,
+            MemoryMutation::Delete => MemoryStatus::Deleted,
+        };
+        if record.memory_id != memory_id || record.status != expected || record.content.is_some() {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(record)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (memory_id, mutation);
+        Err(ApiError::Unavailable)
+    }
+}
+
 /// Load the current authenticated user for the sidebar footer.
 pub async fn load_current_user() -> Result<CurrentUser, ApiError> {
     #[cfg(target_arch = "wasm32")]
@@ -671,6 +859,96 @@ fn approval_decision_path(approval_id: &str) -> Result<String, ApiError> {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn memory_list_path(cursor: Option<&str>) -> Result<String, ApiError> {
+    let mut path = format!("/api/memories?limit={MEMORY_PAGE_SIZE}");
+    if let Some(cursor) = cursor {
+        validate_memory_id(cursor)?;
+        path.push_str("&cursor=");
+        path.push_str(&encode_url_component(cursor));
+    }
+    Ok(path)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn memory_detail_path(memory_id: &str) -> Result<String, ApiError> {
+    validate_memory_id(memory_id)?;
+    Ok(format!("/api/memories/{}", encode_url_component(memory_id)))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_memory_id(memory_id: &str) -> Result<(), ApiError> {
+    if memory_id.is_empty() || memory_id.len() > 512 || memory_id.chars().any(char::is_control) {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_memory_page(page: &MemoryPage) -> Result<(), ApiError> {
+    if page.memories.len() > MEMORY_PAGE_SIZE as usize {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for record in &page.memories {
+        validate_memory_record(record)?;
+        if !ids.insert(record.memory_id.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+    }
+    if let Some(cursor) = page.next_cursor.as_deref() {
+        validate_memory_id(cursor)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_memory_record(record: &MemoryRecord) -> Result<(), ApiError> {
+    validate_memory_id(&record.memory_id)?;
+    if record.owner_user_id.is_empty()
+        || record.owner_user_id.chars().any(char::is_control)
+        || record.created_by.is_empty()
+        || record.created_by.chars().any(char::is_control)
+        || record.tags.len() > 32
+        || record
+            .tags
+            .iter()
+            .any(|tag| tag.is_empty() || tag.len() > 64 || tag.chars().any(char::is_control))
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    match record.status {
+        MemoryStatus::Active | MemoryStatus::Superseded
+            if record.content.as_deref().is_none_or(str::is_empty) =>
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        MemoryStatus::Forbidden | MemoryStatus::Deleted if record.content.is_some() => {
+            return Err(ApiError::InvalidResponse);
+        }
+        _ => {}
+    }
+    match &record.scope {
+        MemoryScope::User => {}
+        MemoryScope::Bot { bot_id } if bot_id.as_str().is_empty() => {
+            return Err(ApiError::InvalidResponse);
+        }
+        MemoryScope::Thread { thread_id } if thread_id.as_str().is_empty() => {
+            return Err(ApiError::InvalidResponse);
+        }
+        MemoryScope::Bot { .. } | MemoryScope::Thread { .. } => {}
+    }
+    if let Some(source) = &record.source
+        && (source.thread_id.as_str().is_empty()
+            || source.message_id.is_empty()
+            || source.message_id.chars().any(char::is_control))
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn channel_detail_path(channel_id: &str) -> Result<String, ApiError> {
     validate_channel_id(channel_id)?;
     Ok(format!(
@@ -826,7 +1104,30 @@ fn status_error(status: u16) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    use openbot_contracts::memory::{MemoryKind, MemoryOrigin, MemorySensitivity};
+    use time::OffsetDateTime;
+
     use super::*;
+
+    fn memory_record(id: &str, content: Option<&str>, status: MemoryStatus) -> MemoryRecord {
+        MemoryRecord {
+            memory_id: id.to_owned(),
+            owner_user_id: "actor".to_owned(),
+            scope: MemoryScope::User,
+            memory_kind: MemoryKind::Preference,
+            content: content.map(str::to_owned),
+            tags: vec!["preference".to_owned()],
+            sensitivity: MemorySensitivity::Normal,
+            source: None,
+            origin: MemoryOrigin::UserAction,
+            created_by: "actor".to_owned(),
+            supersedes_id: None,
+            status,
+            expires_at: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
 
     #[test]
     fn approval_path_is_one_encoded_segment_and_rejects_invalid_ids() {
@@ -880,6 +1181,39 @@ mod tests {
         );
         assert_eq!(
             channel_list_path(Some("bad\ncursor")).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn memory_paths_and_pages_are_closed_bounded_and_owner_safe() {
+        assert_eq!(
+            memory_list_path(Some("memory/one?x=1")).unwrap(),
+            "/api/memories?limit=50&cursor=memory%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
+            memory_detail_path("memory/one?x=1").unwrap(),
+            "/api/memories/memory%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
+            memory_detail_path("bad\nmemory").unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let active = memory_record("memory-1", Some("tea"), MemoryStatus::Active);
+        assert!(validate_memory_record(&active).is_ok());
+        let mut erased_active = active.clone();
+        erased_active.content = None;
+        assert_eq!(
+            validate_memory_record(&erased_active).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let duplicate = MemoryPage {
+            memories: vec![active.clone(), active],
+            next_cursor: None,
+        };
+        assert_eq!(
+            validate_memory_page(&duplicate).unwrap_err(),
             ApiError::InvalidResponse
         );
     }

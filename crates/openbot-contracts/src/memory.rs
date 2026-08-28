@@ -79,6 +79,30 @@ pub enum MemoryStatus {
     Deleted,
 }
 
+/// Actor-scoped runtime memory write control.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryControl {
+    /// Whether runtime GUI/tool/correction paths may retain new memory content.
+    pub writes_enabled: bool,
+}
+
+impl Default for MemoryControl {
+    fn default() -> Self {
+        Self {
+            writes_enabled: true,
+        }
+    }
+}
+
+/// Closed update body for the actor's memory write control.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateMemoryControl {
+    /// New authoritative write setting.
+    pub writes_enabled: bool,
+}
+
 /// GUI “记住这条”的输入；没有 owner/origin/created_by 字段。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -232,6 +256,20 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&MemoryPage::default()).unwrap(),
             r#"{"memories":[],"nextCursor":null}"#
+        );
+    }
+
+    #[test]
+    fn memory_control_defaults_enabled_and_rejects_extra_authority_fields() {
+        assert_eq!(
+            serde_json::to_string(&MemoryControl::default()).unwrap(),
+            r#"{"writesEnabled":true}"#
+        );
+        assert!(
+            serde_json::from_str::<UpdateMemoryControl>(
+                r#"{"writesEnabled":false,"actor":"forged"}"#
+            )
+            .is_err()
         );
     }
 }

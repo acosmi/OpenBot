@@ -4,13 +4,16 @@ mod harness;
 
 use harness::{admin_config, with_temp_database};
 use openbot_application::{
-    CorrectMemoryRequest, MemoryAdministration, MemoryAdministrationError, MemoryPageRequest,
-    MutateMemoryRequest, RecallMemoriesRequest, RememberMemoryRequest,
+    CorrectMemoryRequest, MemoryAdministration, MemoryAdministrationError, MemoryControlRequest,
+    MemoryPageRequest, MutateMemoryRequest, RecallMemoriesRequest, RememberMemoryRequest,
+    RememberToolMemory, RememberToolMemoryRequest, UpdateMemoryControlRequest,
+    parse_remember_tool_arguments,
 };
-use openbot_contracts::ids::{ActorId, TenantId, ThreadId};
+use openbot_contracts::auth::AuthGeneration;
+use openbot_contracts::ids::{ActorId, BotId, RunId, TenantId, ThreadId};
 use openbot_contracts::memory::{
     CorrectMemory, MemoryKind, MemoryMutation, MemoryScope, MemorySensitivity, MemorySource,
-    MemoryStatus, RecallMemories, RememberMemory,
+    MemoryStatus, RecallMemories, RememberMemory, UpdateMemoryControl,
 };
 use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::memory_admin::PostgresMemoryAdministration;
@@ -25,8 +28,10 @@ async fn provision(pool: &deadpool_postgres::Pool) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     client
         .batch_execute(
-            "INSERT INTO public.users(id,email) VALUES
-               ('actor-a','a@example.test'),('actor-b','b@example.test');
+            "INSERT INTO public.users(id,email,auth_generation) VALUES
+               ('actor-a','a@example.test',0),('actor-b','b@example.test',0);
+             INSERT INTO public.user_roles(user_id,role) VALUES
+               ('actor-a','user'),('actor-b','user');
              INSERT INTO public.agents(id,name,type,configuration)
                VALUES('bot-1','Bot 1','built_in','{}'::jsonb);
              INSERT INTO public.agent_profiles(
@@ -40,14 +45,184 @@ async fn provision(pool: &deadpool_postgres::Pool) -> Result<(), String> {
              );
              INSERT INTO public.thread_memberships(thread_id,user_id)
                VALUES('550e8400-e29b-41d4-a716-446655440000','actor-a');
+             INSERT INTO public.runs(
+               run_id,thread_id,bot_id,actor_id,foreground,status,fencing_token,started_at
+             ) VALUES('run-memory','550e8400-e29b-41d4-a716-446655440000','bot-1','actor-a',
+                      true,'running',1,clock_timestamp());
+             INSERT INTO public.thread_leases(
+               thread_id,owner_id,fencing_token,acquired_at,expires_at,updated_at
+             ) VALUES('550e8400-e29b-41d4-a716-446655440000','memory-runtime',1,
+                      clock_timestamp(),clock_timestamp()+interval '10 minutes',clock_timestamp());
              INSERT INTO public.messages(message_id,thread_id,seq,role,content,search_text,actor_id)
                VALUES('message-1','550e8400-e29b-41d4-a716-446655440000',0,'user',
                       '{\"text\":\"The office is closed Friday\"}'::jsonb,
-                      'The office is closed Friday','actor-a');",
+                      'The office is closed Friday','actor-a');
+             UPDATE public.messages SET run_id='run-memory' WHERE message_id='message-1';",
         )
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn write_control_blocks_gui_tool_and_correction_but_never_erasure() {
+    let admin = admin_config("write_control_blocks_gui_tool_and_correction_but_never_erasure");
+    with_temp_database(&admin, "memorycontrol", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let store = PostgresMemoryAdministration::new(pool.clone());
+            let tenant = TenantId::new("tenant-a");
+            let actor = ActorId::new("actor-a");
+            let scope = MemoryControlRequest {
+                tenant: tenant.clone(),
+                actor: actor.clone(),
+            };
+            if !store
+                .memory_control(scope.clone())
+                .await
+                .map_err(|error| error.to_string())?
+                .writes_enabled
+            {
+                return Err("absent control must default enabled".to_owned());
+            }
+            let existing = store
+                .remember(RememberMemoryRequest {
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    input: RememberMemory {
+                        memory_kind: MemoryKind::Preference,
+                        scope: MemoryScope::User,
+                        content: "Prefer concise answers".to_owned(),
+                        tags: vec!["style".to_owned()],
+                        sensitivity: MemorySensitivity::Normal,
+                        source: None,
+                        expires_at: None,
+                    },
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            let disabled = store
+                .update_memory_control(UpdateMemoryControlRequest {
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    update: UpdateMemoryControl {
+                        writes_enabled: false,
+                    },
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            if disabled.writes_enabled
+                || store
+                    .memory_control(scope)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .writes_enabled
+            {
+                return Err("disabled control did not persist".to_owned());
+            }
+            if store
+                .remember(RememberMemoryRequest {
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    input: fact(),
+                })
+                .await
+                != Err(MemoryAdministrationError::WritesDisabled)
+            {
+                return Err("disabled GUI remember must fail before insert".to_owned());
+            }
+            if store
+                .correct(CorrectMemoryRequest {
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    memory_id: existing.memory_id.clone(),
+                    correction: CorrectMemory {
+                        content: "Prefer detailed answers".to_owned(),
+                        tags: Vec::new(),
+                        sensitivity: MemorySensitivity::Normal,
+                        expires_at: None,
+                    },
+                })
+                .await
+                != Err(MemoryAdministrationError::WritesDisabled)
+            {
+                return Err("disabled correction must not create a replacement".to_owned());
+            }
+            let tool_arguments = parse_remember_tool_arguments(&serde_json::json!({
+                "memoryKind":"preference",
+                "scope":"user",
+                "content":"Remember from tool",
+                "tags":[],
+                "sensitivity":"normal"
+            }))
+            .map_err(|error| error.to_string())?;
+            if store
+                .remember_from_tool(RememberToolMemoryRequest {
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    auth_generation: AuthGeneration::new(0),
+                    run: RunId::new("run-memory"),
+                    bot: BotId::new("bot-1"),
+                    thread: ThreadId::new("550e8400-e29b-41d4-a716-446655440000"),
+                    arguments: tool_arguments,
+                })
+                .await
+                != Err(MemoryAdministrationError::WritesDisabled)
+            {
+                return Err("disabled remember tool must fail before insert".to_owned());
+            }
+            let deleted = store
+                .mutate(MutateMemoryRequest {
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    memory_id: existing.memory_id,
+                    mutation: MemoryMutation::Delete,
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            if deleted.status != MemoryStatus::Deleted || deleted.content.is_some() {
+                return Err("disable must never block user erasure".to_owned());
+            }
+            store
+                .update_memory_control(UpdateMemoryControlRequest {
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    update: UpdateMemoryControl {
+                        writes_enabled: true,
+                    },
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            store
+                .remember(RememberMemoryRequest {
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    input: fact(),
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let other = store
+                .memory_control(MemoryControlRequest {
+                    tenant: TenantId::new("tenant-b"),
+                    actor,
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            if !other.writes_enabled {
+                return Err("memory control crossed tenant scope".to_owned());
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
 }
 
 fn fact() -> RememberMemory {

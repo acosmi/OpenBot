@@ -31,8 +31,8 @@ pub use health::{DEFAULT_HEARTBEAT_PERIOD, health, health_stream};
 pub use list_visible_channels::{DEFAULT_CHANNEL_PAGE, get_visible_channel, list_visible_channels};
 pub use memory::{
     DEFAULT_MEMORY_PAGE, MAX_MEMORY_CONTENT_BYTES, MAX_MEMORY_QUERY_BYTES, MAX_MEMORY_TAG_BYTES,
-    MAX_MEMORY_TAGS, correct_memory, list_memories, mutate_memory, recall_memories,
-    remember_memory,
+    MAX_MEMORY_TAGS, correct_memory, get_memory_control, list_memories, mutate_memory,
+    recall_memories, remember_memory, update_memory_control,
 };
 pub use people::{
     DEFAULT_PEOPLE_PAGE, MAX_PEOPLE_PAGE, admin_status, change_person_access, change_person_role,

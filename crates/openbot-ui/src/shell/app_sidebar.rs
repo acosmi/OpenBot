@@ -123,7 +123,8 @@ pub fn AppSidebar() -> impl IntoView {
     let new_channel_location = location.clone();
     let roster_location = location.clone();
     let agents_location = location.clone();
-    let footer_location = location;
+    let approvals_location = location.clone();
+    let memory_location = location;
     view! {
         <span
             hidden
@@ -231,7 +232,15 @@ pub fn AppSidebar() -> impl IntoView {
                     href="/approvals".to_owned()
                     icon=Icon::ListChecks
                     label=move || t_string!(i18n, admin.nav_approvals).to_owned()
-                    current=Signal::derive(move || footer_location.pathname.get() == "/approvals")
+                    current=Signal::derive(move || approvals_location.pathname.get() == "/approvals")
+                />
+                <SidebarNavLink
+                    href="/settings/memory".to_owned()
+                    icon=Icon::Brain
+                    label=move || t_string!(i18n, shell.nav_memory).to_owned()
+                    current=Signal::derive(move || {
+                        memory_location.pathname.get() == "/settings/memory"
+                    })
                 />
             </SidebarNavList>
             <Show when=move || current_user.get().is_some()>

@@ -930,6 +930,9 @@ where
                     openbot_application::MemoryAdministrationError::Conflict => {
                         (CommitState::NotCommitted, "memory_conflict")
                     }
+                    openbot_application::MemoryAdministrationError::WritesDisabled => {
+                        (CommitState::NotCommitted, "memory_writes_disabled")
+                    }
                     openbot_application::MemoryAdministrationError::Unavailable
                     | openbot_application::MemoryAdministrationError::Corrupt { .. } => {
                         (CommitState::NotCommitted, "dependency_unavailable")

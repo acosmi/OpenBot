@@ -39,8 +39,8 @@ use crate::mcp::{
     McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
 };
 use crate::memory::{
-    CorrectMemory, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord, RecallMemories,
-    RememberMemory,
+    CorrectMemory, MemoryControl, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord,
+    RecallMemories, RememberMemory, UpdateMemoryControl,
 };
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
 use crate::policy::ActionPolicyDocument;
@@ -231,6 +231,12 @@ pub enum AppCommand {
     /// GUI “记住这条”；application 固定 origin=user_action。
     RememberMemory(RememberMemory),
 
+    /// Read the current actor's runtime memory write control.
+    GetMemoryControl,
+
+    /// Update the current actor's runtime memory write control.
+    UpdateMemoryControl(UpdateMemoryControl),
+
     /// 当前 actor 的 memory keyset 页。
     ListMemories {
         /// 上一页最后一条 memory id；opaque。
@@ -372,6 +378,8 @@ pub enum AppReply {
     ThreadConversation(ThreadConversationSnapshot),
     /// Remember/correct/mutate 后的记录。
     Memory(MemoryRecord),
+    /// Actor-scoped runtime memory write control.
+    MemoryControl(MemoryControl),
     /// [`AppCommand::ListMemories`] 的页。
     Memories(MemoryPage),
     /// [`AppCommand::RecallMemories`] 的结果。
