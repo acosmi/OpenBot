@@ -4,6 +4,12 @@
 > `5f0b542`。固定上游`CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`。
 > 本机定向测试；不运行`cargo xtask ci`，不派发Actions，不触碰`docs/assets/`。
 
+> 已完成：implementation `18a080cd2749cb958adcbfd12d06af11468d8ae8`；正式证据见
+> `docs/2026-08-27-G6-GalleryCharts-batch42.md`与R105。本文件保留为恢复点历史。
+
+> 已完成：implementation `18a080cd2749cb958adcbfd12d06af11468d8ae8`；正式证据见
+> `docs/2026-08-27-G6-GalleryCharts-batch42.md`与R105。本文件保留为恢复点历史。
+
 ## 范围与裁决
 
 - 固定上游贡献`showBarChart/showPieChart/showLineChart/showAreaChart/showProgress`五个独立name；
