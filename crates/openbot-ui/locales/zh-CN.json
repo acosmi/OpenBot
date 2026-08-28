@@ -212,6 +212,7 @@
   },
   "settings": {
     "title": "设置",
+    "back_to_app": "返回应用",
     "preferences_title": "偏好设置",
     "preferences_description": "选择 OpenBot 为你呈现和朗读内容的方式。这些偏好会在当前部署中随你的账户跨设备同步。",
     "nav_general": "通用",

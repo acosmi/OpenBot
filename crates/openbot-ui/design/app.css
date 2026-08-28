@@ -373,6 +373,58 @@ textarea:focus-visible,
   margin: calc(var(--spacing) * 4) 0 0;
 }
 
+.ob-settings-shell {
+  display: grid;
+  grid-template-columns: var(--size-subnav) minmax(0, 1fr);
+  min-height: calc(100dvh - var(--size-topbar));
+}
+
+.ob-settings-subnav {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  min-height: calc(100dvh - var(--size-topbar));
+  padding: calc(var(--spacing) * 3);
+  border-inline-end: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+
+.ob-settings-subnav nav {
+  display: grid;
+  gap: calc(var(--spacing) * 4);
+}
+
+.ob-settings-back,
+.ob-settings-subnav-link {
+  display: flex;
+  min-height: var(--size-sidebar-item);
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding-inline: calc(var(--spacing) * 2);
+  border-radius: var(--radius-md);
+  color: var(--fg-secondary);
+  text-decoration: none;
+}
+
+.ob-settings-back:is(:hover, :focus-visible),
+.ob-settings-subnav-link:is(:hover, :focus-visible),
+.ob-settings-subnav-link[data-state="current"] {
+  color: var(--fg);
+  background: var(--bg-chip);
+}
+
+.ob-settings-subnav-list {
+  display: grid;
+  gap: var(--spacing);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-settings-shell-content {
+  min-width: 0;
+}
+
 .ob-settings-preference-list {
   margin-block-start: calc(var(--spacing) * 4);
   border: 1px solid var(--border);
@@ -2771,6 +2823,32 @@ textarea:focus-visible,
   margin-block-start: calc(var(--spacing) * 5);
   padding-block-start: calc(var(--spacing) * 4);
   border-block-start: 1px solid var(--border);
+}
+
+@media (max-width: 47.999rem) {
+  .ob-settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ob-settings-subnav {
+    position: static;
+    min-height: 0;
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--border);
+  }
+
+  .ob-settings-subnav nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+  }
+
+  .ob-settings-subnav-list {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
 }
 
 @font-face {
