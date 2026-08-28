@@ -708,15 +708,17 @@ G6 重写后的文本（替换 v3 原四条）：
   golden、Desktop Local OAuth与restricted-scope发布验证仍todo；
 - [x] Components Gallery index/detail只消费typed治理DTO：build manifest由Server所有，browser复述必须
   逐字段相等；PG additive sync首次published且insert+audit同事务，existing管理员治理零覆盖。当前登记
-  `showQuote`、Cards四项与Charts五项共10个真实renderer；stale published有诚实
+  `showQuote`、Cards四项、Charts五项与Activity共11个ordinary真实renderer；stale published有诚实
   fallback，unpublished按不存在。`GalleryFrame`遵守中性chrome与四值语义tone；Cards schema/preview保留
-  独立tool identity，Checklist只读且semantic badge背景0。Axum/Tauri同一typed command。conversation
-  runtime grant/decision、另3个renderer、Refused双路径接线与formal golden仍todo；
+  独立tool identity，Checklist只读且semantic badge背景0。Axum/Tauri同一typed command。ordinary 11项
+  已接fresh provider grant/decision、closed args、durable call/result/Agent三向配对与conversation runtime；
+  Activity follow-up ask、Decisions两个HITL renderer、Refused sandbox共用与formal golden仍todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
-- [ ] 其余24个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、其余3个
-  compiled renderer/runtime与sandboxed gallery、multi-window lifecycle/ACL及真实macOS/Windows binary尚未闭合；
+- [ ] 其余24个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、Decisions
+  两个compiled HITL renderer、Activity follow-up ask与sandboxed gallery、multi-window lifecycle/ACL及真实
+  macOS/Windows binary尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
 - [ ] Tauri 图的 MPL-2.0×5、runtime UNIC unmaintained×5、Cargo Vet macOS 270/Windows 269
