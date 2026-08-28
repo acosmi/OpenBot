@@ -43,9 +43,9 @@
 //! [`SECRET_COLUMN_NAME_ROOTS`] 却既不在 [`SECRET_COLUMNS`] 也不在 [`SECRET_SCAN_EXEMPTIONS`]
 //! 的，当场判红。将来有人加一列 `refresh_token` 而忘了登记，闸门会拦住。
 //!
-//! 0013、0016、0020、0021 与 0022 的 native 表分别登记在 [`NATIVE_0013_TABLES`] /
+//! 0013、0016、0020、0021、0022 与 0023 的 native 表分别登记在 [`NATIVE_0013_TABLES`] /
 //! [`NATIVE_0016_TABLES`] / [`NATIVE_0020_TABLES`] / [`NATIVE_0021_TABLES`] /
-//! [`NATIVE_0022_TABLES`]，
+//! [`NATIVE_0022_TABLES`] / [`NATIVE_0023_TABLES`]，
 //! 始终不混进只代表固定上游 0012 的 [`ALL_TABLES`]。
 
 use std::fmt;
@@ -84,6 +84,9 @@ pub const SECRET_COLUMNS: &[(&str, &str)] = &[
     ("accounts", "refresh_token"),
     ("agent_profiles", "callback_token_hash"),
     ("audit_checkpoints", "signature"),
+    ("component_human_decisions", "answer"),
+    ("component_human_decisions", "arguments"),
+    ("component_human_decisions", "arguments_hash"),
     ("credentials", "encrypted_value"),
     ("intelligence_import_cursors", "cursor"),
     ("intelligence_import_cursors", "provenance"),
@@ -559,6 +562,15 @@ pub const NATIVE_0022_TABLES: &[TableSpec] = &[TableSpec {
     column_specs: user_memory_controls::COLUMN_SPECS,
 }];
 
+pub mod component_human_decisions;
+
+/// Native 0023 durable compiled-component human decisions table.
+pub const NATIVE_0023_TABLES: &[TableSpec] = &[TableSpec {
+    name: component_human_decisions::TABLE_NAME,
+    columns: component_human_decisions::COLUMNS,
+    column_specs: component_human_decisions::COLUMN_SPECS,
+}];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,6 +583,7 @@ mod tests {
             .chain(NATIVE_0020_TABLES.iter())
             .chain(NATIVE_0021_TABLES.iter())
             .chain(NATIVE_0022_TABLES.iter())
+            .chain(NATIVE_0023_TABLES.iter())
     }
 
     /// 每张表的列数。数值取自参照库（`fixtures/db/schema-0012.json`），合计必须是 204。
@@ -910,7 +923,8 @@ mod tests {
             "这些列命中 secret 词根却既没登记也没豁免，请补进 SECRET_COLUMNS 或 \
              SECRET_SCAN_EXEMPTIONS（豁免必须带书面理由）：{unclassified:?}",
         );
-        // signature / capability_id 不含词根但仍是主动登记项，所以只比较会命中词根的子集。
+        // signature/capability_id 以及 component arguments/answer 不含词根但仍是主动登记项，
+        // 所以只比较会命中词根的子集。
         let registered_root_hits = SECRET_COLUMNS
             .iter()
             .filter(|(_, column)| {
@@ -928,7 +942,7 @@ mod tests {
             })
             .count();
         assert_eq!(hits, registered_root_hits + exemption_root_hits);
-        assert_eq!(SECRET_COLUMNS.len(), 29);
+        assert_eq!(SECRET_COLUMNS.len(), 32);
         assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 11);
     }
 

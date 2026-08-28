@@ -78,6 +78,14 @@ impl AuditEventType {
     pub const TOOL_APPROVAL_EXPIRED: Self = Self("tool.approval_expired");
     /// Run/scope cancellation retired a pending request.
     pub const TOOL_APPROVAL_CANCELLED: Self = Self("tool.approval_cancelled");
+    /// A compiled decision component began waiting for its actor.
+    pub const COMPONENT_HUMAN_REQUESTED: Self = Self("component.human_requested");
+    /// The actor answered one durable compiled decision.
+    pub const COMPONENT_HUMAN_ANSWERED: Self = Self("component.human_answered");
+    /// A durable compiled decision reached its wait bound.
+    pub const COMPONENT_HUMAN_EXPIRED: Self = Self("component.human_expired");
+    /// Run/scope invalidation retired a durable compiled decision.
+    pub const COMPONENT_HUMAN_CANCELLED: Self = Self("component.human_cancelled");
     /// Bot 在其 computer 上执行的动作被放行。
     pub const COMPUTER_ACTION_ALLOWED: Self = Self("computer.action_allowed");
     /// Bot 在其 computer 上执行的动作被策略拒绝。
@@ -128,7 +136,7 @@ impl fmt::Display for AuditEventType {
     }
 }
 
-/// 事件类型全集：上游 57 项 + 本项目新增 deadline/memory/catalog/approval 10 项。
+/// 事件类型全集：上游 57 项 + 本项目新增 deadline/memory/catalog/approval/component 14 项。
 ///
 /// 顺序也照抄上游，方便逐行对拍。
 pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
@@ -183,6 +191,10 @@ pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
     AuditEventType("component.function_called"),
     AuditEventType("component.function_refused"),
     AuditEventType("component.function_failed"),
+    AuditEventType("component.human_requested"),
+    AuditEventType("component.human_answered"),
+    AuditEventType("component.human_expired"),
+    AuditEventType("component.human_cancelled"),
     AuditEventType("person.role_changed"),
     AuditEventType("person.access_revoked"),
     AuditEventType("person.access_restored"),
@@ -259,10 +271,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn catalog_is_upstream_fifty_seven_plus_ten_new_and_has_no_duplicates() {
-        assert_eq!(AUDIT_EVENT_TYPES.len(), 67);
+    fn catalog_is_upstream_fifty_seven_plus_fourteen_new_and_has_no_duplicates() {
+        assert_eq!(AUDIT_EVENT_TYPES.len(), 71);
         let unique: BTreeSet<&str> = AUDIT_EVENT_TYPES.iter().map(|t| t.0).collect();
-        assert_eq!(unique.len(), 67, "目录里有重复的事件类型");
+        assert_eq!(unique.len(), 71, "目录里有重复的事件类型");
     }
 
     #[test]
@@ -290,6 +302,10 @@ mod tests {
             AuditEventType::MEMORY_REMEMBER_REFUSED,
             AuditEventType::MEMORY_REMEMBER_SUCCEEDED,
             AuditEventType::MEMORY_REMEMBER_FAILED,
+            AuditEventType::COMPONENT_HUMAN_REQUESTED,
+            AuditEventType::COMPONENT_HUMAN_ANSWERED,
+            AuditEventType::COMPONENT_HUMAN_EXPIRED,
+            AuditEventType::COMPONENT_HUMAN_CANCELLED,
             AuditEventType::COMPUTER_ACTION_ALLOWED,
             AuditEventType::COMPUTER_ACTION_REFUSED,
             AuditEventType::COMPUTER_ACTION_FAILED,

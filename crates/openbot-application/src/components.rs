@@ -7,17 +7,31 @@ use openbot_contracts::auth::AuthContext;
 #[cfg(test)]
 use openbot_contracts::components::ComponentDecisionRefusal;
 use openbot_contracts::components::{
-    BOT_ACTIVITY_FUNCTION_NAME, CompiledComponentManifestEntry, ComponentCatalogueAdded,
-    ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision, ComponentDecisionRequest,
-    ComponentFunctionCall, ComponentFunctionCallRequest, ComponentFunctionData, ComponentRecords,
-    GrantedCompiledComponents, RECENT_REFUSALS_FUNCTION_NAME, SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
-    compiled_component_manifest, component_data_function_manifest,
+    ASK_APPROVAL_COMPONENT_NAME, ASK_CHOICE_COMPONENT_NAME, BOT_ACTIVITY_FUNCTION_NAME,
+    CompiledComponentManifestEntry, ComponentApprovalAnswer, ComponentCatalogueAdded,
+    ComponentCatalogueRequest, ComponentChoiceAnswer, ComponentDataFunctions, ComponentDecision,
+    ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
+    ComponentFunctionData, ComponentHumanDecisionAnswer, ComponentHumanDecisionRequest,
+    ComponentHumanDecisionResolved, ComponentRecords, GrantedCompiledComponents,
+    PendingComponentHumanDecision, PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME,
+    SHOW_ACTIVITY_REPORT_COMPONENT_NAME, compiled_component_manifest,
+    component_data_function_manifest, validate_component_human_decision_arguments,
 };
 use openbot_contracts::error::AppError;
-use openbot_contracts::ids::{ActorId, BotId, TenantId};
+use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId};
+use openbot_contracts::text::trim_ecmascript;
+use openbot_domain::audit::hash::Sha256Digest;
+use openbot_domain::tool::args::ToolArguments;
 
 const MAX_RUNTIME_IDENTIFIERS: usize = 1024;
 const MAX_RUNTIME_IDENTIFIER_BYTES: usize = 256;
+const MAX_HUMAN_DECISION_ARGUMENT_BYTES: usize = 64 * 1024;
+const MAX_HUMAN_DECISION_ARRAY_ITEMS: usize = 100;
+const MAX_HUMAN_DECISION_STRING_BYTES: usize = 16 * 1024;
+const MAX_HUMAN_DECISION_NOTE_BYTES: usize = 4 * 1024;
+/// Surface/HITL upper bound; the Agent run deadline may end the wait sooner.
+pub const COMPONENT_HUMAN_DECISION_TTL: core::time::Duration =
+    core::time::Duration::from_secs(30 * 60);
 
 /// Authority already resolved for one compiled-component runtime request.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,6 +44,44 @@ pub struct ComponentRuntimeScope {
     pub admin: bool,
     /// Untrusted Agent target after bounded identifier validation.
     pub agent_id: BotId,
+}
+
+/// Authority for one internal surface/HITL request; never serialized by a transport.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComponentHumanDecisionScope {
+    /// Verified deployment.
+    pub deployment: DeploymentId,
+    /// Verified tenant.
+    pub tenant: TenantId,
+    /// Verified actor who owns the waiting run.
+    pub actor: ActorId,
+    /// Session generation at request time.
+    pub auth_generation: openbot_contracts::auth::AuthGeneration,
+    /// Whether verified roles include administrator.
+    pub admin: bool,
+    /// Durable thread from the run lease.
+    pub thread_id: ThreadId,
+    /// Durable run from the run lease.
+    pub run_id: RunId,
+    /// Durable Agent from the run lease.
+    pub agent_id: BotId,
+}
+
+/// Validated request persisted by the component human-decision port.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComponentHumanDecisionDraft {
+    /// Server-minted decision identity.
+    pub decision_id: String,
+    /// Durable provider pairing id.
+    pub provider_call_id: String,
+    /// Exact decision component.
+    pub component_name: String,
+    /// Closed, bounded renderer arguments.
+    pub arguments: serde_json::Value,
+    /// Order-independent canonical arguments digest.
+    pub arguments_hash: Sha256Digest,
+    /// Bounded wait upper bound.
+    pub ttl: core::time::Duration,
 }
 
 /// Validated, bounded arguments for one build-owned component data function.
@@ -77,6 +129,9 @@ pub enum ComponentAdministrationError {
     /// The named Agent is absent or not runnable by the verified actor in this tenant.
     #[error("component_agent_not_visible")]
     NotVisible,
+    /// An already-resolved decision was answered differently or is no longer pending.
+    #[error("component_request_conflict")]
+    Conflict,
     /// A catalogue/audit transaction may have committed and must be reconciled.
     #[error("component_commit_unknown")]
     CommitUnknown,
@@ -89,6 +144,9 @@ impl ComponentAdministrationError {
         match self {
             Self::InvalidInput { field } => AppError::MalformedPayload { field },
             Self::NotVisible => AppError::NotVisible,
+            Self::Conflict => AppError::RequestConflict {
+                resource: "component_human_decision",
+            },
             Self::Unavailable | Self::Corrupt { .. } => AppError::DependencyUnavailable {
                 dependency: "components",
             },
@@ -142,6 +200,42 @@ pub trait ComponentAdministration: Send + Sync {
         _build_has_renderer: bool,
         _plan: &ComponentFunctionCallPlan,
     ) -> Result<ComponentFunctionCall, ComponentAdministrationError> {
+        Err(ComponentAdministrationError::Unavailable)
+    }
+
+    /// Create one pending surface/HITL request and append its requested audit atomically.
+    async fn request_component_human_decision(
+        &self,
+        _scope: &ComponentHumanDecisionScope,
+        _draft: &ComponentHumanDecisionDraft,
+    ) -> Result<PendingComponentHumanDecision, ComponentAdministrationError> {
+        Err(ComponentAdministrationError::Unavailable)
+    }
+
+    /// List pending decisions visible to the verified actor.
+    async fn list_component_human_decisions(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<PendingComponentHumanDecisions, ComponentAdministrationError> {
+        Err(ComponentAdministrationError::Unavailable)
+    }
+
+    /// Resolve one pending decision with an answer normalized against its stored arguments.
+    async fn resolve_component_human_decision(
+        &self,
+        _auth: &AuthContext,
+        _decision_id: &str,
+        _answer: &ComponentHumanDecisionAnswer,
+    ) -> Result<ComponentHumanDecisionResolved, ComponentAdministrationError> {
+        Err(ComponentAdministrationError::Unavailable)
+    }
+
+    /// Wait for an answer using durable state as the source of truth.
+    async fn wait_component_human_decision(
+        &self,
+        _scope: &ComponentHumanDecisionScope,
+        _decision_id: &str,
+    ) -> Result<ComponentHumanDecisionResolved, ComponentAdministrationError> {
         Err(ComponentAdministrationError::Unavailable)
     }
 }
@@ -290,6 +384,143 @@ pub async fn call_component_function(
     Ok(result)
 }
 
+/// Create and durably await one surface/HITL answer. This internal use case is not an HTTP route.
+pub async fn await_component_human_decision(
+    port: &dyn ComponentAdministration,
+    auth: &AuthContext,
+    request: ComponentHumanDecisionRequest,
+) -> Result<ComponentHumanDecisionResolved, AppError> {
+    let ComponentHumanDecisionRequest {
+        decision_id,
+        provider_call_id,
+        run_id,
+        thread_id,
+        agent_id,
+        component_name,
+        arguments,
+    } = request;
+    validate_runtime_identifier(&decision_id, "decision_id")
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_provider_call_id(&provider_call_id)
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_runtime_identifier(run_id.as_str(), "run_id")
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_runtime_identifier(thread_id.as_str(), "thread_id")
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_runtime_identifier(agent_id.as_str(), "agent_id")
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_component_human_decision_arguments(&component_name, &arguments)
+        .map_err(|_| ComponentAdministrationError::InvalidInput {
+            field: "component_arguments",
+        })
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_human_decision_argument_bounds(&component_name, &arguments)
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    let canonical = ToolArguments::new(arguments.clone())
+        .map_err(|_| ComponentAdministrationError::InvalidInput {
+            field: "component_arguments",
+        })
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    let scope = ComponentHumanDecisionScope {
+        deployment: auth.deployment().clone(),
+        tenant: auth.tenant().clone(),
+        actor: auth.actor().clone(),
+        auth_generation: auth.auth_generation(),
+        admin: auth.has_role(openbot_contracts::auth::Role::Admin),
+        thread_id,
+        run_id,
+        agent_id,
+    };
+    let draft = ComponentHumanDecisionDraft {
+        decision_id,
+        provider_call_id,
+        component_name,
+        arguments,
+        arguments_hash: canonical.canonical_hash(),
+        ttl: COMPONENT_HUMAN_DECISION_TTL,
+    };
+    let pending = port
+        .request_component_human_decision(&scope, &draft)
+        .await
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_pending_component_human_decision(&pending, &scope, &draft)
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    let resolved = port
+        .wait_component_human_decision(&scope, &draft.decision_id)
+        .await
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    if resolved.decision_id != draft.decision_id {
+        return Err(ComponentAdministrationError::Corrupt {
+            field: "component_human_decision",
+        }
+        .into_app_error());
+    }
+    Ok(resolved)
+}
+
+/// List current-actor pending decisions for Web/Desktop presentation.
+pub async fn list_pending_component_human_decisions(
+    port: &dyn ComponentAdministration,
+    auth: &AuthContext,
+) -> Result<PendingComponentHumanDecisions, AppError> {
+    let pending = port
+        .list_component_human_decisions(auth)
+        .await
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    if pending.decisions.len() > MAX_RUNTIME_IDENTIFIERS {
+        return Err(ComponentAdministrationError::Corrupt {
+            field: "component_human_decisions",
+        }
+        .into_app_error());
+    }
+    for decision in &pending.decisions {
+        validate_runtime_identifier(&decision.decision_id, "decision_id")
+            .map_err(ComponentAdministrationError::into_app_error)?;
+        validate_runtime_identifier(decision.run_id.as_str(), "run_id")
+            .map_err(ComponentAdministrationError::into_app_error)?;
+        validate_runtime_identifier(decision.agent_id.as_str(), "agent_id")
+            .map_err(ComponentAdministrationError::into_app_error)?;
+        validate_component_human_decision_arguments(&decision.component_name, &decision.arguments)
+            .map_err(|_| ComponentAdministrationError::Corrupt {
+                field: "component_arguments",
+            })
+            .map_err(ComponentAdministrationError::into_app_error)?;
+        validate_human_decision_argument_bounds(&decision.component_name, &decision.arguments)
+            .map_err(ComponentAdministrationError::into_app_error)?;
+        if decision.expires_at <= decision.requested_at {
+            return Err(ComponentAdministrationError::Corrupt {
+                field: "component_human_decision_time",
+            }
+            .into_app_error());
+        }
+    }
+    Ok(pending)
+}
+
+/// Normalize and resolve one actor-owned pending decision.
+pub async fn resolve_component_human_decision(
+    port: &dyn ComponentAdministration,
+    auth: &AuthContext,
+    decision_id: String,
+    answer: ComponentHumanDecisionAnswer,
+) -> Result<ComponentHumanDecisionResolved, AppError> {
+    validate_runtime_identifier(&decision_id, "decision_id")
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    let answer = normalize_human_decision_answer(answer)
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    let resolved = port
+        .resolve_component_human_decision(auth, &decision_id, &answer)
+        .await
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    if resolved.decision_id != decision_id || resolved.answer != answer {
+        return Err(ComponentAdministrationError::Corrupt {
+            field: "component_human_decision",
+        }
+        .into_app_error());
+    }
+    Ok(resolved)
+}
+
 /// Check that every repeated entry is a unique, byte-exact member of this build's manifest.
 pub fn validate_manifest_entries(
     entries: &[CompiledComponentManifestEntry],
@@ -322,6 +553,161 @@ fn runtime_scope(auth: &AuthContext, agent_id: BotId) -> ComponentRuntimeScope {
         actor: auth.actor().clone(),
         admin: auth.has_role(openbot_contracts::auth::Role::Admin),
         agent_id,
+    }
+}
+
+fn validate_provider_call_id(value: &str) -> Result<(), ComponentAdministrationError> {
+    if value.is_empty() || value.len() > 1024 || value.as_bytes().contains(&0) {
+        Err(ComponentAdministrationError::InvalidInput {
+            field: "provider_call_id",
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_human_decision_argument_bounds(
+    component_name: &str,
+    arguments: &serde_json::Value,
+) -> Result<(), ComponentAdministrationError> {
+    if arguments.to_string().len() > MAX_HUMAN_DECISION_ARGUMENT_BYTES {
+        return Err(ComponentAdministrationError::InvalidInput {
+            field: "component_arguments",
+        });
+    }
+    let object = arguments
+        .as_object()
+        .ok_or(ComponentAdministrationError::InvalidInput {
+            field: "component_arguments",
+        })?;
+    match component_name {
+        ASK_APPROVAL_COMPONENT_NAME => {
+            for field in ["title", "summary", "approveLabel", "rejectLabel"] {
+                if let Some(value) = object.get(field).and_then(serde_json::Value::as_str) {
+                    validate_human_decision_string(value, "component_arguments")?;
+                }
+            }
+            if let Some(details) = object.get("details").and_then(serde_json::Value::as_array) {
+                if details.len() > MAX_HUMAN_DECISION_ARRAY_ITEMS {
+                    return Err(ComponentAdministrationError::InvalidInput {
+                        field: "component_arguments",
+                    });
+                }
+                for detail in details.iter().filter_map(serde_json::Value::as_object) {
+                    for field in ["label", "value"] {
+                        if let Some(value) = detail.get(field).and_then(serde_json::Value::as_str) {
+                            validate_human_decision_string(value, "component_arguments")?;
+                        }
+                    }
+                }
+            }
+        }
+        ASK_CHOICE_COMPONENT_NAME => {
+            for field in ["title", "summary"] {
+                if let Some(value) = object.get(field).and_then(serde_json::Value::as_str) {
+                    validate_human_decision_string(value, "component_arguments")?;
+                }
+            }
+            let options = object
+                .get("options")
+                .and_then(serde_json::Value::as_array)
+                .ok_or(ComponentAdministrationError::InvalidInput {
+                    field: "component_arguments",
+                })?;
+            if options.is_empty() || options.len() > MAX_HUMAN_DECISION_ARRAY_ITEMS {
+                return Err(ComponentAdministrationError::InvalidInput {
+                    field: "component_arguments",
+                });
+            }
+            let mut ids = BTreeSet::new();
+            for option in options.iter().filter_map(serde_json::Value::as_object) {
+                let id = option.get("id").and_then(serde_json::Value::as_str).ok_or(
+                    ComponentAdministrationError::InvalidInput {
+                        field: "component_arguments",
+                    },
+                )?;
+                if id.is_empty() || !ids.insert(id) {
+                    return Err(ComponentAdministrationError::InvalidInput {
+                        field: "component_arguments",
+                    });
+                }
+                for field in ["id", "label", "description"] {
+                    if let Some(value) = option.get(field).and_then(serde_json::Value::as_str) {
+                        validate_human_decision_string(value, "component_arguments")?;
+                    }
+                }
+            }
+        }
+        _ => {
+            return Err(ComponentAdministrationError::InvalidInput {
+                field: "component_name",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_human_decision_string(
+    value: &str,
+    field: &'static str,
+) -> Result<(), ComponentAdministrationError> {
+    if value.len() > MAX_HUMAN_DECISION_STRING_BYTES || value.as_bytes().contains(&0) {
+        Err(ComponentAdministrationError::InvalidInput { field })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_pending_component_human_decision(
+    pending: &PendingComponentHumanDecision,
+    scope: &ComponentHumanDecisionScope,
+    draft: &ComponentHumanDecisionDraft,
+) -> Result<(), ComponentAdministrationError> {
+    if pending.decision_id != draft.decision_id
+        || pending.run_id != scope.run_id
+        || pending.agent_id != scope.agent_id
+        || pending.component_name != draft.component_name
+        || pending.arguments != draft.arguments
+        || pending.expires_at <= pending.requested_at
+    {
+        return Err(ComponentAdministrationError::Corrupt {
+            field: "component_human_decision",
+        });
+    }
+    Ok(())
+}
+
+fn normalize_human_decision_answer(
+    answer: ComponentHumanDecisionAnswer,
+) -> Result<ComponentHumanDecisionAnswer, ComponentAdministrationError> {
+    match answer {
+        ComponentHumanDecisionAnswer::Approval(ComponentApprovalAnswer { decision, note }) => {
+            let note = note
+                .map(|note| trim_ecmascript(&note).to_owned())
+                .filter(|note| !note.is_empty());
+            if note.as_ref().is_some_and(|note| {
+                note.len() > MAX_HUMAN_DECISION_NOTE_BYTES || note.as_bytes().contains(&0)
+            }) {
+                return Err(ComponentAdministrationError::InvalidInput {
+                    field: "component_answer",
+                });
+            }
+            Ok(ComponentHumanDecisionAnswer::Approval(
+                ComponentApprovalAnswer { decision, note },
+            ))
+        }
+        ComponentHumanDecisionAnswer::Choice(ComponentChoiceAnswer { choice, label }) => {
+            if choice.is_empty() || label.is_empty() {
+                return Err(ComponentAdministrationError::InvalidInput {
+                    field: "component_answer",
+                });
+            }
+            validate_human_decision_string(&choice, "component_answer")?;
+            validate_human_decision_string(&label, "component_answer")?;
+            Ok(ComponentHumanDecisionAnswer::Choice(
+                ComponentChoiceAnswer { choice, label },
+            ))
+        }
     }
 }
 
@@ -562,6 +948,8 @@ mod tests {
                 ComponentFunctionCallPlan,
             )>,
         >,
+        human_requests: Mutex<Vec<(ComponentHumanDecisionScope, ComponentHumanDecisionDraft)>>,
+        human_resolves: Mutex<Vec<(String, ComponentHumanDecisionAnswer)>>,
     }
 
     #[async_trait]
@@ -677,6 +1065,65 @@ mod tests {
                     },
                 )),
             }
+        }
+
+        async fn request_component_human_decision(
+            &self,
+            scope: &ComponentHumanDecisionScope,
+            draft: &ComponentHumanDecisionDraft,
+        ) -> Result<PendingComponentHumanDecision, ComponentAdministrationError> {
+            self.human_requests
+                .lock()
+                .unwrap()
+                .push((scope.clone(), draft.clone()));
+            Ok(PendingComponentHumanDecision {
+                decision_id: draft.decision_id.clone(),
+                run_id: scope.run_id.clone(),
+                agent_id: scope.agent_id.clone(),
+                component_name: draft.component_name.clone(),
+                arguments: draft.arguments.clone(),
+                requested_at: OffsetDateTime::UNIX_EPOCH,
+                expires_at: OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(30),
+            })
+        }
+
+        async fn list_component_human_decisions(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<PendingComponentHumanDecisions, ComponentAdministrationError> {
+            Ok(PendingComponentHumanDecisions::default())
+        }
+
+        async fn resolve_component_human_decision(
+            &self,
+            _auth: &AuthContext,
+            decision_id: &str,
+            answer: &ComponentHumanDecisionAnswer,
+        ) -> Result<ComponentHumanDecisionResolved, ComponentAdministrationError> {
+            self.human_resolves
+                .lock()
+                .unwrap()
+                .push((decision_id.to_owned(), answer.clone()));
+            Ok(ComponentHumanDecisionResolved {
+                decision_id: decision_id.to_owned(),
+                answer: answer.clone(),
+                replayed: false,
+            })
+        }
+
+        async fn wait_component_human_decision(
+            &self,
+            _scope: &ComponentHumanDecisionScope,
+            decision_id: &str,
+        ) -> Result<ComponentHumanDecisionResolved, ComponentAdministrationError> {
+            Ok(ComponentHumanDecisionResolved {
+                decision_id: decision_id.to_owned(),
+                answer: ComponentHumanDecisionAnswer::Approval(ComponentApprovalAnswer {
+                    decision: openbot_contracts::components::ComponentApprovalDecision::Approved,
+                    note: None,
+                }),
+                replayed: false,
+            })
         }
     }
 
@@ -906,5 +1353,90 @@ mod tests {
             Err(AppError::MalformedPayload { field: "args" })
         ));
         assert_eq!(port.function_calls.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn human_decision_scope_hash_bounds_and_answer_normalization_precede_the_port() {
+        let port = FakeComponents::default();
+        let resolved = await_component_human_decision(
+            &port,
+            &auth(),
+            ComponentHumanDecisionRequest {
+                decision_id: "decision-1".to_owned(),
+                provider_call_id: "provider-call-1".to_owned(),
+                run_id: RunId::new("run-1"),
+                thread_id: ThreadId::new("thread-1"),
+                agent_id: BotId::new("bot-1"),
+                component_name: ASK_APPROVAL_COMPONENT_NAME.to_owned(),
+                arguments: serde_json::json!({
+                    "title":"Refund?",
+                    "summary":"The charge was duplicated."
+                }),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            resolved.answer,
+            ComponentHumanDecisionAnswer::Approval(ComponentApprovalAnswer {
+                decision: openbot_contracts::components::ComponentApprovalDecision::Approved,
+                note: None,
+            })
+        ));
+        {
+            let requests = port.human_requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].0.actor.as_str(), "actor");
+            assert_eq!(requests[0].0.auth_generation.get(), 1);
+            assert_eq!(requests[0].0.agent_id.as_str(), "bot-1");
+            assert_eq!(requests[0].1.arguments_hash.to_hex().len(), 64);
+        }
+
+        let normalized = resolve_component_human_decision(
+            &port,
+            &auth(),
+            "decision-1".to_owned(),
+            ComponentHumanDecisionAnswer::Approval(ComponentApprovalAnswer {
+                decision: openbot_contracts::components::ComponentApprovalDecision::Declined,
+                note: Some(" \u{feff}because no ".to_owned()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            normalized.answer,
+            ComponentHumanDecisionAnswer::Approval(ComponentApprovalAnswer {
+                decision: openbot_contracts::components::ComponentApprovalDecision::Declined,
+                note: Some("because no".to_owned()),
+            })
+        );
+
+        let duplicate_choice = await_component_human_decision(
+            &port,
+            &auth(),
+            ComponentHumanDecisionRequest {
+                decision_id: "decision-2".to_owned(),
+                provider_call_id: "provider-call-2".to_owned(),
+                run_id: RunId::new("run-1"),
+                thread_id: ThreadId::new("thread-1"),
+                agent_id: BotId::new("bot-1"),
+                component_name: ASK_CHOICE_COMPONENT_NAME.to_owned(),
+                arguments: serde_json::json!({
+                    "title":"Where?",
+                    "options":[
+                        {"id":"same","label":"One"},
+                        {"id":"same","label":"Two"}
+                    ]
+                }),
+            },
+        )
+        .await;
+        assert!(matches!(
+            duplicate_choice,
+            Err(AppError::MalformedPayload {
+                field: "component_arguments"
+            })
+        ));
+        assert_eq!(port.human_requests.lock().unwrap().len(), 1);
     }
 }

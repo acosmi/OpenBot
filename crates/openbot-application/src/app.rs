@@ -30,9 +30,10 @@ use crate::approval_admin::{
     list_pending_tool_approvals,
 };
 use crate::components::{
-    ComponentAdministration, NoComponentAdministration, call_component_function, decide_component,
-    list_component_data_functions, list_components, list_components_for_agent,
-    sync_component_catalogue,
+    ComponentAdministration, NoComponentAdministration, await_component_human_decision,
+    call_component_function, decide_component, list_component_data_functions, list_components,
+    list_components_for_agent, list_pending_component_human_decisions,
+    resolve_component_human_decision, sync_component_catalogue,
 };
 use crate::mcp_connections::{
     McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
@@ -461,6 +462,28 @@ where
             } => Ok(AppReply::ComponentFunctionCall(
                 call_component_function(self.components.as_ref(), auth, component_name, request)
                     .await?,
+            )),
+            AppCommand::AwaitComponentHumanDecision(request) => {
+                Ok(AppReply::ComponentHumanDecisionResolved(
+                    await_component_human_decision(self.components.as_ref(), auth, request).await?,
+                ))
+            }
+            AppCommand::ListPendingComponentHumanDecisions => {
+                Ok(AppReply::PendingComponentHumanDecisions(
+                    list_pending_component_human_decisions(self.components.as_ref(), auth).await?,
+                ))
+            }
+            AppCommand::ResolveComponentHumanDecision {
+                decision_id,
+                answer,
+            } => Ok(AppReply::ComponentHumanDecisionResolved(
+                resolve_component_human_decision(
+                    self.components.as_ref(),
+                    auth,
+                    decision_id,
+                    answer,
+                )
+                .await?,
             )),
             AppCommand::GetCurrentUser => Ok(AppReply::CurrentUser(
                 current_user(&self.people, auth).await?,

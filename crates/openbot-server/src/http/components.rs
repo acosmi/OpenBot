@@ -10,7 +10,8 @@ use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::components::{
     ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
     ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
-    ComponentRecords, GrantedCompiledComponents,
+    ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecords,
+    GrantedCompiledComponents, PendingComponentHumanDecisions,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::BotId;
@@ -151,6 +152,48 @@ pub async fn call_post(
     }
 }
 
+/// `GET /api/components/human-decisions`; current actor's pending surface/HITL requests.
+pub async fn human_decisions_get(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+) -> Result<(HeaderMap, Json<PendingComponentHumanDecisions>), HttpError> {
+    match state
+        .application()
+        .execute(auth, AppCommand::ListPendingComponentHumanDecisions)
+        .await?
+    {
+        AppReply::PendingComponentHumanDecisions(decisions) => Ok((no_store(), Json(decisions))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/components/human-decisions/{decision_id}/answer`; answer body carries no bindings.
+pub async fn human_decision_answer_post(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    Path(decision_id): Path<String>,
+    body: Result<Json<ComponentHumanDecisionAnswer>, JsonRejection>,
+) -> Result<(HeaderMap, Json<ComponentHumanDecisionResolved>), HttpError> {
+    let Json(answer) = body.map_err(|error| {
+        tracing::debug!(error = %error, "component human decision body rejected");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::ResolveComponentHumanDecision {
+                decision_id,
+                answer,
+            },
+        )
+        .await?
+    {
+        AppReply::ComponentHumanDecisionResolved(resolved) => Ok((no_store(), Json(resolved))),
+        _ => Err(application_contract_error()),
+    }
+}
+
 fn no_store() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -183,11 +226,13 @@ mod tests {
     use openbot_contracts::command::ChannelSummary;
     use openbot_contracts::components::{
         BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, CompiledComponentKind,
-        CompiledComponentManifestEntry, ComponentDecision, ComponentFunctionCall,
-        ComponentFunctionData, ComponentRecord, GrantedCompiledComponent,
-        GrantedCompiledComponents, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
+        CompiledComponentManifestEntry, ComponentApprovalAnswer, ComponentApprovalDecision,
+        ComponentDecision, ComponentFunctionCall, ComponentFunctionData,
+        ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecord,
+        GrantedCompiledComponent, GrantedCompiledComponents, PendingComponentHumanDecision,
+        PendingComponentHumanDecisions, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
-    use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
+    use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
     use openbot_domain::identity::session::TrustedOrigins;
     use openbot_infra::auth::config::default_session_lifetime;
     use time::OffsetDateTime;
@@ -309,6 +354,36 @@ mod tests {
                     rows: Vec::new(),
                 }),
             ))
+        }
+
+        async fn list_component_human_decisions(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<PendingComponentHumanDecisions, ComponentAdministrationError> {
+            Ok(PendingComponentHumanDecisions {
+                decisions: vec![PendingComponentHumanDecision {
+                    decision_id: "decision-1".to_owned(),
+                    run_id: RunId::new("run-1"),
+                    agent_id: BotId::new("bot-1"),
+                    component_name: "askApproval".to_owned(),
+                    arguments: serde_json::json!({"title":"Refund?","summary":"Duplicate"}),
+                    requested_at: OffsetDateTime::UNIX_EPOCH,
+                    expires_at: OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(30),
+                }],
+            })
+        }
+
+        async fn resolve_component_human_decision(
+            &self,
+            _auth: &AuthContext,
+            decision_id: &str,
+            answer: &ComponentHumanDecisionAnswer,
+        ) -> Result<ComponentHumanDecisionResolved, ComponentAdministrationError> {
+            Ok(ComponentHumanDecisionResolved {
+                decision_id: decision_id.to_owned(),
+                answer: answer.clone(),
+                replayed: false,
+            })
         }
     }
 
@@ -543,5 +618,68 @@ mod tests {
             Some(openbot_contracts::components::ComponentFunctionError::ReadFailed)
         );
         assert_eq!(components.runtime.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn human_decisions_are_actor_scoped_no_store_and_origin_precedes_answer_body() {
+        let components = FakeComponents::default();
+        let pending = send(
+            app(components.clone()),
+            Method::GET,
+            "/api/components/human-decisions",
+            None,
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(pending.status(), StatusCode::OK);
+        assert_eq!(pending.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<PendingComponentHumanDecisions>(
+                &to_bytes(pending.into_body(), 4096).await.unwrap()
+            )
+            .unwrap()
+            .decisions[0]
+                .decision_id,
+            "decision-1"
+        );
+
+        let no_origin = send(
+            app(components.clone()),
+            Method::POST,
+            "/api/components/human-decisions/decision-1/answer",
+            None,
+            Body::from("{"),
+        )
+        .await;
+        assert_eq!(no_origin.status(), StatusCode::FORBIDDEN);
+
+        let body = serde_json::to_vec(&ComponentHumanDecisionAnswer::Approval(
+            ComponentApprovalAnswer {
+                decision: ComponentApprovalDecision::Declined,
+                note: Some(" because no ".to_owned()),
+            },
+        ))
+        .unwrap();
+        let answered = send(
+            app(components),
+            Method::POST,
+            "/api/components/human-decisions/decision-1/answer",
+            Some("https://app.example.test"),
+            Body::from(body),
+        )
+        .await;
+        assert_eq!(answered.status(), StatusCode::OK);
+        assert_eq!(answered.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<ComponentHumanDecisionResolved>(
+                &to_bytes(answered.into_body(), 4096).await.unwrap()
+            )
+            .unwrap()
+            .answer,
+            ComponentHumanDecisionAnswer::Approval(ComponentApprovalAnswer {
+                decision: ComponentApprovalDecision::Declined,
+                note: Some("because no".to_owned()),
+            })
+        );
     }
 }

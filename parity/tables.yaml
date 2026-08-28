@@ -7,7 +7,7 @@
 # 三类 entry：
 #   1. 上游 28 张表（表名取自 server/src/db/schema/*.ts 的 pgTable 实参，不抄文档）—— label: parity
 #   2. 上游 13 条 migration（server/drizzle/0000–0012）—— label: parity
-#   3. Rust-owned native 新表（当前 15 张，含 audit/tool/approval/UI preference）—— label: 新增
+#   3. Rust-owned native 新表（当前 17 张，含 audit/tool/approval/UI/memory/decision）—— label: 新增
 #
 # status 随实施推进；权威计数是 `cargo xtask parity-check --json`。done 只表示本条 target
 # 与证据已落地，不蕴含 notes 里的 repository 已实现。
@@ -62,15 +62,15 @@ recount:
     expect: 13
   - command: "grep -c '^  - id: ' parity/tables.yaml"
     cwd: repo
-    expect: 56
+    expect: 58
   - command: "grep -c 'label: \"parity\"' parity/tables.yaml"
     cwd: repo
     expect: 41
   - command: "grep -c 'label: \"新增\"' parity/tables.yaml"
     cwd: repo
-    expect: 15
-  # 「上游没有这 15 张 native 表」的负向断言。
-  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(audit_checkpoints|threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|tool_approvals|outbox|memories|memory_events|intelligence_import_cursors|user_ui_preferences)\"'"
+    expect: 17
+  # 「上游没有这 17 张 native 表」的负向断言。
+  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(audit_checkpoints|threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|tool_approvals|outbox|memories|memory_events|intelligence_import_cursors|user_ui_preferences|user_memory_controls|component_human_decisions)\"'"
     cwd: upstream
     expect: 0
   # 上一条的正向对照：同一条管线在确实存在的表名上命中，证明它不是恒 0 的坏探测器。
@@ -786,3 +786,25 @@ entries:
     done_evidence: "native 0021 PG17/SCRAM 2/0/0：43表/404列/295 NOT NULL/222约束/86索引 exact fixture；逐旧列证明 0020 是子集；并发 theme/locale partial update 原子合并，deployment/tenant/actor scope 隔离，空行/未知 theme/locale 被具名 CHECK 拒绝，actor 删除 cascade。"
     evidence: "固定上游 schema pgTable 集合对 user_ui_preferences 命中 0（同管线 users|channels=2）"
     notes: "typed boundary=PostgresUiPreferenceAdministration（不是第二套业务规则） | PK=(deployment_id,tenant_id,actor_user_id)；actor FK→users ON DELETE CASCADE；theme/locale independently nullable，但二者不能同时 NULL；theme=system/light/dark，locale=en/zh-CN；updated_at 只取 DB clock | retention 随 actor 生命周期 | API owner=openbot-server typed ApplicationService；Desktop Local 用独立 closed local settings port，不写本表。"
+  - id: "native-user-memory-controls"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-infra::db::tables::user_memory_controls"
+    owner: "openbot-infra"
+    test_id: "T-TBL-0057"
+    migration_rule: "n/a: v3 §3.1条7/§4.3条11 actor-scoped runtime memory write control"
+    status: "done"
+    done_evidence: "Batch36 native0022 PG17.11 SCRAM exact fixture：44表/407列/224约束/87索引，逐旧列证明0021是子集；PK=(tenant_id,actor_user_id)，actor FK cascade，writes_enabled/DB updated_at nonnull。runtime test证明缺行默认true、upsert scope隔离、disabled拒绝remember/correct/tool但不阻止list/recall/forbid/delete。"
+    evidence: "固定上游schema对user_memory_controls零命中；同管线users/channels=2"
+    notes: "typed boundary=PostgresMemoryAdministration；控制行不是memory记录，永不进入list/recall。Batch36漏登记本table ledger，本批按机器事实补齐，不倒算成0023成果。"
+  - id: "native-component-human-decisions"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-infra::db::tables::component_human_decisions"
+    owner: "openbot-infra"
+    test_id: "T-TBL-0058"
+    migration_rule: "n/a: v3 §3.3 compiled useHumanInTheLoop不能复用acting tool_approvals"
+    status: "done"
+    done_evidence: "Batch47 native0023 PG17.11 SCRAM exact fixture：在schema0022上只新增component_human_decisions与2 indexes，旧表/列逐项不变，ledger11。PK decision_id、unique(run_id,provider_call_id)、thread/run/actor/Bot/component/resolved_by FK；component/state/Approval-vs-Choice answer/time/hash具名CHECK负例。Row Debug对arguments/answer/hash三列脱敏；PG runtime证明exact replay/异值conflict/actor+generation+membership+lease scope/DB expiry/cancel/audit rollback。"
+    evidence: "固定上游schema与useHumanInTheLoop实现无durable表；同管线users/channels=2"
+    notes: "typed boundary=PostgresComponentAdministration；与tool_approvals结构性分表，零effect/target/policy/computer generation。pending保存bounded renderer args，answer只按stored component/option校验；完整Agent suspend/resume与Leptos renderer留Batch48。"

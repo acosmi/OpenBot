@@ -12,6 +12,7 @@ use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::components::{
     ComponentCatalogueRequest, ComponentDecisionRequest, ComponentFunctionCallRequest,
+    ComponentHumanDecisionAnswer,
 };
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::BotId;
@@ -162,6 +163,17 @@ impl DesktopTauriProtocol {
         }
         if path == "/api/components/functions" {
             return self.component_functions(request, authority).await;
+        }
+        if path == "/api/components/human-decisions" {
+            return self.component_human_decisions(request, authority).await;
+        }
+        if let Some(raw_decision_id) = path
+            .strip_prefix("/api/components/human-decisions/")
+            .and_then(|rest| rest.strip_suffix("/answer"))
+        {
+            return self
+                .component_human_decision_answer(request, authority, raw_decision_id)
+                .await;
         }
         if let Some(raw_agent_id) = path.strip_prefix("/api/components/for-agent/") {
             return self
@@ -384,6 +396,69 @@ impl DesktopTauriProtocol {
             .await
         {
             Ok(AppReply::ComponentDataFunctions(functions)) => json_response(&functions),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn component_human_decisions(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::ListPendingComponentHumanDecisions,
+            )
+            .await
+        {
+            Ok(AppReply::PendingComponentHumanDecisions(decisions)) => json_response(&decisions),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn component_human_decision_answer(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_decision_id: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if request.body().len() > COMPONENT_DECISION_BODY_MAX_BYTES {
+            return payload_too_large();
+        }
+        let decision_id = match percent_decode_segment(raw_decision_id) {
+            Some(decision_id) => decision_id,
+            None => {
+                return error_response(AppError::MalformedPayload {
+                    field: "decision_id",
+                });
+            }
+        };
+        let answer = match serde_json::from_slice::<ComponentHumanDecisionAnswer>(request.body()) {
+            Ok(answer) => answer,
+            Err(_) => return error_response(AppError::MalformedPayload { field: "body" }),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::ResolveComponentHumanDecision {
+                    decision_id,
+                    answer,
+                },
+            )
+            .await
+        {
+            Ok(AppReply::ComponentHumanDecisionResolved(resolved)) => json_response(&resolved),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -756,10 +831,11 @@ mod tests {
     use openbot_contracts::command::ChannelSummary;
     use openbot_contracts::components::{
         BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, CompiledComponentManifestEntry,
-        ComponentCatalogueAdded, ComponentDataFunctions, ComponentDecision,
-        ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionData, ComponentRecords,
-        GrantedCompiledComponent, GrantedCompiledComponents, SHOW_QUOTE_COMPONENT_NAME,
-        compiled_component_manifest,
+        ComponentApprovalAnswer, ComponentApprovalDecision, ComponentCatalogueAdded,
+        ComponentDataFunctions, ComponentDecision, ComponentDecisionRequest, ComponentFunctionCall,
+        ComponentFunctionData, ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved,
+        ComponentRecords, GrantedCompiledComponent, GrantedCompiledComponents,
+        PendingComponentHumanDecisions, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
     use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalResolved};
@@ -868,6 +944,26 @@ mod tests {
                     rows: Vec::new(),
                 }),
             ))
+        }
+
+        async fn list_component_human_decisions(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<PendingComponentHumanDecisions, ComponentAdministrationError> {
+            Ok(PendingComponentHumanDecisions::default())
+        }
+
+        async fn resolve_component_human_decision(
+            &self,
+            _auth: &AuthContext,
+            decision_id: &str,
+            answer: &ComponentHumanDecisionAnswer,
+        ) -> Result<ComponentHumanDecisionResolved, ComponentAdministrationError> {
+            Ok(ComponentHumanDecisionResolved {
+                decision_id: decision_id.to_owned(),
+                answer: answer.clone(),
+                replayed: false,
+            })
         }
     }
 
@@ -1142,6 +1238,51 @@ mod tests {
                 ..
             }))
         ));
+
+        let human_decisions = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .uri("/api/components/human-decisions")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(human_decisions.status(), StatusCode::OK);
+        assert_eq!(human_decisions.headers()[CACHE_CONTROL], "no-store");
+        assert!(
+            serde_json::from_slice::<PendingComponentHumanDecisions>(human_decisions.body())
+                .unwrap()
+                .decisions
+                .is_empty()
+        );
+
+        let human_answer = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/components/human-decisions/decision%2D1/answer")
+                    .body(
+                        serde_json::to_vec(&ComponentHumanDecisionAnswer::Approval(
+                            ComponentApprovalAnswer {
+                                decision: ComponentApprovalDecision::Approved,
+                                note: None,
+                            },
+                        ))
+                        .unwrap(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(human_answer.status(), StatusCode::OK);
+        assert_eq!(human_answer.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<ComponentHumanDecisionResolved>(human_answer.body())
+                .unwrap()
+                .decision_id,
+            "decision-1"
+        );
 
         let stale = protocol
             .handle(

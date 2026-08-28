@@ -121,8 +121,17 @@ pub const NATIVE_0022_NAME: &str = "native_0022_user_memory_controls";
 /// 0022 SQL source.
 pub const NATIVE_0022_SQL: &str = include_str!("../../sql/native_0022.sql");
 
+/// Durable compiled-component human-decision version.
+pub const NATIVE_0023_VERSION: i32 = 23;
+
+/// 0023 stable name.
+pub const NATIVE_0023_NAME: &str = "native_0023_component_human_decisions";
+
+/// 0023 SQL source.
+pub const NATIVE_0023_SQL: &str = include_str!("../../sql/native_0023.sql");
+
 /// 当前二进制认识的最新 native schema 版本。
-pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0022_VERSION;
+pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0023_VERSION;
 
 /// 当前二进制钉住的 native migration 数量。
 pub const NATIVE_MIGRATION_COUNT: usize = MIGRATIONS.len();
@@ -188,6 +197,11 @@ const MIGRATIONS: &[MigrationSpec] = &[
         version: NATIVE_0022_VERSION,
         name: NATIVE_0022_NAME,
         sql: NATIVE_0022_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0023_VERSION,
+        name: NATIVE_0023_NAME,
+        sql: NATIVE_0023_SQL,
     },
 ];
 
@@ -301,6 +315,12 @@ pub fn native_0021_checksum() -> String {
 #[must_use]
 pub fn native_0022_checksum() -> String {
     Sha256Digest::of(NATIVE_0022_SQL.as_bytes()).to_hex()
+}
+
+/// Current 0023 SQL lowercase SHA-256.
+#[must_use]
+pub fn native_0023_checksum() -> String {
+    Sha256Digest::of(NATIVE_0023_SQL.as_bytes()).to_hex()
 }
 
 /// 在一个已到 0012 的数据库上施加当前二进制认识的全部 Rust-owned migrations。
@@ -468,6 +488,7 @@ mod tests {
             .chain(statement_lines(NATIVE_0020_SQL))
             .chain(statement_lines(NATIVE_0021_SQL))
             .chain(statement_lines(NATIVE_0022_SQL))
+            .chain(statement_lines(NATIVE_0023_SQL))
         {
             let uppercase = line.to_ascii_uppercase();
             assert!(
@@ -514,6 +535,8 @@ mod tests {
         assert!(NATIVE_0021_SQL.contains("user_ui_preferences_nonempty"));
         assert!(NATIVE_0022_SQL.contains("CREATE TABLE public.user_memory_controls"));
         assert!(NATIVE_0022_SQL.contains("user_memory_controls_identity_nonempty"));
+        assert!(NATIVE_0023_SQL.contains("CREATE TABLE public.component_human_decisions"));
+        assert!(NATIVE_0023_SQL.contains("component_human_decisions_answer_shape"));
     }
 
     #[test]
@@ -529,6 +552,7 @@ mod tests {
                 .chain(statement_lines(NATIVE_0020_SQL))
                 .chain(statement_lines(NATIVE_0021_SQL))
                 .chain(statement_lines(NATIVE_0022_SQL))
+                .chain(statement_lines(NATIVE_0023_SQL))
                 .any(|line| line.contains("IF NOT EXISTS"))
         );
         assert!(LEDGER_BOOTSTRAP_SQL.contains("IF NOT EXISTS"));
@@ -573,7 +597,10 @@ mod tests {
         let native_memory_controls = native_0022_checksum();
         assert_eq!(native_memory_controls.len(), 64);
         assert_ne!(native_ui_preferences, native_memory_controls);
-        assert_eq!(MIGRATIONS.len(), 10);
-        assert_eq!(MIGRATIONS[9].version, NATIVE_LATEST_VERSION);
+        let native_component_decisions = native_0023_checksum();
+        assert_eq!(native_component_decisions.len(), 64);
+        assert_ne!(native_memory_controls, native_component_decisions);
+        assert_eq!(MIGRATIONS.len(), 11);
+        assert_eq!(MIGRATIONS[10].version, NATIVE_LATEST_VERSION);
     }
 }

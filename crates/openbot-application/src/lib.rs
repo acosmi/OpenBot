@@ -109,10 +109,13 @@ pub use builtin_tools::{
 };
 pub use chunk::{SEMANTIC_CHUNK_MAX_BYTES, SEMANTIC_CHUNK_MAX_DELAY, SemanticChunkAccumulator};
 pub use components::{
-    ComponentAdministration, ComponentAdministrationError, ComponentFunctionArguments,
-    ComponentFunctionCallPlan, ComponentRuntimeScope, NoComponentAdministration,
-    call_component_function, decide_component, list_component_data_functions, list_components,
-    list_components_for_agent, sync_component_catalogue, validate_manifest_entries,
+    COMPONENT_HUMAN_DECISION_TTL, ComponentAdministration, ComponentAdministrationError,
+    ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentHumanDecisionDraft,
+    ComponentHumanDecisionScope, ComponentRuntimeScope, NoComponentAdministration,
+    await_component_human_decision, call_component_function, decide_component,
+    list_component_data_functions, list_components, list_components_for_agent,
+    list_pending_component_human_decisions, resolve_component_human_decision,
+    sync_component_catalogue, validate_manifest_entries,
 };
 pub use cursor::{ChannelCursor, channel_recency};
 pub use intelligence_import::{

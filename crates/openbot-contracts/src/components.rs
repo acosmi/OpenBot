@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 
-use crate::ids::BotId;
+use crate::ids::{BotId, RunId, ThreadId};
 
 /// Stable Activity report renderer identity.
 pub const SHOW_ACTIVITY_REPORT_COMPONENT_NAME: &str = "showActivityReport";
@@ -85,6 +85,18 @@ pub const SHOW_PROGRESS_COMPONENT_NAME: &str = "showProgress";
 pub const SHOW_PROGRESS_COMPONENT_TITLE: &str = "Progress against target";
 /// Progress chart model-facing description.
 pub const SHOW_PROGRESS_COMPONENT_DESCRIPTION: &str = "Show values against their targets as progress bars. Use for 'are we there yet' questions, budget spent against budget, done against planned.";
+/// Stable human approval decision component identity.
+pub const ASK_APPROVAL_COMPONENT_NAME: &str = "askApproval";
+/// Stable human approval decision title.
+pub const ASK_APPROVAL_COMPONENT_TITLE: &str = "Approval";
+/// Default model-facing human approval decision description.
+pub const ASK_APPROVAL_COMPONENT_DESCRIPTION: &str = "Ask the person to approve or decline something, and WAIT for their answer. Use before doing anything you cannot undo, spending money, sending a message, changing a record. You are given their decision and any reason they typed.";
+/// Stable human choice decision component identity.
+pub const ASK_CHOICE_COMPONENT_NAME: &str = "askChoice";
+/// Stable human choice decision title.
+pub const ASK_CHOICE_COMPONENT_TITLE: &str = "Choice";
+/// Default model-facing human choice decision description.
+pub const ASK_CHOICE_COMPONENT_DESCRIPTION: &str = "Ask the person to pick one of several options, and WAIT for their answer. Use when you cannot sensibly guess which one they meant. You are given the id of the option they chose.";
 
 /// Closed grouping used by Admin and Settings presentation; never read by the model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,6 +206,107 @@ pub struct GrantedCompiledComponent {
 pub struct GrantedCompiledComponents {
     /// Published, non-withheld components in stable name order.
     pub components: Vec<GrantedCompiledComponent>,
+}
+
+/// One pending compiled decision visible only to its authoritative actor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PendingComponentHumanDecision {
+    /// Server-minted durable identity used by the answer API.
+    pub decision_id: String,
+    /// Durable run waiting for this exact answer.
+    pub run_id: RunId,
+    /// Server-derived Agent identity.
+    pub agent_id: BotId,
+    /// Stable `askApproval` or `askChoice` renderer identity.
+    pub component_name: String,
+    /// Validated renderer arguments; never policy/effect metadata.
+    pub arguments: Value,
+    /// Database-clock request time.
+    pub requested_at: OffsetDateTime,
+    /// Database-clock upper bound for accepting an answer.
+    pub expires_at: OffsetDateTime,
+}
+
+/// Pending compiled decisions for one authenticated actor.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingComponentHumanDecisions {
+    /// Oldest first so transcript/order stays deterministic.
+    pub decisions: Vec<PendingComponentHumanDecision>,
+}
+
+/// Internal Agent-host request to create and await one durable decision answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComponentHumanDecisionRequest {
+    /// Server-minted UUIDv7 identity; never accepted from the answer endpoint.
+    pub decision_id: String,
+    /// Durable provider call pairing id.
+    pub provider_call_id: String,
+    /// Current run from the non-serializable execution lease.
+    pub run_id: RunId,
+    /// Current thread from the non-serializable execution lease.
+    pub thread_id: ThreadId,
+    /// Current Agent from the non-serializable execution lease.
+    pub agent_id: BotId,
+    /// Stable `askApproval` or `askChoice` identity.
+    pub component_name: String,
+    /// Model-produced arguments validated before persistence.
+    pub arguments: Value,
+}
+
+/// Exact Approval tool result; optional note is omitted rather than serialized as null.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentApprovalAnswer {
+    /// Closed human answer.
+    pub decision: ComponentApprovalDecision,
+    /// Optional trimmed reason typed by the person.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Closed Approval answer vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComponentApprovalDecision {
+    /// Person approved the request.
+    Approved,
+    /// Person declined the request.
+    Declined,
+}
+
+/// Exact Choice tool result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentChoiceAnswer {
+    /// Stable option id from the original arguments.
+    pub choice: String,
+    /// Exact label paired with that option id.
+    pub label: String,
+}
+
+/// Answer body accepted by the authenticated resolve endpoint.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ComponentHumanDecisionAnswer {
+    /// `askApproval` answer.
+    Approval(ComponentApprovalAnswer),
+    /// `askChoice` answer.
+    Choice(ComponentChoiceAnswer),
+}
+
+/// Stable result after one durable decision is answered or exactly replayed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComponentHumanDecisionResolved {
+    /// Durable decision identity.
+    pub decision_id: String,
+    /// Exact normalized answer that becomes the provider tool result.
+    pub answer: ComponentHumanDecisionAnswer,
+    /// True only when this request observed an already-identical answer.
+    pub replayed: bool,
 }
 
 /// Call-time authorization input for one compiled component invocation.
@@ -749,6 +862,51 @@ pub fn validate_compiled_component_arguments(
     }
 }
 
+/// Validate one model-produced decision call against the same closed shape as its renderer.
+pub fn validate_component_human_decision_arguments(
+    name: &str,
+    arguments: &Value,
+) -> Result<(), ComponentArgumentsError> {
+    let object = arguments
+        .as_object()
+        .ok_or(invalid_component_arguments("arguments"))?;
+    match name {
+        ASK_APPROVAL_COMPONENT_NAME => {
+            allowed_keys(
+                object,
+                &["title", "summary", "details", "approveLabel", "rejectLabel"],
+            )?;
+            required_string(object, "title")?;
+            required_string(object, "summary")?;
+            optional_string(object, "approveLabel")?;
+            optional_string(object, "rejectLabel")?;
+            if object.contains_key("details") {
+                object_array(object, "details", |detail| {
+                    allowed_keys(detail, &["label", "value"])?;
+                    required_string(detail, "label")?;
+                    required_string(detail, "value")?;
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        }
+        ASK_CHOICE_COMPONENT_NAME => {
+            allowed_keys(object, &["title", "summary", "options"])?;
+            required_string(object, "title")?;
+            optional_string(object, "summary")?;
+            object_array(object, "options", |option| {
+                allowed_keys(option, &["id", "label", "description"])?;
+                required_string(option, "id")?;
+                required_string(option, "label")?;
+                optional_string(option, "description")?;
+                Ok(())
+            })?;
+            Ok(())
+        }
+        _ => Err(ComponentArgumentsError::UnknownComponent),
+    }
+}
+
 fn point_chart_arguments(
     object: &serde_json::Map<String, Value>,
     target: bool,
@@ -937,6 +1095,73 @@ pub fn show_activity_report_parameter_schema() -> Value {
         },
         "required": ["report"]
     })
+}
+
+/// Exact JSON Schema for `askApproval`.
+#[must_use]
+pub fn ask_approval_parameter_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "title": {"type":"string", "description":"What is being approved, in a few words"},
+            "summary": {"type":"string", "description":"What the person is agreeing to, in one or two sentences"},
+            "details": {
+                "type":"array",
+                "description":"The facts they need in order to decide, e.g. amount, vendor, date",
+                "items": {
+                    "type":"object",
+                    "additionalProperties":false,
+                    "properties": {
+                        "label":{"type":"string"},
+                        "value":{"type":"string"}
+                    },
+                    "required":["label","value"]
+                }
+            },
+            "approveLabel":{"type":"string", "description":"Defaults to Approve"},
+            "rejectLabel":{"type":"string", "description":"Defaults to Decline"}
+        },
+        "required":["title","summary"]
+    })
+}
+
+/// Exact JSON Schema for `askChoice`.
+#[must_use]
+pub fn ask_choice_parameter_schema() -> Value {
+    json!({
+        "type":"object",
+        "additionalProperties":false,
+        "properties": {
+            "title":{"type":"string", "description":"The question being asked"},
+            "summary":{"type":"string", "description":"Any context the person needs to choose"},
+            "options": {
+                "type":"array",
+                "description":"The options, in the order they should be offered",
+                "items": {
+                    "type":"object",
+                    "additionalProperties":false,
+                    "properties": {
+                        "id":{"type":"string", "description":"What comes back to you when this one is picked"},
+                        "label":{"type":"string"},
+                        "description":{"type":"string"}
+                    },
+                    "required":["id","label"]
+                }
+            }
+        },
+        "required":["title","options"]
+    })
+}
+
+/// Exact schema for one compiled human decision without adding it to the runnable manifest yet.
+#[must_use]
+pub fn component_human_decision_parameter_schema(name: &str) -> Option<Value> {
+    match name {
+        ASK_APPROVAL_COMPONENT_NAME => Some(ask_approval_parameter_schema()),
+        ASK_CHOICE_COMPONENT_NAME => Some(ask_choice_parameter_schema()),
+        _ => None,
+    }
 }
 
 /// Exact JSON Schema for `showQuote`; renderer/tool registration share this single source.
@@ -1498,6 +1723,64 @@ mod tests {
         assert_eq!(
             validate_compiled_component_arguments("showStale", &json!({})),
             Err(ComponentArgumentsError::UnknownComponent)
+        );
+    }
+
+    #[test]
+    fn human_decision_schemas_and_answer_wire_are_closed_without_joining_the_manifest() {
+        assert_eq!(compiled_component_manifest().len(), 11);
+        for name in [ASK_APPROVAL_COMPONENT_NAME, ASK_CHOICE_COMPONENT_NAME] {
+            let schema = component_human_decision_parameter_schema(name).unwrap();
+            assert_eq!(schema["additionalProperties"], false, "{name}");
+        }
+        validate_component_human_decision_arguments(
+            ASK_APPROVAL_COMPONENT_NAME,
+            &json!({
+                "title":"Refund this order?",
+                "summary":"The charge was duplicated.",
+                "details":[{"label":"Amount","value":"$12"}]
+            }),
+        )
+        .unwrap();
+        validate_component_human_decision_arguments(
+            ASK_CHOICE_COMPONENT_NAME,
+            &json!({
+                "title":"Where?",
+                "options":[{"id":"staging","label":"Staging"}]
+            }),
+        )
+        .unwrap();
+        assert!(
+            validate_component_human_decision_arguments(
+                ASK_CHOICE_COMPONENT_NAME,
+                &json!({"title":"Where?","options":[],"effect":"write"}),
+            )
+            .is_err()
+        );
+        let approval = ComponentHumanDecisionAnswer::Approval(ComponentApprovalAnswer {
+            decision: ComponentApprovalDecision::Approved,
+            note: Some("because it is exact".to_owned()),
+        });
+        assert_eq!(
+            serde_json::to_value(&approval).unwrap(),
+            json!({"decision":"approved","note":"because it is exact"})
+        );
+        let choice = ComponentHumanDecisionAnswer::Choice(ComponentChoiceAnswer {
+            choice: "production".to_owned(),
+            label: "Production".to_owned(),
+        });
+        assert_eq!(
+            serde_json::from_value::<ComponentHumanDecisionAnswer>(
+                serde_json::to_value(&choice).unwrap()
+            )
+            .unwrap(),
+            choice
+        );
+        assert!(
+            serde_json::from_value::<ComponentHumanDecisionAnswer>(
+                json!({"decision":"approved","effect":"write"})
+            )
+            .is_err()
         );
     }
 }

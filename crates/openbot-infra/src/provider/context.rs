@@ -483,7 +483,8 @@ fn map_component_error(
             }
         }
         openbot_application::ComponentAdministrationError::Unavailable
-        | openbot_application::ComponentAdministrationError::CommitUnknown => {
+        | openbot_application::ComponentAdministrationError::CommitUnknown
+        | openbot_application::ComponentAdministrationError::Conflict => {
             AgentContextError::Unavailable
         }
     }

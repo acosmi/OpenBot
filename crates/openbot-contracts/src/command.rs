@@ -36,7 +36,8 @@ use crate::auth::Role;
 use crate::components::{
     ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
     ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
-    ComponentRecords, GrantedCompiledComponents,
+    ComponentHumanDecisionAnswer, ComponentHumanDecisionRequest, ComponentHumanDecisionResolved,
+    ComponentRecords, GrantedCompiledComponents, PendingComponentHumanDecisions,
 };
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::mcp::{
@@ -162,6 +163,20 @@ pub enum AppCommand {
         component_name: String,
         /// Agent, function and bounded arguments for this exact read.
         request: ComponentFunctionCallRequest,
+    },
+
+    /// Internal Agent-host command that blocks on one durable surface/HITL answer.
+    AwaitComponentHumanDecision(ComponentHumanDecisionRequest),
+
+    /// List pending surface/HITL decisions owned by the authenticated actor.
+    ListPendingComponentHumanDecisions,
+
+    /// Resolve one pending surface/HITL decision; all binding fields come from storage.
+    ResolveComponentHumanDecision {
+        /// Server-minted durable decision identity.
+        decision_id: String,
+        /// Closed answer matched against the stored component/arguments.
+        answer: ComponentHumanDecisionAnswer,
     },
 
     /// 返回当前已验证 actor 的公开资料。
@@ -395,6 +410,10 @@ pub enum AppReply {
     ComponentDataFunctions(ComponentDataFunctions),
     /// [`AppCommand::CallComponentFunction`] response.
     ComponentFunctionCall(ComponentFunctionCall),
+    /// [`AppCommand::ListPendingComponentHumanDecisions`] response.
+    PendingComponentHumanDecisions(PendingComponentHumanDecisions),
+    /// Await/resolve response carrying the exact provider tool result.
+    ComponentHumanDecisionResolved(ComponentHumanDecisionResolved),
     /// [`AppCommand::GetCurrentUser`] 应答。
     CurrentUser(CurrentUser),
     /// [`AppCommand::AdminStatus`] 应答。

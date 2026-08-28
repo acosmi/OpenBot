@@ -221,6 +221,8 @@ impl AgentToolGateway {
                 | AppReply::ComponentDecision(_)
                 | AppReply::ComponentDataFunctions(_)
                 | AppReply::ComponentFunctionCall(_)
+                | AppReply::PendingComponentHumanDecisions(_)
+                | AppReply::ComponentHumanDecisionResolved(_)
                 | AppReply::CurrentUser(_)
                 | AppReply::AdminStatus(_)
                 | AppReply::People(_)

@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 167
+    expect: 169
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 21
+    expect: 23
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 167
+    expect: 169
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1812,3 +1812,25 @@ entries:
     done_evidence: "Batch36: trusted Origin在body parse前；body闭集只有writesEnabled，actor/tenant/time无wire字段。PG upsert用数据库时钟，commit unknown不冒充成功；disabled在同一事务拒绝GUI remember、correct与remember tool并投影stable memory_writes_disabled，但list/recall/forbid/delete保持可用。Server 1/0/0、PG17.11 SCRAM 1/0/0、release WASM浏览器开关false跨reload保持且47个correct disabled、48 forbid与49 delete仍enabled。"
     evidence: "docs/2026-08-27-G3-G6-MemoryControls-batch36.md"
     notes: "新增。响应只回已提交writesEnabled且no-store；关闭写入不能阻止用户查看或擦除既有数据。错误码：401/403 Origin/400/503/reconciliation。"
+  - id: "api-component-human-decisions-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::components::human_decisions_get (GET /api/components/human-decisions)"
+    owner: "openbot-server"
+    test_id: "T-API-0168"
+    migration_rule: "n/a: v3 §3.3/§7.2 要求compiled Decisions跨刷新/副本等待人的answer"
+    status: "done"
+    done_evidence: "Batch47 closed DTO只投影decision/run/Agent/component/validated args/DB requested+expiry；不回auth generation/hash/provider call id。PG17.11 SCRAM只列原actor、fresh generation、current membership、running run与有效lease的pending；outsider/撤权/answered/cancelled/expired均0。Axum authenticated GET与Tauri custom protocol typed/no-store；Server components 4/0/0、Desktop1/0/0。"
+    evidence: "固定上游95条静态route无此native durable surface；正向对照同一components routes含既有for-agent/decision/call"
+    notes: "新增transport，不新增第二套状态；真源是native0023。错误码：401/503；不可见项不进入列表。"
+  - id: "api-component-human-decision-answer-post"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::components::human_decision_answer_post (POST /api/components/human-decisions/{decision_id}/answer)"
+    owner: "openbot-server"
+    test_id: "T-API-0169"
+    migration_rule: "n/a: useHumanInTheLoop的respond必须成为durable provider tool result，不能留在React内存"
+    status: "done"
+    done_evidence: "Batch47 body为untagged closed Approval{decision,note?}|Choice{choice,label}，不接受actor/run/Bot/component/binding自报；Application先ECMAScript trim/size，PG再按stored component/args校Choice id+label。trusted Origin先于body。PG17.11 SCRAM证明跨副本answer唤醒、same answer replay、different conflict、DB-clock expiry、AuthGeneration取消、answer/request audit失败全回滚；Axum/Tauri no-store定向绿。"
+    evidence: "固定上游95条静态route无独立durable answer API；上游respond只在useHumanInTheLoop render callback内"
+    notes: "新增。错误码：401/403 Origin/400 malformed或option mismatch/404不可见或失效/409异值重答/503/reconciliation。"

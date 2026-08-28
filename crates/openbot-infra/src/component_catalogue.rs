@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use deadpool_postgres::Pool;
 use openbot_application::{
     ComponentAdministration, ComponentAdministrationError, ComponentFunctionArguments,
-    ComponentFunctionCallPlan, ComponentRuntimeScope, validate_manifest_entries,
+    ComponentFunctionCallPlan, ComponentHumanDecisionDraft, ComponentHumanDecisionScope,
+    ComponentRuntimeScope, validate_manifest_entries,
 };
 use openbot_contracts::agent::AgentVisibility;
 use openbot_contracts::auth::AuthContext;
@@ -12,9 +13,10 @@ use openbot_contracts::components::{
     AUDIT_TRAIL_READS_DESCRIPTION, BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, BotActivityRow,
     CompiledComponentKind, CompiledComponentManifestEntry, ComponentCatalogueAdded,
     ComponentDecision, ComponentDecisionRefusal, ComponentFunctionCall, ComponentFunctionData,
-    ComponentFunctionError, ComponentRecord, ComponentRecords, GrantedCompiledComponent,
-    GrantedCompiledComponents, RECENT_REFUSALS_FUNCTION_NAME, RecentRefusalRow,
-    RecentRefusalsReport, component_data_function_manifest,
+    ComponentFunctionError, ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved,
+    ComponentRecord, ComponentRecords, GrantedCompiledComponent, GrantedCompiledComponents,
+    PendingComponentHumanDecision, PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME,
+    RecentRefusalRow, RecentRefusalsReport, component_data_function_manifest,
 };
 use openbot_domain::agent::profile_policy::{AgentActor, AgentProfileFacts, can_run_agent};
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
@@ -30,6 +32,8 @@ use tokio_postgres::{IsolationLevel, Row, Transaction};
 
 use crate::policy::PolicyStore;
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
+
+const HUMAN_DECISION_POLL_INTERVAL: core::time::Duration = core::time::Duration::from_secs(1);
 
 /// Production PostgreSQL adapter for compiled-component read/sync operations.
 pub struct PostgresComponentAdministration {
@@ -56,6 +60,66 @@ impl PostgresComponentAdministration {
     pub fn with_policy(mut self, policy: PolicyStore) -> Self {
         self.policy = policy;
         self
+    }
+
+    async fn retire_component_human_decision(
+        &self,
+        scope: &ComponentHumanDecisionScope,
+        decision_id: &str,
+        state: &'static str,
+        event_type: &'static str,
+    ) -> Result<(), ComponentAdministrationError> {
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client.transaction().await.map_err(query_unavailable)?;
+        let row = transaction
+            .query_opt(
+                "SELECT bot_id,component_name,arguments_hash
+                   FROM public.component_human_decisions
+                  WHERE decision_id=$1 AND deployment_id=$2 AND tenant_id=$3 AND thread_id=$4
+                    AND run_id=$5 AND actor_id=$6 AND bot_id=$7 AND state='pending'
+                  FOR UPDATE",
+                &[
+                    &decision_id,
+                    &scope.deployment.as_str(),
+                    &scope.tenant.as_str(),
+                    &scope.thread_id.as_str(),
+                    &scope.run_id.as_str(),
+                    &scope.actor.as_str(),
+                    &scope.agent_id.as_str(),
+                ],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let Some(row) = row else {
+            transaction.commit().await.map_err(query_unavailable)?;
+            return Ok(());
+        };
+        let updated = transaction
+            .execute(
+                "UPDATE public.component_human_decisions
+                    SET state=$2,answer=NULL,resolved_at=clock_timestamp(),resolved_by=NULL,
+                        updated_at=clock_timestamp()
+                  WHERE decision_id=$1 AND state='pending'",
+                &[&decision_id, &state],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        if updated == 1 {
+            append_component_human_answer_audit(
+                &transaction,
+                &scope.actor,
+                decision_id,
+                row.try_get("bot_id").map_err(|_| corrupt("agent_id"))?,
+                row.try_get("component_name")
+                    .map_err(|_| corrupt("component_name"))?,
+                row.try_get("arguments_hash")
+                    .map_err(|_| corrupt("component_arguments_hash"))?,
+                event_type,
+                self.checkpoint_key.expose(),
+            )
+            .await?;
+        }
+        commit_component_runtime(transaction, "component_human_retired").await
     }
 
     fn authorize_function(
@@ -500,6 +564,474 @@ impl ComponentAdministration for PostgresComponentAdministration {
             }
         }
     }
+
+    async fn request_component_human_decision(
+        &self,
+        scope: &ComponentHumanDecisionScope,
+        draft: &ComponentHumanDecisionDraft,
+    ) -> Result<PendingComponentHumanDecision, ComponentAdministrationError> {
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await
+            .map_err(query_unavailable)?;
+        ensure_component_human_scope(&transaction, scope).await?;
+        let runtime_scope = component_runtime_scope(scope);
+        ensure_runnable_agent(&transaction, &runtime_scope).await?;
+        let facts =
+            component_grant_facts(&transaction, &runtime_scope, &draft.component_name, true)
+                .await?;
+        if let ComponentGrantDecision::Refused(reason) = decide_component_grant(facts) {
+            let refusal = component_refusal(reason, None)?;
+            append_component_refusal(
+                &transaction,
+                &runtime_scope,
+                &draft.component_name,
+                &refusal,
+                None,
+                self.checkpoint_key.expose(),
+            )
+            .await?;
+            commit_component_runtime(transaction, "component_human_refused").await?;
+            return Err(ComponentAdministrationError::NotVisible);
+        }
+        let ttl_seconds = i64::try_from(draft.ttl.as_secs())
+            .map_err(|_| corrupt("component_human_decision_ttl"))?;
+        let generation =
+            i64::try_from(scope.auth_generation.get()).map_err(|_| corrupt("auth_generation"))?;
+        let arguments_hash = draft.arguments_hash.to_hex();
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO public.component_human_decisions(
+                   decision_id,deployment_id,tenant_id,thread_id,run_id,actor_id,bot_id,
+                   auth_generation,provider_call_id,component_name,arguments,arguments_hash,
+                   state,answer,requested_at,expires_at,resolved_at,resolved_by,created_at,updated_at
+                 ) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',NULL,
+                          clock.now,clock.now+make_interval(secs=>$13::bigint),NULL,NULL,clock.now,clock.now
+                     FROM (SELECT clock_timestamp() AS now) clock
+                 ON CONFLICT (run_id,provider_call_id) DO NOTHING
+                 RETURNING decision_id,run_id,bot_id,component_name,arguments,requested_at,expires_at",
+                &[
+                    &draft.decision_id,
+                    &scope.deployment.as_str(),
+                    &scope.tenant.as_str(),
+                    &scope.thread_id.as_str(),
+                    &scope.run_id.as_str(),
+                    &scope.actor.as_str(),
+                    &scope.agent_id.as_str(),
+                    &generation,
+                    &draft.provider_call_id,
+                    &draft.component_name,
+                    &draft.arguments,
+                    &arguments_hash,
+                    &ttl_seconds,
+                ],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let (pending, created) = if let Some(row) = inserted {
+            (decode_pending_human_decision(&row)?, true)
+        } else {
+            let row = transaction
+                .query_opt(
+                    "SELECT decision_id,run_id,bot_id,component_name,arguments,arguments_hash,
+                            provider_call_id,actor_id,auth_generation,state,requested_at,expires_at
+                       FROM public.component_human_decisions
+                      WHERE run_id=$1 AND provider_call_id=$2 FOR UPDATE",
+                    &[&scope.run_id.as_str(), &draft.provider_call_id],
+                )
+                .await
+                .map_err(query_unavailable)?
+                .ok_or_else(|| corrupt("component_human_decision"))?;
+            let state: String = row
+                .try_get("state")
+                .map_err(|_| corrupt("decision_state"))?;
+            let exact = row
+                .try_get::<_, String>("decision_id")
+                .is_ok_and(|value| value == draft.decision_id)
+                && row
+                    .try_get::<_, String>("actor_id")
+                    .is_ok_and(|value| value == scope.actor.as_str())
+                && row
+                    .try_get::<_, String>("bot_id")
+                    .is_ok_and(|value| value == scope.agent_id.as_str())
+                && row
+                    .try_get::<_, i64>("auth_generation")
+                    .is_ok_and(|value| value == generation)
+                && row
+                    .try_get::<_, String>("component_name")
+                    .is_ok_and(|value| value == draft.component_name)
+                && row
+                    .try_get::<_, serde_json::Value>("arguments")
+                    .is_ok_and(|value| value == draft.arguments)
+                && row
+                    .try_get::<_, String>("arguments_hash")
+                    .is_ok_and(|value| value == arguments_hash)
+                && state == "pending";
+            if !exact {
+                return Err(ComponentAdministrationError::Conflict);
+            }
+            (decode_pending_human_decision(&row)?, false)
+        };
+        if created {
+            append_component_human_audit(
+                &transaction,
+                scope,
+                draft,
+                "component.human_requested",
+                self.checkpoint_key.expose(),
+            )
+            .await?;
+        }
+        commit_component_runtime(transaction, "component_human_requested").await?;
+        Ok(pending)
+    }
+
+    async fn list_component_human_decisions(
+        &self,
+        auth: &AuthContext,
+    ) -> Result<PendingComponentHumanDecisions, ComponentAdministrationError> {
+        let generation =
+            i64::try_from(auth.auth_generation().get()).map_err(|_| corrupt("auth_generation"))?;
+        let client = self.pool.get().await.map_err(unavailable)?;
+        let rows = client
+            .query(
+                "SELECT d.decision_id,d.run_id,d.bot_id,d.component_name,d.arguments,
+                        d.requested_at,d.expires_at
+                   FROM public.component_human_decisions d
+                   JOIN public.runs r ON r.run_id=d.run_id AND r.thread_id=d.thread_id
+                   JOIN public.threads t ON t.thread_id=d.thread_id
+                   JOIN public.thread_leases l ON l.thread_id=t.thread_id
+                   JOIN public.users u ON u.id=d.actor_id
+                  WHERE d.actor_id=$1 AND d.deployment_id=$2 AND d.tenant_id=$3
+                    AND d.auth_generation=$4 AND d.state='pending'
+                    AND d.expires_at>clock_timestamp() AND r.actor_id=$1 AND r.bot_id=d.bot_id
+                    AND r.status='running' AND t.status<>'deleted'
+                    AND l.fencing_token=r.fencing_token AND l.expires_at>clock_timestamp()
+                    AND coalesce(u.auth_generation,0)=$4
+                    AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
+                    AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                    WHERE ra.email=lower(u.email))
+                    AND ((t.anchor_kind='direct_bot' AND EXISTS(
+                           SELECT 1 FROM public.thread_memberships tm
+                            WHERE tm.thread_id=t.thread_id AND tm.user_id=$1
+                         )) OR (t.anchor_kind='channel' AND EXISTS(
+                           SELECT 1 FROM public.channel_memberships cm
+                            WHERE cm.channel_id=t.anchor_id AND cm.user_id=$1
+                         )))
+                  ORDER BY d.requested_at,d.decision_id LIMIT 100",
+                &[
+                    &auth.actor().as_str(),
+                    &auth.deployment().as_str(),
+                    &auth.tenant().as_str(),
+                    &generation,
+                ],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let decisions = rows
+            .iter()
+            .map(decode_pending_human_decision)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PendingComponentHumanDecisions { decisions })
+    }
+
+    async fn resolve_component_human_decision(
+        &self,
+        auth: &AuthContext,
+        decision_id: &str,
+        answer: &ComponentHumanDecisionAnswer,
+    ) -> Result<ComponentHumanDecisionResolved, ComponentAdministrationError> {
+        let generation =
+            i64::try_from(auth.auth_generation().get()).map_err(|_| corrupt("auth_generation"))?;
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await
+            .map_err(query_unavailable)?;
+        let row = transaction
+            .query_opt(
+                "SELECT d.decision_id,d.run_id,d.thread_id,d.bot_id,d.component_name,d.arguments,
+                        d.arguments_hash,d.state,d.answer,d.expires_at,clock_timestamp() AS now
+                   FROM public.component_human_decisions d
+                   JOIN public.runs r ON r.run_id=d.run_id AND r.thread_id=d.thread_id
+                   JOIN public.threads t ON t.thread_id=d.thread_id
+                   JOIN public.thread_leases l ON l.thread_id=t.thread_id
+                   JOIN public.users u ON u.id=d.actor_id
+                  WHERE d.decision_id=$1 AND d.actor_id=$2 AND d.deployment_id=$3
+                    AND d.tenant_id=$4 AND d.auth_generation=$5
+                    AND r.actor_id=$2 AND r.bot_id=d.bot_id AND r.status='running'
+                    AND t.status<>'deleted' AND l.fencing_token=r.fencing_token
+                    AND l.expires_at>clock_timestamp() AND coalesce(u.auth_generation,0)=$5
+                    AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
+                    AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                    WHERE ra.email=lower(u.email))
+                    AND ((t.anchor_kind='direct_bot' AND EXISTS(
+                           SELECT 1 FROM public.thread_memberships tm
+                            WHERE tm.thread_id=t.thread_id AND tm.user_id=$2
+                         )) OR (t.anchor_kind='channel' AND EXISTS(
+                           SELECT 1 FROM public.channel_memberships cm
+                            WHERE cm.channel_id=t.anchor_id AND cm.user_id=$2
+                         )))
+                  FOR UPDATE OF d",
+                &[
+                    &decision_id,
+                    &auth.actor().as_str(),
+                    &auth.deployment().as_str(),
+                    &auth.tenant().as_str(),
+                    &generation,
+                ],
+            )
+            .await
+            .map_err(query_unavailable)?
+            .ok_or(ComponentAdministrationError::NotVisible)?;
+        let state: String = row
+            .try_get("state")
+            .map_err(|_| corrupt("decision_state"))?;
+        if state == "answered" {
+            let stored = decode_human_answer(
+                row.try_get("answer")
+                    .map_err(|_| corrupt("decision_answer"))?,
+            )?;
+            if &stored != answer {
+                return Err(ComponentAdministrationError::Conflict);
+            }
+            transaction.commit().await.map_err(query_unavailable)?;
+            return Ok(ComponentHumanDecisionResolved {
+                decision_id: decision_id.to_owned(),
+                answer: stored,
+                replayed: true,
+            });
+        }
+        if state != "pending" {
+            return Err(ComponentAdministrationError::NotVisible);
+        }
+        let expires_at: time::OffsetDateTime = row
+            .try_get("expires_at")
+            .map_err(|_| corrupt("expires_at"))?;
+        let now: time::OffsetDateTime = row.try_get("now").map_err(|_| corrupt("clock"))?;
+        if expires_at <= now {
+            expire_component_human_decision(
+                &transaction,
+                auth.actor(),
+                decision_id,
+                row.try_get::<_, String>("bot_id")
+                    .map_err(|_| corrupt("agent_id"))?,
+                row.try_get::<_, String>("component_name")
+                    .map_err(|_| corrupt("component_name"))?,
+                row.try_get::<_, String>("arguments_hash")
+                    .map_err(|_| corrupt("component_arguments_hash"))?,
+                self.checkpoint_key.expose(),
+            )
+            .await?;
+            commit_component_runtime(transaction, "component_human_expired").await?;
+            return Err(ComponentAdministrationError::NotVisible);
+        }
+        let component_name: String = row
+            .try_get("component_name")
+            .map_err(|_| corrupt("component_name"))?;
+        let arguments: serde_json::Value = row
+            .try_get("arguments")
+            .map_err(|_| corrupt("component_arguments"))?;
+        validate_human_answer_against_arguments(&component_name, &arguments, answer)?;
+        let answer_json = serde_json::to_value(answer).map_err(|_| corrupt("decision_answer"))?;
+        let updated = transaction
+            .execute(
+                "UPDATE public.component_human_decisions
+                    SET state='answered',answer=$2,resolved_at=clock_timestamp(),resolved_by=actor_id,
+                        updated_at=clock_timestamp()
+                  WHERE decision_id=$1 AND state='pending'",
+                &[&decision_id, &answer_json],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        if updated != 1 {
+            return Err(ComponentAdministrationError::Conflict);
+        }
+        append_component_human_answer_audit(
+            &transaction,
+            auth.actor(),
+            decision_id,
+            row.try_get::<_, String>("bot_id")
+                .map_err(|_| corrupt("agent_id"))?,
+            component_name,
+            row.try_get::<_, String>("arguments_hash")
+                .map_err(|_| corrupt("component_arguments_hash"))?,
+            "component.human_answered",
+            self.checkpoint_key.expose(),
+        )
+        .await?;
+        commit_component_runtime(transaction, "component_human_answered").await?;
+        Ok(ComponentHumanDecisionResolved {
+            decision_id: decision_id.to_owned(),
+            answer: answer.clone(),
+            replayed: false,
+        })
+    }
+
+    async fn wait_component_human_decision(
+        &self,
+        scope: &ComponentHumanDecisionScope,
+        decision_id: &str,
+    ) -> Result<ComponentHumanDecisionResolved, ComponentAdministrationError> {
+        loop {
+            let client = self.pool.get().await.map_err(unavailable)?;
+            let row = client
+                .query_opt(
+                    "SELECT state,answer,expires_at,clock_timestamp() AS now,
+                            EXISTS(
+                              SELECT 1 FROM public.runs r
+                              JOIN public.threads t ON t.thread_id=r.thread_id
+                              JOIN public.thread_leases l ON l.thread_id=t.thread_id
+                              JOIN public.users u ON u.id=r.actor_id
+                              WHERE r.run_id=d.run_id AND r.thread_id=d.thread_id
+                                AND r.bot_id=d.bot_id AND r.actor_id=d.actor_id
+                                AND r.status='running' AND t.deployment_id=d.deployment_id
+                                AND t.tenant_id=d.tenant_id AND t.status<>'deleted'
+                                AND l.fencing_token=r.fencing_token
+                                AND l.expires_at>clock_timestamp()
+                                AND coalesce(u.auth_generation,0)=d.auth_generation
+                                AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
+                                AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                                WHERE ra.email=lower(u.email))
+                                AND ((t.anchor_kind='direct_bot' AND EXISTS(
+                                       SELECT 1 FROM public.thread_memberships tm
+                                        WHERE tm.thread_id=t.thread_id AND tm.user_id=d.actor_id
+                                     )) OR (t.anchor_kind='channel' AND EXISTS(
+                                       SELECT 1 FROM public.channel_memberships cm
+                                        WHERE cm.channel_id=t.anchor_id AND cm.user_id=d.actor_id
+                                     )))
+                            ) AS scope_current
+                       FROM public.component_human_decisions d
+                      WHERE decision_id=$1 AND run_id=$2 AND actor_id=$3 AND bot_id=$4
+                        AND deployment_id=$5 AND tenant_id=$6 AND thread_id=$7
+                        AND auth_generation=$8",
+                    &[
+                        &decision_id,
+                        &scope.run_id.as_str(),
+                        &scope.actor.as_str(),
+                        &scope.agent_id.as_str(),
+                        &scope.deployment.as_str(),
+                        &scope.tenant.as_str(),
+                        &scope.thread_id.as_str(),
+                        &i64::try_from(scope.auth_generation.get())
+                            .map_err(|_| corrupt("auth_generation"))?,
+                    ],
+                )
+                .await
+                .map_err(query_unavailable)?
+                .ok_or(ComponentAdministrationError::NotVisible)?;
+            let state: String = row
+                .try_get("state")
+                .map_err(|_| corrupt("decision_state"))?;
+            if state == "answered" {
+                return Ok(ComponentHumanDecisionResolved {
+                    decision_id: decision_id.to_owned(),
+                    answer: decode_human_answer(
+                        row.try_get("answer")
+                            .map_err(|_| corrupt("decision_answer"))?,
+                    )?,
+                    replayed: false,
+                });
+            }
+            let current: bool = row
+                .try_get("scope_current")
+                .map_err(|_| corrupt("decision_scope"))?;
+            let expires_at: time::OffsetDateTime = row
+                .try_get("expires_at")
+                .map_err(|_| corrupt("expires_at"))?;
+            let now: time::OffsetDateTime = row.try_get("now").map_err(|_| corrupt("clock"))?;
+            if state != "pending" {
+                return Err(ComponentAdministrationError::NotVisible);
+            }
+            if !current {
+                drop(client);
+                self.retire_component_human_decision(
+                    scope,
+                    decision_id,
+                    "cancelled",
+                    "component.human_cancelled",
+                )
+                .await?;
+                return Err(ComponentAdministrationError::NotVisible);
+            }
+            if expires_at <= now {
+                drop(client);
+                self.retire_component_human_decision(
+                    scope,
+                    decision_id,
+                    "expired",
+                    "component.human_expired",
+                )
+                .await?;
+                return Err(ComponentAdministrationError::NotVisible);
+            }
+            drop(client);
+            tokio::time::sleep(HUMAN_DECISION_POLL_INTERVAL).await;
+        }
+    }
+}
+
+fn component_runtime_scope(scope: &ComponentHumanDecisionScope) -> ComponentRuntimeScope {
+    ComponentRuntimeScope {
+        tenant: scope.tenant.clone(),
+        actor: scope.actor.clone(),
+        admin: scope.admin,
+        agent_id: scope.agent_id.clone(),
+    }
+}
+
+async fn ensure_component_human_scope(
+    transaction: &Transaction<'_>,
+    scope: &ComponentHumanDecisionScope,
+) -> Result<(), ComponentAdministrationError> {
+    let generation =
+        i64::try_from(scope.auth_generation.get()).map_err(|_| corrupt("auth_generation"))?;
+    let current: bool = transaction
+        .query_one(
+            "SELECT EXISTS(
+                SELECT 1 FROM public.runs r
+                JOIN public.threads t ON t.thread_id=r.thread_id
+                JOIN public.thread_leases l ON l.thread_id=t.thread_id
+                JOIN public.users u ON u.id=r.actor_id
+                WHERE r.run_id=$1 AND r.thread_id=$2 AND r.bot_id=$3 AND r.actor_id=$4
+                  AND r.status='running' AND t.deployment_id=$5 AND t.tenant_id=$6
+                  AND t.status<>'deleted' AND l.fencing_token=r.fencing_token
+                  AND l.expires_at>clock_timestamp() AND coalesce(u.auth_generation,0)=$7
+                  AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
+                  AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                  WHERE ra.email=lower(u.email))
+                  AND ((t.anchor_kind='direct_bot' AND EXISTS(
+                         SELECT 1 FROM public.thread_memberships tm
+                          WHERE tm.thread_id=t.thread_id AND tm.user_id=$4
+                       )) OR (t.anchor_kind='channel' AND EXISTS(
+                         SELECT 1 FROM public.channel_memberships cm
+                          WHERE cm.channel_id=t.anchor_id AND cm.user_id=$4
+                       )))
+            )",
+            &[
+                &scope.run_id.as_str(),
+                &scope.thread_id.as_str(),
+                &scope.agent_id.as_str(),
+                &scope.actor.as_str(),
+                &scope.deployment.as_str(),
+                &scope.tenant.as_str(),
+                &generation,
+            ],
+        )
+        .await
+        .map_err(query_unavailable)?
+        .try_get(0)
+        .map_err(|_| corrupt("component_human_scope"))?;
+    if current {
+        Ok(())
+    } else {
+        Err(ComponentAdministrationError::NotVisible)
+    }
 }
 
 async fn component_grant_facts(
@@ -837,6 +1369,141 @@ async fn append_component_refusal(
     Ok(())
 }
 
+async fn append_component_human_audit(
+    transaction: &Transaction<'_>,
+    scope: &ComponentHumanDecisionScope,
+    draft: &ComponentHumanDecisionDraft,
+    event_type: &'static str,
+    checkpoint_key: &[u8],
+) -> Result<(), ComponentAdministrationError> {
+    let input_bytes = u64::try_from(draft.arguments.to_string().len())
+        .map_err(|_| corrupt("component_arguments"))?;
+    let facts = vec![
+        AuditFact::Bot(
+            AuditIdentifier::new(scope.agent_id.as_str().to_owned())
+                .map_err(|_| corrupt("agent_id"))?,
+        ),
+        AuditFact::DecisionId(
+            AuditIdentifier::new(draft.decision_id.clone()).map_err(|_| corrupt("decision_id"))?,
+        ),
+        AuditFact::ToolName(
+            AuditIdentifier::new(draft.component_name.clone())
+                .map_err(|_| corrupt("component_name"))?,
+        ),
+        AuditFact::CanonicalArgsHash(draft.arguments_hash),
+        AuditFact::InputBytes(input_bytes),
+    ];
+    append_component_human_event(
+        transaction,
+        scope.actor.clone(),
+        &draft.component_name,
+        facts,
+        event_type,
+        checkpoint_key,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn append_component_human_answer_audit(
+    transaction: &Transaction<'_>,
+    actor: &openbot_contracts::ids::ActorId,
+    decision_id: &str,
+    bot_id: String,
+    component_name: String,
+    arguments_hash: String,
+    event_type: &'static str,
+    checkpoint_key: &[u8],
+) -> Result<(), ComponentAdministrationError> {
+    let facts = vec![
+        AuditFact::Bot(AuditIdentifier::new(bot_id).map_err(|_| corrupt("agent_id"))?),
+        AuditFact::DecisionId(
+            AuditIdentifier::new(decision_id.to_owned()).map_err(|_| corrupt("decision_id"))?,
+        ),
+        AuditFact::ToolName(
+            AuditIdentifier::new(component_name.clone()).map_err(|_| corrupt("component_name"))?,
+        ),
+        AuditFact::CanonicalArgsHash(
+            Sha256Digest::parse_hex(&arguments_hash)
+                .map_err(|_| corrupt("component_arguments_hash"))?,
+        ),
+    ];
+    append_component_human_event(
+        transaction,
+        actor.clone(),
+        &component_name,
+        facts,
+        event_type,
+        checkpoint_key,
+    )
+    .await
+}
+
+async fn append_component_human_event(
+    transaction: &Transaction<'_>,
+    actor: openbot_contracts::ids::ActorId,
+    component_name: &str,
+    facts: Vec<AuditFact>,
+    event_type: &'static str,
+    checkpoint_key: &[u8],
+) -> Result<(), ComponentAdministrationError> {
+    let payload = AuditPayload::from_facts(facts).map_err(|_| corrupt("audit_payload"))?;
+    let (id, created_at) = next_event_coordinates(transaction)
+        .await
+        .map_err(infra_unavailable)?;
+    let event = AuditEvent {
+        id,
+        actor: Some(actor),
+        event_type: AuditEventType::parse(event_type).ok_or_else(|| corrupt("audit_event"))?,
+        target_kind: AuditLabel::new("component"),
+        target_id: Some(
+            AuditIdentifier::new(component_name.to_owned())
+                .map_err(|_| corrupt("component_name"))?,
+        ),
+        payload,
+        created_at,
+    };
+    append_event_in_transaction(transaction, &event, checkpoint_key)
+        .await
+        .map(|_| ())
+        .map_err(infra_unavailable)
+}
+
+async fn expire_component_human_decision(
+    transaction: &Transaction<'_>,
+    actor: &openbot_contracts::ids::ActorId,
+    decision_id: &str,
+    bot_id: String,
+    component_name: String,
+    arguments_hash: String,
+    checkpoint_key: &[u8],
+) -> Result<(), ComponentAdministrationError> {
+    let updated = transaction
+        .execute(
+            "UPDATE public.component_human_decisions
+                SET state='expired',answer=NULL,resolved_at=clock_timestamp(),resolved_by=NULL,
+                    updated_at=clock_timestamp()
+              WHERE decision_id=$1 AND state='pending'",
+            &[&decision_id],
+        )
+        .await
+        .map_err(query_unavailable)?;
+    if updated != 1 {
+        return Err(ComponentAdministrationError::Conflict);
+    }
+    append_component_human_answer_audit(
+        transaction,
+        actor,
+        decision_id,
+        bot_id,
+        component_name,
+        arguments_hash,
+        "component.human_expired",
+        checkpoint_key,
+    )
+    .await
+}
+
 async fn commit_component_runtime(
     transaction: deadpool_postgres::Transaction<'_>,
     operation: &'static str,
@@ -845,6 +1512,89 @@ async fn commit_component_runtime(
         tracing::error!(operation, error = %error, "component runtime commit result unknown");
         ComponentAdministrationError::CommitUnknown
     })
+}
+
+fn decode_pending_human_decision(
+    row: &Row,
+) -> Result<PendingComponentHumanDecision, ComponentAdministrationError> {
+    let decision_id: String = row
+        .try_get("decision_id")
+        .map_err(|_| corrupt("decision_id"))?;
+    let run_id: String = row.try_get("run_id").map_err(|_| corrupt("run_id"))?;
+    let agent_id: String = row.try_get("bot_id").map_err(|_| corrupt("agent_id"))?;
+    let component_name: String = row
+        .try_get("component_name")
+        .map_err(|_| corrupt("component_name"))?;
+    let arguments: serde_json::Value = row
+        .try_get("arguments")
+        .map_err(|_| corrupt("component_arguments"))?;
+    for (value, field) in [
+        (decision_id.as_str(), "decision_id"),
+        (run_id.as_str(), "run_id"),
+        (agent_id.as_str(), "agent_id"),
+        (component_name.as_str(), "component_name"),
+    ] {
+        validate_name(value).map_err(|_| corrupt(field))?;
+    }
+    Ok(PendingComponentHumanDecision {
+        decision_id,
+        run_id: openbot_contracts::ids::RunId::new(run_id),
+        agent_id: openbot_contracts::ids::BotId::new(agent_id),
+        component_name,
+        arguments,
+        requested_at: row
+            .try_get("requested_at")
+            .map_err(|_| corrupt("requested_at"))?,
+        expires_at: row
+            .try_get("expires_at")
+            .map_err(|_| corrupt("expires_at"))?,
+    })
+}
+
+fn decode_human_answer(
+    value: Option<serde_json::Value>,
+) -> Result<ComponentHumanDecisionAnswer, ComponentAdministrationError> {
+    serde_json::from_value(value.ok_or_else(|| corrupt("decision_answer"))?)
+        .map_err(|_| corrupt("decision_answer"))
+}
+
+fn validate_human_answer_against_arguments(
+    component_name: &str,
+    arguments: &serde_json::Value,
+    answer: &ComponentHumanDecisionAnswer,
+) -> Result<(), ComponentAdministrationError> {
+    match (component_name, answer) {
+        (
+            openbot_contracts::components::ASK_APPROVAL_COMPONENT_NAME,
+            ComponentHumanDecisionAnswer::Approval(_),
+        ) => Ok(()),
+        (
+            openbot_contracts::components::ASK_CHOICE_COMPONENT_NAME,
+            ComponentHumanDecisionAnswer::Choice(choice),
+        ) => {
+            let exact = arguments
+                .get("options")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|options| {
+                    options.iter().any(|option| {
+                        option.get("id").and_then(serde_json::Value::as_str)
+                            == Some(choice.choice.as_str())
+                            && option.get("label").and_then(serde_json::Value::as_str)
+                                == Some(choice.label.as_str())
+                    })
+                });
+            if exact {
+                Ok(())
+            } else {
+                Err(ComponentAdministrationError::InvalidInput {
+                    field: "component_answer",
+                })
+            }
+        }
+        _ => Err(ComponentAdministrationError::InvalidInput {
+            field: "component_answer",
+        }),
+    }
 }
 
 fn decode_record(row: &Row) -> Result<ComponentRecord, ComponentAdministrationError> {

@@ -14,7 +14,7 @@
 #       identity_provider.registered / knowledge.searched）在 server/src 无任何发出点。
 #       owner 判据（机械）：发出点是进程启动顶层代码或传输层看门狗（无 use case）=> openbot-infra，
 #       其余 => openbot-application（铸造）；落库一律 openbot-infra，见 §8.6 的 DB role 分离。
-#   (c) 新增语义事件 14 条，label=新增，upstream=-。
+#   (c) 新增语义事件 18 条，label=新增，upstream=-。
 #
 # target 统一写事件名的 Rust 符号落点；audit 的名字是契约层封闭枚举（§5.1 openbot-contracts
 # 的职责原文 = "native/wasm-safe ID、DTO、event、error、schema"），owner 写的是谁负责铸造它。
@@ -43,17 +43,17 @@ recount:
   - command: |-
       grep -c '^  - id: ' parity/events.yaml
     cwd: repo
-    expect: 82
-  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，14 新增）
+    expect: 86
+  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，18 新增）
   - command: |-
       printf 'parity=%s 新增=%s 替代=%s\n' "$(grep -c "^    label: 'parity'$" parity/events.yaml)" "$(grep -c "^    label: '新增'$" parity/events.yaml)" "$(grep -c "^    label: '替代'$" parity/events.yaml)"
     cwd: repo
-    expect: 'parity=68 新增=14 替代=0'
-  # owner 分布（openbot-agent 11；openbot-infra 3；其余 openbot-application 68 = audit 54 + 新增 14）
+    expect: 'parity=68 新增=18 替代=0'
+  # owner 分布（openbot-agent 11；openbot-infra 3；其余 openbot-application 72 = audit 54 + 新增 18）
   - command: |-
       grep -oE "^    owner: 'openbot-[a-z]+'" parity/events.yaml | tr -d "'" | sort | uniq -c | awk '{print $3"="$1}' | paste -sd' ' -
     cwd: repo
-    expect: 'openbot-agent=11 openbot-application=68 openbot-infra=3'
+    expect: 'openbot-agent=11 openbot-application=72 openbot-infra=3'
   # 新增 absolute deadline audit 在固定上游零命中；同形命令对既有 stall audit 命中 5 个文件。
   - command: |-
       printf 'deadline=%s stalled=%s\n' "$(git grep -l 'agent.run_deadline_exceeded' | wc -l | tr -d ' ')" "$(git grep -l 'agent.stream_stalled' | wc -l | tr -d ' ')"
@@ -68,6 +68,10 @@ recount:
       printf 'approval=%s decision=%s\n' "$(git grep -l 'tool.approval_' | wc -l | tr -d ' ')" "$(git grep -l 'mcp.call_succeeded' | wc -l | tr -d ' ')"
     cwd: upstream
     expect: 'approval=0 decision=8'
+  - command: |-
+      printf 'human=%s component=%s\n' "$(git grep -l 'component.human_' | wc -l | tr -d ' ')" "$(git grep -l 'component.function_called' | wc -l | tr -d ' ')"
+    cwd: upstream
+    expect: 'human=0 component=4'
 
 entries:
   - id: 'agui-lifecycle'
@@ -919,3 +923,47 @@ entries:
     status: 'todo'
     evidence: 'sed -n ''/^### 4.3 Native/,/^## 5\./p'' docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md => 不变量 2 "(run_id, seq)、(thread_id, event_seq) 唯一；所有 terminal event 恰好一次"'
     notes: '§4.3 不变量 2 + §7.5〈每个 run 恰好一个 terminal event〉。这是 run_events 表上的持久化不变量，不是 AG-UI 线事件的重复：AG-UI 侧的 RUN_FINISHED / RUN_ERROR 是远端 Agent 说的话（可能一条都不来、也可能来两条），terminal 事件是本地按 (run_id, seq) 唯一索引铸造的权威终态。因此 agui-lifecycle / agui-error 标 parity，本条标新增，两者不可互相顶替。'
+  - id: 'component-human-requested'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::COMPONENT_HUMAN_REQUESTED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0083'
+    migration_rule: 'n/a: 固定上游useHumanInTheLoop request只在React内存，Rust新增durable事实'
+    status: 'done'
+    done_evidence: 'Batch47 PG17.11 SCRAM：native0023 pending row与component.human_requested hash-chain audit同serializable事务；payload只含Bot/decision id/tool name/canonical args hash/input bytes，零renderer args。exact request replay零重复audit，forced audit trigger时pending row0。'
+    evidence: 'git grep -l component.human_固定上游=0；同形component.function_called=3'
+    notes: 'surface/HITL request，不是acting approval；无effect/target/policy字段。'
+  - id: 'component-human-answered'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::COMPONENT_HUMAN_ANSWERED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0084'
+    migration_rule: 'n/a: 人的respond必须exactly-once durable并可跨副本唤醒'
+    status: 'done'
+    done_evidence: 'Batch47 PG17.11 SCRAM：stored component/args校验Approval或Choice id+label后，answer state与component.human_answered同事务；same answer replay零新audit，different answer409。payload不含note/choice/label；forced answer-audit失败把state回滚pending。'
+    evidence: 'git grep -l component.human_固定上游=0；上游respond仅在gallery-tools/decisions React callback'
+    notes: 'answer内容只进入受限decision row，audit只记录identity/hash，不记录人写的note。'
+  - id: 'component-human-expired'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::COMPONENT_HUMAN_EXPIRED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0085'
+    migration_rule: 'n/a: DB-clock bounded wait的可审计终态'
+    status: 'done'
+    done_evidence: 'Batch47真库把requested/created置过去后，resolve按DB clock原子推进expired、清answer/resolved_by并写component.human_expired；过期answer返回not_visible。'
+    evidence: '固定上游无component.human_事件；v3 §7.2 run deadline要求等待有上界'
+    notes: 'TTL是surface wait上限；Agent run deadline可更早终止。'
+  - id: 'component-human-cancelled'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::COMPONENT_HUMAN_CANCELLED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0086'
+    migration_rule: 'n/a: run/lease/membership/AuthGeneration失效必须退役pending'
+    status: 'done'
+    done_evidence: 'Batch47真库在actor auth_generation 0→1后，跨副本waiter检测scope_current=false，原子推进cancelled并写component.human_cancelled；旧session list=0、answer不可见。'
+    evidence: '固定上游无durable component human state；v3 §6.2 generation变化使旧approval/run authority失效'
+    notes: 'cancelled不含answer，也不冒充用户拒绝。'
