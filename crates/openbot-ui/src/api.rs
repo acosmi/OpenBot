@@ -17,6 +17,7 @@ use openbot_contracts::command::{
     ThreadRunCancellation, ThreadRunStarted,
 };
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
+use openbot_contracts::mcp::{McpConnectionDisconnected, McpConnections, McpOAuthAuthorization};
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::memory::UpdateMemoryControl;
 use openbot_contracts::memory::{
@@ -55,6 +56,106 @@ pub enum ApiError {
 pub const CHANNEL_PAGE_SIZE: u32 = 50;
 /// Memory page size; the application owns the authoritative clamp.
 pub const MEMORY_PAGE_SIZE: u32 = 50;
+
+/// Load reviewed user-OAuth servers and the current actor's connection rows.
+pub async fn load_mcp_connections() -> Result<McpConnections, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/plugins/connections")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let page = response
+            .json::<McpConnections>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_mcp_connections(&page)?;
+        Ok(page)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Ask the Server to mint OAuth state/PKCE and validate its navigation receipt.
+pub async fn begin_mcp_connection(server_id: &str) -> Result<McpOAuthAuthorization, ApiError> {
+    validate_mcp_server_id(server_id)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = mcp_connect_path(server_id)?;
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let authorization = response
+            .json::<McpOAuthAuthorization>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_authorization_target(&authorization.authorization_url)?;
+        Ok(authorization)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = server_id;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Tombstone one actor-owned connection and verify the exact Server receipt.
+pub async fn disconnect_mcp_connection(
+    server_id: &str,
+) -> Result<McpConnectionDisconnected, ApiError> {
+    validate_mcp_server_id(server_id)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = mcp_disconnect_path(server_id)?;
+        let response = Request::delete(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let receipt = response
+            .json::<McpConnectionDisconnected>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if receipt.server_id != server_id {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(receipt)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = server_id;
+        Err(ApiError::Unavailable)
+    }
+}
 
 /// Create one private channel for a single URL-selected recipient.
 pub async fn create_channel(agent_id: &BotId) -> Result<ChannelDetail, ApiError> {
@@ -847,6 +948,114 @@ pub async fn sign_out_current_session() -> Result<(), ApiError> {
     }
 }
 
+fn validate_mcp_server_id(server_id: &str) -> Result<(), ApiError> {
+    if server_id.is_empty()
+        || server_id.len() > 64
+        || server_id.contains("__")
+        || server_id.contains('/')
+        || !server_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn mcp_connect_path(server_id: &str) -> Result<String, ApiError> {
+    validate_mcp_server_id(server_id)?;
+    Ok(format!(
+        "/api/plugins/servers/{}/connect?returnTo=settings",
+        encode_url_component(server_id)
+    ))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn mcp_disconnect_path(server_id: &str) -> Result<String, ApiError> {
+    validate_mcp_server_id(server_id)?;
+    Ok(format!(
+        "/api/plugins/connections/{}",
+        encode_url_component(server_id)
+    ))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_mcp_connections(page: &McpConnections) -> Result<(), ApiError> {
+    if page.available_server_ids.len() > 64 || page.connections.len() > 256 {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut available = std::collections::BTreeSet::new();
+    for server_id in &page.available_server_ids {
+        validate_mcp_server_id(server_id)?;
+        if !available.insert(server_id.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+    }
+    let mut connected = std::collections::BTreeSet::new();
+    for connection in &page.connections {
+        validate_mcp_server_id(&connection.server_id)?;
+        if !connected.insert(connection.server_id.as_str())
+            || connection.scope.is_empty()
+            || connection.scope.len() > 16 * 1024
+            || connection.scope.chars().any(char::is_control)
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+    }
+    if let Some(redirect_uri) = page.redirect_uri.as_deref() {
+        validate_callback_uri(redirect_uri)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_callback_uri(value: &str) -> Result<(), ApiError> {
+    if value.len() > 16 * 1024 || value.chars().any(char::is_control) {
+        return Err(ApiError::InvalidResponse);
+    }
+    let parsed = url::Url::parse(value).map_err(|_| ApiError::InvalidResponse)?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_authorization_target(value: &str) -> Result<(), ApiError> {
+    if value.is_empty()
+        || value.len() > 16 * 1024
+        || value.chars().any(char::is_control)
+        || value.contains('\\')
+        || value.contains('#')
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    if value.starts_with('/') {
+        return if value.starts_with("//") {
+            Err(ApiError::InvalidResponse)
+        } else {
+            Ok(())
+        };
+    }
+    let parsed = url::Url::parse(value).map_err(|_| ApiError::InvalidResponse)?;
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
 #[cfg(any(target_arch = "wasm32", test))]
 fn approval_decision_path(approval_id: &str) -> Result<String, ApiError> {
     if approval_id.is_empty() || approval_id.len() > 128 || approval_id.as_bytes().contains(&0) {
@@ -1127,6 +1336,73 @@ mod tests {
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
         }
+    }
+
+    fn mcp_page() -> McpConnections {
+        McpConnections {
+            available_server_ids: vec!["google-drive".to_owned()],
+            connections: vec![openbot_contracts::mcp::McpConnection {
+                server_id: "google-drive".to_owned(),
+                scope: "https://www.googleapis.com/auth/drive.readonly".to_owned(),
+                connected_at: OffsetDateTime::UNIX_EPOCH,
+            }],
+            redirect_uri: Some("http://127.0.0.1:39015/api/plugins/oauth/callback".to_owned()),
+        }
+    }
+
+    #[test]
+    fn mcp_paths_projection_and_navigation_receipts_are_closed() {
+        assert_eq!(
+            mcp_connect_path("google-drive").unwrap(),
+            "/api/plugins/servers/google-drive/connect?returnTo=settings"
+        );
+        assert_eq!(
+            mcp_disconnect_path("google-drive").unwrap(),
+            "/api/plugins/connections/google-drive"
+        );
+        assert!(validate_mcp_connections(&mcp_page()).is_ok());
+        assert!(
+            validate_authorization_target("/settings/connected-accounts?connected=google-drive")
+                .is_ok()
+        );
+        assert!(
+            validate_authorization_target(
+                "https://accounts.google.com/o/oauth2/v2/auth?state=opaque"
+            )
+            .is_ok()
+        );
+
+        for invalid in [
+            "//attacker.example/path",
+            "http://accounts.google.com/authorize",
+            "https://user@accounts.google.com/authorize",
+            "https://accounts.google.com/authorize#token",
+            "javascript:alert(1)",
+            "/bad\\path",
+        ] {
+            assert_eq!(
+                validate_authorization_target(invalid).unwrap_err(),
+                ApiError::InvalidResponse
+            );
+        }
+        assert_eq!(
+            validate_mcp_server_id("google__drive").unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let mut duplicate = mcp_page();
+        duplicate
+            .available_server_ids
+            .push("google-drive".to_owned());
+        assert_eq!(
+            validate_mcp_connections(&duplicate).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let mut credential_like_scope = mcp_page();
+        credential_like_scope.connections[0].scope = "bad\nscope".to_owned();
+        assert_eq!(
+            validate_mcp_connections(&credential_like_scope).unwrap_err(),
+            ApiError::InvalidResponse
+        );
     }
 
     #[test]

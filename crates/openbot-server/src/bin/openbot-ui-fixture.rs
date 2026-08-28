@@ -14,12 +14,13 @@ use openbot_application::{
     AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, BeginThreadRunRequest,
     CancelThreadRunRequest, ChannelAdministration, ChannelAdministrationError,
     ChannelCreateRequest, ChannelReadScope, ChannelReader, CorrectMemoryRequest,
-    MemoryAdministration, MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest,
-    MutateMemoryRequest, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
-    PeoplePortError, PortError, RecallMemoriesRequest, RememberMemoryRequest,
-    ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
-    ThreadHistoryRequest, ToolApprovalAdministration, ToolApprovalAdministrationError,
-    UiPreferenceAdministration, UiPreferenceAdministrationError, UpdateMemoryControlRequest,
+    McpConnectionAdministration, McpConnectionError, MemoryAdministration,
+    MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest, MutateMemoryRequest,
+    OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
+    RecallMemoriesRequest, RememberMemoryRequest, ThreadConversationRequest, ThreadDirectory,
+    ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
+    ToolApprovalAdministration, ToolApprovalAdministrationError, UiPreferenceAdministration,
+    UiPreferenceAdministrationError, UpdateMemoryControlRequest,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
@@ -31,6 +32,11 @@ use openbot_contracts::command::{
 };
 use openbot_contracts::ids::{
     ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
+};
+use openbot_contracts::mcp::{
+    McpConnection, McpConnectionDisconnected, McpConnections, McpOAuthAuthorization,
+    McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo,
+    McpVendorRevocationStatus,
 };
 use openbot_contracts::memory::{
     MemoryControl, MemoryKind, MemoryMutation, MemoryOrigin, MemoryPage, MemoryRecall,
@@ -50,6 +56,8 @@ use openbot_server::{
 use time::{Duration, OffsetDateTime};
 
 const FIXTURE_EXISTING_THREAD: &str = "550e8400-e29b-81d4-a716-446655440000";
+const FIXTURE_GOOGLE_DRIVE_SERVER: &str = "google-drive";
+const FIXTURE_GOOGLE_DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 
 #[derive(Clone)]
 struct FixtureChannels {
@@ -291,6 +299,118 @@ impl AgentDirectory for FixtureAgents {
             .iter()
             .find(|profile| &profile.id == agent_id)
             .cloned())
+    }
+}
+
+#[derive(Clone)]
+struct FixtureConnections {
+    actor: ActorId,
+    redirect_uri: String,
+    connected_at: OffsetDateTime,
+    connection: Arc<Mutex<Option<McpConnection>>>,
+}
+
+impl FixtureConnections {
+    fn new(actor: ActorId, port: u16, connected_at: OffsetDateTime) -> Self {
+        Self {
+            actor,
+            redirect_uri: format!("http://127.0.0.1:{port}/api/plugins/oauth/callback"),
+            connected_at,
+            connection: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn ensure_actor(&self, auth: &AuthContext) -> Result<(), McpConnectionError> {
+        if auth.actor() == &self.actor {
+            Ok(())
+        } else {
+            Err(McpConnectionError::NotVisible)
+        }
+    }
+
+    fn ensure_server(server_id: &str) -> Result<(), McpConnectionError> {
+        if server_id == FIXTURE_GOOGLE_DRIVE_SERVER {
+            Ok(())
+        } else {
+            Err(McpConnectionError::NotVisible)
+        }
+    }
+}
+
+#[async_trait]
+impl McpConnectionAdministration for FixtureConnections {
+    async fn list_connections(
+        &self,
+        auth: &AuthContext,
+    ) -> Result<McpConnections, McpConnectionError> {
+        self.ensure_actor(auth)?;
+        Ok(McpConnections {
+            available_server_ids: vec![FIXTURE_GOOGLE_DRIVE_SERVER.to_owned()],
+            connections: self
+                .connection
+                .lock()
+                .map_err(|_| McpConnectionError::Unavailable)?
+                .iter()
+                .cloned()
+                .collect(),
+            redirect_uri: Some(self.redirect_uri.clone()),
+        })
+    }
+
+    async fn begin_oauth(
+        &self,
+        auth: &AuthContext,
+        server_id: &str,
+        return_to: McpOAuthReturnTo,
+    ) -> Result<McpOAuthAuthorization, McpConnectionError> {
+        self.ensure_actor(auth)?;
+        Self::ensure_server(server_id)?;
+        if return_to != McpOAuthReturnTo::Settings {
+            return Err(McpConnectionError::InvalidInput { field: "return_to" });
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        *self
+            .connection
+            .lock()
+            .map_err(|_| McpConnectionError::Unavailable)? = Some(McpConnection {
+            server_id: server_id.to_owned(),
+            scope: FIXTURE_GOOGLE_DRIVE_SCOPE.to_owned(),
+            connected_at: self.connected_at,
+        });
+        Ok(McpOAuthAuthorization {
+            authorization_url: "/settings/connected-accounts?connected=google-drive".to_owned(),
+        })
+    }
+
+    async fn disconnect(
+        &self,
+        auth: &AuthContext,
+        server_id: &str,
+    ) -> Result<McpConnectionDisconnected, McpConnectionError> {
+        self.ensure_actor(auth)?;
+        Self::ensure_server(server_id)?;
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        let removed = self
+            .connection
+            .lock()
+            .map_err(|_| McpConnectionError::Unavailable)?
+            .take();
+        if removed.is_none() {
+            return Err(McpConnectionError::NotVisible);
+        }
+        Ok(McpConnectionDisconnected {
+            server_id: server_id.to_owned(),
+            vendor_revocation: McpVendorRevocationStatus::Pending,
+        })
+    }
+
+    async fn register_oauth_client(
+        &self,
+        _auth: &AuthContext,
+        _server_id: &str,
+        _registration: &McpOAuthClientRegistration,
+    ) -> Result<McpOAuthClientRegistered, McpConnectionError> {
+        Err(McpConnectionError::Unavailable)
     }
 }
 
@@ -1290,7 +1410,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let channels = FixtureChannels::new(now);
     let threads = FixtureThreads::new(channels.clone());
-    let memory = FixtureMemory::new(tenant, actor, now);
+    let memory = FixtureMemory::new(tenant, actor.clone(), now);
+    let connections = FixtureConnections::new(actor, port, now);
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
@@ -1298,6 +1419,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_people(FixturePeople)
             .with_threads(threads)
             .with_memory(memory)
+            .with_mcp_connections(Arc::new(connections))
             .with_tool_approvals(Arc::new(FixtureApprovals::new(now)))
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );

@@ -23,13 +23,13 @@ use crate::http::ServerState;
 pub async fn connections_get(
     State(state): State<ServerState>,
     Authenticated(auth): Authenticated,
-) -> Result<Json<McpConnections>, HttpError> {
+) -> Result<(HeaderMap, Json<McpConnections>), HttpError> {
     match state
         .application()
         .execute(auth, AppCommand::ListMcpConnections)
         .await?
     {
-        AppReply::McpConnections(connections) => Ok(Json(connections)),
+        AppReply::McpConnections(connections) => Ok((no_store_headers(), Json(connections))),
         _ => Err(application_contract_error()),
     }
 }
@@ -47,7 +47,7 @@ pub async fn servers_connect_post(
     OriginAuthenticated(auth): OriginAuthenticated,
     Path(server_id): Path<String>,
     query: Result<Query<BeginConnectQuery>, QueryRejection>,
-) -> Result<Json<McpOAuthAuthorization>, HttpError> {
+) -> Result<(HeaderMap, Json<McpOAuthAuthorization>), HttpError> {
     let Query(query) = query.map_err(|rejection| {
         tracing::debug!(rejection = %rejection, "MCP connect query 解析失败");
         AppError::MalformedPayload { field: "query" }
@@ -68,7 +68,9 @@ pub async fn servers_connect_post(
         )
         .await?
     {
-        AppReply::McpOAuthAuthorization(authorization) => Ok(Json(authorization)),
+        AppReply::McpOAuthAuthorization(authorization) => {
+            Ok((no_store_headers(), Json(authorization)))
+        }
         _ => Err(application_contract_error()),
     }
 }
@@ -78,13 +80,13 @@ pub async fn connections_delete(
     State(state): State<ServerState>,
     OriginAuthenticated(auth): OriginAuthenticated,
     Path(server_id): Path<String>,
-) -> Result<Json<McpConnectionDisconnected>, HttpError> {
+) -> Result<(HeaderMap, Json<McpConnectionDisconnected>), HttpError> {
     match state
         .application()
         .execute(auth, AppCommand::DisconnectMcpConnection { server_id })
         .await?
     {
-        AppReply::McpConnectionDisconnected(receipt) => Ok(Json(receipt)),
+        AppReply::McpConnectionDisconnected(receipt) => Ok((no_store_headers(), Json(receipt))),
         _ => Err(application_contract_error()),
     }
 }
@@ -238,6 +240,12 @@ fn redirect_no_store(outcome: McpOAuthCallbackOutcome) -> Response {
     response
 }
 
+fn no_store_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers
+}
+
 fn application_contract_error() -> HttpError {
     AppError::DependencyUnavailable {
         dependency: "application",
@@ -315,6 +323,7 @@ mod tests {
                 .unwrap()
                 .push(Call::List(auth.actor().clone()));
             Ok(McpConnections {
+                available_server_ids: vec!["notes".to_owned()],
                 connections: vec![openbot_contracts::mcp::McpConnection {
                     server_id: "notes".to_owned(),
                     scope: "notes:read".to_owned(),
@@ -536,6 +545,7 @@ mod tests {
         )
         .await;
         assert_eq!(list.status(), StatusCode::OK);
+        assert_eq!(list.headers().get(CACHE_CONTROL).unwrap(), "no-store");
 
         let rejected = send(
             router.clone(),
@@ -553,6 +563,7 @@ mod tests {
         )
         .await;
         assert_eq!(begin.status(), StatusCode::OK);
+        assert_eq!(begin.headers().get(CACHE_CONTROL).unwrap(), "no-store");
         let untrusted_return = send(
             router.clone(),
             Method::POST,
@@ -561,6 +572,10 @@ mod tests {
         )
         .await;
         assert_eq!(untrusted_return.status(), StatusCode::OK);
+        assert_eq!(
+            untrusted_return.headers().get(CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
         let disconnected = send(
             router,
             Method::DELETE,
@@ -569,6 +584,10 @@ mod tests {
         )
         .await;
         assert_eq!(disconnected.status(), StatusCode::OK);
+        assert_eq!(
+            disconnected.headers().get(CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
         assert_eq!(
             connections.calls.lock().unwrap().as_slice(),
             [

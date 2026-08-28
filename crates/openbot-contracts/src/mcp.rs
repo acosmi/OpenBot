@@ -279,6 +279,9 @@ pub struct McpConnection {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpConnections {
+    /// Stable ids for compile-time reviewed user-OAuth servers enabled by this deployment.
+    /// Display metadata is intentionally absent and remains a localized UI concern.
+    pub available_server_ids: Vec<String>,
     /// Connections owned by the authenticated actor only.
     pub connections: Vec<McpConnection>,
     /// Exact registered Server callback URI, or `None` when this deployment cannot run OAuth.
@@ -311,4 +314,44 @@ pub struct McpConnectionDisconnected {
     pub server_id: String,
     /// Truthful vendor reconciliation state.
     pub vendor_revocation: McpVendorRevocationStatus,
+}
+
+#[cfg(test)]
+mod personal_connection_tests {
+    use super::*;
+
+    #[test]
+    fn personal_connections_wire_is_closed_and_contains_no_server_metadata_or_credentials() {
+        let page = McpConnections {
+            available_server_ids: vec!["google-drive".to_owned()],
+            connections: vec![McpConnection {
+                server_id: "google-drive".to_owned(),
+                scope: "drive.readonly".to_owned(),
+                connected_at: OffsetDateTime::UNIX_EPOCH,
+            }],
+            redirect_uri: Some("https://app.example.test/api/plugins/oauth/callback".to_owned()),
+        };
+        assert_eq!(page.available_server_ids, ["google-drive"]);
+        assert_eq!(page.connections.len(), 1);
+        let encoded = serde_json::to_value(&page).unwrap();
+        assert_eq!(
+            encoded
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["availableServerIds", "connections", "redirectUri"]
+        );
+        assert_eq!(
+            serde_json::from_value::<McpConnections>(encoded).unwrap(),
+            page
+        );
+        assert!(
+            serde_json::from_str::<McpConnections>(
+                r#"{"availableServerIds":[],"connections":[],"redirectUri":null,"clientSecret":"forbidden"}"#
+            )
+            .is_err()
+        );
+    }
 }

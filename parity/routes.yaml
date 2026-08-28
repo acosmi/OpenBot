@@ -11,8 +11,7 @@
 #   Leptos 路径用 leptos_router 的 `:param` 写法；TanStack 的 pathless 段（`_authed` / `_app`）
 #   不进 URL，所以 layout 条目的路径写 `(pathless)`。
 # - notes 依次记：页面模板（设计系统文档 §5.2）、核心 journey（v3 §21.1 条 2）、权限可见性。
-# - status 全为 todo：本仓当前零实现代码（`find crates -name '*.rs'` 只有 10 个 `lib.rs`
-#   加 1 个 `bin/xtask.rs`），任何 done 都会是假 done。
+# - status 只随可复算实现与旅程证据推进；尚无完整实现/权限/交互证据的条目保持 todo。
 
 schema: routes
 schema_version: 1
@@ -93,9 +92,9 @@ entries:
     test_id: T-ROUTE-0005
     migration_rule: "preserve: settings 二级侧栏保留；宽度改为设计系统 §5.1 的 200px（尺寸是新增契约）"
     status: done
-    done_evidence: "Batch38 release WASM/browser：SettingsShell只包裹/settings与/settings/memory；secondary nav按--size-subnav实得200px，named Settings nav含Back to app/General/Memory三条同源链接，connected accounts/gallery断链为0。General exact与Memory current始终恰1；两route点击+hard reload保持shell/current/h1，Back回/后secondary=0。1440/1024/900为200px双列，600堆叠单列；General与Memory均X overflow0、main1/nav2/h1 1、duplicate IDs/visible alerts/console 0。"
+    done_evidence: "Batch38建立SettingsShell；Batch39在真实Connected Accounts index/detail落地后把该destination加入。secondary nav按--size-subnav实得200px，named Settings nav当前只含Back to app/General/Connected accounts/Memory四条有真实route的同源链接，gallery断链为0。General仍exact，Connected accounts对index/detail前缀current，Memory exact，任一路径aria-current始终恰1；既有1440/1024/900双列与600单列证据保持，Batch39 release 1280复验subnav=200、X overflow0、main1/nav2/h1 1、duplicate IDs/visible alerts/console 0。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/settings/route.tsx 得 createFileRoute(\"/_authed/settings\")；同文件渲染 SidebarProvider + SettingsSidebar + main"
-    notes: "模板n/a（layout，非页面）。journey：进入个人设置区后在200px二级nav切General/Memory并可返回app；权限无额外守卫，已登录即可见。固定上游还列Connected accounts/Components gallery，但对应production route尚未实现，当前shell构造性不画断链；它们各自route与settings-sidebar业务/golden条目继续todo。"
+    notes: "模板n/a（layout，非页面）。journey：进入个人设置区后在200px二级nav切General/Connected accounts/Memory并可返回app；权限无额外守卫，已登录即可见。固定上游Components gallery尚无production route，当前shell构造性不画断链；gallery route与settings-sidebar业务/golden条目继续todo。"
 
   # ---------------------------------------------------------------------------
   # 26 个页面
@@ -335,21 +334,23 @@ entries:
   - id: settings-connected-accounts-index
     upstream: app/src/routes/_authed/settings/connected-accounts/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_connected_accounts_index -> /settings/connected-accounts"
+    target: "openbot_ui::features::settings::ConnectedAccountsPage -> /settings/connected-accounts"
     owner: openbot-ui
     test_id: T-ROUTE-0029
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch39 contract/PG/Server/UI/release-browser：McpConnections新增stable availableServerIds，PG只在管理员已add且google-drive的url/vendor/provenance/transport与编译期reviewed identity逐字段相等时投影；connection仍只取AuthContext actor。GET 200 no-store，UI只join reviewed id，unknown/custom即使存在connection也不显示。release浏览器实得Google Drive Not connected→fixture full-page callback→Connected，hard reload保持；failed query只显示统一本地化错误且vendor canary=0；中英切换、current恰1、main1/nav2/h1 1、duplicate/overflow/visible alert/console均0。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/settings/connected-accounts/index.tsx 得 title=\"Connected accounts\" + description=\"Services a Bot reads as you, so it only ever sees what you can see. Connecting is yours to grant, and nobody can grant it for you.\""
     notes: "模板 List。journey：本人查看自己已连接 / 可连接的服务（v3 §3.1 条 7、§9.4）。权限：只列本人的连接；授权只能本人给，管理员不能代授。"
   - id: settings-connected-account-detail
     upstream: app/src/routes/_authed/settings/connected-accounts/$key.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_connected_account_detail -> /settings/connected-accounts/:key"
+    target: "openbot_ui::features::settings::ConnectedAccountDetailPage -> /settings/connected-accounts/:server_id"
     owner: openbot-ui
     test_id: T-ROUTE-0030
-    migration_rule: "preserve"
-    status: todo
+    migration_rule: "preserve: 上游connect journey保留；按v3 §9.4额外harden为local-first disconnect与truthful vendor reconciliation状态"
+    status: done
+    done_evidence: "Batch39 typed UI API只接受bounded server id；authorization receipt只允许同源根路径或HTTPS绝对URL且拒userinfo/fragment/control/backslash，Server receipt后才full-page navigation。detail只认reviewed Google Drive，unknown id页内Not found且零action；已连接页逐字显示vendor scope与RFC3339 connectedAt。POST connect/DELETE disconnect均trusted Origin+no-store；APG Menu ArrowDown聚焦唯一menuitem、Escape返trigger。fixture断开中trigger disabled；pending receipt后权威GET使scope消失，文案明确本地已断开/供应商撤销待协调，稳定page owner在重渲染后把焦点送到Connect。真实OAuth/PKCE/token/revoke仍由既有PG协议用例证明，不拿fixture冒充。"
     evidence: "grep -A2 -n 'createFileRoute($' app/src/routes/_authed/settings/connected-accounts/$key.tsx 得路由串 \"/_authed/settings/connected-accounts/$key\"；同文件 useMutation(connect) 与 title=\"Account\" / \"Access\" + description=\"What you agreed to, as the vendor recorded it — not what was asked for.\""
     notes: "模板 Form。journey：本人对单个服务做连接 / 断开，并看到厂商实际记录下来的授权范围（与请求范围可能不同）。权限：只本人；不是「为自己连接」的服务走「This is not a service you connect for yourself.」空态。"
   - id: sign-in

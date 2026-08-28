@@ -476,6 +476,91 @@ textarea:focus-visible,
   margin-block-start: calc(var(--spacing) * 3);
 }
 
+.ob-connected-account-card {
+  margin-block-start: calc(var(--spacing) * 4);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-popover);
+}
+
+.ob-connected-account-card-header,
+.ob-connected-account-disconnected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 4);
+}
+
+.ob-connected-account-menu .ob-menu-content {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+
+.ob-connected-account-menu .ob-menu-item {
+  color: var(--danger);
+}
+
+.ob-connected-account-facts {
+  display: grid;
+  gap: calc(var(--spacing) * 4);
+  margin: 0;
+  padding: calc(var(--spacing) * 4);
+  border-block-start: 1px solid var(--border);
+}
+
+.ob-connected-account-facts > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: calc(var(--spacing) * 4);
+}
+
+.ob-connected-account-facts dt,
+.ob-connected-account-facts dd,
+.ob-connected-account-disconnected p,
+.ob-connected-account-unavailable {
+  margin: 0;
+}
+
+.ob-connected-account-facts dt {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.ob-connected-account-facts dd {
+  min-width: 0;
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
+
+.ob-connected-account-facts code {
+  overflow-wrap: anywhere;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.ob-connected-account-disconnected > div:first-child {
+  min-width: min(100%, calc(var(--size-control-lg) * 5));
+  flex: 1 1 calc(var(--size-control-lg) * 5);
+}
+
+.ob-connected-account-disconnected p {
+  margin-block-start: calc(var(--spacing) * 2);
+  color: var(--fg-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+}
+
+.ob-connected-account-unavailable {
+  flex-basis: 100%;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+
 .ob-memory-page {
   width: 100%;
   padding: calc(var(--spacing) * 8) calc(var(--spacing) * 6) calc(var(--spacing) * 12);

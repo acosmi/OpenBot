@@ -8,6 +8,7 @@ use crate::icons::Icon;
 use crate::primitives::{IconSize, IconView};
 
 const GENERAL_PATH: &str = "/settings";
+const CONNECTED_ACCOUNTS_PATH: &str = "/settings/connected-accounts";
 const MEMORY_PATH: &str = "/settings/memory";
 
 /// Settings secondary shell. The global App shell remains the only owner of `<main>`.
@@ -16,6 +17,7 @@ pub fn SettingsShell(children: Children) -> impl IntoView {
     let i18n = use_i18n();
     let location = use_location();
     let general_location = location.clone();
+    let connected_accounts_location = location.clone();
     let memory_location = location;
     view! {
         <div class="ob-settings-shell">
@@ -41,6 +43,29 @@ pub fn SettingsShell(children: Children) -> impl IntoView {
                             >
                                 <IconView icon=Icon::Settings size=IconSize::Inline />
                                 <span>{move || t!(i18n, settings.nav_general)}</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a
+                                class="ob-settings-subnav-link"
+                                href=CONNECTED_ACCOUNTS_PATH
+                                data-state=move || {
+                                    is_section_current(
+                                        &connected_accounts_location.pathname.get(),
+                                        CONNECTED_ACCOUNTS_PATH,
+                                    )
+                                    .then_some("current")
+                                }
+                                aria-current=move || {
+                                    is_section_current(
+                                        &connected_accounts_location.pathname.get(),
+                                        CONNECTED_ACCOUNTS_PATH,
+                                    )
+                                    .then_some("page")
+                                }
+                            >
+                                <IconView icon=Icon::Plug size=IconSize::Inline />
+                                <span>{move || t!(i18n, settings.nav_connected_accounts)}</span>
                             </a>
                         </li>
                         <li>
@@ -74,16 +99,38 @@ fn is_current(pathname: &str, destination: &str) -> bool {
     pathname == destination
 }
 
+fn is_section_current(pathname: &str, destination: &str) -> bool {
+    pathname == destination
+        || pathname
+            .strip_prefix(destination)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn only_real_settings_destinations_exist_and_general_is_exact() {
-        assert_eq!([GENERAL_PATH, MEMORY_PATH].len(), 2);
+        assert_eq!(
+            [GENERAL_PATH, CONNECTED_ACCOUNTS_PATH, MEMORY_PATH].len(),
+            3
+        );
         assert!(is_current("/settings", GENERAL_PATH));
         assert!(!is_current("/settings/memory", GENERAL_PATH));
         assert!(is_current("/settings/memory", MEMORY_PATH));
         assert!(!is_current("/settings/connected-accounts", MEMORY_PATH));
+        assert!(is_section_current(
+            "/settings/connected-accounts",
+            CONNECTED_ACCOUNTS_PATH
+        ));
+        assert!(is_section_current(
+            "/settings/connected-accounts/google-drive",
+            CONNECTED_ACCOUNTS_PATH
+        ));
+        assert!(!is_section_current(
+            "/settings/connected-accounts-legacy",
+            CONNECTED_ACCOUNTS_PATH
+        ));
     }
 }

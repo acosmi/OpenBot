@@ -1074,7 +1074,35 @@ impl McpConnectionAdministration for PostgresMcpConnections {
                 })
             })
             .collect::<Result<Vec<_>, McpConnectionError>>()?;
+        let reviewed = client
+            .query_opt(
+                "SELECT url,vendor,provenance,transport
+                   FROM public.mcp_servers WHERE id=$1",
+                &[&GOOGLE_DRIVE_SERVER_ID],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let available_server_ids = if let Some(row) = reviewed {
+            let endpoint: String = row.try_get("url").map_err(|_| corrupt("server_endpoint"))?;
+            let vendor: String = row.try_get("vendor").map_err(|_| corrupt("vendor"))?;
+            let provenance: String = row
+                .try_get("provenance")
+                .map_err(|_| corrupt("provenance"))?;
+            let transport: Option<String> =
+                row.try_get("transport").map_err(|_| corrupt("transport"))?;
+            if endpoint != GOOGLE_DRIVE_API_BASE
+                || vendor != GOOGLE_DRIVE_VENDOR
+                || provenance != GOOGLE_DRIVE_PROVENANCE
+                || transport.as_deref() != Some(GOOGLE_DRIVE_TRANSPORT)
+            {
+                return Err(corrupt("reviewed_server_identity"));
+            }
+            vec![GOOGLE_DRIVE_SERVER_ID.to_owned()]
+        } else {
+            Vec::new()
+        };
         Ok(McpConnections {
+            available_server_ids,
             connections,
             redirect_uri: self.callback_uri.clone(),
         })

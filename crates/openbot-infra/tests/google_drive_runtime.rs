@@ -17,8 +17,8 @@ use axum::routing::{get, post};
 use base64::Engine as _;
 use openbot_agent::{AgentToolInvoker, AuthorizedAgentToolGateway};
 use openbot_application::{
-    ApplicationService, McpConnectionAdministration, McpOAuthCallback, McpOAuthCallbackInput,
-    OpenBotApplication, RunExecutionLease,
+    ApplicationService, McpConnectionAdministration, McpConnectionError, McpOAuthCallback,
+    McpOAuthCallbackInput, OpenBotApplication, RunExecutionLease,
 };
 use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId};
@@ -827,6 +827,16 @@ async fn drive_oauth_catalog_grant_agent_retry_disconnect_and_revoke_are_one_rea
             .with_roles([Role::User, Role::Admin])
             .build();
 
+            let unavailable = connections
+                .list_connections(&auth)
+                .await
+                .map_err(|error| error.to_string())?;
+            if !unavailable.available_server_ids.is_empty()
+                || !unavailable.connections.is_empty()
+            {
+                return Err("Drive appeared before admin enabled its reviewed row".to_owned());
+            }
+
             let added = connections
                 .add_curated_server(&auth, GOOGLE_DRIVE_SERVER_ID)
                 .await
@@ -918,6 +928,7 @@ async fn drive_oauth_catalog_grant_agent_retry_disconnect_and_revoke_are_one_rea
                 .await
                 .map_err(|error| error.to_string())?;
             if page.connections.len() != 1
+                || page.available_server_ids.as_slice() != [GOOGLE_DRIVE_SERVER_ID]
                 || page.connections[0].server_id != GOOGLE_DRIVE_SERVER_ID
                 || page.connections[0].scope != GOOGLE_DRIVE_READONLY_SCOPE
             {
@@ -1146,6 +1157,24 @@ async fn drive_oauth_catalog_grant_agent_retry_disconnect_and_revoke_are_one_rea
                 || vendor.revoke_calls.load(Ordering::SeqCst) != 2
             {
                 return Err("Drive revocation reconciliation drift".to_owned());
+            }
+            pool.get()
+                .await
+                .map_err(|error| error.to_string())?
+                .execute(
+                    "UPDATE public.mcp_servers SET url='https://attacker.invalid/drive'
+                      WHERE id='google-drive'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if !matches!(
+                connections.list_connections(&auth).await,
+                Err(McpConnectionError::Corrupt {
+                    field: "reviewed_server_identity"
+                })
+            ) {
+                return Err("tampered reviewed Drive identity remained available".to_owned());
             }
             handle.abort();
             Ok(())
