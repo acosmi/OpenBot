@@ -50,6 +50,10 @@ use crate::memory::{
 };
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
 use crate::policy::ActionPolicyDocument;
+use crate::sandboxed::{
+    PublishedSandboxedComponents, SandboxedComponentDeleted, SandboxedComponentResponse,
+    SandboxedComponents, SaveSandboxedComponentRequest,
+};
 use crate::tool::{
     PendingToolApprovals, ToolApprovalDecision, ToolApprovalResolved, ToolInvocation, ToolResult,
 };
@@ -177,6 +181,27 @@ pub enum AppCommand {
         decision_id: String,
         /// Closed answer matched against the stored component/arguments.
         answer: ComponentHumanDecisionAnswer,
+    },
+
+    /// List every administrator-editable sandboxed component draft.
+    ListSandboxedComponents,
+
+    /// List published sandbox source for an authenticated renderer.
+    ListPublishedSandboxedComponents,
+
+    /// Save one administrator-authored sandboxed draft without publishing it.
+    SaveSandboxedComponent(SaveSandboxedComponentRequest),
+
+    /// Atomically promote one sandboxed draft to the next published revision.
+    PublishSandboxedComponent {
+        /// Untrusted path identity; application requires the server-owned namespace.
+        component_name: String,
+    },
+
+    /// Delete one sandboxed source and its shared governance row atomically.
+    DeleteSandboxedComponent {
+        /// Untrusted path identity; compiled component names are never accepted.
+        component_name: String,
     },
 
     /// 返回当前已验证 actor 的公开资料。
@@ -414,6 +439,14 @@ pub enum AppReply {
     PendingComponentHumanDecisions(PendingComponentHumanDecisions),
     /// Await/resolve response carrying the exact provider tool result.
     ComponentHumanDecisionResolved(ComponentHumanDecisionResolved),
+    /// [`AppCommand::ListSandboxedComponents`] response.
+    SandboxedComponents(SandboxedComponents),
+    /// [`AppCommand::ListPublishedSandboxedComponents`] response.
+    PublishedSandboxedComponents(PublishedSandboxedComponents),
+    /// Save/publish response carrying the committed authoritative row.
+    SandboxedComponent(SandboxedComponentResponse),
+    /// [`AppCommand::DeleteSandboxedComponent`] response.
+    SandboxedComponentDeleted(SandboxedComponentDeleted),
     /// [`AppCommand::GetCurrentUser`] 应答。
     CurrentUser(CurrentUser),
     /// [`AppCommand::AdminStatus`] 应答。

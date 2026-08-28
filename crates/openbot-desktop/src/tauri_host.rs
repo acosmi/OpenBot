@@ -16,6 +16,7 @@ use openbot_contracts::components::{
 };
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::BotId;
+use openbot_contracts::sandboxed::SaveSandboxedComponentRequest;
 use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme, UpdateUiPreferences};
 use serde_json::json;
@@ -28,6 +29,7 @@ const ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const API_BODY_MAX_BYTES: usize = 4096;
 const COMPONENT_CATALOGUE_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_DECISION_BODY_MAX_BYTES: usize = 256 * 1024;
+const SANDBOXED_COMPONENT_BODY_MAX_BYTES: usize = 1024 * 1024;
 const HTML_ROOT_MARKER: &str = "<html lang=\"en\">";
 const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
                    connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; \
@@ -166,6 +168,27 @@ impl DesktopTauriProtocol {
         }
         if path == "/api/components/human-decisions" {
             return self.component_human_decisions(request, authority).await;
+        }
+        if path == "/api/sandboxed/published" {
+            return self
+                .published_sandboxed_components(request, authority)
+                .await;
+        }
+        if path == "/api/sandboxed" {
+            return self.sandboxed_components(request, authority).await;
+        }
+        if let Some(raw_name) = path
+            .strip_prefix("/api/sandboxed/")
+            .and_then(|rest| rest.strip_suffix("/publish"))
+        {
+            return self
+                .publish_sandboxed_component(request, authority, raw_name)
+                .await;
+        }
+        if let Some(raw_name) = path.strip_prefix("/api/sandboxed/") {
+            return self
+                .delete_sandboxed_component(request, authority, raw_name)
+                .await;
         }
         if let Some(raw_decision_id) = path
             .strip_prefix("/api/components/human-decisions/")
@@ -309,6 +332,132 @@ impl DesktopTauriProtocol {
             .await
         {
             Ok(AppReply::ComponentCatalogueAdded(added)) => json_response(&added),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn sandboxed_components(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        let command = match *request.method() {
+            Method::GET if request.body().is_empty() => AppCommand::ListSandboxedComponents,
+            Method::POST if !authority.is_fresh() => {
+                return error_response(AppError::SensitiveWriteRefused {
+                    reason: SensitiveWriteReason::SessionNotFresh,
+                });
+            }
+            Method::POST if request.body().len() > SANDBOXED_COMPONENT_BODY_MAX_BYTES => {
+                return payload_too_large();
+            }
+            Method::POST => {
+                let draft =
+                    match serde_json::from_slice::<SaveSandboxedComponentRequest>(request.body()) {
+                        Ok(draft) => draft,
+                        Err(_) => {
+                            return error_response(AppError::MalformedPayload { field: "body" });
+                        }
+                    };
+                AppCommand::SaveSandboxedComponent(draft)
+            }
+            _ => return empty_response(StatusCode::METHOD_NOT_ALLOWED),
+        };
+        match self.transport.execute(authority.auth, command).await {
+            Ok(AppReply::SandboxedComponents(components)) => json_response(&components),
+            Ok(AppReply::SandboxedComponent(component)) => json_response(&component),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn published_sandboxed_components(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::ListPublishedSandboxedComponents)
+            .await
+        {
+            Ok(AppReply::PublishedSandboxedComponents(components)) => json_response(&components),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn publish_sandboxed_component(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_name: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let component_name = match percent_decode_segment(raw_name) {
+            Some(name) => name,
+            None => {
+                return error_response(AppError::MalformedPayload {
+                    field: "component_name",
+                });
+            }
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::PublishSandboxedComponent { component_name },
+            )
+            .await
+        {
+            Ok(AppReply::SandboxedComponent(component)) => json_response(&component),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn delete_sandboxed_component(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_name: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::DELETE || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let component_name = match percent_decode_segment(raw_name) {
+            Some(name) => name,
+            None => {
+                return error_response(AppError::MalformedPayload {
+                    field: "component_name",
+                });
+            }
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::DeleteSandboxedComponent { component_name },
+            )
+            .await
+        {
+            Ok(AppReply::SandboxedComponentDeleted(deleted)) => json_response(&deleted),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -824,8 +973,10 @@ mod tests {
     use openbot_application::{
         ChannelReader, ComponentAdministration, ComponentAdministrationError,
         ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentRuntimeScope,
-        OpenBotApplication, PortError, ToolApprovalAdministration, ToolApprovalAdministrationError,
-        UiPreferenceAdministration, UiPreferenceAdministrationError,
+        OpenBotApplication, PortError, SandboxedComponentAdministration,
+        SandboxedComponentAdministrationError, SandboxedComponentDraft, ToolApprovalAdministration,
+        ToolApprovalAdministrationError, UiPreferenceAdministration,
+        UiPreferenceAdministrationError,
     };
     use openbot_contracts::auth::{AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
@@ -838,6 +989,11 @@ mod tests {
         PendingComponentHumanDecisions, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
+    use openbot_contracts::sandboxed::{
+        PublishedSandboxedComponent, PublishedSandboxedComponents, SandboxedComponentDeleted,
+        SandboxedComponentRecord, SandboxedComponentResponse, SandboxedComponents,
+        SaveSandboxedComponentRequest,
+    };
     use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalResolved};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -884,6 +1040,107 @@ mod tests {
     struct FakeApprovals;
 
     struct FakeComponents;
+
+    struct FakeSandboxed;
+
+    #[async_trait]
+    impl SandboxedComponentAdministration for FakeSandboxed {
+        async fn list_sandboxed_components(
+            &self,
+            auth: &AuthContext,
+        ) -> Result<SandboxedComponents, SandboxedComponentAdministrationError> {
+            Ok(SandboxedComponents {
+                components: vec![sandboxed_draft_record(auth.actor().as_str())],
+            })
+        }
+
+        async fn list_published_sandboxed_components(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<PublishedSandboxedComponents, SandboxedComponentAdministrationError> {
+            Ok(PublishedSandboxedComponents {
+                components: vec![PublishedSandboxedComponent {
+                    name: "custom_delivery_eta".to_owned(),
+                    html: "<p>ETA</p>".to_owned(),
+                    css: "p{}".to_owned(),
+                    js_functions: "function draw(){}".to_owned(),
+                    argument_schema: BTreeMap::new(),
+                }],
+            })
+        }
+
+        async fn save_sandboxed_component(
+            &self,
+            auth: &AuthContext,
+            draft: &SandboxedComponentDraft,
+        ) -> Result<SandboxedComponentRecord, SandboxedComponentAdministrationError> {
+            Ok(SandboxedComponentRecord {
+                name: draft.name.clone(),
+                title: draft.title.clone(),
+                draft_description: draft.description.clone(),
+                draft_html: draft.html.clone(),
+                draft_css: draft.css.clone(),
+                draft_js_functions: draft.js_functions.clone(),
+                draft_argument_schema: draft.argument_schema.clone(),
+                published_html: None,
+                published_css: None,
+                published_js_functions: None,
+                published_argument_schema: None,
+                sample_arguments: draft.sample_arguments.clone(),
+                revision: 0,
+                published: false,
+                published_at: None,
+                authored_by: Some(auth.actor().as_str().to_owned()),
+                has_unpublished_changes: false,
+            })
+        }
+
+        async fn publish_sandboxed_component(
+            &self,
+            auth: &AuthContext,
+            _component_name: &str,
+        ) -> Result<SandboxedComponentRecord, SandboxedComponentAdministrationError> {
+            let mut record = sandboxed_draft_record(auth.actor().as_str());
+            record.published_html = Some(record.draft_html.clone());
+            record.published_css = Some(record.draft_css.clone());
+            record.published_js_functions = Some(record.draft_js_functions.clone());
+            record.published_argument_schema = Some(record.draft_argument_schema.clone());
+            record.revision = 1;
+            record.published = true;
+            record.published_at = Some(time::OffsetDateTime::UNIX_EPOCH);
+            Ok(record)
+        }
+
+        async fn delete_sandboxed_component(
+            &self,
+            _auth: &AuthContext,
+            _component_name: &str,
+        ) -> Result<(), SandboxedComponentAdministrationError> {
+            Ok(())
+        }
+    }
+
+    fn sandboxed_draft_record(actor: &str) -> SandboxedComponentRecord {
+        SandboxedComponentRecord {
+            name: "custom_delivery_eta".to_owned(),
+            title: "Delivery ETA".to_owned(),
+            draft_description: "Delivery estimate".to_owned(),
+            draft_html: "<p>ETA</p>".to_owned(),
+            draft_css: "p{}".to_owned(),
+            draft_js_functions: "function draw(){}".to_owned(),
+            draft_argument_schema: BTreeMap::new(),
+            published_html: None,
+            published_css: None,
+            published_js_functions: None,
+            published_argument_schema: None,
+            sample_arguments: BTreeMap::new(),
+            revision: 0,
+            published: false,
+            published_at: None,
+            authored_by: Some(actor.to_owned()),
+            has_unpublished_changes: false,
+        }
+    }
 
     #[async_trait]
     impl ComponentAdministration for FakeComponents {
@@ -1002,6 +1259,17 @@ mod tests {
         )
     }
 
+    fn admin_auth() -> AuthContext {
+        AuthContext::for_test(
+            DeploymentId::new("dep"),
+            TenantId::new("tenant"),
+            ActorId::new("admin"),
+            [Role::Admin],
+            AuthGeneration::new(1),
+            true,
+        )
+    }
+
     fn protocol() -> (Arc<DesktopTauriProtocol>, PathBuf) {
         let root = std::env::temp_dir().join(format!(
             "openbot-tauri-protocol-{}-{}",
@@ -1023,6 +1291,7 @@ mod tests {
             OpenBotApplication::new(EmptyChannels)
                 .with_ui_preferences(preferences)
                 .with_component_administration(Arc::new(FakeComponents))
+                .with_sandboxed_component_administration(Arc::new(FakeSandboxed))
                 .with_tool_approvals(Arc::new(FakeApprovals)),
         );
         let transport = Arc::new(InProcessTransport::new(application));
@@ -1317,6 +1586,120 @@ mod tests {
                 approval_id: "approval-1".to_owned(),
                 decision: ToolApprovalDecision::Grant,
             }
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sandboxed_routes_share_typed_application_and_require_fresh_admin_for_writes() {
+        let (protocol, root) = protocol();
+        protocol.bind_window("main", auth(), None).unwrap();
+        let published = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .uri("/api/sandboxed/published")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(published.status(), StatusCode::OK);
+        let published =
+            serde_json::from_slice::<PublishedSandboxedComponents>(published.body()).unwrap();
+        assert_eq!(published.components[0].name, "custom_delivery_eta");
+
+        let drafts = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .uri("/api/sandboxed")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(drafts.status(), StatusCode::FORBIDDEN);
+
+        assert!(protocol.unbind_window("main").unwrap());
+        protocol.bind_window("main", admin_auth(), None).unwrap();
+        let stale = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/sandboxed")
+                    .body(b"{".to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+
+        assert!(protocol.unbind_window("main").unwrap());
+        protocol
+            .bind_window("main", admin_auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        let draft = SaveSandboxedComponentRequest {
+            slug: "delivery_eta".to_owned(),
+            title: "Delivery ETA".to_owned(),
+            description: "Delivery estimate".to_owned(),
+            html: "<p>ETA</p>".to_owned(),
+            css: "p{}".to_owned(),
+            js_functions: "function draw(){}".to_owned(),
+            argument_schema: BTreeMap::new(),
+            sample_arguments: BTreeMap::new(),
+        };
+        let saved = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/sandboxed")
+                    .body(serde_json::to_vec(&draft).unwrap())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<SandboxedComponentResponse>(saved.body())
+                .unwrap()
+                .component
+                .name,
+            "custom_delivery_eta"
+        );
+
+        let published = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/sandboxed/custom_delivery_eta/publish")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(published.status(), StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<SandboxedComponentResponse>(published.body())
+                .unwrap()
+                .component
+                .revision,
+            1
+        );
+
+        let deleted = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/sandboxed/custom_delivery_eta")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(deleted.status(), StatusCode::OK);
+        assert!(
+            serde_json::from_slice::<SandboxedComponentDeleted>(deleted.body())
+                .unwrap()
+                .ok
         );
         fs::remove_dir_all(root).unwrap();
     }

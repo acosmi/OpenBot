@@ -483,6 +483,11 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::AwaitComponentHumanDecision(_)
         | AppCommand::ListPendingComponentHumanDecisions
         | AppCommand::ResolveComponentHumanDecision { .. }
+        | AppCommand::ListSandboxedComponents
+        | AppCommand::ListPublishedSandboxedComponents
+        | AppCommand::SaveSandboxedComponent(_)
+        | AppCommand::PublishSandboxedComponent { .. }
+        | AppCommand::DeleteSandboxedComponent { .. }
         | AppCommand::AdminStatus
         | AppCommand::ListPeople { .. }
         | AppCommand::ChangePersonRole { .. }

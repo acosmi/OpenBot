@@ -75,6 +75,7 @@ use openbot_infra::repo::tools::PostgresToolJournal;
 use openbot_infra::repo::{ChannelRepo, PostgresAgentDirectory};
 use openbot_infra::routing::PostgresChannelRouting;
 use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
+use openbot_infra::sandboxed_components::PostgresSandboxedComponentAdministration;
 use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
 use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
@@ -467,6 +468,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         PostgresComponentAdministration::new(pool.clone(), audit_key.to_vec())?
             .with_policy(policy_store.clone()),
     );
+    let sandboxed_components = Arc::new(PostgresSandboxedComponentAdministration::new(
+        pool.clone(),
+        audit_key.to_vec(),
+    )?);
     let application = OpenBotApplication::new(channels.clone())
         .with_people(people)
         .with_audit(PostgresAuditReader::new(pool.clone()))
@@ -480,6 +485,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let application = application
         .with_agent_directory(Arc::new(PostgresAgentDirectory::new(pool.clone())))
         .with_component_administration(components.clone())
+        .with_sandboxed_component_administration(sandboxed_components)
         .with_mcp_connections(mcp_connections.clone())
         .with_tool_approvals(tool_approvals)
         .with_ui_preferences(Arc::new(PostgresUiPreferenceAdministration::new(

@@ -83,6 +83,7 @@ pub mod mcp_connections;
 pub mod ports;
 pub mod provider;
 pub mod run_runtime;
+pub mod sandboxed_components;
 pub mod service;
 pub mod tenant;
 pub mod tool;
@@ -159,6 +160,12 @@ pub use run_runtime::{
     RunCancellationDisposition, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease,
     RunFailureCode, RunRuntime, RunRuntimeError, RunSemanticChannel, RunTerminal, RunToolExchange,
     RunWriteReceipt,
+};
+pub use sandboxed_components::{
+    MAX_SANDBOXED_COMPONENT_DRAFT_BYTES, NoSandboxedComponentAdministration,
+    SandboxedComponentAdministration, SandboxedComponentAdministrationError,
+    SandboxedComponentDraft, delete_sandboxed_component, list_published_sandboxed_components,
+    list_sandboxed_components, publish_sandboxed_component, save_sandboxed_component,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,

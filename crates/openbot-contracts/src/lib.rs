@@ -81,6 +81,7 @@ pub mod mcp;
 pub mod memory;
 pub mod people;
 pub mod policy;
+pub mod sandboxed;
 pub mod telemetry;
 pub mod text;
 pub mod tool;

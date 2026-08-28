@@ -47,6 +47,11 @@ use crate::ports::{
     NoPolicyAdministration, NoThreadDirectory, PeopleAdministration, PolicyAdministration,
     ThreadDirectory,
 };
+use crate::sandboxed_components::{
+    NoSandboxedComponentAdministration, SandboxedComponentAdministration,
+    delete_sandboxed_component, list_published_sandboxed_components, list_sandboxed_components,
+    publish_sandboxed_component, save_sandboxed_component,
+};
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
 use crate::ui_preferences::{
@@ -90,6 +95,7 @@ pub struct OpenBotApplication<
     callback_tokens: B,
     agents: std::sync::Arc<dyn AgentDirectory>,
     components: std::sync::Arc<dyn ComponentAdministration>,
+    sandboxed_components: std::sync::Arc<dyn SandboxedComponentAdministration>,
     channel_administration: std::sync::Arc<dyn ChannelAdministration>,
     channel_routing: std::sync::Arc<dyn ChannelRoutingBackend>,
     mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
@@ -125,6 +131,7 @@ impl<R>
             callback_tokens: NoAgentCallbackTokenAdministration,
             agents: std::sync::Arc::new(NoAgentDirectory),
             components: std::sync::Arc::new(NoComponentAdministration),
+            sandboxed_components: std::sync::Arc::new(NoSandboxedComponentAdministration),
             channel_administration: std::sync::Arc::new(NoChannelAdministration),
             channel_routing: std::sync::Arc::new(NoChannelRoutingBackend),
             mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
@@ -151,6 +158,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             agents: self.agents,
             components: self.components,
+            sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -175,6 +183,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             agents: self.agents,
             components: self.components,
+            sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -199,6 +208,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             agents: self.agents,
             components: self.components,
+            sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -227,6 +237,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             agents: self.agents,
             components: self.components,
+            sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -251,6 +262,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             agents: self.agents,
             components: self.components,
+            sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -275,6 +287,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens: self.callback_tokens,
             agents: self.agents,
             components: self.components,
+            sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -302,6 +315,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             callback_tokens,
             agents: self.agents,
             components: self.components,
+            sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
@@ -325,6 +339,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
         components: std::sync::Arc<dyn ComponentAdministration>,
     ) -> Self {
         self.components = components;
+        self
+    }
+
+    /// Attach sandboxed source lifecycle governance; the port exposes no data-function channel.
+    #[must_use]
+    pub fn with_sandboxed_component_administration(
+        mut self,
+        components: std::sync::Arc<dyn SandboxedComponentAdministration>,
+    ) -> Self {
+        self.sandboxed_components = components;
         self
     }
 
@@ -485,6 +509,38 @@ where
                 )
                 .await?,
             )),
+            AppCommand::ListSandboxedComponents => Ok(AppReply::SandboxedComponents(
+                list_sandboxed_components(self.sandboxed_components.as_ref(), auth).await?,
+            )),
+            AppCommand::ListPublishedSandboxedComponents => {
+                Ok(AppReply::PublishedSandboxedComponents(
+                    list_published_sandboxed_components(self.sandboxed_components.as_ref(), auth)
+                        .await?,
+                ))
+            }
+            AppCommand::SaveSandboxedComponent(request) => Ok(AppReply::SandboxedComponent(
+                save_sandboxed_component(self.sandboxed_components.as_ref(), auth, request).await?,
+            )),
+            AppCommand::PublishSandboxedComponent { component_name } => {
+                Ok(AppReply::SandboxedComponent(
+                    publish_sandboxed_component(
+                        self.sandboxed_components.as_ref(),
+                        auth,
+                        component_name,
+                    )
+                    .await?,
+                ))
+            }
+            AppCommand::DeleteSandboxedComponent { component_name } => {
+                Ok(AppReply::SandboxedComponentDeleted(
+                    delete_sandboxed_component(
+                        self.sandboxed_components.as_ref(),
+                        auth,
+                        component_name,
+                    )
+                    .await?,
+                ))
+            }
             AppCommand::GetCurrentUser => Ok(AppReply::CurrentUser(
                 current_user(&self.people, auth).await?,
             )),

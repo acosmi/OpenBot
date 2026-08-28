@@ -97,6 +97,7 @@ pub mod remote_agui;
 pub mod repo;
 pub mod routing;
 pub mod run_runtime;
+pub mod sandboxed_components;
 pub mod store;
 pub mod tenant;
 pub mod thread_directory;

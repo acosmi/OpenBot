@@ -74,7 +74,7 @@ openbot-domain.workspace = true
 # `AuthContext::for_test` 只在 contracts 的 `testkit` feature 下存在（默认关）。
 openbot-contracts = { workspace = true, features = ["testkit"] }
 # in-process 腿（§13.2 的 typed in-process transport）。
-openbot-desktop.workspace = true
+openbot-desktop = { workspace = true, features = ["tauri-host"] }
 # Axum 腿。`testkit` 打开 `auth::FixedAuthResolver` —— 一个"恒定放行成某个身份"的
 # `AuthResolver` 就是后门，所以它默认不在生产 feature 图里。
 openbot-server = { workspace = true, features = ["testkit"] }

@@ -206,6 +206,32 @@ impl FromRequestParts<ServerState> for SensitiveAuthenticated {
     }
 }
 
+/// Fresh administrator + trusted-Origin authority resolved before any request body is read.
+///
+/// Unlike [`SensitiveAuthenticated`], this extractor completes the sensitive-write decision inside
+/// `FromRequestParts`. A following `Json` extractor therefore cannot parse an attacker-controlled
+/// body when Origin/session/admin assurance has already failed.
+pub struct SensitiveOriginAuthenticated(pub AuthContext);
+
+impl FromRequestParts<ServerState> for SensitiveOriginAuthenticated {
+    type Rejection = HttpError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &ServerState,
+    ) -> Result<Self, Self::Rejection> {
+        let resolved = state.auth_resolver().resolve_with_assurance(parts).await?;
+        let origin = parts
+            .headers
+            .get(http::header::ORIGIN)
+            .map(|value| value.to_str().unwrap_or(""));
+        state.authorize_sensitive_write(&resolved, origin).await?;
+        let auth = resolved.into_context();
+        Span::current().record(ACTOR_ID_FIELD, tracing::field::display(auth.actor()));
+        Ok(Self(auth))
+    }
+}
+
 /// 已认证的 same-origin 操作；trusted Origin 在任何 body/upgrade 业务运行前判定。
 ///
 /// `FromRequestParts` 构造性拿不到 body，Memory 写与 thread WebSocket 共用它，避免 CSRF

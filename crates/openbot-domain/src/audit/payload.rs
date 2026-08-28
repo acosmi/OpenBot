@@ -224,6 +224,10 @@ pub enum AuditFact {
     ComponentFunction(AuditIdentifier),
     /// Build-owned description of the data source read by a component function.
     ComponentReads(AuditLabel),
+    /// Closed component implementation kind, such as `sandboxed`.
+    ComponentKind(AuditLabel),
+    /// Monotonic published source revision for a sandboxed component.
+    ComponentRevision(u64),
     /// 该次工具调用的权威 Bot；绝不取自模型或 callback body。
     Bot(AuditIdentifier),
     /// 该次调用的 effect 分类结果。
@@ -329,6 +333,8 @@ impl AuditFact {
             Self::ToolName(_) => "tool_name",
             Self::ComponentFunction(_) => "function",
             Self::ComponentReads(_) => "reads",
+            Self::ComponentKind(_) => "component_kind",
+            Self::ComponentRevision(_) => "component_revision",
             Self::Bot(_) => "bot",
             Self::EffectClass(_) => "effect_class",
             Self::EffectDowngraded(_) => "effect_downgraded",
@@ -385,6 +391,7 @@ impl AuditFact {
             | Self::CredentialOwner(value) => Value::String(value.as_str().to_owned()),
             Self::EffectClass(label)
             | Self::ComponentReads(label)
+            | Self::ComponentKind(label)
             | Self::TargetKind(label)
             | Self::RoutingReason(label)
             | Self::ErrorCode(label)
@@ -408,6 +415,7 @@ impl AuditFact {
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
             | Self::DocumentGeneration(value)
+            | Self::ComponentRevision(value)
             | Self::DurationMs(value)
             | Self::InputBytes(value)
             | Self::OutputBytes(value) => Value::Number((*value).into()),
@@ -465,6 +473,7 @@ impl AuditFact {
             | Self::CredentialOwner(value) => writer.str(value.as_str()),
             Self::EffectClass(label)
             | Self::ComponentReads(label)
+            | Self::ComponentKind(label)
             | Self::TargetKind(label)
             | Self::RoutingReason(label)
             | Self::ErrorCode(label)
@@ -486,6 +495,7 @@ impl AuditFact {
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
             | Self::DocumentGeneration(value)
+            | Self::ComponentRevision(value)
             | Self::DurationMs(value)
             | Self::InputBytes(value)
             | Self::OutputBytes(value) => writer.u64(*value),
@@ -523,6 +533,8 @@ pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "tool_name",
     "function",
     "reads",
+    "component_kind",
+    "component_revision",
     "bot",
     "effect_class",
     "effect_downgraded",
@@ -675,6 +687,8 @@ mod tests {
             AuditFact::ToolName(identifier("browser.click")),
             AuditFact::ComponentFunction(identifier("recentRefusals")),
             AuditFact::ComponentReads(AuditLabel::new("audit_trail")),
+            AuditFact::ComponentKind(AuditLabel::new("sandboxed")),
+            AuditFact::ComponentRevision(7),
             AuditFact::Bot(identifier("bot-1")),
             AuditFact::EffectClass(AuditLabel::new("execute")),
             AuditFact::EffectDowngraded(true),

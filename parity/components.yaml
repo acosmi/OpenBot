@@ -304,7 +304,8 @@ entries:
     owner: "openbot-application"
     test_id: "T-CMP-0019"
     migration_rule: "preserve: draft/published 双列、单次 publish 原子提升、revision 单调递增"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch49以closed contracts/application独立port/PostgreSQL adapter闭合draft→published生命周期。save只更新draft/title/sample/author且保留published/revision；publish在一个SERIALIZABLE事务与同一DB时间戳内同时提升description/html/css/jsFunctions/argumentSchema、shared governance与allowlisted audit，revision checked单调递增；hasUnpublishedChanges逐字保留固定上游仅比较HTML/CSS/JS三列。PG17.11 SCRAM 1/0/0实得revision 0→1→2、两次publish audit payload revision=[1,2]，draft source/schema发布前不外泄，三种audit故障全回滚。Axum/Tauri同一Arc五接口语义对拍1/0/0。"
     evidence: "grep -c 'revision: row.revision + 1' server/src/components/sandboxed.ts = 2（update 语句 + audit payload 各一处）"
     notes: "publish 是一个动作同时提升描述与源码：sandboxed.ts::publish 一次 update 写 publishedDescription/Html/Css/JsFunctions/ArgumentSchema + published=true + publishedAt + revision+1，并同步把 components 行的 publishedDescription 与 published 一起提上去（沙箱与 compiled 共用同一张治理表与同一套 grant 面）。拆成两个端点即产生“有措辞没源码”或“有源码没措辞”两种没人想要的中间态。hasUnpublishedChanges 由 draft 三列与 published 三列逐一比对得出（sandboxed.ts::toRecord），不是另存的标志位。前端 publishSandboxedMutationOptions 先 POST /api/sandboxed 存草稿再 POST /:name/publish，save 失败即中止 publish。**注意**：v3 §3.3 要求 data function 每次调用重新检查 component revision，而上游 /call 与 store 侧对 revision 零命中（routes.ts:0 store.ts:0，sandboxed.ts:4 是正向对照）——即 revision 复检是 R1 新加的，本条只覆盖上游已有的 draft/publish/revision 生命周期。"
 
