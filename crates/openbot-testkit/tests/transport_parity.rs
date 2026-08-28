@@ -476,6 +476,13 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::GetVisibleAgent { .. }
         | AppCommand::ListComponents
         | AppCommand::SyncComponentCatalogue(_)
+        | AppCommand::ListComponentsForAgent { .. }
+        | AppCommand::DecideComponent { .. }
+        | AppCommand::ListComponentDataFunctions
+        | AppCommand::CallComponentFunction { .. }
+        | AppCommand::AwaitComponentHumanDecision(_)
+        | AppCommand::ListPendingComponentHumanDecisions
+        | AppCommand::ResolveComponentHumanDecision { .. }
         | AppCommand::AdminStatus
         | AppCommand::ListPeople { .. }
         | AppCommand::ChangePersonRole { .. }

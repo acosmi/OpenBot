@@ -11,8 +11,9 @@ use openbot_application::{
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::components::{
-    ComponentDecisionRefusal, ComponentDecisionRequest, compiled_component_confirmation,
-    compiled_component_title, validate_compiled_component_arguments,
+    ComponentDecisionRefusal, ComponentDecisionRequest, ComponentHumanDecisionRequest,
+    compiled_component_confirmation, compiled_component_title, is_component_human_decision_name,
+    validate_compiled_component_arguments, validate_component_human_decision_answer,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::{BotId, RunId, ToolCallId};
@@ -97,6 +98,7 @@ pub trait AgentToolInvoker: Send + Sync {
     async fn invoke(
         &self,
         lease: &RunExecutionLease,
+        provider_call_id: &str,
         tool_name: &str,
         arguments: Value,
     ) -> Result<AgentToolReply, AgentToolInvokeError>;
@@ -127,6 +129,7 @@ impl AgentToolInvoker for NoAgentToolInvoker {
     async fn invoke(
         &self,
         _lease: &RunExecutionLease,
+        _provider_call_id: &str,
         _tool_name: &str,
         _arguments: Value,
     ) -> Result<AgentToolReply, AgentToolInvokeError> {
@@ -376,6 +379,83 @@ impl AuthorizedAgentToolGateway {
             ) => Err(AgentToolInvokeError::Unavailable),
         })
     }
+
+    async fn invoke_human_component(
+        &self,
+        auth: AuthContext,
+        lease: &RunExecutionLease,
+        provider_call_id: &str,
+        name: &str,
+        arguments: &Value,
+    ) -> Option<Result<AgentToolReply, AgentToolInvokeError>> {
+        if !is_component_human_decision_name(name) {
+            return None;
+        }
+        let decision_id = Uuid::now_v7().to_string();
+        let call_id = ToolCallId::new(decision_id.clone());
+        if provider_call_id.is_empty() || provider_call_id.as_bytes().contains(&0) {
+            return Some(Err(AgentToolInvokeError::Unavailable));
+        }
+        let result = self
+            .gateway
+            .application()
+            .execute(
+                auth,
+                AppCommand::AwaitComponentHumanDecision(ComponentHumanDecisionRequest {
+                    decision_id: decision_id.clone(),
+                    provider_call_id: provider_call_id.to_owned(),
+                    run_id: lease.run_id().clone(),
+                    thread_id: lease.thread_id().clone(),
+                    agent_id: lease.bot_id().clone(),
+                    component_name: name.to_owned(),
+                    arguments: arguments.clone(),
+                }),
+            )
+            .await;
+        Some(match result {
+            Ok(AppReply::ComponentHumanDecisionResolved(resolved))
+                if resolved.decision_id == decision_id
+                    && validate_component_human_decision_answer(
+                        name,
+                        arguments,
+                        &resolved.answer,
+                    )
+                    .is_ok() =>
+            {
+                match serde_json::to_string(&resolved.answer) {
+                    Ok(content) => AgentToolReply::new(call_id, content, None),
+                    Err(_) => Err(AgentToolInvokeError::Unavailable),
+                }
+            }
+            Ok(_) => Err(AgentToolInvokeError::Unavailable),
+            Err(AppError::MalformedPayload { .. }) => Ok(normalized_error_reply(
+                call_id,
+                "invalid_arguments",
+                "The decision request was invalid, so the person was not asked.",
+            )),
+            Err(
+                AppError::NotVisible
+                | AppError::ForbiddenRole { .. }
+                | AppError::PolicyRefused { .. },
+            ) => Ok(normalized_error_reply(
+                call_id,
+                "component_human_unavailable",
+                "The person could not answer this request. Do not act as if they did.",
+            )),
+            Err(AppError::RequestConflict { .. } | AppError::ReconciliationRequired { .. }) => {
+                Err(AgentToolInvokeError::ReconciliationRequired)
+            }
+            Err(
+                AppError::Unauthenticated
+                | AppError::DependencyUnavailable { .. }
+                | AppError::VendorFailure { .. }
+                | AppError::StaleGeneration { .. }
+                | AppError::LeaseConflict { .. }
+                | AppError::IdentityConflict { .. }
+                | AppError::SensitiveWriteRefused { .. },
+            ) => Err(AgentToolInvokeError::Unavailable),
+        })
+    }
 }
 
 impl core::fmt::Debug for AuthorizedAgentToolGateway {
@@ -390,6 +470,7 @@ impl AgentToolInvoker for AuthorizedAgentToolGateway {
     async fn invoke(
         &self,
         lease: &RunExecutionLease,
+        provider_call_id: &str,
         tool_name: &str,
         arguments: Value,
     ) -> Result<AgentToolReply, AgentToolInvokeError> {
@@ -398,6 +479,12 @@ impl AgentToolInvoker for AuthorizedAgentToolGateway {
             .load(lease)
             .await
             .map_err(|_| AgentToolInvokeError::Unavailable)?;
+        if let Some(result) = self
+            .invoke_human_component(auth.clone(), lease, provider_call_id, tool_name, &arguments)
+            .await
+        {
+            return result;
+        }
         if let Some(result) = self
             .invoke_component(auth.clone(), lease, tool_name, &arguments)
             .await
@@ -560,8 +647,10 @@ mod tests {
     use openbot_contracts::auth::Role;
     use openbot_contracts::command::{HealthReport, SubscriptionRequest};
     use openbot_contracts::components::{
-        BOT_ACTIVITY_FUNCTION_NAME, ComponentDecision, SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
-        SHOW_QUOTE_COMPONENT_NAME,
+        ASK_APPROVAL_COMPONENT_NAME, BOT_ACTIVITY_FUNCTION_NAME, ComponentApprovalAnswer,
+        ComponentApprovalDecision, ComponentDecision, ComponentHumanDecisionAnswer,
+        ComponentHumanDecisionRequest, ComponentHumanDecisionResolved,
+        SHOW_ACTIVITY_REPORT_COMPONENT_NAME, SHOW_QUOTE_COMPONENT_NAME,
     };
     use openbot_contracts::ids::{ActorId, DeploymentId, TenantId, ThreadId};
     use openbot_contracts::tool::{ToolCommitState, ToolResult};
@@ -578,6 +667,11 @@ mod tests {
     struct ComponentApplication {
         decision: ComponentDecision,
         calls: Mutex<Vec<(ActorId, String, ComponentDecisionRequest)>>,
+    }
+
+    struct HumanComponentApplication {
+        calls: Mutex<Vec<(ActorId, ComponentHumanDecisionRequest)>>,
+        answer: ComponentHumanDecisionAnswer,
     }
 
     #[async_trait]
@@ -599,6 +693,40 @@ mod tests {
                 .unwrap()
                 .push((auth.actor().clone(), component_name, request));
             Ok(AppReply::ComponentDecision(self.decision.clone()))
+        }
+
+        async fn subscribe(
+            &self,
+            _auth: AuthContext,
+            _request: SubscriptionRequest,
+        ) -> Result<AppEventStream, AppError> {
+            Ok(openbot_application::use_cases::health_stream(
+                Duration::from_secs(1),
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl ApplicationService for HumanComponentApplication {
+        async fn execute(
+            &self,
+            auth: AuthContext,
+            command: AppCommand,
+        ) -> Result<AppReply, AppError> {
+            let AppCommand::AwaitComponentHumanDecision(request) = command else {
+                return Ok(AppReply::Health(HealthReport { ok: true }));
+            };
+            self.calls
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), request.clone()));
+            Ok(AppReply::ComponentHumanDecisionResolved(
+                ComponentHumanDecisionResolved {
+                    decision_id: request.decision_id,
+                    answer: self.answer.clone(),
+                    replayed: false,
+                },
+            ))
         }
 
         async fn subscribe(
@@ -784,6 +912,7 @@ mod tests {
         let quote = gateway
             .invoke(
                 &lease(),
+                "provider-quote",
                 SHOW_QUOTE_COMPONENT_NAME,
                 json!({"quote":"Exact words","attribution":"the report"}),
             )
@@ -797,6 +926,7 @@ mod tests {
         let activity = gateway
             .invoke(
                 &lease(),
+                "provider-activity",
                 SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
                 json!({"report":"activity","days":7}),
             )
@@ -814,6 +944,7 @@ mod tests {
         let invalid = gateway
             .invoke(
                 &lease(),
+                "provider-invalid",
                 SHOW_QUOTE_COMPONENT_NAME,
                 json!({"quote":"missing attribution"}),
             )
@@ -833,6 +964,7 @@ mod tests {
         let reply = gateway
             .invoke(
                 &lease(),
+                "provider-refused",
                 SHOW_QUOTE_COMPONENT_NAME,
                 json!({"quote":"Exact words","attribution":"the report"}),
             )
@@ -840,5 +972,49 @@ mod tests {
             .unwrap();
         assert_eq!(reply.error_code(), Some("component_withheld"));
         assert!(reply.content().starts_with("Not shown: Quotation."));
+    }
+
+    #[tokio::test]
+    async fn human_component_binds_provider_pairing_and_returns_the_recorded_answer() {
+        let answer = ComponentHumanDecisionAnswer::Approval(ComponentApprovalAnswer {
+            decision: ComponentApprovalDecision::Approved,
+            note: Some("looks right".to_owned()),
+        });
+        let application = Arc::new(HumanComponentApplication {
+            calls: Mutex::new(Vec::new()),
+            answer: answer.clone(),
+        });
+        let gateway =
+            AuthorizedAgentToolGateway::new(application.clone(), Arc::new(FixedAuthorization));
+        let arguments = json!({"title":"Refund?","summary":"Duplicate charge"});
+        let reply = gateway
+            .invoke(
+                &lease(),
+                "provider-human-1",
+                ASK_APPROVAL_COMPONENT_NAME,
+                arguments.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.error_code(), None);
+        assert_eq!(
+            serde_json::from_str::<ComponentHumanDecisionAnswer>(reply.content()).unwrap(),
+            answer
+        );
+        assert_eq!(
+            Uuid::parse_str(reply.call_id().as_str())
+                .unwrap()
+                .get_version_num(),
+            7
+        );
+        let calls = application.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0.as_str(), "actor-verified");
+        assert_eq!(calls[0].1.provider_call_id, "provider-human-1");
+        assert_eq!(calls[0].1.run_id, RunId::new("run-component"));
+        assert_eq!(calls[0].1.thread_id, ThreadId::new("thread-component"));
+        assert_eq!(calls[0].1.agent_id, BotId::new("bot-1"));
+        assert_eq!(calls[0].1.component_name, ASK_APPROVAL_COMPONENT_NAME);
+        assert_eq!(calls[0].1.arguments, arguments);
     }
 }

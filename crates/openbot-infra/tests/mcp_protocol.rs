@@ -795,6 +795,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             let reply = gateway
                 .invoke(
                     &lease,
+                    "provider-mcp-search-1",
                     "mcp__notes__search_issues",
                     json!({"query":"invoices"}),
                 )
@@ -837,6 +838,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             let secret_refused = gateway
                 .invoke(
                     &lease,
+                    "provider-mcp-search-secret",
                     "mcp__notes__search_issues",
                     json!({"query":"OPENBOT_SECRET_CANARY-do-not-send"}),
                 )
@@ -889,7 +891,12 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 .await
                 .map_err(|error| error.to_string())?;
             let vendor_failed = gateway
-                .invoke(&lease, "mcp__notes__always_fails", json!({}))
+                .invoke(
+                    &lease,
+                    "provider-mcp-vendor-failed",
+                    "mcp__notes__always_fails",
+                    json!({}),
+                )
                 .await
                 .map_err(|error| error.to_string())?;
             if vendor_failed.error_code() != Some("mcp_vendor_error")
@@ -937,7 +944,12 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 let lease = lease.clone();
                 tokio::spawn(async move {
                     gateway
-                        .invoke(&lease, "mcp__notes__long_answer", json!({}))
+                        .invoke(
+                            &lease,
+                            "provider-mcp-approved",
+                            "mcp__notes__long_answer",
+                            json!({}),
+                        )
                         .await
                 })
             };
@@ -1049,7 +1061,12 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 let lease = lease.clone();
                 tokio::spawn(async move {
                     gateway
-                        .invoke(&lease, "mcp__notes__long_answer", json!({}))
+                        .invoke(
+                            &lease,
+                            "provider-mcp-denied",
+                            "mcp__notes__long_answer",
+                            json!({}),
+                        )
                         .await
                 })
             };
@@ -1131,6 +1148,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             let refused = gateway
                 .invoke(
                     &lease,
+                    "provider-mcp-policy-refused",
                     "mcp__notes__search_issues",
                     json!({"query":"must-not-send"}),
                 )

@@ -53,9 +53,9 @@ pub fn Input(
     /// Optional form name.
     #[prop(optional, into)]
     name: Option<String>,
-    /// Optional visible hint.
+    /// Optional reactive visible hint.
     #[prop(optional, into)]
-    placeholder: Option<String>,
+    placeholder: TextProp,
     /// Required for a standalone control without an external `<label for>`.
     #[prop(optional, into)]
     aria_label: TextProp,
@@ -98,7 +98,10 @@ pub fn Input(
             class="ob-input"
             type=input_type.as_str()
             name=name
-            placeholder=placeholder
+            placeholder=move || {
+                let value = placeholder.get();
+                (!value.is_empty()).then_some(value)
+            }
             prop:value=move || value.get()
             disabled=move || is_disabled.get()
             aria-label=move || {

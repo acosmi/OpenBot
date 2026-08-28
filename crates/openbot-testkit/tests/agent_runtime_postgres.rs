@@ -17,13 +17,20 @@ use openbot_agent::{
     RetryingProviderConfig,
 };
 use openbot_application::{
-    ApplicationService, BeginThreadRunRequest, CancelThreadRunRequest, MemoryAdministrationError,
-    OpenBotApplication, ProviderAdapter, ProviderEvent, ProviderMessage, ProviderPortError,
-    ProviderRequest, ProviderSession, ProviderUsage, RememberToolMemory, RememberToolMemoryRequest,
-    RunExecutionLease, RunRuntime, RunToolExchange, ThreadDirectory, remember_provider_tool,
+    ApplicationService, BeginThreadRunRequest, CancelThreadRunRequest, ComponentAdministration,
+    MemoryAdministrationError, OpenBotApplication, ProviderAdapter, ProviderEvent, ProviderMessage,
+    ProviderPortError, ProviderRequest, ProviderSession, ProviderUsage, RememberToolMemory,
+    RememberToolMemoryRequest, RunExecutionLease, RunRuntime, RunToolExchange, ThreadDirectory,
+    remember_provider_tool,
 };
+use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::command::{
-    BeginThreadRun, CancelThreadRun, ThreadRunAnchor, ThreadRunCancellationState,
+    AppCommand, AppReply, BeginThreadRun, CancelThreadRun, ThreadRunAnchor,
+    ThreadRunCancellationState,
+};
+use openbot_contracts::components::{
+    ASK_APPROVAL_COMPONENT_NAME, ComponentApprovalAnswer, ComponentApprovalDecision,
+    ComponentHumanDecisionAnswer, compiled_component_manifest,
 };
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
@@ -36,6 +43,7 @@ use openbot_infra::agent_audit::PostgresAgentAudit;
 use openbot_infra::agent_tools::{
     PostgresAgentAuthorizationSource, PostgresBuiltInToolControlPlane,
 };
+use openbot_infra::component_catalogue::PostgresComponentAdministration;
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::memory_admin::PostgresMemoryAdministration;
@@ -126,6 +134,66 @@ impl ProviderAdapter for RecordedProvider {
 
 struct RecordedSession {
     events: VecDeque<ProviderEvent>,
+}
+
+#[derive(Default)]
+struct DecisionLoopProvider {
+    requests: Mutex<Vec<ProviderRequest>>,
+}
+
+#[async_trait]
+impl ProviderAdapter for DecisionLoopProvider {
+    async fn start(
+        &self,
+        request: ProviderRequest,
+    ) -> Result<Box<dyn ProviderSession>, ProviderPortError> {
+        let turn = {
+            let mut requests = self.requests.lock().expect("decision provider lock");
+            let turn = requests.len();
+            requests.push(request);
+            turn
+        };
+        let events = match turn {
+            0 => vec![
+                ProviderEvent::ToolCallCompleted {
+                    index: 0,
+                    call_id: "provider-approval-1".to_owned(),
+                    name: ASK_APPROVAL_COMPONENT_NAME.to_owned(),
+                    arguments: serde_json::json!({
+                        "title":"Refund this order?",
+                        "summary":"The charge was duplicated.",
+                        "details":[{"label":"Amount","value":"$128.40"}]
+                    }),
+                },
+                ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 5,
+                    output_tokens: 3,
+                    total_tokens: 8,
+                }),
+                ProviderEvent::Completed,
+            ],
+            1 => vec![
+                ProviderEvent::TextDelta {
+                    index: 0,
+                    delta: "The refund was approved.".to_owned(),
+                },
+                ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 9,
+                    output_tokens: 4,
+                    total_tokens: 13,
+                }),
+                ProviderEvent::Completed,
+            ],
+            _ => {
+                return Err(ProviderPortError::InvalidRequest {
+                    field: "decision_turn_count",
+                });
+            }
+        };
+        Ok(Box::new(RecordedSession {
+            events: events.into(),
+        }))
+    }
 }
 
 #[derive(Default)]
@@ -484,6 +552,245 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
                 .map_err(|error| error.to_string())?;
             if invoked != 1 {
                 return Err(format!("agent.invoked audit 漂移：{invoked}"));
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn component_decision_suspends_cross_replica_answer_then_commits_exchange_before_resample() {
+    let admin = batch6_admin_config(
+        "component_decision_suspends_cross_replica_answer_then_commits_exchange_before_resample",
+    );
+    with_temp_database(&admin, "agentdecision", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let auth = AuthContextBuilder::from_verified_session(
+                deployment.clone(),
+                tenant.clone(),
+                ActorId::new("actor-a"),
+                AuthGeneration::new(0),
+                false,
+            )
+            .with_roles([Role::User])
+            .build();
+            let components = Arc::new(
+                PostgresComponentAdministration::new(pool.clone(), vec![0xd8; 32])
+                    .map_err(|error| error.to_string())?,
+            );
+            components
+                .sync_catalogue(&auth, &compiled_component_manifest())
+                .await
+                .map_err(|error| error.to_string())?;
+            let owner = "runtime-decision".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner,
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let application: Arc<dyn ApplicationService> = Arc::new(
+                OpenBotApplication::new(ChannelRepo::new(pool.clone()))
+                    .with_component_administration(components.clone()),
+            );
+            let tools: Arc<dyn AgentToolInvoker> = Arc::new(AuthorizedAgentToolGateway::new(
+                application.clone(),
+                Arc::new(PostgresAgentAuthorizationSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    false,
+                )),
+            ));
+            let context = Arc::new(
+                PostgresAgentContextSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    Some(64),
+                )
+                .map_err(|error| error.to_string())?
+                .with_components(components),
+            );
+            let provider = Arc::new(DecisionLoopProvider::default());
+            let agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                context,
+                provider.clone(),
+                tools,
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xd8; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 1,
+                    lease_renew_interval: Duration::from_secs(1),
+                    run_deadline: Some(Duration::from_secs(10)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let relay = RunRelay::start(runtime, agent.consumer());
+            begin_test_run(
+                &directory,
+                &deployment,
+                &tenant,
+                10,
+                "run-decision",
+                "Ask before refunding.",
+            )
+            .await?;
+
+            let mut pending = None;
+            for _ in 0..120 {
+                match application
+                    .execute(auth.clone(), AppCommand::ListPendingComponentHumanDecisions)
+                    .await
+                    .map_err(|error| error.to_string())?
+                {
+                    AppReply::PendingComponentHumanDecisions(page) if page.decisions.len() == 1 => {
+                        pending = page.decisions.into_iter().next();
+                        break;
+                    }
+                    AppReply::PendingComponentHumanDecisions(_) => {}
+                    reply => return Err(format!("pending decision reply drift: {reply:?}")),
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            let pending = pending.ok_or_else(|| "decision never became pending".to_owned())?;
+            if pending.run_id.as_str() != "run-decision"
+                || pending.provider_call_id != "provider-approval-1"
+                || pending.component_name != ASK_APPROVAL_COMPONENT_NAME
+                || provider.requests.lock().unwrap().len() != 1
+            {
+                return Err(format!("pending decision/provider drift: {pending:?}"));
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let before: (String, i64) = {
+                let row = client
+                    .query_one(
+                        "SELECT status,(SELECT count(*)::bigint FROM public.messages
+                          WHERE run_id='run-decision' AND role='tool')
+                           FROM public.runs WHERE run_id='run-decision'",
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                (
+                    row.try_get(0).map_err(|error| error.to_string())?,
+                    row.try_get(1).map_err(|error| error.to_string())?,
+                )
+            };
+            if before != ("running".to_owned(), 0) {
+                return Err(format!("run did not suspend before answer: {before:?}"));
+            }
+            drop(client);
+            let answer = ComponentHumanDecisionAnswer::Approval(ComponentApprovalAnswer {
+                decision: ComponentApprovalDecision::Approved,
+                note: Some("duplicate charge".to_owned()),
+            });
+            match application
+                .execute(
+                    auth,
+                    AppCommand::ResolveComponentHumanDecision {
+                        decision_id: pending.decision_id.clone(),
+                        answer: answer.clone(),
+                    },
+                )
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                AppReply::ComponentHumanDecisionResolved(resolved)
+                    if resolved.decision_id == pending.decision_id && resolved.answer == answer => {
+                }
+                reply => return Err(format!("answer receipt drift: {reply:?}")),
+            }
+            wait_for_terminal(&pool, "run-decision", "The refund was approved.").await?;
+            relay.stop().await;
+            agent.stop().await;
+
+            let requests = provider.requests.lock().unwrap().clone();
+            let expected_result =
+                serde_json::to_string(&answer).map_err(|error| error.to_string())?;
+            if requests.len() != 2
+                || requests[0]
+                    .tools
+                    .iter()
+                    .all(|tool| tool.name != ASK_APPROVAL_COMPONENT_NAME)
+                || requests[1].messages.iter().all(|message| {
+                    message.role != openbot_application::ProviderMessageRole::Assistant
+                        || message.tool_calls.len() != 1
+                        || message.tool_calls[0].call_id != "provider-approval-1"
+                        || message.tool_calls[0].name != ASK_APPROVAL_COMPONENT_NAME
+                })
+                || requests[1].messages.iter().all(|message| {
+                    message.role != openbot_application::ProviderMessageRole::Tool
+                        || message.tool_call_id.as_deref() != Some("provider-approval-1")
+                        || message.tool_name.as_deref() != Some(ASK_APPROVAL_COMPONENT_NAME)
+                        || message.content != expected_result
+                })
+            {
+                return Err(format!(
+                    "decision provider resume history drift: {requests:?}"
+                ));
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let row = client
+                .query_one(
+                    "SELECT d.state,d.answer,
+                            (SELECT count(*)::bigint FROM public.audit_events a
+                              WHERE a.event_type='component.human_requested'
+                                AND a.target_id='askApproval'),
+                            (SELECT count(*)::bigint FROM public.audit_events a
+                              WHERE a.event_type='component.human_answered'
+                                AND a.target_id='askApproval'),
+                            (SELECT count(*)::bigint FROM public.messages m
+                              WHERE m.run_id='run-decision' AND m.role='tool'
+                                AND m.content->>'toolCallId'='provider-approval-1')
+                       FROM public.component_human_decisions d
+                      WHERE d.decision_id=$1",
+                    &[&pending.decision_id],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let shape: (String, serde_json::Value, i64, i64, i64) = (
+                row.try_get(0).map_err(|error| error.to_string())?,
+                row.try_get(1).map_err(|error| error.to_string())?,
+                row.try_get(2).map_err(|error| error.to_string())?,
+                row.try_get(3).map_err(|error| error.to_string())?,
+                row.try_get(4).map_err(|error| error.to_string())?,
+            );
+            if shape
+                != (
+                    "answered".to_owned(),
+                    serde_json::to_value(&answer).map_err(|error| error.to_string())?,
+                    1,
+                    1,
+                    1,
+                )
+            {
+                return Err(format!("decision durable/audit shape drift: {shape:?}"));
             }
             Ok(())
         }

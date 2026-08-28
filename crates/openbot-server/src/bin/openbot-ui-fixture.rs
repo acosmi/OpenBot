@@ -32,10 +32,13 @@ use openbot_contracts::command::{
     ThreadRunStarted,
 };
 use openbot_contracts::components::{
-    BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, BotActivityRow, CompiledComponentKind,
-    CompiledComponentManifestEntry, ComponentCatalogueAdded, ComponentFunctionCall,
-    ComponentFunctionData, ComponentRecord, ComponentRecords, RECENT_REFUSALS_FUNCTION_NAME,
-    RecentRefusalRow, RecentRefusalsReport, SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
+    ASK_APPROVAL_COMPONENT_NAME, ASK_CHOICE_COMPONENT_NAME, BOT_ACTIVITY_FUNCTION_NAME,
+    BotActivityReport, BotActivityRow, CompiledComponentKind, CompiledComponentManifestEntry,
+    ComponentCatalogueAdded, ComponentFunctionCall, ComponentFunctionData,
+    ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecord,
+    ComponentRecords, PendingComponentHumanDecision, PendingComponentHumanDecisions,
+    RECENT_REFUSALS_FUNCTION_NAME, RecentRefusalRow, RecentRefusalsReport,
+    SHOW_ACTIVITY_REPORT_COMPONENT_NAME, validate_component_human_decision_answer,
 };
 use openbot_contracts::ids::{
     ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
@@ -63,6 +66,10 @@ use openbot_server::{
 use time::{Duration, OffsetDateTime};
 
 const FIXTURE_EXISTING_THREAD: &str = "550e8400-e29b-81d4-a716-446655440000";
+const FIXTURE_APPROVAL_THREAD: &str = "550e8400-e29b-81d4-a716-446655440001";
+const FIXTURE_CHOICE_THREAD: &str = "550e8400-e29b-81d4-a716-446655440002";
+const FIXTURE_APPROVAL_RUN: &str = "fixture-decision-run-approval";
+const FIXTURE_CHOICE_RUN: &str = "fixture-decision-run-choice";
 const FIXTURE_GOOGLE_DRIVE_SERVER: &str = "google-drive";
 const FIXTURE_GOOGLE_DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 const FIXTURE_ACTIVITY_FOLLOW_UP: &str =
@@ -93,7 +100,12 @@ impl FixtureChannels {
                 last_message_at: Some(now - Duration::minutes(i64::from(index))),
                 last_message_agent_id: Some(BotId::new(format!("bot-{}", index % 4))),
                 created_at: now - Duration::days(2) - Duration::minutes(i64::from(index)),
-                thread_id: (index == 0).then(|| ThreadId::new(FIXTURE_EXISTING_THREAD)),
+                thread_id: match index {
+                    0 => Some(ThreadId::new(FIXTURE_EXISTING_THREAD)),
+                    1 => Some(ThreadId::new(FIXTURE_APPROVAL_THREAD)),
+                    2 => Some(ThreadId::new(FIXTURE_CHOICE_THREAD)),
+                    _ => None,
+                },
                 active: index != 3,
             })
             .collect();
@@ -426,11 +438,20 @@ impl McpConnectionAdministration for FixtureConnections {
 #[derive(Clone)]
 struct FixtureComponents {
     rows: Arc<Mutex<Vec<ComponentRecord>>>,
+    decisions: Arc<Mutex<Vec<FixtureHumanDecision>>>,
+    threads: FixtureThreads,
     now: OffsetDateTime,
 }
 
+#[derive(Clone)]
+struct FixtureHumanDecision {
+    thread_id: ThreadId,
+    pending: PendingComponentHumanDecision,
+    answer: Option<ComponentHumanDecisionAnswer>,
+}
+
 impl FixtureComponents {
-    fn new(now: OffsetDateTime) -> Self {
+    fn new(now: OffsetDateTime, threads: FixtureThreads) -> Self {
         Self {
             rows: Arc::new(Mutex::new(vec![
                 ComponentRecord {
@@ -464,6 +485,52 @@ impl FixtureComponents {
                     functions: vec!["readFixture".to_owned()],
                 },
             ])),
+            decisions: Arc::new(Mutex::new(vec![
+                FixtureHumanDecision {
+                    thread_id: ThreadId::new(FIXTURE_APPROVAL_THREAD),
+                    pending: PendingComponentHumanDecision {
+                        decision_id: "fixture-decision-approval".to_owned(),
+                        run_id: RunId::new(FIXTURE_APPROVAL_RUN),
+                        provider_call_id: "fixture-provider-approval".to_owned(),
+                        agent_id: BotId::new("bot-1"),
+                        component_name: ASK_APPROVAL_COMPONENT_NAME.to_owned(),
+                        arguments: serde_json::json!({
+                            "title":"Refund this order?",
+                            "summary":"The customer was charged twice for the same order.",
+                            "details":[
+                                {"label":"Amount","value":"$128.40"},
+                                {"label":"Order","value":"2043"}
+                            ],
+                            "approveLabel":"Refund"
+                        }),
+                        requested_at: now - Duration::minutes(1),
+                        expires_at: now + Duration::minutes(30),
+                    },
+                    answer: None,
+                },
+                FixtureHumanDecision {
+                    thread_id: ThreadId::new(FIXTURE_CHOICE_THREAD),
+                    pending: PendingComponentHumanDecision {
+                        decision_id: "fixture-decision-choice".to_owned(),
+                        run_id: RunId::new(FIXTURE_CHOICE_RUN),
+                        provider_call_id: "fixture-provider-choice".to_owned(),
+                        agent_id: BotId::new("bot-2"),
+                        component_name: ASK_CHOICE_COMPONENT_NAME.to_owned(),
+                        arguments: serde_json::json!({
+                            "title":"Where should this go?",
+                            "summary":"Choose the destination environment.",
+                            "options":[
+                                {"id":"staging","label":"Staging"},
+                                {"id":"production","label":"Production","description":"Live customers"}
+                            ]
+                        }),
+                        requested_at: now,
+                        expires_at: now + Duration::minutes(30),
+                    },
+                    answer: None,
+                },
+            ])),
+            threads,
             now,
         }
     }
@@ -574,6 +641,72 @@ impl ComponentAdministration for FixtureComponents {
                 field: "fixture_component_function",
             }),
         }
+    }
+
+    async fn list_component_human_decisions(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<PendingComponentHumanDecisions, ComponentAdministrationError> {
+        let mut decisions = self
+            .decisions
+            .lock()
+            .map_err(|_| ComponentAdministrationError::Unavailable)?
+            .iter()
+            .filter(|decision| decision.answer.is_none())
+            .map(|decision| decision.pending.clone())
+            .collect::<Vec<_>>();
+        decisions.sort_by(|left, right| {
+            (left.requested_at, &left.decision_id).cmp(&(right.requested_at, &right.decision_id))
+        });
+        Ok(PendingComponentHumanDecisions { decisions })
+    }
+
+    async fn resolve_component_human_decision(
+        &self,
+        _auth: &AuthContext,
+        decision_id: &str,
+        answer: &ComponentHumanDecisionAnswer,
+    ) -> Result<ComponentHumanDecisionResolved, ComponentAdministrationError> {
+        let (thread_id, pending, replayed) = {
+            let mut decisions = self
+                .decisions
+                .lock()
+                .map_err(|_| ComponentAdministrationError::Unavailable)?;
+            let decision = decisions
+                .iter_mut()
+                .find(|decision| decision.pending.decision_id == decision_id)
+                .ok_or(ComponentAdministrationError::NotVisible)?;
+            validate_component_human_decision_answer(
+                &decision.pending.component_name,
+                &decision.pending.arguments,
+                answer,
+            )
+            .map_err(|_| ComponentAdministrationError::InvalidInput {
+                field: "component_answer",
+            })?;
+            let replayed = match &decision.answer {
+                Some(stored) if stored == answer => true,
+                Some(_) => return Err(ComponentAdministrationError::Conflict),
+                None => {
+                    decision.answer = Some(answer.clone());
+                    false
+                }
+            };
+            (
+                decision.thread_id.clone(),
+                decision.pending.clone(),
+                replayed,
+            )
+        };
+        if !replayed {
+            self.threads
+                .complete_human_decision(&thread_id, &pending, answer)?;
+        }
+        Ok(ComponentHumanDecisionResolved {
+            decision_id: decision_id.to_owned(),
+            answer: answer.clone(),
+            replayed,
+        })
     }
 }
 
@@ -1094,6 +1227,41 @@ impl FixtureThreads {
                 last_event_sequence: None,
             },
         );
+        for (thread, run, bot, prompt) in [
+            (
+                FIXTURE_APPROVAL_THREAD,
+                FIXTURE_APPROVAL_RUN,
+                "bot-1",
+                "Please ask me before refunding the duplicate charge.",
+            ),
+            (
+                FIXTURE_CHOICE_THREAD,
+                FIXTURE_CHOICE_RUN,
+                "bot-2",
+                "Ask which environment I want.",
+            ),
+        ] {
+            snapshots.insert(
+                thread.to_owned(),
+                ThreadConversationSnapshot {
+                    messages: vec![ThreadHistoryMessage {
+                        id: format!("{run}:user"),
+                        role: ThreadHistoryRole::User,
+                        content: prompt.to_owned(),
+                        agent_id: Some(BotId::new(bot)),
+                        tool_call_id: None,
+                        tool_name: None,
+                        tool_error_code: None,
+                        tool_calls: None,
+                    }],
+                    active_run_id: Some(RunId::new(run)),
+                    active_run_state: Some(ThreadForegroundRunState::Running),
+                    active_run_cancellable: true,
+                    active_run_text: String::new(),
+                    last_event_sequence: Some(0),
+                },
+            );
+        }
         Self {
             inner: Arc::new(FixtureThreadsInner {
                 snapshots: Mutex::new(snapshots),
@@ -1128,6 +1296,78 @@ impl FixtureThreads {
                     .is_ok()
             });
         }
+    }
+
+    fn complete_human_decision(
+        &self,
+        thread: &ThreadId,
+        pending: &PendingComponentHumanDecision,
+        answer: &ComponentHumanDecisionAnswer,
+    ) -> Result<(), ComponentAdministrationError> {
+        let result = serde_json::to_string(answer)
+            .map_err(|_| ComponentAdministrationError::Corrupt { field: "answer" })?;
+        let event_sequence = {
+            let mut snapshots = self
+                .inner
+                .snapshots
+                .lock()
+                .map_err(|_| ComponentAdministrationError::Unavailable)?;
+            let snapshot = snapshots
+                .get_mut(thread.as_str())
+                .ok_or(ComponentAdministrationError::NotVisible)?;
+            if snapshot.active_run_id.as_ref() != Some(&pending.run_id) {
+                return Err(ComponentAdministrationError::NotVisible);
+            }
+            snapshot.messages.push(ThreadHistoryMessage {
+                id: format!("{}:assistant", pending.decision_id),
+                role: ThreadHistoryRole::Assistant,
+                content: String::new(),
+                agent_id: Some(pending.agent_id.clone()),
+                tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
+                tool_calls: Some(vec![serde_json::json!({
+                    "id":pending.provider_call_id,
+                    "type":"function",
+                    "function":{
+                        "name":pending.component_name,
+                        "arguments":pending.arguments,
+                    }
+                })]),
+            });
+            snapshot.messages.push(ThreadHistoryMessage {
+                id: format!("{}:tool", pending.decision_id),
+                role: ThreadHistoryRole::Tool,
+                content: result,
+                agent_id: Some(pending.agent_id.clone()),
+                tool_call_id: Some(pending.provider_call_id.clone()),
+                tool_name: Some(pending.component_name.clone()),
+                tool_error_code: None,
+                tool_calls: None,
+            });
+            snapshot.active_run_id = None;
+            snapshot.active_run_state = None;
+            snapshot.active_run_cancellable = false;
+            snapshot.active_run_text.clear();
+            let sequence = snapshot
+                .last_event_sequence
+                .map_or(0, |value| value.saturating_add(1));
+            snapshot.last_event_sequence = Some(sequence);
+            sequence
+        };
+        self.publish(
+            thread,
+            ThreadRunEvent {
+                thread_id: thread.clone(),
+                run_id: pending.run_id.clone(),
+                event_sequence,
+                event_type: ThreadRunEventKind::Completed,
+                payload: serde_json::json!({"status":"completed"}),
+                terminal: true,
+                created_at: pending.requested_at,
+            },
+        );
+        Ok(())
     }
 }
 
@@ -1713,7 +1953,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let threads = FixtureThreads::new(channels.clone());
     let memory = FixtureMemory::new(tenant, actor.clone(), now);
     let connections = FixtureConnections::new(actor, port, now);
-    let components = FixtureComponents::new(now);
+    let components = FixtureComponents::new(now, threads.clone());
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))

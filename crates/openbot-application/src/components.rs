@@ -8,12 +8,13 @@ use openbot_contracts::auth::AuthContext;
 use openbot_contracts::components::ComponentDecisionRefusal;
 use openbot_contracts::components::{
     ASK_APPROVAL_COMPONENT_NAME, ASK_CHOICE_COMPONENT_NAME, BOT_ACTIVITY_FUNCTION_NAME,
-    CompiledComponentManifestEntry, ComponentApprovalAnswer, ComponentCatalogueAdded,
-    ComponentCatalogueRequest, ComponentChoiceAnswer, ComponentDataFunctions, ComponentDecision,
-    ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
-    ComponentFunctionData, ComponentHumanDecisionAnswer, ComponentHumanDecisionRequest,
-    ComponentHumanDecisionResolved, ComponentRecords, GrantedCompiledComponents,
-    PendingComponentHumanDecision, PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME,
+    COMPONENT_HUMAN_DECISION_NOTE_MAX_BYTES, CompiledComponentManifestEntry,
+    ComponentApprovalAnswer, ComponentCatalogueAdded, ComponentCatalogueRequest,
+    ComponentChoiceAnswer, ComponentDataFunctions, ComponentDecision, ComponentDecisionRequest,
+    ComponentFunctionCall, ComponentFunctionCallRequest, ComponentFunctionData,
+    ComponentHumanDecisionAnswer, ComponentHumanDecisionRequest, ComponentHumanDecisionResolved,
+    ComponentRecords, GrantedCompiledComponents, PendingComponentHumanDecision,
+    PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME,
     SHOW_ACTIVITY_REPORT_COMPONENT_NAME, compiled_component_manifest,
     component_data_function_manifest, validate_component_human_decision_arguments,
 };
@@ -28,7 +29,6 @@ const MAX_RUNTIME_IDENTIFIER_BYTES: usize = 256;
 const MAX_HUMAN_DECISION_ARGUMENT_BYTES: usize = 64 * 1024;
 const MAX_HUMAN_DECISION_ARRAY_ITEMS: usize = 100;
 const MAX_HUMAN_DECISION_STRING_BYTES: usize = 16 * 1024;
-const MAX_HUMAN_DECISION_NOTE_BYTES: usize = 4 * 1024;
 /// Surface/HITL upper bound; the Agent run deadline may end the wait sooner.
 pub const COMPONENT_HUMAN_DECISION_TTL: core::time::Duration =
     core::time::Duration::from_secs(30 * 60);
@@ -478,6 +478,8 @@ pub async fn list_pending_component_human_decisions(
             .map_err(ComponentAdministrationError::into_app_error)?;
         validate_runtime_identifier(decision.run_id.as_str(), "run_id")
             .map_err(ComponentAdministrationError::into_app_error)?;
+        validate_provider_call_id(&decision.provider_call_id)
+            .map_err(ComponentAdministrationError::into_app_error)?;
         validate_runtime_identifier(decision.agent_id.as_str(), "agent_id")
             .map_err(ComponentAdministrationError::into_app_error)?;
         validate_component_human_decision_arguments(&decision.component_name, &decision.arguments)
@@ -665,6 +667,7 @@ fn validate_pending_component_human_decision(
 ) -> Result<(), ComponentAdministrationError> {
     if pending.decision_id != draft.decision_id
         || pending.run_id != scope.run_id
+        || pending.provider_call_id != draft.provider_call_id
         || pending.agent_id != scope.agent_id
         || pending.component_name != draft.component_name
         || pending.arguments != draft.arguments
@@ -686,7 +689,7 @@ fn normalize_human_decision_answer(
                 .map(|note| trim_ecmascript(&note).to_owned())
                 .filter(|note| !note.is_empty());
             if note.as_ref().is_some_and(|note| {
-                note.len() > MAX_HUMAN_DECISION_NOTE_BYTES || note.as_bytes().contains(&0)
+                note.len() > COMPONENT_HUMAN_DECISION_NOTE_MAX_BYTES || note.as_bytes().contains(&0)
             }) {
                 return Err(ComponentAdministrationError::InvalidInput {
                     field: "component_answer",
@@ -1079,6 +1082,7 @@ mod tests {
             Ok(PendingComponentHumanDecision {
                 decision_id: draft.decision_id.clone(),
                 run_id: scope.run_id.clone(),
+                provider_call_id: draft.provider_call_id.clone(),
                 agent_id: scope.agent_id.clone(),
                 component_name: draft.component_name.clone(),
                 arguments: draft.arguments.clone(),

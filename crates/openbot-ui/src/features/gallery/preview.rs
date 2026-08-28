@@ -4,6 +4,8 @@ use leptos::prelude::*;
 #[cfg(test)]
 use openbot_contracts::components::compiled_component_manifest;
 use openbot_contracts::components::{
+    ASK_APPROVAL_COMPONENT_NAME, ASK_CHOICE_COMPONENT_NAME, ComponentApprovalAnswer,
+    ComponentApprovalDecision, ComponentChoiceAnswer, ComponentHumanDecisionAnswer,
     SHOW_ACTIVITY_REPORT_COMPONENT_NAME, SHOW_AREA_CHART_COMPONENT_NAME,
     SHOW_BAR_CHART_COMPONENT_NAME, SHOW_CHECKLIST_COMPONENT_NAME, SHOW_LINE_CHART_COMPONENT_NAME,
     SHOW_METRICS_COMPONENT_NAME, SHOW_NOTICE_COMPONENT_NAME, SHOW_PIE_CHART_COMPONENT_NAME,
@@ -14,11 +16,13 @@ use crate::i18n::{t, use_i18n};
 
 use super::{
     AreaChartCard, BarChartCard, ChartPoint, ChartSeries, ChecklistCard, ChecklistItem,
-    GalleryTone, HeadlineMetric, LineChartCard, MetricsCard, NoticeCard, PieChartCard,
-    ProgressChartCard, ProgressPoint, QuoteCard, RecordCard, RecordField,
+    GalleryTone, HeadlineMetric, HumanDecisionCard, LineChartCard, MetricsCard, NoticeCard,
+    PieChartCard, ProgressChartCard, ProgressPoint, QuoteCard, RecordCard, RecordField,
 };
 
-const RENDERER_NAMES: [&str; 11] = [
+const RENDERER_NAMES: [&str; 13] = [
+    ASK_APPROVAL_COMPONENT_NAME,
+    ASK_CHOICE_COMPONENT_NAME,
     SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
     SHOW_AREA_CHART_COMPONENT_NAME,
     SHOW_BAR_CHART_COMPONENT_NAME,
@@ -49,6 +53,49 @@ pub fn component_has_renderer(name: &str) -> bool {
 pub fn ComponentPreview(name: String) -> AnyView {
     let i18n = use_i18n();
     let content = match name.as_str() {
+        ASK_APPROVAL_COMPONENT_NAME => view! {
+            <HumanDecisionCard
+                name=ASK_APPROVAL_COMPONENT_NAME.to_owned()
+                arguments=serde_json::json!({
+                    "title":"Refund this order?",
+                    "summary":"The customer was charged twice for the same order.",
+                    "details":[
+                        {"label":"Amount","value":"$128.40"},
+                        {"label":"Order","value":"2043"}
+                    ],
+                    "approveLabel":"Refund"
+                })
+                answer=Signal::derive(|| Some(ComponentHumanDecisionAnswer::Approval(
+                    ComponentApprovalAnswer {
+                        decision: ComponentApprovalDecision::Approved,
+                        note: None,
+                    }
+                )))
+                submitting=Signal::derive(|| false)
+                error=Signal::derive(|| false)
+            />
+        }.into_any(),
+        ASK_CHOICE_COMPONENT_NAME => view! {
+            <HumanDecisionCard
+                name=ASK_CHOICE_COMPONENT_NAME.to_owned()
+                arguments=serde_json::json!({
+                    "title":"Where should this go?",
+                    "summary":"Choose the destination environment.",
+                    "options":[
+                        {"id":"staging","label":"Staging"},
+                        {"id":"production","label":"Production","description":"Live customers"}
+                    ]
+                })
+                answer=Signal::derive(|| Some(ComponentHumanDecisionAnswer::Choice(
+                    ComponentChoiceAnswer {
+                        choice: "staging".to_owned(),
+                        label: "Staging".to_owned(),
+                    }
+                )))
+                submitting=Signal::derive(|| false)
+                error=Signal::derive(|| false)
+            />
+        }.into_any(),
         SHOW_ACTIVITY_REPORT_COMPONENT_NAME => view! {
             <p class="ob-gallery-preview-unavailable">
                 {move || t!(i18n, gallery.preview_unavailable)}
@@ -183,6 +230,8 @@ mod tests {
         assert_eq!(
             renderer_names(),
             [
+                ASK_APPROVAL_COMPONENT_NAME,
+                ASK_CHOICE_COMPONENT_NAME,
                 SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
                 SHOW_AREA_CHART_COMPONENT_NAME,
                 SHOW_BAR_CHART_COMPONENT_NAME,

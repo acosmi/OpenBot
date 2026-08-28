@@ -3,6 +3,7 @@
 mod activity;
 mod cards;
 mod charts;
+mod decisions;
 mod frame;
 mod preview;
 mod quote;
@@ -17,6 +18,7 @@ pub use charts::{
     AreaChartCard, BarChartCard, ChartPoint, ChartSeries, LineChartCard, PieChartCard,
     ProgressChartCard, ProgressPoint,
 };
+pub use decisions::HumanDecisionCard;
 pub use frame::{GalleryBadge, GalleryFrame, GalleryTone};
 pub use preview::{ComponentPreview, component_has_renderer, renderer_names};
 pub use quote::QuoteCard;

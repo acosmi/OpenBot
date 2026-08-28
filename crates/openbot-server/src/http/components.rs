@@ -364,6 +364,7 @@ mod tests {
                 decisions: vec![PendingComponentHumanDecision {
                     decision_id: "decision-1".to_owned(),
                     run_id: RunId::new("run-1"),
+                    provider_call_id: "provider-call-1".to_owned(),
                     agent_id: BotId::new("bot-1"),
                     component_name: "askApproval".to_owned(),
                     arguments: serde_json::json!({"title":"Refund?","summary":"Duplicate"}),

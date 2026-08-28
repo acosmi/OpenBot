@@ -97,6 +97,8 @@ pub const ASK_CHOICE_COMPONENT_NAME: &str = "askChoice";
 pub const ASK_CHOICE_COMPONENT_TITLE: &str = "Choice";
 /// Default model-facing human choice decision description.
 pub const ASK_CHOICE_COMPONENT_DESCRIPTION: &str = "Ask the person to pick one of several options, and WAIT for their answer. Use when you cannot sensibly guess which one they meant. You are given the id of the option they chose.";
+/// Maximum UTF-8 bytes accepted for an optional Approval note.
+pub const COMPONENT_HUMAN_DECISION_NOTE_MAX_BYTES: usize = 4 * 1024;
 
 /// Closed grouping used by Admin and Settings presentation; never read by the model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +218,8 @@ pub struct PendingComponentHumanDecision {
     pub decision_id: String,
     /// Durable run waiting for this exact answer.
     pub run_id: RunId,
+    /// Provider pairing id; never accepted as answer authority.
+    pub provider_call_id: String,
     /// Server-derived Agent identity.
     pub agent_id: BotId,
     /// Stable `askApproval` or `askChoice` renderer identity.
@@ -598,6 +602,18 @@ impl ComponentFunctionCall {
 pub fn compiled_component_manifest() -> Vec<CompiledComponentManifestEntry> {
     vec![
         manifest_entry(
+            ASK_APPROVAL_COMPONENT_NAME,
+            ASK_APPROVAL_COMPONENT_TITLE,
+            CompiledComponentKind::Decision,
+            ASK_APPROVAL_COMPONENT_DESCRIPTION,
+        ),
+        manifest_entry(
+            ASK_CHOICE_COMPONENT_NAME,
+            ASK_CHOICE_COMPONENT_TITLE,
+            CompiledComponentKind::Decision,
+            ASK_CHOICE_COMPONENT_DESCRIPTION,
+        ),
+        manifest_entry(
             SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
             SHOW_ACTIVITY_REPORT_COMPONENT_TITLE,
             CompiledComponentKind::Card,
@@ -698,6 +714,8 @@ pub enum ComponentArgumentsError {
 #[must_use]
 pub fn compiled_component_parameter_schema(name: &str) -> Option<Value> {
     match name {
+        ASK_APPROVAL_COMPONENT_NAME => Some(ask_approval_parameter_schema()),
+        ASK_CHOICE_COMPONENT_NAME => Some(ask_choice_parameter_schema()),
         SHOW_ACTIVITY_REPORT_COMPONENT_NAME => Some(show_activity_report_parameter_schema()),
         SHOW_AREA_CHART_COMPONENT_NAME => Some(show_area_chart_parameter_schema()),
         SHOW_BAR_CHART_COMPONENT_NAME => Some(show_bar_chart_parameter_schema()),
@@ -738,6 +756,8 @@ pub fn compiled_component_confirmation(name: &str) -> Option<&'static str> {
 #[must_use]
 pub fn compiled_component_title(name: &str) -> Option<&'static str> {
     match name {
+        ASK_APPROVAL_COMPONENT_NAME => Some(ASK_APPROVAL_COMPONENT_TITLE),
+        ASK_CHOICE_COMPONENT_NAME => Some(ASK_CHOICE_COMPONENT_TITLE),
         SHOW_ACTIVITY_REPORT_COMPONENT_NAME => Some(SHOW_ACTIVITY_REPORT_COMPONENT_TITLE),
         SHOW_AREA_CHART_COMPONENT_NAME => Some(SHOW_AREA_CHART_COMPONENT_TITLE),
         SHOW_BAR_CHART_COMPONENT_NAME => Some(SHOW_BAR_CHART_COMPONENT_TITLE),
@@ -751,6 +771,15 @@ pub fn compiled_component_title(name: &str) -> Option<&'static str> {
         SHOW_RECORD_COMPONENT_NAME => Some(SHOW_RECORD_COMPONENT_TITLE),
         _ => None,
     }
+}
+
+/// Whether one exact build renderer suspends for a person's tool result.
+#[must_use]
+pub fn is_component_human_decision_name(name: &str) -> bool {
+    matches!(
+        name,
+        ASK_APPROVAL_COMPONENT_NAME | ASK_CHOICE_COMPONENT_NAME
+    )
 }
 
 /// Validate one ordinary renderer call and derive its build-owned data functions from arguments.
@@ -904,6 +933,50 @@ pub fn validate_component_human_decision_arguments(
             Ok(())
         }
         _ => Err(ComponentArgumentsError::UnknownComponent),
+    }
+}
+
+/// Stable failure while pairing a recorded decision result with its original closed arguments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ComponentHumanDecisionAnswerError {
+    /// This build has no decision renderer by that name.
+    #[error("component_human_answer_unknown_component")]
+    UnknownComponent,
+    /// Answer variant or stored Choice id/label does not match the original request.
+    #[error("component_human_answer_invalid")]
+    Invalid,
+}
+
+/// Validate a recorded answer against the exact decision renderer and its original arguments.
+pub fn validate_component_human_decision_answer(
+    name: &str,
+    arguments: &Value,
+    answer: &ComponentHumanDecisionAnswer,
+) -> Result<(), ComponentHumanDecisionAnswerError> {
+    validate_component_human_decision_arguments(name, arguments)
+        .map_err(|_| ComponentHumanDecisionAnswerError::Invalid)?;
+    match (name, answer) {
+        (ASK_APPROVAL_COMPONENT_NAME, ComponentHumanDecisionAnswer::Approval(_)) => Ok(()),
+        (ASK_CHOICE_COMPONENT_NAME, ComponentHumanDecisionAnswer::Choice(choice)) => {
+            let options = arguments
+                .get("options")
+                .and_then(Value::as_array)
+                .ok_or(ComponentHumanDecisionAnswerError::Invalid)?;
+            options
+                .iter()
+                .filter_map(Value::as_object)
+                .any(|option| {
+                    option.get("id").and_then(Value::as_str) == Some(choice.choice.as_str())
+                        && option.get("label").and_then(Value::as_str)
+                            == Some(choice.label.as_str())
+                })
+                .then_some(())
+                .ok_or(ComponentHumanDecisionAnswerError::Invalid)
+        }
+        (ASK_APPROVAL_COMPONENT_NAME | ASK_CHOICE_COMPONENT_NAME, _) => {
+            Err(ComponentHumanDecisionAnswerError::Invalid)
+        }
+        _ => Err(ComponentHumanDecisionAnswerError::UnknownComponent),
     }
 }
 
@@ -1154,7 +1227,7 @@ pub fn ask_choice_parameter_schema() -> Value {
     })
 }
 
-/// Exact schema for one compiled human decision without adding it to the runnable manifest yet.
+/// Exact schema for one compiled human decision.
 #[must_use]
 pub fn component_human_decision_parameter_schema(name: &str) -> Option<Value> {
     match name {
@@ -1405,13 +1478,15 @@ mod tests {
     #[test]
     fn manifest_and_compiled_schemas_are_exact_closed_and_stable() {
         let manifest = compiled_component_manifest();
-        assert_eq!(manifest.len(), 11);
+        assert_eq!(manifest.len(), 13);
         assert_eq!(
             manifest
                 .iter()
                 .map(|entry| entry.name.as_str())
                 .collect::<Vec<_>>(),
             [
+                ASK_APPROVAL_COMPONENT_NAME,
+                ASK_CHOICE_COMPONENT_NAME,
                 SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
                 SHOW_AREA_CHART_COMPONENT_NAME,
                 SHOW_BAR_CHART_COMPONENT_NAME,
@@ -1431,6 +1506,13 @@ mod tests {
                 .filter(|entry| entry.kind == CompiledComponentKind::Chart)
                 .count(),
             5
+        );
+        assert_eq!(
+            manifest
+                .iter()
+                .filter(|entry| entry.kind == CompiledComponentKind::Decision)
+                .count(),
+            2
         );
         assert_eq!(
             show_activity_report_parameter_schema()["properties"]["report"]["enum"],
@@ -1727,11 +1809,13 @@ mod tests {
     }
 
     #[test]
-    fn human_decision_schemas_and_answer_wire_are_closed_without_joining_the_manifest() {
-        assert_eq!(compiled_component_manifest().len(), 11);
+    fn human_decision_schemas_answers_and_manifest_are_closed() {
+        assert_eq!(compiled_component_manifest().len(), 13);
         for name in [ASK_APPROVAL_COMPONENT_NAME, ASK_CHOICE_COMPONENT_NAME] {
             let schema = component_human_decision_parameter_schema(name).unwrap();
             assert_eq!(schema["additionalProperties"], false, "{name}");
+            assert_eq!(compiled_component_parameter_schema(name), Some(schema));
+            assert!(is_component_human_decision_name(name));
         }
         validate_component_human_decision_arguments(
             ASK_APPROVAL_COMPONENT_NAME,
@@ -1750,6 +1834,41 @@ mod tests {
             }),
         )
         .unwrap();
+        let choice_arguments = json!({
+            "title":"Where?",
+            "options":[{"id":"staging","label":"Staging"}]
+        });
+        let choice_answer = ComponentHumanDecisionAnswer::Choice(ComponentChoiceAnswer {
+            choice: "staging".to_owned(),
+            label: "Staging".to_owned(),
+        });
+        assert_eq!(
+            validate_component_human_decision_answer(
+                ASK_CHOICE_COMPONENT_NAME,
+                &choice_arguments,
+                &choice_answer,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_component_human_decision_answer(
+                ASK_CHOICE_COMPONENT_NAME,
+                &choice_arguments,
+                &ComponentHumanDecisionAnswer::Choice(ComponentChoiceAnswer {
+                    choice: "staging".to_owned(),
+                    label: "forged".to_owned(),
+                }),
+            ),
+            Err(ComponentHumanDecisionAnswerError::Invalid)
+        );
+        assert_eq!(
+            validate_component_human_decision_answer(
+                ASK_APPROVAL_COMPONENT_NAME,
+                &json!({"title":"Approve?","summary":"Summary"}),
+                &choice_answer,
+            ),
+            Err(ComponentHumanDecisionAnswerError::Invalid)
+        );
         assert!(
             validate_component_human_decision_arguments(
                 ASK_CHOICE_COMPONENT_NAME,

@@ -1,4 +1,4 @@
-//! Safe durable-conversation projection for ordinary compiled components.
+//! Safe durable-conversation projection for compiled components.
 
 use leptos::prelude::*;
 use openbot_contracts::components::*;
@@ -14,6 +14,7 @@ use super::*;
 pub fn ConversationComponent(
     name: String,
     arguments: Value,
+    result: Option<String>,
     error_code: Option<String>,
     agent_id: BotId,
     on_ask: UnsyncCallback<(BotId, String)>,
@@ -23,6 +24,36 @@ pub fn ConversationComponent(
     let title = compiled_component_title(&name)
         .unwrap_or("Component")
         .to_owned();
+    if is_component_human_decision_name(&name) {
+        let recorded = result
+            .as_deref()
+            .and_then(|result| serde_json::from_str::<ComponentHumanDecisionAnswer>(result).ok());
+        if error_code.is_some()
+            || validate_component_human_decision_arguments(&name, &arguments).is_err()
+            || recorded.as_ref().is_none_or(|answer| {
+                validate_component_human_decision_answer(&name, &arguments, answer).is_err()
+            })
+        {
+            return view! {
+                <RefusedCard
+                    title
+                    reason=t_string!(i18n, gallery.runtime_refused).to_owned()
+                />
+            }
+            .into_any();
+        }
+        let recorded = recorded.expect("recorded decision was checked above");
+        return view! {
+            <HumanDecisionCard
+                name
+                arguments
+                answer=Signal::derive(move || Some(recorded.clone()))
+                submitting=Signal::derive(|| false)
+                error=Signal::derive(|| false)
+            />
+        }
+        .into_any();
+    }
     if error_code.is_some() || validate_compiled_component_arguments(&name, &arguments).is_err() {
         return view! {
             <RefusedCard

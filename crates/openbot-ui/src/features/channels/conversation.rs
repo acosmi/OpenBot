@@ -6,7 +6,7 @@
 )]
 
 use core::fmt::Write as _;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
@@ -17,7 +17,10 @@ use openbot_contracts::command::{
     ChannelDetail, ThreadConversationSnapshot, ThreadForegroundRunState, ThreadHistoryMessage,
     ThreadHistoryRole, ThreadRunEvent, ThreadRunEventKind,
 };
-use openbot_contracts::components::compiled_component_parameter_schema;
+use openbot_contracts::components::{
+    ComponentHumanDecisionAnswer, PendingComponentHumanDecision,
+    compiled_component_parameter_schema,
+};
 use openbot_contracts::ids::{BotId, RunId, ThreadId};
 use openbot_contracts::text::trim_ecmascript;
 use sha2::{Digest, Sha256};
@@ -25,13 +28,14 @@ use sha2::{Digest, Sha256};
 use crate::api::mint_run_id;
 #[cfg(target_arch = "wasm32")]
 use crate::api::{
-    begin_channel_run, cancel_thread_run, load_thread_conversation, mint_thread_id,
+    answer_component_human_decision, begin_channel_run, cancel_thread_run,
+    list_pending_component_human_decisions, load_thread_conversation, mint_thread_id,
     thread_event_stream_path,
 };
 use crate::features::agents::{AgentPresence, AgentPresenceState};
 use crate::features::channels::composer::draft::{Segment, to_draft};
 use crate::features::channels::composer::queue::{QueueAction, QueuedMessage, reduce_queue};
-use crate::features::gallery::ConversationComponent;
+use crate::features::gallery::{ConversationComponent, HumanDecisionCard};
 use crate::features::threads::tool_name::read_tool_name;
 use crate::features::threads::tool_result::for_display;
 use crate::i18n::{t, t_string, use_i18n};
@@ -62,7 +66,9 @@ enum TranscriptKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TranscriptComponent {
     name: String,
+    provider_call_id: String,
     arguments: serde_json::Value,
+    result: Option<String>,
     error_code: Option<String>,
     agent_id: Option<BotId>,
 }
@@ -258,7 +264,9 @@ fn apply_live_event(
             }
             Ok(LiveEffect::None)
         }
-        ThreadRunEventKind::Checkpoint => Ok(LiveEffect::None),
+        // A checkpoint materializes a durable assistant/tool pair. Reload so completed compiled
+        // components replace any pending surface before the next provider sample finishes.
+        ThreadRunEventKind::Checkpoint => Ok(LiveEffect::ReloadSnapshot),
         ThreadRunEventKind::Completed => {
             state.active_run_id = None;
             state.active_run_state = None;
@@ -325,7 +333,9 @@ fn project_history(messages: &[ThreadHistoryMessage]) -> Vec<TranscriptLine> {
                                 content: name.clone(),
                                 component: Some(TranscriptComponent {
                                     name,
+                                    provider_call_id: call_id.clone(),
                                     arguments,
+                                    result: None,
                                     error_code: Some("component_result_missing".to_owned()),
                                     agent_id: message.agent_id.clone(),
                                 }),
@@ -359,6 +369,7 @@ fn project_history(messages: &[ThreadHistoryMessage]) -> Vec<TranscriptLine> {
                             == Some(component.name.as_str())
                             && message.agent_id == component.agent_id
                         {
+                            component.result = Some(message.content.clone());
                             message.tool_error_code.clone()
                         } else {
                             Some("component_result_mismatch".to_owned())
@@ -429,6 +440,56 @@ pub fn ChannelConversation(
         stream_error,
         reload_generation,
     );
+    let human_decisions = RwSignal::new(Vec::<PendingComponentHumanDecision>::new());
+    let human_decision_answers =
+        RwSignal::new(BTreeMap::<String, ComponentHumanDecisionAnswer>::new());
+    let human_decision_in_flight = RwSignal::new(BTreeSet::<String>::new());
+    let human_decision_failures = RwSignal::new(BTreeSet::<String>::new());
+    let human_decision_load_error = RwSignal::new(false);
+    install_component_human_decision_sync(
+        human_decisions,
+        human_decision_answers,
+        human_decision_load_error,
+    );
+    Effect::new(move |_| {
+        let snapshot = state.get();
+        let durable_provider_calls = snapshot
+            .messages
+            .iter()
+            .filter_map(|message| {
+                message.component.as_ref().and_then(|component| {
+                    component
+                        .result
+                        .as_ref()
+                        .map(|_| &component.provider_call_id)
+                })
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let answered = human_decision_answers.get();
+        if answered.is_empty() {
+            return;
+        }
+        let remove = human_decisions
+            .get()
+            .into_iter()
+            .filter(|decision| {
+                answered.contains_key(&decision.decision_id)
+                    && (durable_provider_calls.contains(&decision.provider_call_id)
+                        || snapshot.active_run_id.as_ref() != Some(&decision.run_id))
+            })
+            .map(|decision| decision.decision_id)
+            .collect::<BTreeSet<_>>();
+        if remove.is_empty() {
+            return;
+        }
+        human_decisions.update(|decisions| {
+            decisions.retain(|decision| !remove.contains(&decision.decision_id));
+        });
+        human_decision_answers.update(|answers| answers.retain(|id, _| !remove.contains(id)));
+        human_decision_in_flight.update(|ids| ids.retain(|id| !remove.contains(id)));
+        human_decision_failures.update(|ids| ids.retain(|id| !remove.contains(id)));
+    });
 
     let draft = RwSignal::new(String::new());
     let queued = RwSignal::new(Vec::<QueuedMessage>::new());
@@ -564,6 +625,47 @@ pub fn ChannelConversation(
         }
         send_now.run((agent_id, message));
     });
+    let answer_human_decision = UnsyncCallback::new(
+        move |(decision_id, answer): (String, ComponentHumanDecisionAnswer)| {
+            if human_decision_in_flight.with_untracked(|ids| ids.contains(&decision_id)) {
+                return;
+            }
+            human_decision_in_flight.update(|ids| {
+                ids.insert(decision_id.clone());
+            });
+            human_decision_failures.update(|ids| {
+                ids.remove(&decision_id);
+            });
+            #[cfg(target_arch = "wasm32")]
+            leptos::task::spawn_local_scoped_with_cancellation(async move {
+                match answer_component_human_decision(&decision_id, &answer).await {
+                    Ok(resolved) => {
+                        human_decision_answers.update(|answers| {
+                            answers.insert(decision_id.clone(), resolved.answer);
+                        });
+                    }
+                    Err(_) => {
+                        human_decision_failures.update(|ids| {
+                            ids.insert(decision_id.clone());
+                        });
+                    }
+                }
+                human_decision_in_flight.update(|ids| {
+                    ids.remove(&decision_id);
+                });
+            });
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let _ = answer;
+                human_decision_failures.update(|ids| {
+                    ids.insert(decision_id.clone());
+                });
+                human_decision_in_flight.update(|ids| {
+                    ids.remove(&decision_id);
+                });
+            }
+        },
+    );
     let submit = UnsyncCallback::new(move |_| {
         if send_disabled.get_untracked() {
             return;
@@ -681,6 +783,14 @@ pub fn ChannelConversation(
     let retry_snapshot = move |_| {
         reload_generation.update(|value| *value = value.saturating_add(1));
     };
+    let visible_human_decisions = Signal::derive(move || {
+        let active = state.get().active_run_id;
+        human_decisions
+            .get()
+            .into_iter()
+            .filter(|decision| active.as_ref() == Some(&decision.run_id))
+            .collect::<Vec<_>>()
+    });
 
     view! {
         <div class="ob-channel-conversation">
@@ -700,6 +810,9 @@ pub fn ChannelConversation(
             <Show when=move || stream_error.get() && !snapshot_error.get()>
                 <p class="ob-alert" role="status">{move || t!(i18n, channels.conversation_stream_error)}</p>
             </Show>
+            <Show when=move || human_decision_load_error.get() && state.get().active_run_id.is_some()>
+                <p class="ob-alert" role="status">{move || t!(i18n, gallery.decision_load_error)}</p>
+            </Show>
             <MessageScroller
                 id="channel-transcript"
                 aria_label=move || t_string!(i18n, channels.transcript_label).to_owned()
@@ -710,6 +823,7 @@ pub fn ChannelConversation(
                             !loading.get()
                                 && state.get().messages.is_empty()
                                 && state.get().streaming_text.is_empty()
+                                && visible_human_decisions.get().is_empty()
                         }>
                             <p class="ob-page-empty">{move || t!(i18n, channels.conversation_empty)}</p>
                         </Show>
@@ -726,6 +840,23 @@ pub fn ChannelConversation(
                                         agent_name=agent_name.clone()
                                         on_component_ask=ask_from_component
                                         component_ask_disabled
+                                    />
+                                }
+                            }
+                        />
+                        <For
+                            each=move || visible_human_decisions.get()
+                            key=|decision| decision.decision_id.clone()
+                            children={
+                                let agent_name = agent_name.clone();
+                                move |decision| view! {
+                                    <PendingHumanDecisionMessage
+                                        decision
+                                        agent_name=agent_name.clone()
+                                        answers=human_decision_answers
+                                        in_flight=human_decision_in_flight
+                                        failures=human_decision_failures
+                                        on_answer=answer_human_decision
                                     />
                                 }
                             }
@@ -762,6 +893,7 @@ pub fn ChannelConversation(
                         <Show when=move || {
                             busy.get()
                                 && state.get().streaming_text.is_empty()
+                                && visible_human_decisions.get().is_empty()
                                 && !matches!(
                                     state.get().active_run_state,
                                     Some(
@@ -909,6 +1041,59 @@ pub fn ChannelConversation(
 }
 
 #[component]
+fn PendingHumanDecisionMessage(
+    decision: PendingComponentHumanDecision,
+    agent_name: String,
+    answers: RwSignal<BTreeMap<String, ComponentHumanDecisionAnswer>>,
+    in_flight: RwSignal<BTreeSet<String>>,
+    failures: RwSignal<BTreeSet<String>>,
+    on_answer: UnsyncCallback<(String, ComponentHumanDecisionAnswer)>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    let decision_id = StoredValue::new(decision.decision_id.clone());
+    let answer_id = decision.decision_id.clone();
+    let submitting_id = decision.decision_id.clone();
+    let failure_id = decision.decision_id.clone();
+    let callback_id = decision.decision_id.clone();
+    let answer = Signal::derive(move || answers.get().get(&answer_id).cloned());
+    let submitting = Signal::derive(move || in_flight.get().contains(&submitting_id));
+    let error = Signal::derive(move || failures.get().contains(&failure_id));
+    let answer_callback = UnsyncCallback::new(move |answer| {
+        on_answer.run((callback_id.clone(), answer));
+    });
+    let avatar_seed = StoredValue::new(decision.agent_id.as_str().to_owned());
+    let avatar_name = StoredValue::new(agent_name);
+    view! {
+        <MessageScrollerItem
+            message_id=transcript_dom_id(&format!("decision:{}", decision_id.get_value()))
+        >
+            <Message aria_label=move || t_string!(i18n, channels.assistant_message_label).to_owned()>
+                <MessageAvatar>
+                    <span aria-hidden="true">
+                        <Avatar
+                            principal_id=avatar_seed.get_value()
+                            name=avatar_name.get_value()
+                            size=AvatarSize::Small
+                        />
+                    </span>
+                </MessageAvatar>
+                <MessageContent>
+                    <MessageHeader>{avatar_name.get_value()}</MessageHeader>
+                    <HumanDecisionCard
+                        name=decision.component_name
+                        arguments=decision.arguments
+                        answer
+                        submitting
+                        error
+                        on_answer=answer_callback
+                    />
+                </MessageContent>
+            </Message>
+        </MessageScrollerItem>
+    }
+}
+
+#[component]
 fn TranscriptMessage(
     message: TranscriptLine,
     agent_seed: String,
@@ -925,6 +1110,7 @@ fn TranscriptMessage(
             <ConversationComponent
                 name=component.name
                 arguments=component.arguments
+                result=component.result
                 error_code=component.error_code.or_else(|| {
                     component.agent_id.is_none().then(|| "component_agent_missing".to_owned())
                 })
@@ -983,6 +1169,65 @@ fn TranscriptMessage(
             </Message>
         </MessageScrollerItem>
     }
+}
+
+fn install_component_human_decision_sync(
+    decisions: RwSignal<Vec<PendingComponentHumanDecision>>,
+    answers: RwSignal<BTreeMap<String, ComponentHumanDecisionAnswer>>,
+    load_error: RwSignal<bool>,
+) {
+    #[cfg(target_arch = "wasm32")]
+    leptos::task::spawn_local_scoped_with_cancellation(async move {
+        loop {
+            match list_pending_component_human_decisions().await {
+                Ok(page) => {
+                    let local_answers = answers.get_untracked();
+                    decisions.update(|current| {
+                        merge_component_human_decisions(current, page.decisions, &local_answers);
+                    });
+                    load_error.set(false);
+                }
+                Err(_) => load_error.set(true),
+            }
+            component_human_decision_poll_delay().await;
+        }
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (decisions, answers);
+        load_error.set(true);
+    }
+}
+
+fn merge_component_human_decisions(
+    current: &mut Vec<PendingComponentHumanDecision>,
+    mut incoming: Vec<PendingComponentHumanDecision>,
+    answers: &BTreeMap<String, ComponentHumanDecisionAnswer>,
+) {
+    for local in current.iter() {
+        if answers.contains_key(&local.decision_id)
+            && !incoming
+                .iter()
+                .any(|decision| decision.decision_id == local.decision_id)
+        {
+            incoming.push(local.clone());
+        }
+    }
+    incoming.sort_by(|left, right| {
+        (left.requested_at, &left.decision_id).cmp(&(right.requested_at, &right.decision_id))
+    });
+    *current = incoming;
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn component_human_decision_poll_delay() {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        web_sys::window()
+            .expect("CSR component decision polling requires Window")
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 1_000)
+            .expect("browser rejected component decision polling timer");
+    });
+    _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
 fn transcript_dom_id(source: &str) -> String {
@@ -1299,7 +1544,12 @@ mod tests {
         assert_eq!(lines[0].kind, TranscriptKind::Component);
         let component = lines[0].component.as_ref().unwrap();
         assert_eq!(component.name, "showQuote");
+        assert_eq!(component.provider_call_id, "provider-call-1");
         assert_eq!(component.arguments["quote"], "Exact words");
+        assert_eq!(
+            component.result.as_deref(),
+            Some("The quotation is now on screen for the person.")
+        );
         assert_eq!(component.error_code, None);
         assert_eq!(component.agent_id, Some(BotId::new("bot-1")));
 
@@ -1326,6 +1576,79 @@ mod tests {
                 .as_deref(),
             Some("component_result_mismatch")
         );
+    }
+
+    #[test]
+    fn durable_decision_result_is_retained_for_completed_renderer_replay() {
+        let lines = project_history(&[
+            ThreadHistoryMessage {
+                id: "decision-call".to_owned(),
+                role: ThreadHistoryRole::Assistant,
+                content: String::new(),
+                agent_id: Some(BotId::new("bot-1")),
+                tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
+                tool_calls: Some(vec![serde_json::json!({
+                    "id":"provider-choice-1",
+                    "type":"function",
+                    "function":{
+                        "name":"askChoice",
+                        "arguments":{
+                            "title":"Where?",
+                            "options":[{"id":"prod","label":"Production"}]
+                        }
+                    }
+                })]),
+            },
+            ThreadHistoryMessage {
+                id: "decision-result".to_owned(),
+                role: ThreadHistoryRole::Tool,
+                content: r#"{"choice":"prod","label":"Production"}"#.to_owned(),
+                agent_id: Some(BotId::new("bot-1")),
+                tool_call_id: Some("provider-choice-1".to_owned()),
+                tool_name: Some("askChoice".to_owned()),
+                tool_error_code: None,
+                tool_calls: None,
+            },
+        ]);
+        assert_eq!(lines.len(), 1);
+        let component = lines[0].component.as_ref().unwrap();
+        assert_eq!(component.name, "askChoice");
+        assert_eq!(component.provider_call_id, "provider-choice-1");
+        assert_eq!(
+            component.result.as_deref(),
+            Some(r#"{"choice":"prod","label":"Production"}"#)
+        );
+        assert_eq!(component.error_code, None);
+    }
+
+    #[test]
+    fn polling_keeps_a_locally_answered_card_until_its_durable_pair_arrives() {
+        let pending = PendingComponentHumanDecision {
+            decision_id: "decision-1".to_owned(),
+            run_id: RunId::new("run-1"),
+            provider_call_id: "provider-1".to_owned(),
+            agent_id: BotId::new("bot-1"),
+            component_name: "askApproval".to_owned(),
+            arguments: serde_json::json!({"title":"Approve?","summary":"Summary"}),
+            requested_at: time::OffsetDateTime::UNIX_EPOCH,
+            expires_at: time::OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(30),
+        };
+        let mut current = vec![pending.clone()];
+        let answers = BTreeMap::from([(
+            pending.decision_id.clone(),
+            ComponentHumanDecisionAnswer::Approval(
+                openbot_contracts::components::ComponentApprovalAnswer {
+                    decision: openbot_contracts::components::ComponentApprovalDecision::Approved,
+                    note: None,
+                },
+            ),
+        )]);
+        merge_component_human_decisions(&mut current, Vec::new(), &answers);
+        assert_eq!(current, [pending]);
+        merge_component_human_decisions(&mut current, Vec::new(), &BTreeMap::new());
+        assert!(current.is_empty());
     }
 
     #[test]

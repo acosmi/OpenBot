@@ -1055,6 +1055,7 @@ async fn drive_oauth_catalog_grant_agent_retry_disconnect_and_revoke_are_one_rea
             let reply = gateway
                 .invoke(
                     &lease,
+                    "provider-drive-search",
                     "mcp__google-drive__search_files",
                     json!({"query":"roadmap"}),
                 )

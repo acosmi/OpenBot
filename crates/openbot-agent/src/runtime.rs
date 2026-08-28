@@ -13,6 +13,7 @@ use openbot_application::{
     RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime,
     RunRuntimeError, RunTerminal, RunToolExchange,
 };
+use openbot_contracts::components::is_component_human_decision_name;
 use openbot_domain::agent::{
     AgentEffect, AgentEvent, AgentFailure, AgentState, AgentTerminal, AgentToolCall, reduce,
 };
@@ -572,16 +573,77 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
         }
         for call in calls {
             let arguments = call.arguments.clone();
-            let reply = match await_run_child(
-                inner.tools.invoke(lease, &call.name, call.arguments),
-                &mut activation.cancel,
-                &mut renew,
-                deadline,
-                inner.runtime.as_ref(),
-                lease,
-            )
-            .await
-            {
+            let waits_for_human = is_component_human_decision_name(&call.name);
+            if waits_for_human {
+                let Ok((next, effects)) = reduce(&state, AgentEvent::HumanRequired) else {
+                    return;
+                };
+                state = next;
+                if !matches!(effects.as_slice(), [AgentEffect::AwaitHuman]) {
+                    return;
+                }
+            }
+            let tools = inner.tools.clone();
+            let invocation_lease = lease.clone();
+            let provider_call_id = call.call_id.clone();
+            let tool_name = call.name.clone();
+            let invocation = async move {
+                tools
+                    .invoke(
+                        &invocation_lease,
+                        &provider_call_id,
+                        &tool_name,
+                        call.arguments,
+                    )
+                    .await
+            };
+            let outcome = if waits_for_human {
+                // Dropping a JoinHandle detaches rather than aborts. On cancellation the durable
+                // waiter therefore survives long enough to observe the terminal run in PostgreSQL
+                // and atomically retire/audit its pending row. Ordinary effect tools stay inline so
+                // cancellation still drops them before the terminal commit.
+                match await_run_child(
+                    tokio::spawn(invocation),
+                    &mut activation.cancel,
+                    &mut renew,
+                    deadline,
+                    inner.runtime.as_ref(),
+                    lease,
+                )
+                .await
+                {
+                    ControlledChild::Ready(Ok(result)) => ControlledChild::Ready(result),
+                    ControlledChild::Ready(Err(error)) => {
+                        tracing::error!(
+                            cancelled = error.is_cancelled(),
+                            "component human-decision task ended without a result"
+                        );
+                        ControlledChild::Ready(Err(AgentToolInvokeError::Unavailable))
+                    }
+                    ControlledChild::Cancelled(source) => ControlledChild::Cancelled(source),
+                    ControlledChild::LeaseLost => ControlledChild::LeaseLost,
+                }
+            } else {
+                await_run_child(
+                    invocation,
+                    &mut activation.cancel,
+                    &mut renew,
+                    deadline,
+                    inner.runtime.as_ref(),
+                    lease,
+                )
+                .await
+            };
+            if waits_for_human && matches!(&outcome, ControlledChild::Ready(_)) {
+                let Ok((next, effects)) = reduce(&state, AgentEvent::HumanReleased) else {
+                    return;
+                };
+                state = next;
+                if !effects.is_empty() {
+                    return;
+                }
+            }
+            let reply = match outcome {
                 ControlledChild::Ready(Ok(reply)) => reply,
                 ControlledChild::Ready(Err(AgentToolInvokeError::ReconciliationRequired)) => {
                     drive_terminal_event(
@@ -602,14 +664,25 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
                     return;
                 }
                 ControlledChild::Cancelled(source) => {
-                    tool_interrupted(
-                        &mut state,
-                        &mut journal,
-                        inner.audit.as_ref(),
-                        lease,
-                        source,
-                    )
-                    .await;
+                    if waits_for_human {
+                        cancel_and_commit(
+                            &mut state,
+                            &mut journal,
+                            inner.audit.as_ref(),
+                            lease,
+                            source,
+                        )
+                        .await;
+                    } else {
+                        tool_interrupted(
+                            &mut state,
+                            &mut journal,
+                            inner.audit.as_ref(),
+                            lease,
+                            source,
+                        )
+                        .await;
+                    }
                     return;
                 }
                 ControlledChild::LeaseLost => {
@@ -1214,6 +1287,7 @@ mod tests {
         async fn invoke(
             &self,
             _lease: &RunExecutionLease,
+            _provider_call_id: &str,
             tool_name: &str,
             arguments: serde_json::Value,
         ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
@@ -1237,11 +1311,59 @@ mod tests {
         seen: StdMutex<Vec<u64>>,
     }
 
+    struct HumanToolInvoker {
+        started: Notify,
+        answer: Notify,
+        provider_calls: StdMutex<Vec<String>>,
+        completed: AtomicUsize,
+    }
+
+    impl HumanToolInvoker {
+        fn new() -> Self {
+            Self {
+                started: Notify::new(),
+                answer: Notify::new(),
+                provider_calls: StdMutex::new(Vec::new()),
+                completed: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AgentToolInvoker for HumanToolInvoker {
+        async fn invoke(
+            &self,
+            _lease: &RunExecutionLease,
+            provider_call_id: &str,
+            tool_name: &str,
+            arguments: serde_json::Value,
+        ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
+            assert_eq!(tool_name, "askApproval");
+            assert_eq!(
+                arguments,
+                serde_json::json!({"title":"Refund?","summary":"Duplicate"})
+            );
+            self.provider_calls
+                .lock()
+                .expect("human provider calls")
+                .push(provider_call_id.to_owned());
+            self.started.notify_one();
+            self.answer.notified().await;
+            self.completed.fetch_add(1, AtomicOrdering::SeqCst);
+            crate::AgentToolReply::new(
+                ToolCallId::new("decision-1"),
+                r#"{"decision":"approved"}"#.to_owned(),
+                None,
+            )
+        }
+    }
+
     #[async_trait]
     impl AgentToolInvoker for OrderedToolInvoker {
         async fn invoke(
             &self,
             _lease: &RunExecutionLease,
+            _provider_call_id: &str,
             _tool_name: &str,
             arguments: serde_json::Value,
         ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
@@ -1454,6 +1576,163 @@ mod tests {
         assert_eq!(tools.calls.load(AtomicOrdering::SeqCst), 1);
         agent.stop().await;
         assert_eq!(tools.releases.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn human_decision_waits_before_exchange_then_resamples_only_after_commit() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let context = Arc::new(CountingContext::default());
+        let provider = Arc::new(SequencedProvider {
+            sessions: StdMutex::new(
+                vec![
+                    vec![
+                        ProviderEvent::ToolCallCompleted {
+                            index: 0,
+                            call_id: "provider-human-1".to_owned(),
+                            name: "askApproval".to_owned(),
+                            arguments: serde_json::json!({
+                                "title":"Refund?",
+                                "summary":"Duplicate"
+                            }),
+                        },
+                        ProviderEvent::Usage(ProviderUsage {
+                            input_tokens: 3,
+                            output_tokens: 2,
+                            total_tokens: 5,
+                        }),
+                        ProviderEvent::Completed,
+                    ],
+                    vec![
+                        ProviderEvent::TextDelta {
+                            index: 0,
+                            delta: "approved".to_owned(),
+                        },
+                        ProviderEvent::Usage(ProviderUsage {
+                            input_tokens: 5,
+                            output_tokens: 1,
+                            total_tokens: 6,
+                        }),
+                        ProviderEvent::Completed,
+                    ],
+                ]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        });
+        let tools = Arc::new(HumanToolInvoker::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            context.clone(),
+            provider.clone(),
+            tools.clone(),
+            Arc::new(NoAgentAudit),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-human");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), tools.started.notified())
+            .await
+            .unwrap();
+        assert_eq!(provider.starts.load(AtomicOrdering::SeqCst), 1);
+        assert!(runtime.calls().is_empty());
+        tools.answer.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.calls(),
+            [
+                RuntimeCall::ToolExchange(
+                    1,
+                    "provider-human-1".to_owned(),
+                    "askApproval".to_owned(),
+                    r#"{"decision":"approved"}"#.to_owned(),
+                ),
+                RuntimeCall::Chunk(2, RunSemanticChannel::Text, "approved".to_owned()),
+                RuntimeCall::Finish(3, RunTerminal::Completed),
+            ]
+        );
+        assert_eq!(
+            tools.provider_calls.lock().unwrap().as_slice(),
+            ["provider-human-1"]
+        );
+        assert_eq!(tools.completed.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(context.loads.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(provider.starts.load(AtomicOrdering::SeqCst), 2);
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_human_wait_is_detached_long_enough_for_durable_retirement() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let tools = Arc::new(HumanToolInvoker::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            Arc::new(FakeProvider {
+                events: vec![
+                    ProviderEvent::ToolCallCompleted {
+                        index: 0,
+                        call_id: "provider-human-cancel".to_owned(),
+                        name: "askApproval".to_owned(),
+                        arguments: serde_json::json!({
+                            "title":"Refund?",
+                            "summary":"Duplicate"
+                        }),
+                    },
+                    ProviderEvent::Usage(ProviderUsage {
+                        input_tokens: 3,
+                        output_tokens: 2,
+                        total_tokens: 5,
+                    }),
+                    ProviderEvent::Completed,
+                ],
+                hold: false,
+            }),
+            tools.clone(),
+            Arc::new(NoAgentAudit),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-human-cancel");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), tools.started.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            consumer.revoke(&lease).await,
+            RunCancellationDisposition::ChildSignalled
+        );
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert!(
+            runtime
+                .calls()
+                .iter()
+                .any(|call| matches!(call, RuntimeCall::Finish(_, RunTerminal::Cancelled)))
+        );
+        tools.answer.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while tools.completed.load(AtomicOrdering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(tools.completed.load(AtomicOrdering::SeqCst), 1);
+        agent.stop().await;
     }
 
     #[tokio::test]

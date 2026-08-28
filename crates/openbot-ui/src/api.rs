@@ -20,11 +20,13 @@ use openbot_contracts::command::{
 use openbot_contracts::components::{
     BOT_ACTIVITY_FUNCTION_NAME, ComponentDecisionRefusal, ComponentFunctionData, ComponentRecord,
     RECENT_REFUSALS_FUNCTION_NAME, component_data_function_manifest,
+    is_component_human_decision_name, validate_component_human_decision_arguments,
 };
 use openbot_contracts::components::{
     ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
     ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
-    ComponentRecords, GrantedCompiledComponents, compiled_component_manifest,
+    ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecords,
+    GrantedCompiledComponents, PendingComponentHumanDecisions, compiled_component_manifest,
 };
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::mcp::{McpConnectionDisconnected, McpConnections, McpOAuthAuthorization};
@@ -298,6 +300,76 @@ pub async fn call_component_function(
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = request;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load the current actor's durable component decisions without browser cache.
+pub async fn list_pending_component_human_decisions()
+-> Result<PendingComponentHumanDecisions, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/components/human-decisions")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let decisions = response
+            .json::<PendingComponentHumanDecisions>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_pending_component_human_decisions(&decisions)?;
+        Ok(decisions)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Commit one closed answer to an actor-owned durable component decision.
+pub async fn answer_component_human_decision(
+    decision_id: &str,
+    answer: &ComponentHumanDecisionAnswer,
+) -> Result<ComponentHumanDecisionResolved, ApiError> {
+    let path = component_human_decision_answer_path(decision_id)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(answer)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let resolved = response
+            .json::<ComponentHumanDecisionResolved>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if resolved.decision_id != decision_id || &resolved.answer != answer {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(resolved)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, answer);
         Err(ApiError::Unavailable)
     }
 }
@@ -1395,6 +1467,46 @@ fn validate_component_function_call(
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn validate_pending_component_human_decisions(
+    decisions: &PendingComponentHumanDecisions,
+) -> Result<(), ApiError> {
+    if decisions.decisions.len() > 100 {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut decision_ids = std::collections::BTreeSet::new();
+    let mut provider_calls = std::collections::BTreeSet::new();
+    let mut previous = None;
+    for decision in &decisions.decisions {
+        let argument_bytes =
+            serde_json::to_vec(&decision.arguments).map_err(|_| ApiError::InvalidResponse)?;
+        validate_opaque_identifier(&decision.decision_id, 256)?;
+        validate_opaque_identifier(decision.run_id.as_str(), 256)?;
+        validate_opaque_identifier(&decision.provider_call_id, 1024)?;
+        validate_opaque_identifier(decision.agent_id.as_str(), 256)?;
+        if !decision_ids.insert(decision.decision_id.as_str())
+            || !provider_calls
+                .insert((decision.run_id.as_str(), decision.provider_call_id.as_str()))
+            || !is_component_human_decision_name(&decision.component_name)
+            || validate_component_human_decision_arguments(
+                &decision.component_name,
+                &decision.arguments,
+            )
+            .is_err()
+            || argument_bytes.len() > 64 * 1024
+            || decision.expires_at <= decision.requested_at
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        let key = (decision.requested_at, decision.decision_id.as_str());
+        if previous.is_some_and(|previous| previous > key) {
+            return Err(ApiError::InvalidResponse);
+        }
+        previous = Some(key);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn validate_component_description(value: &str) -> Result<(), ApiError> {
     if value.is_empty() || value.len() > 64 * 1024 || value.as_bytes().contains(&0) {
         Err(ApiError::InvalidResponse)
@@ -1410,6 +1522,14 @@ fn validate_component_identifier(value: &str, max: usize) -> Result<(), ApiError
 
 fn validate_bounded_identifier(value: &str, max: usize) -> Result<(), ApiError> {
     if value.is_empty() || value.len() > max || value.chars().any(char::is_control) {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_opaque_identifier(value: &str, max: usize) -> Result<(), ApiError> {
+    if value.is_empty() || value.len() > max || value.as_bytes().contains(&0) {
         Err(ApiError::InvalidResponse)
     } else {
         Ok(())
@@ -1548,6 +1668,14 @@ fn approval_decision_path(approval_id: &str) -> Result<String, ApiError> {
     Ok(format!(
         "/api/tool-approvals/{}",
         encode_url_component(approval_id)
+    ))
+}
+
+fn component_human_decision_answer_path(decision_id: &str) -> Result<String, ApiError> {
+    validate_opaque_identifier(decision_id, 256)?;
+    Ok(format!(
+        "/api/components/human-decisions/{}/answer",
+        encode_url_component(decision_id)
     ))
 }
 
@@ -1797,7 +1925,10 @@ fn status_error(status: u16) -> ApiError {
 
 #[cfg(test)]
 mod tests {
-    use openbot_contracts::components::{CompiledComponentKind, SHOW_QUOTE_COMPONENT_NAME};
+    use openbot_contracts::components::{
+        ASK_APPROVAL_COMPONENT_NAME, CompiledComponentKind, PendingComponentHumanDecision,
+        SHOW_QUOTE_COMPONENT_NAME,
+    };
     use openbot_contracts::memory::{MemoryKind, MemoryOrigin, MemorySensitivity};
     use time::OffsetDateTime;
 
@@ -2039,6 +2170,41 @@ mod tests {
         credential_like_scope.connections[0].scope = "bad\nscope".to_owned();
         assert_eq!(
             validate_mcp_connections(&credential_like_scope).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn component_human_decision_path_and_pending_projection_are_closed() {
+        assert_eq!(
+            component_human_decision_answer_path("decision/one?x=1").unwrap(),
+            "/api/components/human-decisions/decision%2Fone%3Fx%3D1/answer"
+        );
+        assert_eq!(
+            component_human_decision_answer_path("").unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let pending = PendingComponentHumanDecision {
+            decision_id: "decision-1".to_owned(),
+            run_id: RunId::new("run-1"),
+            provider_call_id: "provider-call-1".to_owned(),
+            agent_id: BotId::new("bot-1"),
+            component_name: ASK_APPROVAL_COMPONENT_NAME.to_owned(),
+            arguments: serde_json::json!({"title":"Refund?","summary":"Duplicate"}),
+            requested_at: OffsetDateTime::UNIX_EPOCH,
+            expires_at: OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(30),
+        };
+        let page = PendingComponentHumanDecisions {
+            decisions: vec![pending.clone()],
+        };
+        assert!(validate_pending_component_human_decisions(&page).is_ok());
+        let mut duplicate = pending;
+        duplicate.decision_id = "decision-2".to_owned();
+        assert_eq!(
+            validate_pending_component_human_decisions(&PendingComponentHumanDecisions {
+                decisions: vec![page.decisions[0].clone(), duplicate],
+            })
+            .unwrap_err(),
             ApiError::InvalidResponse
         );
     }

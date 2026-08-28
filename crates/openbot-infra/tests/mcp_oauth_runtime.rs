@@ -664,6 +664,7 @@ async fn actor_oauth_rotates_before_use_and_retries_one_401_exactly_once() {
             let reply = gateway
                 .invoke(
                     &lease,
+                    "provider-oauth-search",
                     "mcp__oauth-notes__search_notes",
                     serde_json::json!({"query":"invoices"}),
                 )

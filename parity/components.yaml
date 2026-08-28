@@ -121,7 +121,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0004"
     migration_rule: "preserve: askApproval / askChoice 两个工具名、参数 schema 与 HITL 挂起语义不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch48把askApproval/askChoice以kind=decision同批加入13项manifest/provider/schema/Leptos registry；runtime原样传provider call id、Rust UUIDv7另作decision/internal identity，HumanRequired进入AwaitingHuman，answer后只回ExecutingTools，durable exchange checkpoint提交后才load context/resample。取消时human waiter以detached JoinHandle继续到PG观察terminal并写cancelled audit，ordinary effect仍drop-first/reconciliation；拒绝/坏参数也返回单个error tool result，不挂死run。PG17.11完整竖切实得pending前run=running/tool result=0、跨Application answer、answered row与requested/answered audit各1、provider第二次context含exact assistant/tool pair；catalogue/human/provider-context另各1/0/0。最终release浏览器实得Approval/Choice pending各1、提交后complete、hard reload仍complete、Choice Enter有效且stored Production选中、坏/重复DOM与console均0。"
     evidence: "grep -c respond app/src/lib/copilot/sandboxed-tools.tsx app/src/components/gallery/decisions.tsx app/src/lib/copilot/gallery-tools.tsx = sandboxed-tools.tsx:0 decisions.tsx:12 gallery-tools.tsx:7"
     notes: "kind=decision 是唯一走 useHumanInTheLoop 的分支（gallery-tools.tsx::GrantedDecision），它会挂起整个 run，所以⑤ tool-call-time 再授权在这里的形态不同：被拒时 gallery-tools.tsx::RefusedDecision 必须调 respond 把 tool call 答掉，否则 run 永远挂着。这条 HITL 半边的落点是 openbot-application（v3 §8.5 Approval），本 ledger 按主控指定的 owner 域记为 openbot-ui（渲染面）——两侧同 PR 落地，缺任一即挂死。① 参数 schema = ApprovalCardProps / ChoiceCardProps；② published / ③ withholding / ④ data-function grant 同 gallery-activity。decisions.tsx::readResult / readDecision / readChoice 是结果回读，Leptos 版必须一并搬，否则已完成的决策卡重渲染会丢掉用户答案。"
 

@@ -155,7 +155,7 @@ pub enum AgentPhase {
     Sampling,
     /// Tool pipeline 正在等待 approval。
     AwaitingApproval,
-    /// Human handover/interrupt。
+    /// Human tool result / handover is pending.
     AwaitingHuman,
     /// Tool effect/outcome 正在执行/提交。
     ExecutingTools,
@@ -320,7 +320,7 @@ pub enum AgentEvent {
     ApprovalDenied,
     /// Human handover requested。
     HumanRequired,
-    /// Human released and Agent may resume sampling。
+    /// Human released; the host must durably commit the waiting tool result before resampling.
     HumanReleased,
     /// User/deadline cancellation request。
     CancelRequested,
@@ -507,8 +507,8 @@ pub fn reduce(
             vec![AgentEffect::AwaitHuman]
         }
         (AgentPhase::AwaitingHuman, AgentEvent::HumanReleased) => {
-            next.phase = AgentPhase::Sampling;
-            vec![AgentEffect::StartProvider]
+            next.phase = AgentPhase::ExecutingTools;
+            Vec::new()
         }
         (
             AgentPhase::Queued
@@ -677,5 +677,31 @@ mod tests {
                 AgentFailure::ToolStepLimit
             ))]
         );
+    }
+
+    #[test]
+    fn human_tool_result_returns_to_execution_until_the_exchange_is_committed() {
+        let mut state = AgentState::queued(RunId::new("run-human"));
+        (state, _) = step(&state, AgentEvent::DispatchActivated);
+        (state, _) = step(&state, AgentEvent::ContextPrepared);
+        let (next, effects) = step(
+            &state,
+            AgentEvent::ProviderToolCalls(vec![AgentToolCall {
+                call_id: "provider-human-1".to_owned(),
+                name: "askApproval".to_owned(),
+                arguments: serde_json::json!({}),
+            }]),
+        );
+        assert_eq!(next.phase(), AgentPhase::ExecutingTools);
+        assert!(matches!(effects.as_slice(), [AgentEffect::InvokeTools(_)]));
+        let (waiting, effects) = step(&next, AgentEvent::HumanRequired);
+        assert_eq!(waiting.phase(), AgentPhase::AwaitingHuman);
+        assert_eq!(effects, [AgentEffect::AwaitHuman]);
+        let (executing, effects) = step(&waiting, AgentEvent::HumanReleased);
+        assert_eq!(executing.phase(), AgentPhase::ExecutingTools);
+        assert!(effects.is_empty());
+        let (preparing, effects) = step(&executing, AgentEvent::ToolResultCommitted);
+        assert_eq!(preparing.phase(), AgentPhase::Preparing);
+        assert_eq!(effects, [AgentEffect::LoadContext]);
     }
 }

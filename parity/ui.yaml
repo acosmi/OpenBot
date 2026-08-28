@@ -142,16 +142,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch40累计完成前述地基与SettingsSidebar；其余todo
+  # Batch48累计完成前述地基、SettingsSidebar与Decisions；其余todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 66
+    expect: 65
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 86
+    expect: 87
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 86
+    expect: 87
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -820,7 +820,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0056"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch48新增同一HumanDecisionCard的Approval/Choice pending+complete双态；Approval保留title/summary/details/custom labels/optional note，Choice保留ordered options/id/label/description。等待/批准/拒绝/已回答/错误全部reactive i18n；本项目视觉真源下只用中性chrome、唯一primary实心按钮和文字+状态点语义色，selected option以文字+Check表达。conversation只渲染当前active run的actor-scoped pending；answer防双击，checkpoint后从durable recorded result重建complete，坏result/错label走共享RefusedCard；Settings两preview均无enabled control。UI128/0/0；i18n529/design86+74/CSS281；bundle1322323/96050/740216/1/0。最终release浏览器中英即时切换、4视口overflow0、Approval 4097-byte note禁交互、Choice Enter、两者answer+hard reload、Gallery14 tile/2 Decisions、duplicate/nested/alerts/console均0。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `gallery`（该组上游文件数 8）。同上。"
 

@@ -17,6 +17,7 @@ use openbot_contracts::components::{
     ComponentRecord, ComponentRecords, GrantedCompiledComponent, GrantedCompiledComponents,
     PendingComponentHumanDecision, PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME,
     RecentRefusalRow, RecentRefusalsReport, component_data_function_manifest,
+    validate_component_human_decision_answer,
 };
 use openbot_domain::agent::profile_policy::{AgentActor, AgentProfileFacts, can_run_agent};
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
@@ -612,7 +613,8 @@ impl ComponentAdministration for PostgresComponentAdministration {
                           clock.now,clock.now+make_interval(secs=>$13::bigint),NULL,NULL,clock.now,clock.now
                      FROM (SELECT clock_timestamp() AS now) clock
                  ON CONFLICT (run_id,provider_call_id) DO NOTHING
-                 RETURNING decision_id,run_id,bot_id,component_name,arguments,requested_at,expires_at",
+                 RETURNING decision_id,run_id,provider_call_id,bot_id,component_name,arguments,
+                           requested_at,expires_at",
                 &[
                     &draft.decision_id,
                     &scope.deployment.as_str(),
@@ -698,7 +700,7 @@ impl ComponentAdministration for PostgresComponentAdministration {
         let client = self.pool.get().await.map_err(unavailable)?;
         let rows = client
             .query(
-                "SELECT d.decision_id,d.run_id,d.bot_id,d.component_name,d.arguments,
+                "SELECT d.decision_id,d.run_id,d.provider_call_id,d.bot_id,d.component_name,d.arguments,
                         d.requested_at,d.expires_at
                    FROM public.component_human_decisions d
                    JOIN public.runs r ON r.run_id=d.run_id AND r.thread_id=d.thread_id
@@ -1521,6 +1523,9 @@ fn decode_pending_human_decision(
         .try_get("decision_id")
         .map_err(|_| corrupt("decision_id"))?;
     let run_id: String = row.try_get("run_id").map_err(|_| corrupt("run_id"))?;
+    let provider_call_id: String = row
+        .try_get("provider_call_id")
+        .map_err(|_| corrupt("provider_call_id"))?;
     let agent_id: String = row.try_get("bot_id").map_err(|_| corrupt("agent_id"))?;
     let component_name: String = row
         .try_get("component_name")
@@ -1536,9 +1541,16 @@ fn decode_pending_human_decision(
     ] {
         validate_name(value).map_err(|_| corrupt(field))?;
     }
+    if provider_call_id.is_empty()
+        || provider_call_id.len() > 1024
+        || provider_call_id.as_bytes().contains(&0)
+    {
+        return Err(corrupt("provider_call_id"));
+    }
     Ok(PendingComponentHumanDecision {
         decision_id,
         run_id: openbot_contracts::ids::RunId::new(run_id),
+        provider_call_id,
         agent_id: openbot_contracts::ids::BotId::new(agent_id),
         component_name,
         arguments,
@@ -1563,38 +1575,11 @@ fn validate_human_answer_against_arguments(
     arguments: &serde_json::Value,
     answer: &ComponentHumanDecisionAnswer,
 ) -> Result<(), ComponentAdministrationError> {
-    match (component_name, answer) {
-        (
-            openbot_contracts::components::ASK_APPROVAL_COMPONENT_NAME,
-            ComponentHumanDecisionAnswer::Approval(_),
-        ) => Ok(()),
-        (
-            openbot_contracts::components::ASK_CHOICE_COMPONENT_NAME,
-            ComponentHumanDecisionAnswer::Choice(choice),
-        ) => {
-            let exact = arguments
-                .get("options")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|options| {
-                    options.iter().any(|option| {
-                        option.get("id").and_then(serde_json::Value::as_str)
-                            == Some(choice.choice.as_str())
-                            && option.get("label").and_then(serde_json::Value::as_str)
-                                == Some(choice.label.as_str())
-                    })
-                });
-            if exact {
-                Ok(())
-            } else {
-                Err(ComponentAdministrationError::InvalidInput {
-                    field: "component_answer",
-                })
-            }
-        }
-        _ => Err(ComponentAdministrationError::InvalidInput {
+    validate_component_human_decision_answer(component_name, arguments, answer).map_err(|_| {
+        ComponentAdministrationError::InvalidInput {
             field: "component_answer",
-        }),
-    }
+        }
+    })
 }
 
 fn decode_record(row: &Row) -> Result<ComponentRecord, ComponentAdministrationError> {
