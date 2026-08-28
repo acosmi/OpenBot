@@ -4503,6 +4503,12 @@ dependencies = [
 [[package]]
 name = "openbot-computer"
 version = "0.0.0"
+dependencies = [
+ "openbot-contracts",
+ "openbot-domain",
+ "thiserror 2.0.20",
+ "time",
+]
 
 [[package]]
 name = "openbot-contracts"

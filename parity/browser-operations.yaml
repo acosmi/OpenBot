@@ -29,8 +29,9 @@
 #   配第 6 条（server/src 得 2）；dialog 的负向（第 7 条得 0）配第 8 条（app/src 得 10）。
 #   recount 里所有 command 都是可直接执行的裸命令，不带任何说明前缀，方便 CI 逐条重跑。
 #
-# status 全为 todo：本仓当前零实现代码（`find crates -name '*.rs' | wc -l` = 11，
-# 全是 10 个 `lib.rs` + 1 个 `bin/xtask.rs`），写任何 done 都会是假 done。
+# Batch51 后本表 7 done / 39 todo：只关闭不依赖 Electron/CDP 的 control/HumanLease 状态机与
+# closed input-union 裁决。mouse/wheel/key/secret 的真实 CDP execution、engine reject、screen/frame/
+# viewer ticket 仍全部 todo，不能用 Rust enum 冒充运行时。
 #
 # owner 全表固定 openbot-computer（v3 §5.1 十 crate 之一；§18 里 Browser actions / Supervisor /
 # File/shell 三行的 Rust owner 都是 computer）。Screen/input 行在 §18 写作
@@ -98,7 +99,7 @@ recount:
     expect: 3
   - command: "grep -c '^    status: todo$' parity/browser-operations.yaml"
     cwd: repo
-    expect: 46
+    expect: 39
   - command: "grep -c '^    upstream: \"-\"$' parity/browser-operations.yaml"
     cwd: repo
     expect: 5
@@ -157,7 +158,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0005
     migration_rule: "preserve: 只读控制状态，供界面与屏幕一起轮询"
-    status: todo
+    status: done
+    done_evidence: "Batch51 ControlService::state返回只读snapshot；未回答help按固定上游严格 age>10分钟在读取时清requested/reason/requestedAt，human holder不受help TTL误释放；HumanLease expiry另按显式expires-at处理。computer单测8/0/0中的TTL正反边界绿。"
     evidence: "grep -c '\"/control\"' agent-computer/src/index.ts 得 1；GET 分支返回 session.control.get()"
     notes: "不是 BrowserOperation：控制状态是 Rust 侧 HumanLease 的投影（v3 §12.5），engine 不参与裁决。上游 get() 在没有 pending 请求时会剥掉 reason/requestedAt 两个字段，Rust 侧的 DTO 也必须是同样的「无请求即无理由」形状，否则界面会一直显示上一次的求助文案。"
   - id: path-control-release
@@ -167,7 +169,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0006
     migration_rule: "preserve: 释放时丢弃 reason（人做完了，界面不能还挂着旧请求）"
-    status: todo
+    status: done
+    done_evidence: "Batch51 ControlService::release原子回Bot并清reason/request/secret/lease，同时epoch checked+1；旧HumanInputTicket下一次authorize稳定TakeControlFirst，Bot acting立即恢复。take→transfer→release单测逐字段绿。"
     evidence: "grep -c '\"/control/release\"' agent-computer/src/index.ts 得 1；handler 调 session.control.release()"
     notes: "v3 §12.5：release 必须递增 epoch（新增部分单列在 T-BROP-0046，本条只承诺上游可观察行为）。"
   - id: path-control-request
@@ -177,7 +180,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0007
     migration_rule: "preserve: Bot 只能「说我卡住了」，不能自己把控制权交给人"
-    status: todo
+    status: done
+    done_evidence: "Batch51 request_help只设置requested/requestedAt/reason，holder保持Bot且epoch不变；复用canonical ECMAScript TrimString，空reason落固定上游default。exact 10分钟仍显示、10分钟+1ns清除的单测绿。"
     evidence: "grep -c '\"/control/request\"' agent-computer/src/index.ts 得 1；handler 调 session.control.requestHelp(body?.reason)；同文件 control.ts 导出 HELP_REQUEST_TTL_MS"
     notes: "上游注释写死了理由：能把自己交给人的 Bot 也能把人拽到一个他没要求看的页面上。求助有 TTL（HELP_REQUEST_TTL_MS = 10 分钟），Rust 侧要保留过期语义，过期同样递增 epoch。"
   - id: path-control-secret
@@ -187,7 +191,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0008
     migration_rule: "preserve: Bot 请求一个它不该被告知的值，只给 label + ref（+ 可选 snapshotId），不给值"
-    status: todo
+    status: done
+    done_evidence: "Batch51 request_secret拒绝空ref，只在ControlState保存trimmed label、ref与Rust权威DocumentGeneration；secret value只存在独立zeroizing SecretInsert，永不进入snapshot。secret_supplied只清exact current target，stale target拒绝；default label/ref/generation/clear单测绿。"
     evidence: "grep -c '\"/control/secret\"' agent-computer/src/index.ts 得 1；handler 调 session.control.requestSecret(body)，非法输入抛 ControlRequestError 转 400"
     notes: "这是 secret insert 的「请求半边」，留在 Rust 控制面；真正把值打进页面的是 T-BROP-0018 / T-BROP-0044。值全程不进 engine 命令、不进 frame log、不进 transcript（v3 §12.5 末句）。"
   - id: path-control-take
@@ -197,7 +202,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0009
     migration_rule: "preserve: 人接管后 Bot 立即被拒（上游 assertBotMayAct 抛 ControlError -> 409），不排队"
-    status: todo
+    status: done
+    done_evidence: "Batch51 take只接受已验AuthContext与调用方显式future expires-at；进入Human后assert_bot_may_act立即返回human_has_control且无队列。输入authorize逐次比对actor/auth generation/computer/tab/computer generation/epoch/expiry；transfer使旧actor/ticket失效。"
     evidence: "grep -c '\"/control/take\"' agent-computer/src/index.ts 得 1；control.ts 内 assertBotMayAct 与 humanMayDrive 成对，导出常量 HUMAN_HAS_CONTROL / TAKE_CONTROL_FIRST"
     notes: "v3 §12.5「接管期间 Agent acting 立即返回确定性 refusal，不排队」与上游一致，属 parity。epoch 栅栏是新增，见 T-BROP-0046。"
   - id: path-exec
@@ -573,7 +579,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0045
     migration_rule: "n/a: 协议裁决，不是可迁移的上游行为"
-    status: todo
+    status: done
+    done_evidence: "Batch51 BrowserInput是exhaustive八变体MouseMove/MouseDown/MouseUp/Wheel/KeyDown/KeyUp/InsertText/SecretInsert；kind() exhaustive match与exact-vector单测锁集合，类型中无ImeComposition/Drag。move clickCount=0、down/up非零由私有字段+构造器保证。真实CDP映射仍由0037–0044保持todo。"
     evidence: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u 得 4（mouse / wheel / key / text），上游 union 本来就没有 IME 与 drag 变体；performHumanInput 的 /human/type 分支用 keyboard.insertText 而不是逐键 type"
     notes: "v3 §12.5 裁决原文：不设 IME composition 与 drag 两个独立变体。理由逐条可验：① IME 合成发生在 viewer 自己的输入元素里，合成完成的文本走 insertText——上游 /human/type 正是这样做的（T-BROP-0019），engine 从不需要看见合成中间态；② 拖拽就是 down -> move -> up 序列（T-BROP-0038 / 0037 / 0039），engine 不需要知道「这是一次拖拽」。标 新增 是因为它是本方案立的协议约束，不是从上游继承来的行为——上游没有这两个变体是「没做」，这里是「明确不做并说明为什么」，两者不能混为一谈。代价必须写明：真出现「必须知道是拖拽」的场景（HTML5 dragstart/dragover/drop 事件序列在某些站点上无法由裸鼠标事件合成）时，这是一次需要重新立项的协议扩展，不是实现期可以顺手加的变体。v3 §12.6 已把「IME 合成文本经 insertText」与「down->move->up 拖拽序列」两条列进必须覆盖的测试面。"
   - id: human-lease-epoch-fencing
@@ -583,6 +590,7 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0046
     migration_rule: "n/a: 上游控制状态无 epoch/generation 概念，R1 新增"
-    status: todo
+    status: done
+    done_evidence: "Batch51 HumanLease绑定Rust AuthContext actor/auth generation、computer/tab/computer generation、epoch与显式expires-at；take/transfer/release/inclusive expiry/navigation/restart各推进epoch，旧ticket在队列后到达仍拒绝。computer generation不前进拒绝，u64::MAX饱和不回绕；竞态单测绿。"
     evidence: "grep -nE 'epoch|generation' agent-computer/src/control.ts | wc -l 得 0；同文件 ControlState 的全部字段是 holder / since / reason / requested / requestedAt / secretWanted / secretRef / secretSnapshotId，其中 secretSnapshotId 是 snapshot 代次而不是 lease 代次；对照 v3 §12.5 的 HumanLease(owner, computer, tab, epoch, expires_at)"
     notes: "登记在本表是因为它是每一条输入操作的前置栅栏：v3 §12.5 要求 lease transfer / release / expiry / navigation / computer restart 都递增 epoch，且「旧 input 即使已经躺在 socket buffer 里也会被拒绝」。上游没有这层——它只有一个布尔式的「谁握着方向盘」，所以一条在 take 之前就发出、在 take 之后才被处理的输入会被当成合法输入执行。**这是新增，不得写进任何 parity 条目的 migration_rule 里冒充当前行为**：T-BROP-0006 / 0009 / 0021 / 0003 四条的 notes 都只承诺上游可观察行为，epoch 部分统一指回本条。"
