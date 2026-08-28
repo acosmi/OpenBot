@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  fill="none"
+  role="img"
+  aria-labelledby="logo-title logo-description"
+>
+  <title id="logo-title">Open Keystone project logo concept</title>
+  <desc id="logo-description">
+    A rounded open core with a detached diamond keystone at its top center.
+  </desc>
+  <path
+    d="M88 72L55 105C50.5 109.5 48 115.6 48 122V171C48 177.4 50.5 183.5 55 188L72 205C76.5 209.5 82.6 212 89 212H167C173.4 212 179.5 209.5 184 205L201 188C205.5 183.5 208 177.4 208 171V122C208 115.6 205.5 109.5 201 105L168 72"
+    stroke="#111111"
+    stroke-width="32"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <rect
+    x="114"
+    y="32"
+    width="28"
+    height="28"
+    rx="7"
+    fill="#111111"
+    transform="rotate(45 128 46)"
+  />
+</svg>
