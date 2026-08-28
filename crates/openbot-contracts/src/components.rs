@@ -10,6 +10,30 @@ pub const SHOW_QUOTE_COMPONENT_NAME: &str = "showQuote";
 pub const SHOW_QUOTE_COMPONENT_TITLE: &str = "Quotation";
 /// Model-facing default description promoted on first arrival only.
 pub const SHOW_QUOTE_COMPONENT_DESCRIPTION: &str = "Show a quotation with its attribution. Use when the exact words matter, something a person said, or a line from a document you were given.";
+/// Stable Record renderer identity.
+pub const SHOW_RECORD_COMPONENT_NAME: &str = "showRecord";
+/// Stable Record title.
+pub const SHOW_RECORD_COMPONENT_TITLE: &str = "Record";
+/// Default model-facing Record description.
+pub const SHOW_RECORD_COMPONENT_DESCRIPTION: &str = "Show one thing and its fields, an order, a person, a ticket. Use instead of describing a record in prose.";
+/// Stable Metrics renderer identity.
+pub const SHOW_METRICS_COMPONENT_NAME: &str = "showMetrics";
+/// Stable Metrics title.
+pub const SHOW_METRICS_COMPONENT_TITLE: &str = "Headline figures";
+/// Default model-facing Metrics description.
+pub const SHOW_METRICS_COMPONENT_DESCRIPTION: &str = "Show up to six headline figures, each with an optional movement. Use for a summary somebody reads at a glance.";
+/// Stable Checklist renderer identity.
+pub const SHOW_CHECKLIST_COMPONENT_NAME: &str = "showChecklist";
+/// Stable Checklist title.
+pub const SHOW_CHECKLIST_COMPONENT_TITLE: &str = "Checklist";
+/// Default model-facing Checklist description.
+pub const SHOW_CHECKLIST_COMPONENT_DESCRIPTION: &str = "Show a list of things and which are done. Reporting only, the person cannot tick these, so do not use it to ask for anything.";
+/// Stable Notice renderer identity.
+pub const SHOW_NOTICE_COMPONENT_NAME: &str = "showNotice";
+/// Stable Notice title.
+pub const SHOW_NOTICE_COMPONENT_TITLE: &str = "Notice";
+/// Default model-facing Notice description.
+pub const SHOW_NOTICE_COMPONENT_DESCRIPTION: &str = "Show a headline, a short explanation and optional supporting points. Use instead of writing several paragraphs of prose.";
 
 /// Closed grouping used by Admin and Settings presentation; never read by the model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,12 +130,46 @@ pub struct ComponentRecords {
 /// The exact compiled renderer manifest for this build.
 #[must_use]
 pub fn compiled_component_manifest() -> Vec<CompiledComponentManifestEntry> {
-    vec![CompiledComponentManifestEntry {
-        name: SHOW_QUOTE_COMPONENT_NAME.to_owned(),
-        title: SHOW_QUOTE_COMPONENT_TITLE.to_owned(),
+    vec![
+        manifest_entry(
+            SHOW_CHECKLIST_COMPONENT_NAME,
+            SHOW_CHECKLIST_COMPONENT_TITLE,
+            SHOW_CHECKLIST_COMPONENT_DESCRIPTION,
+        ),
+        manifest_entry(
+            SHOW_METRICS_COMPONENT_NAME,
+            SHOW_METRICS_COMPONENT_TITLE,
+            SHOW_METRICS_COMPONENT_DESCRIPTION,
+        ),
+        manifest_entry(
+            SHOW_NOTICE_COMPONENT_NAME,
+            SHOW_NOTICE_COMPONENT_TITLE,
+            SHOW_NOTICE_COMPONENT_DESCRIPTION,
+        ),
+        manifest_entry(
+            SHOW_QUOTE_COMPONENT_NAME,
+            SHOW_QUOTE_COMPONENT_TITLE,
+            SHOW_QUOTE_COMPONENT_DESCRIPTION,
+        ),
+        manifest_entry(
+            SHOW_RECORD_COMPONENT_NAME,
+            SHOW_RECORD_COMPONENT_TITLE,
+            SHOW_RECORD_COMPONENT_DESCRIPTION,
+        ),
+    ]
+}
+
+fn manifest_entry(
+    name: &'static str,
+    title: &'static str,
+    description: &'static str,
+) -> CompiledComponentManifestEntry {
+    CompiledComponentManifestEntry {
+        name: name.to_owned(),
+        title: title.to_owned(),
         kind: CompiledComponentKind::Card,
-        description: SHOW_QUOTE_COMPONENT_DESCRIPTION.to_owned(),
-    }]
+        description: description.to_owned(),
+    }
 }
 
 /// Exact JSON Schema for `showQuote`; renderer/tool registration share this single source.
@@ -138,6 +196,121 @@ pub fn show_quote_parameter_schema() -> Value {
     })
 }
 
+/// Exact JSON Schema for `showRecord`.
+#[must_use]
+pub fn show_record_parameter_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "title": {"type": "string", "description": "What this record is, e.g. a person or an order"},
+            "subtitle": {"type": "string", "description": "One line of context under the title"},
+            "status": {"type": "string", "description": "A short status word, e.g. Approved"},
+            "statusTone": tone_schema(),
+            "fields": {
+                "type": "array",
+                "description": "The fields, in the order they should be read",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "label": {"type": "string"},
+                        "value": {"type": "string", "description": "Already formatted for a person to read"}
+                    },
+                    "required": ["label", "value"]
+                }
+            }
+        },
+        "required": ["title", "fields"]
+    })
+}
+
+/// Exact JSON Schema for `showMetrics`.
+#[must_use]
+pub fn show_metrics_parameter_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "title": {"type": "string", "description": "What these figures are about"},
+            "caption": {"type": "string"},
+            "metrics": {
+                "type": "array",
+                "maxItems": 6,
+                "description": "Up to six figures. More than that wanted a table",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "label": {"type": "string"},
+                        "value": {"type": "string", "description": "Already formatted, including any unit or currency"},
+                        "change": {"type": "string", "description": "The movement, e.g. '+12% on last month'"},
+                        "changeTone": tone_schema()
+                    },
+                    "required": ["label", "value"]
+                }
+            }
+        },
+        "required": ["title", "metrics"]
+    })
+}
+
+/// Exact JSON Schema for `showChecklist`.
+#[must_use]
+pub fn show_checklist_parameter_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "title": {"type": "string", "description": "What this list is"},
+            "caption": {"type": "string"},
+            "items": {
+                "type": "array",
+                "description": "The items, in the order they should be done",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "text": {"type": "string"},
+                        "done": {"type": "boolean", "description": "Whether this one is already finished"},
+                        "note": {"type": "string", "description": "A short aside, e.g. who it is waiting on"}
+                    },
+                    "required": ["text", "done"]
+                }
+            }
+        },
+        "required": ["title", "items"]
+    })
+}
+
+/// Exact JSON Schema for `showNotice`.
+#[must_use]
+pub fn show_notice_parameter_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "title": {"type": "string", "description": "The headline, in a few words"},
+            "body": {"type": "string", "description": "The explanation, in one or two sentences"},
+            "tone": tone_schema(),
+            "points": {
+                "type": "array",
+                "description": "Supporting points, if there are any",
+                "items": {"type": "string"}
+            }
+        },
+        "required": ["title", "body"]
+    })
+}
+
+fn tone_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["neutral", "positive", "caution", "negative"],
+        "description": "How this reads at a glance. Use negative and caution sparingly, for a refusal, a breach or a failure, not for anything merely notable"
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,14 +318,42 @@ mod tests {
     #[test]
     fn first_manifest_and_quote_schema_are_exact_closed_and_stable() {
         let manifest = compiled_component_manifest();
-        assert_eq!(manifest.len(), 1);
-        assert_eq!(manifest[0].name, SHOW_QUOTE_COMPONENT_NAME);
-        assert_eq!(manifest[0].kind.as_str(), "card");
+        assert_eq!(manifest.len(), 5);
+        assert_eq!(
+            manifest
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                SHOW_CHECKLIST_COMPONENT_NAME,
+                SHOW_METRICS_COMPONENT_NAME,
+                SHOW_NOTICE_COMPONENT_NAME,
+                SHOW_QUOTE_COMPONENT_NAME,
+                SHOW_RECORD_COMPONENT_NAME,
+            ]
+        );
+        assert!(manifest.iter().all(|entry| entry.kind.as_str() == "card"));
         assert_eq!(
             show_quote_parameter_schema()["required"],
             json!(["quote", "attribution"])
         );
         assert_eq!(show_quote_parameter_schema()["additionalProperties"], false);
+        assert_eq!(
+            show_metrics_parameter_schema()["properties"]["metrics"]["maxItems"],
+            6
+        );
+        assert_eq!(
+            show_record_parameter_schema()["properties"]["statusTone"]["enum"],
+            json!(["neutral", "positive", "caution", "negative"])
+        );
+        assert_eq!(
+            show_checklist_parameter_schema()["required"],
+            json!(["title", "items"])
+        );
+        assert_eq!(
+            show_notice_parameter_schema()["required"],
+            json!(["title", "body"])
+        );
         assert!(
             serde_json::from_str::<ComponentCatalogueRequest>(
                 r#"{"components":[],"renderer":"untrusted"}"#

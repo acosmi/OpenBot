@@ -38,7 +38,7 @@ async fn catalogue_sync_is_exact_additive_audited_and_list_is_closed() {
                      ) VALUES
                        ('showLegacyWidget','Legacy widget','card','legacy draft','legacy published',
                         true,clock_timestamp(),'admin',clock_timestamp(),clock_timestamp()),
-                       ('showNotice','Notice','card','notice draft',NULL,false,NULL,'admin',
+                       ('showFutureChart','Future chart','chart','future draft',NULL,false,NULL,'admin',
                         clock_timestamp(),clock_timestamp());
                      INSERT INTO public.agents(id,name,type,configuration) VALUES
                        ('agent-a','Agent A','built_in','{}'),
@@ -108,7 +108,8 @@ async fn catalogue_sync_is_exact_additive_audited_and_list_is_closed() {
             let client = pool.get().await.map_err(|error| error.to_string())?;
             let rolled_back: i64 = client
                 .query_one(
-                    "SELECT count(*)::bigint FROM public.components WHERE name='showQuote'",
+                    "SELECT count(*)::bigint FROM public.components
+                      WHERE name IN ('showChecklist','showMetrics','showNotice','showQuote','showRecord')",
                     &[],
                 )
                 .await
@@ -127,11 +128,22 @@ async fn catalogue_sync_is_exact_additive_audited_and_list_is_closed() {
                 .map_err(|error| error.to_string())?;
             drop(client);
 
+            let manifest = compiled_component_manifest();
+            let expected_added = manifest
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>();
             let added = catalogue
-                .sync_catalogue(&auth, &compiled_component_manifest())
+                .sync_catalogue(&auth, &manifest)
                 .await
                 .map_err(|error| error.to_string())?;
-            if added.added.as_slice() != [SHOW_QUOTE_COMPONENT_NAME] {
+            if added
+                .added
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                != expected_added
+            {
                 return Err(format!("component first sync drift: {added:?}"));
             }
             let repeated = catalogue
@@ -191,19 +203,27 @@ async fn catalogue_sync_is_exact_additive_audited_and_list_is_closed() {
                 return Err(format!("catalogue overwrote governance: {quote:?}"));
             }
             let client = pool.get().await.map_err(|error| error.to_string())?;
-            let audits: i64 = client
+            let audit_row = client
                 .query_one(
-                    "SELECT count(*)::bigint FROM public.audit_events
-                      WHERE event_type='component.published' AND target_id='showQuote'
+                    "SELECT count(*)::bigint,
+                            count(*) FILTER (WHERE target_id='showQuote')::bigint
+                       FROM public.audit_events
+                      WHERE event_type='component.published'
                         AND actor_user_id='component-actor'",
                     &[],
                 )
                 .await
-                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?;
+            let audits: i64 = audit_row
                 .try_get(0)
                 .map_err(|error| error.to_string())?;
-            if audits != 1 {
-                return Err(format!("component catalogue audit count drift: {audits}"));
+            let quote_audits: i64 = audit_row
+                .try_get(1)
+                .map_err(|error| error.to_string())?;
+            if audits != 5 || quote_audits != 1 {
+                return Err(format!(
+                    "component catalogue audit count drift: total={audits} quote={quote_audits}"
+                ));
             }
             client
                 .execute(

@@ -445,9 +445,9 @@ impl FixtureComponents {
                     functions: Vec::new(),
                 },
                 ComponentRecord {
-                    name: "showNotice".to_owned(),
-                    title: "Notice".to_owned(),
-                    kind: CompiledComponentKind::Card,
+                    name: "showFutureChart".to_owned(),
+                    title: "Future chart".to_owned(),
+                    kind: CompiledComponentKind::Chart,
                     draft_description: "An unpublished fixture row.".to_owned(),
                     published_description: None,
                     published: false,

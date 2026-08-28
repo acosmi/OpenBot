@@ -589,7 +589,7 @@ mod tests {
     use openbot_contracts::command::ChannelSummary;
     use openbot_contracts::components::{
         CompiledComponentManifestEntry, ComponentCatalogueAdded, ComponentRecords,
-        SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
+        compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
     use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalResolved};
@@ -830,11 +830,15 @@ mod tests {
             .await;
         assert_eq!(catalogue.status(), StatusCode::OK);
         assert_eq!(catalogue.headers()[CACHE_CONTROL], "no-store");
+        let expected = compiled_component_manifest()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
         assert_eq!(
             serde_json::from_slice::<ComponentCatalogueAdded>(catalogue.body())
                 .unwrap()
                 .added,
-            [SHOW_QUOTE_COMPONENT_NAME]
+            expected
         );
 
         let stale = protocol

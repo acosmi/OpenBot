@@ -213,6 +213,10 @@ mod tests {
             1
         );
         let manifest = compiled_component_manifest();
+        let expected = manifest
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect::<Vec<_>>();
         assert_eq!(
             sync_component_catalogue(
                 &port,
@@ -224,7 +228,7 @@ mod tests {
             .await
             .unwrap()
             .added,
-            [SHOW_QUOTE_COMPONENT_NAME]
+            expected
         );
         assert_eq!(port.syncs.lock().unwrap().as_slice(), [manifest]);
     }
