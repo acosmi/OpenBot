@@ -730,8 +730,10 @@ G6 重写后的文本（替换 v3 原四条）：
   直接复用RefusedCard且零iframe。release IAB实得Playground invalid sample抑制iframe、会话双拒绝卡、
   sandbox/srcdoc/query随机与DOM/overflow/console负面边界；但该环境没有可用MessageChannel/postMessage且
   Chrome不可用，所以args注入、作者JS、无网络/回调、channel正向握手和sample正向执行不提前标绿。
-  当前components=`13/9/22`、总parity=`686/1000/1686`；Desktop独立Chromium renderer、帧流/input broker、
-  CPU/内存硬隔离、具名a11y豁免、admin正式route journey/golden/AX仍todo；
+  当前components=`13/9/22`；Desktop独立Chromium renderer、帧流/input broker、
+  CPU/内存硬隔离、具名a11y豁免、admin正式route journey/golden/AX仍todo。Batch51只补其前置
+  HumanLease/epoch与closed BrowserInput，browser-operations=`7/39/46`、总parity=`693/993/1686`；没有
+  Electron/CDP/ScreenHub实证，不改变上述Desktop renderer与a11y todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
@@ -774,7 +776,8 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-28-G6-ComponentHumanDecisions-batch47.md`、
 `docs/2026-08-28-G6-ComponentDecisionsRuntime-batch48.md`、
 `docs/2026-08-28-G6-SandboxedComponentGovernance-batch49.md` 与
-`docs/2026-08-28-G6-WebSandboxRuntime-batch50.md`；
+`docs/2026-08-28-G6-WebSandboxRuntime-batch50.md`、
+`docs/2026-08-28-G5-HumanLease与输入协议-batch51.md`；
 G6 整关继续不勾。
 
 ---
