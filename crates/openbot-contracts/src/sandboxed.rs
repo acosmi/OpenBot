@@ -14,6 +14,22 @@ use time::OffsetDateTime;
 pub const SANDBOXED_COMPONENT_PREFIX: &str = "custom_";
 /// Maximum slug bytes accepted by the fixed-upstream naming grammar.
 pub const SANDBOXED_COMPONENT_SLUG_MAX_BYTES: usize = 40;
+/// Exact fixed-upstream model-visible success reply for one sandboxed renderer call.
+pub const SANDBOXED_COMPONENT_CONFIRMATION: &str = "It is now on screen for the person.";
+
+/// Whether a name is exactly in the server-owned browser-authored namespace.
+#[must_use]
+pub fn is_sandboxed_component_name(name: &str) -> bool {
+    let Some(slug) = name.strip_prefix(SANDBOXED_COMPONENT_PREFIX) else {
+        return false;
+    };
+    let bytes = slug.as_bytes();
+    let edge = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    (2..=SANDBOXED_COMPONENT_SLUG_MAX_BYTES).contains(&bytes.len())
+        && edge(bytes[0])
+        && edge(bytes[bytes.len() - 1])
+        && bytes.iter().copied().all(|byte| edge(byte) || byte == b'_')
+}
 
 /// Closed draft accepted from the administrator playground.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,5 +181,22 @@ mod tests {
         assert!(value.get("argumentSchema").unwrap().is_object());
         assert!(value.get("sampleArguments").unwrap().is_object());
         assert!(value.get("authoredBy").is_none());
+    }
+
+    #[test]
+    fn namespaced_identity_is_exact_not_a_prefix_guess() {
+        for valid in ["custom_ab", "custom_delivery_eta", "custom_a0"] {
+            assert!(is_sandboxed_component_name(valid), "{valid}");
+        }
+        for invalid in [
+            "custom_a",
+            "custom__ab",
+            "custom_ab_",
+            "custom_A1",
+            "showQuote",
+            "custom_ab/extra",
+        ] {
+            assert!(!is_sandboxed_component_name(invalid), "{invalid}");
+        }
     }
 }

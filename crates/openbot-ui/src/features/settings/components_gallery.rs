@@ -247,6 +247,7 @@ fn component_kind_label(
         CompiledComponentKind::Chart => t_string!(i18n, gallery.kind_chart).to_owned(),
         CompiledComponentKind::Card => t_string!(i18n, gallery.kind_card).to_owned(),
         CompiledComponentKind::Decision => t_string!(i18n, gallery.kind_decision).to_owned(),
+        CompiledComponentKind::Sandboxed => t_string!(i18n, gallery.kind_sandboxed).to_owned(),
     }
 }
 

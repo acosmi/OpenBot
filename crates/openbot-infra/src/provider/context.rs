@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use openbot_application::{
     AgentContextError, AgentContextSource, ComponentAdministration, ComponentRuntimeScope,
     ProviderMessage, ProviderMessageRole, ProviderRequest, ProviderRoute, ProviderToolCall,
-    ProviderToolDefinition, RemoteAguiRoute, RunExecutionLease,
+    ProviderToolDefinition, RemoteAguiRoute, RunExecutionLease, SandboxedComponentAdministration,
 };
 use openbot_contracts::components::{
     compiled_component_manifest, compiled_component_parameter_schema,
@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use crate::component_catalogue::PostgresComponentAdministration;
 use crate::mcp_catalog::{GrantedMcpTool, McpCatalogError, PostgresMcpCatalog};
+use crate::sandboxed_components::PostgresSandboxedComponentAdministration;
 
 // SPDX-License-Identifier: MIT
 // Source: CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d
@@ -54,6 +55,7 @@ pub struct PostgresAgentContextSource {
     remote_assertions: Option<std::sync::Arc<RemoteRunAssertionSigner>>,
     mcp_catalog: Option<std::sync::Arc<PostgresMcpCatalog>>,
     components: Option<std::sync::Arc<PostgresComponentAdministration>>,
+    sandboxed_components: Option<std::sync::Arc<PostgresSandboxedComponentAdministration>>,
 }
 
 impl PostgresAgentContextSource {
@@ -78,6 +80,7 @@ impl PostgresAgentContextSource {
             remote_assertions: None,
             mcp_catalog: None,
             components: None,
+            sandboxed_components: None,
         })
     }
 
@@ -112,6 +115,16 @@ impl PostgresAgentContextSource {
         components: std::sync::Arc<PostgresComponentAdministration>,
     ) -> Self {
         self.components = Some(components);
+        self
+    }
+
+    /// Attach published sandbox source/grants used for dynamic provider definitions.
+    #[must_use]
+    pub fn with_sandboxed_components(
+        mut self,
+        components: std::sync::Arc<PostgresSandboxedComponentAdministration>,
+    ) -> Self {
+        self.sandboxed_components = Some(components);
         self
     }
 }
@@ -218,10 +231,31 @@ impl AgentContextSource for PostgresAgentContextSource {
             }
             None => Vec::new(),
         };
+        let sandboxed_component_tools = match &self.sandboxed_components {
+            Some(components) => components
+                .list_sandboxed_components_for_agent(&ComponentRuntimeScope {
+                    tenant: self.tenant.clone(),
+                    actor: lease.actor_id().clone(),
+                    admin: actor_admin,
+                    agent_id: lease.bot_id().clone(),
+                })
+                .await
+                .map_err(map_sandboxed_component_error)?
+                .components
+                .into_iter()
+                .map(|component| ProviderToolDefinition {
+                    name: component.name,
+                    description: component.description,
+                    input_schema: component.argument_schema,
+                })
+                .collect::<Vec<_>>(),
+            None => Vec::new(),
+        };
         let (route, standing_prompt, tools, max_output_tokens) = match agent_type.as_str() {
             "built_in" => {
                 let mut tools = self.tools.clone();
                 tools.extend(component_tools.clone());
+                tools.extend(sandboxed_component_tools.clone());
                 tools.extend(granted_mcp.iter().map(|tool| tool.provider_definition()));
                 (
                     provider_route(&configuration)?,
@@ -302,6 +336,7 @@ impl AgentContextSource for PostgresAgentContextSource {
                     ),
                     component_tools
                         .into_iter()
+                        .chain(sandboxed_component_tools)
                         .chain(granted_mcp.iter().map(|tool| tool.provider_definition()))
                         .collect(),
                     None,
@@ -485,6 +520,27 @@ fn map_component_error(
         openbot_application::ComponentAdministrationError::Unavailable
         | openbot_application::ComponentAdministrationError::CommitUnknown
         | openbot_application::ComponentAdministrationError::Conflict => {
+            AgentContextError::Unavailable
+        }
+    }
+}
+
+fn map_sandboxed_component_error(
+    error: openbot_application::SandboxedComponentAdministrationError,
+) -> AgentContextError {
+    match error {
+        openbot_application::SandboxedComponentAdministrationError::NotVisible => {
+            AgentContextError::Stale
+        }
+        openbot_application::SandboxedComponentAdministrationError::Corrupt { .. }
+        | openbot_application::SandboxedComponentAdministrationError::InvalidInput { .. } => {
+            AgentContextError::Corrupt {
+                field: "sandboxed_component_catalogue",
+            }
+        }
+        openbot_application::SandboxedComponentAdministrationError::Unavailable
+        | openbot_application::SandboxedComponentAdministrationError::CommitUnknown
+        | openbot_application::SandboxedComponentAdministrationError::Conflict => {
             AgentContextError::Unavailable
         }
     }

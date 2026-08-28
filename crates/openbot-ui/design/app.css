@@ -3734,7 +3734,99 @@ textarea:focus-visible,
   border-block-start: 1px solid var(--border);
 }
 
+.ob-sandbox-frame {
+  min-width: 0;
+}
+
+.ob-sandbox-iframe {
+  display: block;
+  width: 100%;
+  height: calc(var(--size-control-lg) * 7);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.ob-sandbox-frame[data-state="pending"] .ob-sandbox-iframe {
+  visibility: hidden;
+}
+
+.ob-playground-actions,
+.ob-playground-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 2);
+}
+
+.ob-playground-actions {
+  justify-content: flex-end;
+  margin-block-end: calc(var(--spacing) * 4);
+}
+
+.ob-playground-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 6);
+  align-items: start;
+}
+
+.ob-playground-editor,
+.ob-playground-preview,
+.ob-playground-saved {
+  display: grid;
+  min-width: 0;
+  gap: calc(var(--spacing) * 3);
+}
+
+.ob-playground-editor h2,
+.ob-playground-preview h2,
+.ob-playground-saved h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--text-lg--line-height);
+}
+
+.ob-playground-identity {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 3);
+}
+
+.ob-playground-code .ob-textarea {
+  min-height: calc(var(--size-control-lg) * 3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+
+.ob-playground-list {
+  display: grid;
+  gap: var(--spacing);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-playground-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 3);
+  padding-block: calc(var(--spacing) * 2);
+}
+
+.ob-playground-list p {
+  margin: var(--spacing) 0 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
 @media (max-width: 47.999rem) {
+  .ob-playground-grid,
+  .ob-playground-identity {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .ob-gallery-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

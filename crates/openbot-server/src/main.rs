@@ -131,6 +131,7 @@ struct BuiltInAgentAssemblyInput {
     remote_assertions: Arc<RemoteRunAssertionSigner>,
     mcp_catalog: Arc<PostgresMcpCatalog>,
     components: Arc<PostgresComponentAdministration>,
+    sandboxed_components: Arc<PostgresSandboxedComponentAdministration>,
     budgets: AgentBudgets,
 }
 
@@ -485,7 +486,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let application = application
         .with_agent_directory(Arc::new(PostgresAgentDirectory::new(pool.clone())))
         .with_component_administration(components.clone())
-        .with_sandboxed_component_administration(sandboxed_components)
+        .with_sandboxed_component_administration(sandboxed_components.clone())
         .with_mcp_connections(mcp_connections.clone())
         .with_tool_approvals(tool_approvals)
         .with_ui_preferences(Arc::new(PostgresUiPreferenceAdministration::new(
@@ -525,6 +526,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         remote_assertions: remote_assertions.clone(),
         mcp_catalog,
         components,
+        sandboxed_components,
         budgets: server.agent_budgets,
     })?;
     let built_in_agent_ready = built_in_agent.is_some() || !requires_agent_runtime;
@@ -630,6 +632,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         remote_assertions,
         mcp_catalog,
         components,
+        sandboxed_components,
         budgets,
     } = input;
     if !required {
@@ -701,7 +704,8 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
             .with_tools(vec![remember_provider_tool()])
             .with_remote_assertions(remote_assertions)
             .with_mcp_catalog(mcp_catalog)
-            .with_components(components),
+            .with_components(components)
+            .with_sandboxed_components(sandboxed_components),
     );
     let agent = BuiltInAgentRuntime::start(
         runtime,

@@ -49,8 +49,8 @@ use crate::ports::{
 };
 use crate::sandboxed_components::{
     NoSandboxedComponentAdministration, SandboxedComponentAdministration,
-    delete_sandboxed_component, list_published_sandboxed_components, list_sandboxed_components,
-    publish_sandboxed_component, save_sandboxed_component,
+    authorize_sandboxed_component, delete_sandboxed_component, list_published_sandboxed_components,
+    list_sandboxed_components, publish_sandboxed_component, save_sandboxed_component,
 };
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
@@ -541,6 +541,20 @@ where
                     .await?,
                 ))
             }
+            AppCommand::AuthorizeSandboxedComponent {
+                component_name,
+                agent_id,
+                arguments,
+            } => Ok(AppReply::ComponentDecision(
+                authorize_sandboxed_component(
+                    self.sandboxed_components.as_ref(),
+                    auth,
+                    component_name,
+                    agent_id,
+                    arguments,
+                )
+                .await?,
+            )),
             AppCommand::GetCurrentUser => Ok(AppReply::CurrentUser(
                 current_user(&self.people, auth).await?,
             )),

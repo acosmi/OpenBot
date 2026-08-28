@@ -4629,6 +4629,7 @@ dependencies = [
  "openbot-contracts",
  "openbot-domain",
  "openbot-infra",
+ "ring",
  "rmcp",
  "serde",
  "serde_json",
@@ -4686,6 +4687,7 @@ dependencies = [
 name = "openbot-ui"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
  "gloo-net",
  "js-sys",

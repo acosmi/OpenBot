@@ -169,7 +169,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0008"
     migration_rule: "preserve: data-testid=component-refused 与 role=status 不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50把既有RefusedCard直接复用于SandboxedComponentFrame启动/host拒绝、SandboxedConversationComponent缺source/坏result以及compiled runtime；没有第二份沙箱拒绝DOM。固定data-testid=component-refused与role=status保持。release IAB会话实得compiled refusal+sandbox capability不可用两张共享卡，testid恰2、author source正文0；Playground同一组件testid1。"
     evidence: "grep -l '^export const GALLERY' app/src/components/gallery/*.tsx 不含 refused.tsx；被 gallery-tools.tsx 与 sandboxed-tools.tsx 双方 import"
     notes: "支撑件，不是注册项（无 GALLERY 导出）。它是⑤ tool-call-time 再授权与②③④三项拒绝的唯一可见出口：compiled 侧（gallery-tools.tsx::GrantedTool / GrantedDecision）与 sandboxed 侧（sandboxed-tools.tsx::SandboxedTool）都渲染它，所以 Leptos 版必须是两条路径共用的同一个组件，不能各画各的。上游把 data-testid=component-refused 与 role=status 写死，是拒绝可被自动化断言的唯一抓手，迁移必须逐字保留。"
 
@@ -216,7 +217,8 @@ entries:
     owner: "openbot-application"
     test_id: "T-CMP-0011"
     migration_rule: "preserve: 沙箱侧不得新增 data function 通道"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50独立SandboxedComponentAdministration runtime port只有list granted与authorize(name,args)，无functions/call方法；dynamic provider definition只含published name/description/schema，Agent命令只带name/Agent/args。PG17.11真库手工给custom_delivery_eta插component_functions后，共享治理list以sandboxed_component_functions corruption fail-closed；删坏行后provider恢复，sandbox call-time路径从未查询/执行function。"
     evidence: "grep -c callComponentFunction app/src/lib/copilot/sandboxed-tools.tsx app/src/routes/_authed/admin/playground.tsx app/src/components/gallery/activity.tsx = sandboxed-tools.tsx:0 playground.tsx:0 activity.tsx:3"
     notes: "两重证据。① 词法：沙箱两个调用点对 callComponentFunction 零命中，而同一条命令在 compiled 侧 activity.tsx 命中 3 次——正向对照成立，不是命令没扫到。② 结构：server/drizzle/0000_schema.sql 里 component_functions 的外键只指向 public.components(name)（命中 1），零指向 sandboxed_components（命中 0）；sandboxed_components 是 server/src/db/schema/plugins.ts 里的独立表，名字带 custom_ 前缀（sandboxed.ts 里保证不与 compiled 名冲突），所以一个沙箱组件在库层面就无法持有 data-function 行。v3 §3.3 明确 R1 不新增这一通道，Rust 版必须让“沙箱组件没有可授予的 data function”仍是**结构性**事实而不是靠调用点自觉。"
 
@@ -260,7 +262,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0015"
     migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50 SANDBOX_IFRAME_POLICY唯一字面量恰allow-scripts，单测断词数=1并锁完整值；release IAB在Playground与durable conversation均实得sandbox='allow-scripts'、srcdoc=null、src为同源/sandbox/runner?render=<每次随机ID>#<local payload>，allow-same-origin/top-navigation/popups/downloads/forms/storage token均不存在。custom/Tauri scheme由host protocol gate直接画RefusedCard且不创建iframe。"
     evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0（正向对照见 T-CMP-0014）"
     notes: "sandbox 属性恰为 allow-scripts 一项；禁止 allow-same-origin（给了它 opaque origin 就没了，同源即可读宿主 storage 与 DOM）、禁止 top navigation、popup、download、storage。Rust 版应把这串属性做成常量并配双向断言（既断言 allow-scripts 在、也断言 allow-same-origin 不在），否则“少写一个属性”是静默失效。上游第一方源零命中，故 label=新增。"
 
@@ -271,7 +274,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0016"
     migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50 /sandbox/runner普通网络导航避免srcdoc继承父CSP；Server每响应以唯一builder下发逐字default-src 'none'; connect-src 'none'; script-src 'nonce-<random>'; style-src 'unsafe-inline'; img-src data: blob:。Server单测双响应前后缀exact、bootstrap恰一个nonce script；runner源码无fetch/XMLHttpRequest/atob/TextDecoder，用户script首句清nonce且bootstrap已自删除。"
     evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0（正向对照见 T-CMP-0014）"
     notes: "CSP 逐字固定为：default-src 'none'; connect-src 'none'; script-src 'nonce-<per-render-random>'; style-src 'unsafe-inline'; img-src data: blob:。connect-src 'none' 是 sandbox-no-network 在本仓的兑现方式；style-src 'unsafe-inline' 是有意放开的（作者 CSS 就是产品本身），img-src 只放 data: 与 blob: 即不出网。这串必须是单一常量并配单测逐字比对：CSP 写错一个指令不会报错，只会静默不生效。上游第一方源零 CSP 字面量，故 label=新增。"
 
@@ -282,7 +286,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0017"
     migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50 Server用ring SystemRandom每次GET /sandbox/runner生成32字节/64 hex nonce；双响应测试断言nonce各自合法且互不相等，HTML script nonce与同响应CSP exact相等。作者执行script由bootstrap临时赋同nonce，但固定前缀在作者代码前清空nonce/attribute；bootstrap自身执行开头保存nonce后立即清空并remove，作者HTML拿不到仍有效的nonce。"
     evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0（正向对照见 T-CMP-0014）"
     notes: "nonce 每次渲染重新随机；Rust wrapper **只**给本次封装后的用户脚本设置该 nonce，不给任何其它 script 标签。判据必须是“每次 render 取到的 nonce 互不相等”，而不是“nonce 非空”——常量 nonce 在 CSP 下同样能跑通，正好是失效模式。上游第一方源零命中，故 label=新增。"
 

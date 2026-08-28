@@ -4,13 +4,17 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use openbot_contracts::auth::{AuthContext, Role};
+use openbot_contracts::components::{ComponentDecision, ComponentDecisionRefusal};
 use openbot_contracts::error::AppError;
+use openbot_contracts::ids::BotId;
 use openbot_contracts::sandboxed::{
     PublishedSandboxedComponent, PublishedSandboxedComponents, SANDBOXED_COMPONENT_PREFIX,
-    SANDBOXED_COMPONENT_SLUG_MAX_BYTES, SandboxedComponentDeleted, SandboxedComponentRecord,
-    SandboxedComponentResponse, SandboxedComponents, SaveSandboxedComponentRequest,
+    SandboxedComponentDeleted, SandboxedComponentRecord, SandboxedComponentResponse,
+    SandboxedComponents, SaveSandboxedComponentRequest, is_sandboxed_component_name,
 };
 use serde_json::Value;
+
+use crate::components::ComponentRuntimeScope;
 
 /// Application/in-process equivalent of the global HTTP request-body boundary.
 pub const MAX_SANDBOXED_COMPONENT_DRAFT_BYTES: usize = 1024 * 1024;
@@ -36,6 +40,26 @@ pub struct SandboxedComponentDraft {
     pub argument_schema: BTreeMap<String, Value>,
     /// Administrator-only playground arguments.
     pub sample_arguments: BTreeMap<String, Value>,
+}
+
+/// One current published sandbox definition granted to a runnable Agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrantedSandboxedComponent {
+    /// Stable `custom_` provider tool and renderer identity.
+    pub name: String,
+    /// Current published model-facing description.
+    pub description: String,
+    /// Current published JSON Schema.
+    pub argument_schema: Value,
+    /// Current monotonic published revision.
+    pub revision: u32,
+}
+
+/// Current dynamic sandbox definitions for one runnable Agent.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GrantedSandboxedComponents {
+    /// Published, non-withheld definitions in stable name order.
+    pub components: Vec<GrantedSandboxedComponent>,
 }
 
 /// Stable sandboxed-component failures without SQL text or untrusted source.
@@ -120,6 +144,24 @@ pub trait SandboxedComponentAdministration: Send + Sync {
         auth: &AuthContext,
         component_name: &str,
     ) -> Result<(), SandboxedComponentAdministrationError>;
+
+    /// List current published sandbox definitions granted to one authoritative Agent scope.
+    async fn list_sandboxed_components_for_agent(
+        &self,
+        _scope: &ComponentRuntimeScope,
+    ) -> Result<GrantedSandboxedComponents, SandboxedComponentAdministrationError> {
+        Err(SandboxedComponentAdministrationError::Unavailable)
+    }
+
+    /// Recheck publication, withholding, and current schema for one exact provider call.
+    async fn authorize_sandboxed_component(
+        &self,
+        _scope: &ComponentRuntimeScope,
+        _component_name: &str,
+        _arguments: &Value,
+    ) -> Result<ComponentDecision, SandboxedComponentAdministrationError> {
+        Err(SandboxedComponentAdministrationError::Unavailable)
+    }
 }
 
 /// Fail-closed default used until the production adapter is injected.
@@ -274,6 +316,78 @@ pub async fn delete_sandboxed_component(
     Ok(SandboxedComponentDeleted { ok: true })
 }
 
+/// Re-authorize one dynamic sandbox renderer against current publication/schema/grant facts.
+pub async fn authorize_sandboxed_component(
+    port: &dyn SandboxedComponentAdministration,
+    auth: &AuthContext,
+    component_name: String,
+    agent_id: BotId,
+    arguments: Value,
+) -> Result<ComponentDecision, AppError> {
+    validate_sandboxed_name(&component_name)
+        .map_err(SandboxedComponentAdministrationError::into_app_error)?;
+    if agent_id.as_str().is_empty()
+        || agent_id.as_str().len() > MAX_ACTOR_IDENTIFIER_BYTES
+        || agent_id.as_str().as_bytes().contains(&0)
+    {
+        return Err(
+            SandboxedComponentAdministrationError::InvalidInput { field: "agent_id" }
+                .into_app_error(),
+        );
+    }
+    let object = arguments
+        .as_object()
+        .ok_or(SandboxedComponentAdministrationError::InvalidInput {
+            field: "component_arguments",
+        })
+        .map_err(SandboxedComponentAdministrationError::into_app_error)?;
+    let encoded = serde_json::to_vec(&arguments)
+        .map_err(|_| SandboxedComponentAdministrationError::InvalidInput {
+            field: "component_arguments",
+        })
+        .map_err(SandboxedComponentAdministrationError::into_app_error)?;
+    if encoded.len() > MAX_SANDBOXED_COMPONENT_DRAFT_BYTES {
+        return Err(SandboxedComponentAdministrationError::InvalidInput {
+            field: "component_arguments",
+        }
+        .into_app_error());
+    }
+    validate_json_object(
+        &object
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        "component_arguments",
+    )
+    .map_err(SandboxedComponentAdministrationError::into_app_error)?;
+    let scope = ComponentRuntimeScope {
+        tenant: auth.tenant().clone(),
+        actor: auth.actor().clone(),
+        admin: auth.has_role(Role::Admin),
+        agent_id,
+    };
+    let decision = port
+        .authorize_sandboxed_component(&scope, &component_name, &arguments)
+        .await
+        .map_err(SandboxedComponentAdministrationError::into_app_error)?;
+    let shape_valid = decision.allowed == decision.refusal.is_none();
+    let refusal_valid = decision.refusal.as_ref().is_none_or(|refusal| {
+        matches!(
+            refusal,
+            ComponentDecisionRefusal::UnknownComponent
+                | ComponentDecisionRefusal::Unpublished
+                | ComponentDecisionRefusal::WithheldFromAgent
+        )
+    });
+    if !shape_valid || !refusal_valid {
+        return Err(SandboxedComponentAdministrationError::Corrupt {
+            field: "sandboxed_component_decision",
+        }
+        .into_app_error());
+    }
+    Ok(decision)
+}
+
 fn require_admin(auth: &AuthContext) -> Result<(), AppError> {
     if auth.has_role(Role::Admin) {
         Ok(())
@@ -317,14 +431,7 @@ fn validate_draft(
 }
 
 fn validate_slug(slug: &str) -> Result<(), SandboxedComponentAdministrationError> {
-    let bytes = slug.as_bytes();
-    let edge = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
-    let inner = |byte: u8| edge(byte) || byte == b'_';
-    if !(2..=SANDBOXED_COMPONENT_SLUG_MAX_BYTES).contains(&bytes.len())
-        || !edge(bytes[0])
-        || !edge(bytes[bytes.len() - 1])
-        || !bytes.iter().copied().all(inner)
-    {
+    if !is_sandboxed_component_name(&format!("{SANDBOXED_COMPONENT_PREFIX}{slug}")) {
         Err(SandboxedComponentAdministrationError::InvalidInput { field: "slug" })
     } else {
         Ok(())
@@ -332,14 +439,13 @@ fn validate_slug(slug: &str) -> Result<(), SandboxedComponentAdministrationError
 }
 
 fn validate_sandboxed_name(name: &str) -> Result<(), SandboxedComponentAdministrationError> {
-    let slug = name.strip_prefix(SANDBOXED_COMPONENT_PREFIX).ok_or(
-        SandboxedComponentAdministrationError::InvalidInput {
+    if is_sandboxed_component_name(name) {
+        Ok(())
+    } else {
+        Err(SandboxedComponentAdministrationError::InvalidInput {
             field: "component_name",
-        },
-    )?;
-    validate_slug(slug).map_err(|_| SandboxedComponentAdministrationError::InvalidInput {
-        field: "component_name",
-    })
+        })
+    }
 }
 
 fn validate_required_text(
@@ -614,5 +720,40 @@ mod tests {
                 field: "argument_schema"
             })
         );
+    }
+
+    #[tokio::test]
+    async fn dynamic_authorization_validates_namespace_agent_and_object_before_the_port() {
+        let user = auth(Role::User);
+        for (name, agent, arguments) in [
+            ("showQuote", "agent-1", serde_json::json!({})),
+            ("custom_ab", "", serde_json::json!({})),
+            ("custom_ab", "agent-1", serde_json::json!([])),
+        ] {
+            assert!(matches!(
+                authorize_sandboxed_component(
+                    &NoSandboxedComponentAdministration,
+                    &user,
+                    name.to_owned(),
+                    BotId::new(agent),
+                    arguments,
+                )
+                .await,
+                Err(AppError::MalformedPayload { .. })
+            ));
+        }
+        assert!(matches!(
+            authorize_sandboxed_component(
+                &NoSandboxedComponentAdministration,
+                &user,
+                "custom_ab".to_owned(),
+                BotId::new("agent-1"),
+                serde_json::json!({"title":"ok"}),
+            )
+            .await,
+            Err(AppError::DependencyUnavailable {
+                dependency: "sandboxed_components"
+            })
+        ));
     }
 }

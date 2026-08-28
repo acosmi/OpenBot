@@ -78,6 +78,7 @@ time.workspace = true
 tokio.workspace = true
 hmac.workspace = true
 sha2.workspace = true
+ring.workspace = true
 zeroize.workspace = true
 
 # §16.4「Server 暴露 Prometheus metrics」。**门面 + exporter 两层**，不直接依赖 prometheus

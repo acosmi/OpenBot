@@ -488,6 +488,7 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::SaveSandboxedComponent(_)
         | AppCommand::PublishSandboxedComponent { .. }
         | AppCommand::DeleteSandboxedComponent { .. }
+        | AppCommand::AuthorizeSandboxedComponent { .. }
         | AppCommand::AdminStatus
         | AppCommand::ListPeople { .. }
         | AppCommand::ChangePersonRole { .. }

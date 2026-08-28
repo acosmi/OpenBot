@@ -3,6 +3,7 @@
 use leptos::prelude::*;
 use openbot_contracts::components::*;
 use openbot_contracts::ids::BotId;
+use openbot_contracts::sandboxed::is_sandboxed_component_name;
 use serde_json::{Map, Value};
 
 use crate::i18n::{t_string, use_i18n};
@@ -21,6 +22,12 @@ pub fn ConversationComponent(
     ask_disabled: Signal<bool>,
 ) -> AnyView {
     let i18n = use_i18n();
+    if is_sandboxed_component_name(&name) {
+        return view! {
+            <SandboxedConversationComponent name arguments result error_code />
+        }
+        .into_any();
+    }
     let title = compiled_component_title(&name)
         .unwrap_or("Component")
         .to_owned();

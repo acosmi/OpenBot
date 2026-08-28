@@ -162,10 +162,11 @@ pub use run_runtime::{
     RunWriteReceipt,
 };
 pub use sandboxed_components::{
-    MAX_SANDBOXED_COMPONENT_DRAFT_BYTES, NoSandboxedComponentAdministration,
-    SandboxedComponentAdministration, SandboxedComponentAdministrationError,
-    SandboxedComponentDraft, delete_sandboxed_component, list_published_sandboxed_components,
-    list_sandboxed_components, publish_sandboxed_component, save_sandboxed_component,
+    GrantedSandboxedComponent, GrantedSandboxedComponents, MAX_SANDBOXED_COMPONENT_DRAFT_BYTES,
+    NoSandboxedComponentAdministration, SandboxedComponentAdministration,
+    SandboxedComponentAdministrationError, SandboxedComponentDraft, authorize_sandboxed_component,
+    delete_sandboxed_component, list_published_sandboxed_components, list_sandboxed_components,
+    publish_sandboxed_component, save_sandboxed_component,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,

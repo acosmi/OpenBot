@@ -1,5 +1,6 @@
 //! 业务界面的纯 projection 与未来 Leptos 组件模块。
 
+pub mod admin;
 pub mod agents;
 pub mod app_sidebar;
 pub mod approvals;

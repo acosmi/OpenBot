@@ -1071,7 +1071,7 @@ async fn component_grant_facts(
     })
 }
 
-async fn ensure_runnable_agent(
+pub(crate) async fn ensure_runnable_agent(
     transaction: &Transaction<'_>,
     scope: &ComponentRuntimeScope,
 ) -> Result<(), ComponentAdministrationError> {
@@ -1300,7 +1300,7 @@ async fn append_component_function_outcome(
     Ok(())
 }
 
-fn component_refusal(
+pub(crate) fn component_refusal(
     reason: ComponentGrantRefusal,
     function: Option<String>,
 ) -> Result<ComponentDecisionRefusal, ComponentAdministrationError> {
@@ -1369,6 +1369,24 @@ async fn append_component_refusal(
         .await
         .map_err(infra_unavailable)?;
     Ok(())
+}
+
+pub(crate) async fn append_sandboxed_component_refusal(
+    transaction: &Transaction<'_>,
+    scope: &ComponentRuntimeScope,
+    component_name: &str,
+    refusal: &ComponentDecisionRefusal,
+    checkpoint_key: &[u8],
+) -> Result<(), ComponentAdministrationError> {
+    append_component_refusal(
+        transaction,
+        scope,
+        component_name,
+        refusal,
+        None,
+        checkpoint_key,
+    )
+    .await
 }
 
 async fn append_component_human_audit(
@@ -1506,7 +1524,7 @@ async fn expire_component_human_decision(
     .await
 }
 
-async fn commit_component_runtime(
+pub(crate) async fn commit_component_runtime(
     transaction: deadpool_postgres::Transaction<'_>,
     operation: &'static str,
 ) -> Result<(), ComponentAdministrationError> {
@@ -1624,8 +1642,12 @@ fn decode_record(row: &Row) -> Result<ComponentRecord, ComponentAdministrationEr
         "chart" => CompiledComponentKind::Chart,
         "card" => CompiledComponentKind::Card,
         "decision" => CompiledComponentKind::Decision,
+        "sandboxed" => CompiledComponentKind::Sandboxed,
         _ => return Err(corrupt("kind")),
     };
+    if kind == CompiledComponentKind::Sandboxed && !functions.is_empty() {
+        return Err(corrupt("sandboxed_component_functions"));
+    }
     let has_unpublished_changes =
         draft_description != published_description.as_deref().unwrap_or("");
     Ok(ComponentRecord {

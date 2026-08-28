@@ -110,6 +110,8 @@ pub enum CompiledComponentKind {
     Card,
     /// Human-in-the-loop decision surface.
     Decision,
+    /// Browser-authored source executed only by an isolated sandbox renderer.
+    Sandboxed,
 }
 
 impl CompiledComponentKind {
@@ -120,6 +122,7 @@ impl CompiledComponentKind {
             Self::Chart => "chart",
             Self::Card => "card",
             Self::Decision => "decision",
+            Self::Sandboxed => "sandboxed",
         }
     }
 }

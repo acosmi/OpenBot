@@ -5,21 +5,28 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use deadpool_postgres::{Pool, Transaction as PooledTransaction};
 use openbot_application::{
-    SandboxedComponentAdministration, SandboxedComponentAdministrationError,
-    SandboxedComponentDraft,
+    ComponentAdministrationError, ComponentRuntimeScope, GrantedSandboxedComponent,
+    GrantedSandboxedComponents, SandboxedComponentAdministration,
+    SandboxedComponentAdministrationError, SandboxedComponentDraft,
 };
 use openbot_contracts::auth::AuthContext;
+use openbot_contracts::components::ComponentDecision;
 use openbot_contracts::sandboxed::{
     PublishedSandboxedComponent, PublishedSandboxedComponents, SandboxedComponentRecord,
-    SandboxedComponents,
+    SandboxedComponents, is_sandboxed_component_name,
 };
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
 use openbot_domain::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
+use openbot_domain::components::{ComponentGrantFacts, decide_component_grant};
 use openbot_domain::vault::SecretBytes;
 use serde_json::{Map, Value};
 use time::OffsetDateTime;
 use tokio_postgres::{IsolationLevel, Row, Transaction as PgTransaction};
 
+use crate::component_catalogue::{
+    append_sandboxed_component_refusal, commit_component_runtime, component_refusal,
+    ensure_runnable_agent,
+};
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 
 const SANDBOXED_KIND: &str = "sandboxed";
@@ -105,6 +112,11 @@ impl SandboxedComponentAdministration for PostgresSandboxedComponentAdministrati
         auth: &AuthContext,
         draft: &SandboxedComponentDraft,
     ) -> Result<SandboxedComponentRecord, SandboxedComponentAdministrationError> {
+        compile_sandbox_schema(&object_value(&draft.argument_schema)).map_err(|_| {
+            SandboxedComponentAdministrationError::InvalidInput {
+                field: "argument_schema",
+            }
+        })?;
         let mut client = self.pool.get().await.map_err(unavailable)?;
         let transaction = client
             .build_transaction()
@@ -360,6 +372,173 @@ impl SandboxedComponentAdministration for PostgresSandboxedComponentAdministrati
         .await?;
         commit(transaction, "sandboxed_component_delete").await
     }
+
+    async fn list_sandboxed_components_for_agent(
+        &self,
+        scope: &ComponentRuntimeScope,
+    ) -> Result<GrantedSandboxedComponents, SandboxedComponentAdministrationError> {
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::RepeatableRead)
+            .start()
+            .await
+            .map_err(query_unavailable)?;
+        ensure_runnable_agent(&transaction, scope)
+            .await
+            .map_err(map_component_runtime_error)?;
+        let rows = transaction
+            .query(
+                "SELECT coalesce(c.name,s.name) AS name,c.kind,
+                        c.published AS governance_published,c.published_description,
+                        s.name AS source_name,s.published AS source_published,
+                        s.published_html,s.published_css,s.published_js_functions,
+                        s.published_argument_schema,s.revision,
+                        (e.agent_id IS NOT NULL) AS withheld_from_agent
+                   FROM public.components c
+              FULL JOIN public.sandboxed_components s ON s.name=c.name
+              LEFT JOIN public.component_exclusions e
+                     ON e.component_name=coalesce(c.name,s.name) AND e.agent_id=$1
+                  WHERE (c.kind='sandboxed' AND c.published=true)
+                     OR s.published=true
+               ORDER BY coalesce(c.name,s.name)",
+                &[&scope.agent_id.as_str()],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let mut components = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let definition = decode_granted_sandboxed(row)?;
+            if !row
+                .try_get::<_, bool>("withheld_from_agent")
+                .map_err(|_| corrupt("component_exclusion"))?
+            {
+                components.push(definition);
+            }
+        }
+        transaction.commit().await.map_err(query_unavailable)?;
+        Ok(GrantedSandboxedComponents { components })
+    }
+
+    async fn authorize_sandboxed_component(
+        &self,
+        scope: &ComponentRuntimeScope,
+        component_name: &str,
+        arguments: &Value,
+    ) -> Result<ComponentDecision, SandboxedComponentAdministrationError> {
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await
+            .map_err(query_unavailable)?;
+        ensure_runnable_agent(&transaction, scope)
+            .await
+            .map_err(map_component_runtime_error)?;
+        transaction
+            .query_opt(
+                "SELECT name FROM public.components WHERE name=$1 FOR UPDATE",
+                &[&component_name],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        transaction
+            .query_opt(
+                "SELECT name FROM public.sandboxed_components WHERE name=$1 FOR UPDATE",
+                &[&component_name],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let row = transaction
+            .query_one(
+                "SELECT c.name AS governance_name,c.kind,
+                        coalesce(c.published,false) AS governance_published,
+                        c.published_description,s.name AS source_name,
+                        coalesce(s.published,false) AS source_published,
+                        s.published_html,s.published_css,s.published_js_functions,
+                        s.published_argument_schema,s.revision,
+                        (e.agent_id IS NOT NULL) AS withheld_from_agent
+                   FROM (VALUES(1)) AS singleton(value)
+              LEFT JOIN public.components c ON c.name=$1
+              LEFT JOIN public.sandboxed_components s ON s.name=c.name
+              LEFT JOIN public.component_exclusions e
+                     ON e.component_name=c.name AND e.agent_id=$2",
+                &[&component_name, &scope.agent_id.as_str()],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let governance_name = row
+            .try_get::<_, Option<String>>("governance_name")
+            .map_err(|_| corrupt("component_governance"))?;
+        let kind = row
+            .try_get::<_, Option<String>>("kind")
+            .map_err(|_| corrupt("component_kind"))?;
+        let source_name = row
+            .try_get::<_, Option<String>>("source_name")
+            .map_err(|_| corrupt("sandboxed_source"))?;
+        let owned = governance_name.as_deref() == Some(component_name)
+            && kind.as_deref() == Some(SANDBOXED_KIND)
+            && source_name.as_deref() == Some(component_name)
+            && is_sandboxed_component_name(component_name);
+        if kind.as_deref() == Some(SANDBOXED_KIND) && source_name.is_none() {
+            return Err(corrupt("sandboxed_source"));
+        }
+        let governance_published = row
+            .try_get::<_, bool>("governance_published")
+            .map_err(|_| corrupt("published"))?;
+        let source_published = row
+            .try_get::<_, bool>("source_published")
+            .map_err(|_| corrupt("published"))?;
+        if owned && governance_published != source_published {
+            return Err(corrupt("component_governance"));
+        }
+        let published = owned && governance_published && source_published;
+        let description = row
+            .try_get::<_, Option<String>>("published_description")
+            .map_err(|_| corrupt("published_description"))?;
+        let facts = ComponentGrantFacts {
+            exists: owned,
+            published,
+            has_published_description: description.is_some(),
+            withheld_from_agent: row
+                .try_get("withheld_from_agent")
+                .map_err(|_| corrupt("component_exclusion"))?,
+        };
+        if let openbot_domain::components::ComponentGrantDecision::Refused(reason) =
+            decide_component_grant(facts)
+        {
+            let refusal = component_refusal(reason, None).map_err(map_component_runtime_error)?;
+            append_sandboxed_component_refusal(
+                &transaction,
+                scope,
+                component_name,
+                &refusal,
+                self.checkpoint_key.expose(),
+            )
+            .await
+            .map_err(map_component_runtime_error)?;
+            commit_component_runtime(transaction, "sandboxed_component_refusal")
+                .await
+                .map_err(map_component_runtime_error)?;
+            return Ok(ComponentDecision::refused(refusal));
+        }
+        let schema = row
+            .try_get::<_, Option<Value>>("published_argument_schema")
+            .map_err(|_| corrupt("published_argument_schema"))?
+            .ok_or_else(|| corrupt("published_argument_schema"))?;
+        required_published(&row, "published_html")?;
+        required_published(&row, "published_css")?;
+        required_published(&row, "published_js_functions")?;
+        let validator = compile_sandbox_schema(&schema)?;
+        if !arguments.is_object() || !validator.is_valid(arguments) {
+            return Err(SandboxedComponentAdministrationError::InvalidInput {
+                field: "component_arguments",
+            });
+        }
+        transaction.commit().await.map_err(query_unavailable)?;
+        Ok(ComponentDecision::allowed())
+    }
 }
 
 fn record_query(suffix: &str) -> String {
@@ -514,6 +693,124 @@ fn decode_published(
             "published_argument_schema",
         )?,
     })
+}
+
+fn decode_granted_sandboxed(
+    row: &Row,
+) -> Result<GrantedSandboxedComponent, SandboxedComponentAdministrationError> {
+    let name = row
+        .try_get::<_, String>("name")
+        .map_err(|_| corrupt("component_name"))?;
+    let source_name = row
+        .try_get::<_, Option<String>>("source_name")
+        .map_err(|_| corrupt("sandboxed_source"))?;
+    if !is_sandboxed_component_name(&name)
+        || source_name.as_deref() != Some(name.as_str())
+        || row
+            .try_get::<_, Option<String>>("kind")
+            .map_err(|_| corrupt("component_kind"))?
+            .as_deref()
+            != Some(SANDBOXED_KIND)
+        || row
+            .try_get::<_, Option<bool>>("governance_published")
+            .map_err(|_| corrupt("component_governance"))?
+            != Some(true)
+        || row
+            .try_get::<_, Option<bool>>("source_published")
+            .map_err(|_| corrupt("published"))?
+            != Some(true)
+    {
+        return Err(corrupt("component_governance"));
+    }
+    required_published(row, "published_html")?;
+    required_published(row, "published_css")?;
+    required_published(row, "published_js_functions")?;
+    let description = row
+        .try_get::<_, Option<String>>("published_description")
+        .map_err(|_| corrupt("published_description"))?
+        .ok_or_else(|| corrupt("published_description"))?;
+    if description.is_empty()
+        || description.len() > 16 * 1024
+        || description.as_bytes().contains(&0)
+    {
+        return Err(corrupt("published_description"));
+    }
+    let argument_schema = row
+        .try_get::<_, Option<Value>>("published_argument_schema")
+        .map_err(|_| corrupt("published_argument_schema"))?
+        .ok_or_else(|| corrupt("published_argument_schema"))?;
+    compile_sandbox_schema(&argument_schema)?;
+    let revision = row
+        .try_get::<_, Option<i32>>("revision")
+        .map_err(|_| corrupt("revision"))?
+        .ok_or_else(|| corrupt("revision"))?;
+    if revision < 1 {
+        return Err(corrupt("revision"));
+    }
+    Ok(GrantedSandboxedComponent {
+        name,
+        description,
+        argument_schema,
+        revision: u32::try_from(revision).map_err(|_| corrupt("revision"))?,
+    })
+}
+
+fn compile_sandbox_schema(
+    schema: &Value,
+) -> Result<jsonschema::Validator, SandboxedComponentAdministrationError> {
+    if !schema.is_object() || contains_external_schema_reference(schema) {
+        return Err(corrupt("published_argument_schema"));
+    }
+    jsonschema::options()
+        .with_pattern_options(
+            jsonschema::PatternOptions::regex()
+                .size_limit(1024 * 1024)
+                .dfa_size_limit(1024 * 1024),
+        )
+        .build(schema)
+        .map_err(|_| corrupt("published_argument_schema"))
+}
+
+fn contains_external_schema_reference(schema: &Value) -> bool {
+    let mut stack = vec![schema];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::Object(object) => {
+                if object
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reference| !reference.starts_with('#'))
+                {
+                    return true;
+                }
+                stack.extend(object.values());
+            }
+            Value::Array(values) => stack.extend(values),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+    false
+}
+
+fn map_component_runtime_error(
+    error: ComponentAdministrationError,
+) -> SandboxedComponentAdministrationError {
+    match error {
+        ComponentAdministrationError::InvalidInput { field }
+        | ComponentAdministrationError::Corrupt { field } => {
+            SandboxedComponentAdministrationError::Corrupt { field }
+        }
+        ComponentAdministrationError::NotVisible => {
+            SandboxedComponentAdministrationError::NotVisible
+        }
+        ComponentAdministrationError::Conflict => SandboxedComponentAdministrationError::Conflict,
+        ComponentAdministrationError::Unavailable => {
+            SandboxedComponentAdministrationError::Unavailable
+        }
+        ComponentAdministrationError::CommitUnknown => {
+            SandboxedComponentAdministrationError::CommitUnknown
+        }
+    }
 }
 
 fn required_published(

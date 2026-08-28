@@ -204,6 +204,16 @@ pub enum AppCommand {
         component_name: String,
     },
 
+    /// Internal Agent-host call-time authorization for one published sandboxed renderer.
+    AuthorizeSandboxedComponent {
+        /// Untrusted namespaced provider tool identity.
+        component_name: String,
+        /// Current run's authoritative Agent identity.
+        agent_id: BotId,
+        /// Provider arguments validated again against the current published schema.
+        arguments: serde_json::Value,
+    },
+
     /// 返回当前已验证 actor 的公开资料。
     GetCurrentUser,
 

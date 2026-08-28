@@ -56,6 +56,7 @@ pub mod memories;
 pub mod metrics;
 pub mod plugins;
 pub mod routing;
+pub mod sandbox_runner;
 pub mod sandboxed;
 pub mod session;
 pub mod static_app;
@@ -526,6 +527,7 @@ pub fn router(state: ServerState) -> Router {
             post(sandboxed::publish_post),
         )
         .route("/api/sandboxed/{name}", delete(sandboxed::delete))
+        .route("/sandbox/runner", get(sandbox_runner::document))
         .route("/api/tool-approvals", get(approvals::pending_get))
         .route(
             "/api/tool-approvals/{approval_id}",

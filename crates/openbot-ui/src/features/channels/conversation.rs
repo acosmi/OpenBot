@@ -22,6 +22,7 @@ use openbot_contracts::components::{
     compiled_component_parameter_schema,
 };
 use openbot_contracts::ids::{BotId, RunId, ThreadId};
+use openbot_contracts::sandboxed::is_sandboxed_component_name;
 use openbot_contracts::text::trim_ecmascript;
 use sha2::{Digest, Sha256};
 
@@ -325,7 +326,9 @@ fn project_history(messages: &[ThreadHistoryMessage]) -> Vec<TranscriptLine> {
                         let Some((call_id, name, arguments)) = durable_tool_call(call) else {
                             continue;
                         };
-                        if compiled_component_parameter_schema(&name).is_some() {
+                        if compiled_component_parameter_schema(&name).is_some()
+                            || is_sandboxed_component_name(&name)
+                        {
                             let index = projected.len();
                             projected.push(TranscriptLine {
                                 id: format!("{}:{call_id}", message.id),
@@ -1621,6 +1624,48 @@ mod tests {
             Some(r#"{"choice":"prod","label":"Production"}"#)
         );
         assert_eq!(component.error_code, None);
+    }
+
+    #[test]
+    fn durable_sandboxed_call_is_projected_by_exact_namespace_not_prefix_guess() {
+        let messages = [
+            ThreadHistoryMessage {
+                id: "sandbox-call".to_owned(),
+                role: ThreadHistoryRole::Assistant,
+                content: String::new(),
+                agent_id: Some(BotId::new("bot-1")),
+                tool_call_id: None,
+                tool_name: None,
+                tool_error_code: None,
+                tool_calls: Some(vec![serde_json::json!({
+                    "id":"provider-sandbox-1",
+                    "type":"function",
+                    "function":{
+                        "name":"custom_delivery_eta",
+                        "arguments":{"title":"Tomorrow"}
+                    }
+                })]),
+            },
+            ThreadHistoryMessage {
+                id: "sandbox-result".to_owned(),
+                role: ThreadHistoryRole::Tool,
+                content: "It is now on screen for the person.".to_owned(),
+                agent_id: Some(BotId::new("bot-1")),
+                tool_call_id: Some("provider-sandbox-1".to_owned()),
+                tool_name: Some("custom_delivery_eta".to_owned()),
+                tool_error_code: None,
+                tool_calls: None,
+            },
+        ];
+        let lines = project_history(&messages);
+        assert_eq!(lines.len(), 1);
+        let component = lines[0].component.as_ref().unwrap();
+        assert_eq!(component.name, "custom_delivery_eta");
+        assert_eq!(component.arguments, serde_json::json!({"title":"Tomorrow"}));
+        assert_eq!(
+            component.result.as_deref(),
+            Some("It is now on screen for the person.")
+        );
     }
 
     #[test]

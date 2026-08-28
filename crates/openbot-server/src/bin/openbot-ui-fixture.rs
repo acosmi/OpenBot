@@ -1,6 +1,6 @@
 //! Local-only deterministic GUI fixture host required by the GUI first-source golden workflow.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -19,9 +19,11 @@ use openbot_application::{
     MemoryAdministration, MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest,
     MutateMemoryRequest, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
     PeoplePortError, PortError, RecallMemoriesRequest, RememberMemoryRequest,
-    ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription,
-    ThreadHistoryRequest, ToolApprovalAdministration, ToolApprovalAdministrationError,
-    UiPreferenceAdministration, UiPreferenceAdministrationError, UpdateMemoryControlRequest,
+    SandboxedComponentAdministration, SandboxedComponentAdministrationError,
+    SandboxedComponentDraft, ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError,
+    ThreadEventSubscription, ThreadHistoryRequest, ToolApprovalAdministration,
+    ToolApprovalAdministrationError, UiPreferenceAdministration, UiPreferenceAdministrationError,
+    UpdateMemoryControlRequest,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
@@ -53,6 +55,10 @@ use openbot_contracts::memory::{
     MemoryRecord, MemoryScope, MemorySensitivity, MemorySource, MemoryStatus,
 };
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
+use openbot_contracts::sandboxed::{
+    PublishedSandboxedComponent, PublishedSandboxedComponents, SandboxedComponentRecord,
+    SandboxedComponents,
+};
 use openbot_contracts::tool::{
     PendingToolApproval, PendingToolApprovals, ToolApprovalClass, ToolApprovalDecision,
     ToolApprovalEffect, ToolApprovalResolved,
@@ -711,6 +717,177 @@ impl ComponentAdministration for FixtureComponents {
 }
 
 #[derive(Clone)]
+struct FixtureSandboxed {
+    rows: Arc<Mutex<Vec<SandboxedComponentRecord>>>,
+    now: OffsetDateTime,
+}
+
+impl FixtureSandboxed {
+    fn new(now: OffsetDateTime) -> Self {
+        Self {
+            rows: Arc::new(Mutex::new(vec![SandboxedComponentRecord {
+                name: "custom_delivery_eta".to_owned(),
+                title: "Delivery ETA".to_owned(),
+                draft_description: "Show a delivery estimate.".to_owned(),
+                draft_html: "<div class=\"eta\"><strong id=\"eta-title\"></strong><span id=\"eta-body\"></span></div>".to_owned(),
+                draft_css: ".eta { display: grid; gap: 6px; padding: 12px; font: 14px system-ui; }".to_owned(),
+                draft_js_functions: "document.getElementById('eta-title').textContent = window.__args.title || 'Delivery'; document.getElementById('eta-body').textContent = window.__args.body || ''; document.body.dataset.argsInjected = window.__args.title || '';".to_owned(),
+                draft_argument_schema: BTreeMap::from([
+                    ("type".to_owned(), serde_json::json!("object")),
+                    ("properties".to_owned(), serde_json::json!({"title":{"type":"string"},"body":{"type":"string"}})),
+                ]),
+                published_html: Some("<div class=\"eta\"><strong id=\"eta-title\"></strong><span id=\"eta-body\"></span></div>".to_owned()),
+                published_css: Some(".eta { display: grid; gap: 6px; padding: 12px; font: 14px system-ui; }".to_owned()),
+                published_js_functions: Some("document.getElementById('eta-title').textContent = window.__args.title || 'Delivery'; document.getElementById('eta-body').textContent = window.__args.body || ''; document.body.dataset.argsInjected = window.__args.title || '';".to_owned()),
+                published_argument_schema: Some(BTreeMap::from([
+                    ("type".to_owned(), serde_json::json!("object")),
+                    ("properties".to_owned(), serde_json::json!({"title":{"type":"string"},"body":{"type":"string"}})),
+                ])),
+                sample_arguments: BTreeMap::from([
+                    ("title".to_owned(), serde_json::json!("Arrives tomorrow")),
+                    ("body".to_owned(), serde_json::json!("Tracked from the published fixture.")),
+                ]),
+                revision: 1,
+                published: true,
+                published_at: Some(now),
+                authored_by: Some("fixture-actor".to_owned()),
+                has_unpublished_changes: false,
+            }])),
+            now,
+        }
+    }
+}
+
+#[async_trait]
+impl SandboxedComponentAdministration for FixtureSandboxed {
+    async fn list_sandboxed_components(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<SandboxedComponents, SandboxedComponentAdministrationError> {
+        let mut components = self
+            .rows
+            .lock()
+            .map_err(|_| SandboxedComponentAdministrationError::Unavailable)?
+            .clone();
+        components
+            .sort_by(|left, right| (&left.title, &left.name).cmp(&(&right.title, &right.name)));
+        Ok(SandboxedComponents { components })
+    }
+
+    async fn list_published_sandboxed_components(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<PublishedSandboxedComponents, SandboxedComponentAdministrationError> {
+        let rows = self
+            .rows
+            .lock()
+            .map_err(|_| SandboxedComponentAdministrationError::Unavailable)?;
+        let mut components = rows
+            .iter()
+            .filter(|row| row.published)
+            .map(|row| PublishedSandboxedComponent {
+                name: row.name.clone(),
+                html: row.published_html.clone().unwrap_or_default(),
+                css: row.published_css.clone().unwrap_or_default(),
+                js_functions: row.published_js_functions.clone().unwrap_or_default(),
+                argument_schema: row.published_argument_schema.clone().unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        components.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(PublishedSandboxedComponents { components })
+    }
+
+    async fn save_sandboxed_component(
+        &self,
+        auth: &AuthContext,
+        draft: &SandboxedComponentDraft,
+    ) -> Result<SandboxedComponentRecord, SandboxedComponentAdministrationError> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| SandboxedComponentAdministrationError::Unavailable)?;
+        if let Some(row) = rows.iter_mut().find(|row| row.name == draft.name) {
+            row.title = draft.title.clone();
+            row.draft_description = draft.description.clone();
+            row.draft_html = draft.html.clone();
+            row.draft_css = draft.css.clone();
+            row.draft_js_functions = draft.js_functions.clone();
+            row.draft_argument_schema = draft.argument_schema.clone();
+            row.sample_arguments = draft.sample_arguments.clone();
+            row.authored_by = Some(auth.actor().as_str().to_owned());
+            row.has_unpublished_changes = row.published
+                && (row.published_html.as_deref() != Some(row.draft_html.as_str())
+                    || row.published_css.as_deref() != Some(row.draft_css.as_str())
+                    || row.published_js_functions.as_deref()
+                        != Some(row.draft_js_functions.as_str()));
+            return Ok(row.clone());
+        }
+        let row = SandboxedComponentRecord {
+            name: draft.name.clone(),
+            title: draft.title.clone(),
+            draft_description: draft.description.clone(),
+            draft_html: draft.html.clone(),
+            draft_css: draft.css.clone(),
+            draft_js_functions: draft.js_functions.clone(),
+            draft_argument_schema: draft.argument_schema.clone(),
+            published_html: None,
+            published_css: None,
+            published_js_functions: None,
+            published_argument_schema: None,
+            sample_arguments: draft.sample_arguments.clone(),
+            revision: 0,
+            published: false,
+            published_at: None,
+            authored_by: Some(auth.actor().as_str().to_owned()),
+            has_unpublished_changes: false,
+        };
+        rows.push(row.clone());
+        Ok(row)
+    }
+
+    async fn publish_sandboxed_component(
+        &self,
+        _auth: &AuthContext,
+        component_name: &str,
+    ) -> Result<SandboxedComponentRecord, SandboxedComponentAdministrationError> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| SandboxedComponentAdministrationError::Unavailable)?;
+        let row = rows
+            .iter_mut()
+            .find(|row| row.name == component_name)
+            .ok_or(SandboxedComponentAdministrationError::NotVisible)?;
+        row.published_html = Some(row.draft_html.clone());
+        row.published_css = Some(row.draft_css.clone());
+        row.published_js_functions = Some(row.draft_js_functions.clone());
+        row.published_argument_schema = Some(row.draft_argument_schema.clone());
+        row.revision = row.revision.saturating_add(1);
+        row.published = true;
+        row.published_at = Some(self.now);
+        row.has_unpublished_changes = false;
+        Ok(row.clone())
+    }
+
+    async fn delete_sandboxed_component(
+        &self,
+        _auth: &AuthContext,
+        component_name: &str,
+    ) -> Result<(), SandboxedComponentAdministrationError> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| SandboxedComponentAdministrationError::Unavailable)?;
+        let before = rows.len();
+        rows.retain(|row| row.name != component_name);
+        if rows.len() == before {
+            return Err(SandboxedComponentAdministrationError::NotVisible);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
 struct FixtureMemory {
     tenant: TenantId,
     actor: ActorId,
@@ -1217,6 +1394,36 @@ impl FixtureThreads {
                         tool_call_id: Some("fixture-provider-refused-component".to_owned()),
                         tool_name: Some("showNotice".to_owned()),
                         tool_error_code: Some("component_withheld".to_owned()),
+                        tool_calls: None,
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-sandboxed-component-call".to_owned(),
+                        role: ThreadHistoryRole::Assistant,
+                        content: String::new(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: None,
+                        tool_name: None,
+                        tool_error_code: None,
+                        tool_calls: Some(vec![serde_json::json!({
+                            "id":"fixture-provider-sandboxed-component",
+                            "type":"function",
+                            "function":{
+                                "name":"custom_delivery_eta",
+                                "arguments":{
+                                    "title":"Arrives tomorrow",
+                                    "body":"Rendered from published sandbox source."
+                                }
+                            }
+                        })]),
+                    },
+                    ThreadHistoryMessage {
+                        id: "fixture-sandboxed-component-result".to_owned(),
+                        role: ThreadHistoryRole::Tool,
+                        content: "It is now on screen for the person.".to_owned(),
+                        agent_id: Some(BotId::new("bot-0")),
+                        tool_call_id: Some("fixture-provider-sandboxed-component".to_owned()),
+                        tool_name: Some("custom_delivery_eta".to_owned()),
+                        tool_error_code: None,
                         tool_calls: None,
                     },
                 ],
@@ -1930,7 +2137,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         DeploymentId::new("fixture-deployment"),
         tenant.clone(),
         actor.clone(),
-        [Role::User],
+        [Role::User, Role::Admin],
         generation,
         false,
     );
@@ -1954,11 +2161,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let memory = FixtureMemory::new(tenant, actor.clone(), now);
     let connections = FixtureConnections::new(actor, port, now);
     let components = FixtureComponents::new(now, threads.clone());
+    let sandboxed = FixtureSandboxed::new(now);
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
             .with_agent_directory(Arc::new(FixtureAgents::new()))
             .with_component_administration(Arc::new(components))
+            .with_sandboxed_component_administration(Arc::new(sandboxed))
             .with_people(FixturePeople)
             .with_threads(threads)
             .with_memory(memory)

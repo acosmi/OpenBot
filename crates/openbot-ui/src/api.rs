@@ -40,6 +40,14 @@ use openbot_contracts::memory::{MemoryScope, MemoryStatus};
 use openbot_contracts::people::CurrentUser;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::people::CurrentUserResponse;
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::sandboxed::SandboxedComponentDeleted;
+#[cfg(any(target_arch = "wasm32", test))]
+use openbot_contracts::sandboxed::{PublishedSandboxedComponent, SandboxedComponentRecord};
+use openbot_contracts::sandboxed::{
+    PublishedSandboxedComponents, SandboxedComponentResponse, SandboxedComponents,
+    SaveSandboxedComponentRequest, is_sandboxed_component_name,
+};
 use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalDecision, ToolApprovalResolved};
 use openbot_contracts::ui::{SessionStatus, UiPreferences, UpdateUiPreferences};
 
@@ -128,6 +136,179 @@ pub async fn load_components() -> Result<ComponentRecords, ApiError> {
             .map_err(|_| ApiError::InvalidResponse)?;
         validate_component_records(&records)?;
         Ok(records)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load administrator-only sandbox drafts and sample arguments.
+pub async fn load_sandboxed_components() -> Result<SandboxedComponents, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/sandboxed")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let components = response
+            .json::<SandboxedComponents>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_sandboxed_components(&components)?;
+        Ok(components)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load published sandbox source; the response type cannot contain drafts or sample arguments.
+pub async fn load_published_sandboxed_components() -> Result<PublishedSandboxedComponents, ApiError>
+{
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/sandboxed/published")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let components = response
+            .json::<PublishedSandboxedComponents>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_published_sandboxed_components(&components)?;
+        Ok(components)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Save one fresh-admin sandbox draft without publishing it.
+pub async fn save_sandboxed_component_draft(
+    request: &SaveSandboxedComponentRequest,
+) -> Result<SandboxedComponentResponse, ApiError> {
+    validate_sandboxed_request(request)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::post("/api/sandboxed")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(request)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let saved = response
+            .json::<SandboxedComponentResponse>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_sandboxed_record(&saved.component)?;
+        Ok(saved)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Save the editor state, then publish exactly that stored draft as the next revision.
+pub async fn publish_sandboxed_component(
+    request: &SaveSandboxedComponentRequest,
+) -> Result<SandboxedComponentResponse, ApiError> {
+    let saved = save_sandboxed_component_draft(request).await?;
+    let name = saved.component.name;
+    if !is_sandboxed_component_name(&name) {
+        return Err(ApiError::InvalidResponse);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = format!("/api/sandboxed/{}/publish", encode_url_component(&name));
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let published = response
+            .json::<SandboxedComponentResponse>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_sandboxed_record(&published.component)?;
+        if published.component.name != name || !published.component.published {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(published)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Delete one fresh-admin browser-authored component.
+pub async fn delete_sandboxed_component(name: &str) -> Result<(), ApiError> {
+    if !is_sandboxed_component_name(name) {
+        return Err(ApiError::InvalidResponse);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = format!("/api/sandboxed/{}", encode_url_component(name));
+        let response = Request::delete(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let deleted = response
+            .json::<SandboxedComponentDeleted>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if !deleted.ok {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1335,9 +1516,117 @@ fn validate_component_records(records: &ComponentRecords) -> Result<(), ApiError
     Ok(())
 }
 
+fn validate_sandboxed_request(request: &SaveSandboxedComponentRequest) -> Result<(), ApiError> {
+    if !is_sandboxed_component_name(&format!("custom_{}", request.slug))
+        || request.title.is_empty()
+        || request.title.as_bytes().contains(&0)
+        || [
+            &request.description,
+            &request.html,
+            &request.css,
+            &request.js_functions,
+        ]
+        .into_iter()
+        .any(|value| value.as_bytes().contains(&0))
+        || serde_json::to_vec(request)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .len()
+            > 1024 * 1024
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_sandboxed_components(components: &SandboxedComponents) -> Result<(), ApiError> {
+    let mut previous = None::<(&str, &str)>;
+    for component in &components.components {
+        validate_sandboxed_record(component)?;
+        let key = (component.title.as_str(), component.name.as_str());
+        if previous.is_some_and(|previous| previous >= key) {
+            return Err(ApiError::InvalidResponse);
+        }
+        previous = Some(key);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_sandboxed_record(component: &SandboxedComponentRecord) -> Result<(), ApiError> {
+    if !is_sandboxed_component_name(&component.name)
+        || component.title.is_empty()
+        || component.title.as_bytes().contains(&0)
+        || [
+            component.draft_description.as_str(),
+            component.draft_html.as_str(),
+            component.draft_css.as_str(),
+            component.draft_js_functions.as_str(),
+        ]
+        .into_iter()
+        .any(|value| value.as_bytes().contains(&0))
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    if component.published
+        && (component.revision == 0
+            || component.published_at.is_none()
+            || component.published_html.is_none()
+            || component.published_css.is_none()
+            || component.published_js_functions.is_none()
+            || component.published_argument_schema.is_none())
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    let expected_changes = component.published
+        && (component.published_html.as_deref() != Some(component.draft_html.as_str())
+            || component.published_css.as_deref() != Some(component.draft_css.as_str())
+            || component.published_js_functions.as_deref()
+                != Some(component.draft_js_functions.as_str()));
+    if component.has_unpublished_changes != expected_changes {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_published_sandboxed_components(
+    components: &PublishedSandboxedComponents,
+) -> Result<(), ApiError> {
+    let mut previous = None::<&str>;
+    for component in &components.components {
+        validate_published_sandboxed_component(component)?;
+        if previous.is_some_and(|previous| previous >= component.name.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+        previous = Some(component.name.as_str());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_published_sandboxed_component(
+    component: &PublishedSandboxedComponent,
+) -> Result<(), ApiError> {
+    if !is_sandboxed_component_name(&component.name)
+        || [&component.html, &component.css, &component.js_functions]
+            .into_iter()
+            .any(|value| value.as_bytes().contains(&0))
+    {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(any(target_arch = "wasm32", test))]
 fn validate_component_record(record: &ComponentRecord) -> Result<(), ApiError> {
     validate_component_name(&record.name)?;
+    if record.kind == openbot_contracts::components::CompiledComponentKind::Sandboxed
+        && (!is_sandboxed_component_name(&record.name) || !record.functions.is_empty())
+    {
+        return Err(ApiError::InvalidResponse);
+    }
     validate_component_identifier(&record.title, 512)?;
     validate_component_description(&record.draft_description)?;
     if let Some(description) = record.published_description.as_deref() {
@@ -1925,6 +2214,8 @@ fn status_error(status: u16) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use openbot_contracts::components::{
         ASK_APPROVAL_COMPONENT_NAME, CompiledComponentKind, PendingComponentHumanDecision,
         SHOW_QUOTE_COMPONENT_NAME,
@@ -2115,6 +2406,60 @@ mod tests {
                 200,
             )
             .unwrap_err(),
+            ApiError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn sandboxed_admin_and_published_projections_are_closed_and_sorted() {
+        let record = SandboxedComponentRecord {
+            name: "custom_delivery_eta".to_owned(),
+            title: "Delivery ETA".to_owned(),
+            draft_description: "Show an ETA.".to_owned(),
+            draft_html: "<p>ETA</p>".to_owned(),
+            draft_css: "p{}".to_owned(),
+            draft_js_functions: "document.body.dataset.ok='1';".to_owned(),
+            draft_argument_schema: BTreeMap::new(),
+            published_html: Some("<p>ETA</p>".to_owned()),
+            published_css: Some("p{}".to_owned()),
+            published_js_functions: Some("document.body.dataset.ok='1';".to_owned()),
+            published_argument_schema: Some(BTreeMap::new()),
+            sample_arguments: BTreeMap::new(),
+            revision: 1,
+            published: true,
+            published_at: Some(OffsetDateTime::UNIX_EPOCH),
+            authored_by: Some("actor".to_owned()),
+            has_unpublished_changes: false,
+        };
+        assert!(
+            validate_sandboxed_components(&SandboxedComponents {
+                components: vec![record.clone()],
+            })
+            .is_ok()
+        );
+        assert!(
+            validate_published_sandboxed_components(&PublishedSandboxedComponents {
+                components: vec![PublishedSandboxedComponent {
+                    name: record.name.clone(),
+                    html: record.published_html.clone().unwrap(),
+                    css: record.published_css.clone().unwrap(),
+                    js_functions: record.published_js_functions.clone().unwrap(),
+                    argument_schema: BTreeMap::new(),
+                }],
+            })
+            .is_ok()
+        );
+        let mut changed = record.clone();
+        changed.draft_html = "<p>changed</p>".to_owned();
+        assert_eq!(
+            validate_sandboxed_record(&changed).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let mut shared = component_record("custom_delivery_eta", "Delivery ETA", true);
+        shared.kind = CompiledComponentKind::Sandboxed;
+        shared.functions = vec!["botActivity".to_owned()];
+        assert_eq!(
+            validate_component_record(&shared).unwrap_err(),
             ApiError::InvalidResponse
         );
     }

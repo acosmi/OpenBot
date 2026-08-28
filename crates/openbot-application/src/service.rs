@@ -120,6 +120,7 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::SaveSandboxedComponent(_) => "save_sandboxed_component",
         AppCommand::PublishSandboxedComponent { .. } => "publish_sandboxed_component",
         AppCommand::DeleteSandboxedComponent { .. } => "delete_sandboxed_component",
+        AppCommand::AuthorizeSandboxedComponent { .. } => "authorize_sandboxed_component",
         AppCommand::GetCurrentUser => "get_current_user",
         AppCommand::AdminStatus => "admin_status",
         AppCommand::ListPeople { .. } => "list_people",

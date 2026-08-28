@@ -17,6 +17,7 @@ use openbot_contracts::components::{
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::{BotId, RunId, ToolCallId};
+use openbot_contracts::sandboxed::{SANDBOXED_COMPONENT_CONFIRMATION, is_sandboxed_component_name};
 use openbot_contracts::tool::{ToolInvocation, ToolResult};
 use serde_json::Value;
 use uuid::Uuid;
@@ -460,6 +461,71 @@ impl AuthorizedAgentToolGateway {
             ) => Err(AgentToolInvokeError::Unavailable),
         })
     }
+
+    async fn invoke_sandboxed_component(
+        &self,
+        auth: AuthContext,
+        lease: &RunExecutionLease,
+        name: &str,
+        arguments: &Value,
+    ) -> Option<Result<AgentToolReply, AgentToolInvokeError>> {
+        if !is_sandboxed_component_name(name) {
+            return None;
+        }
+        let call_id = ToolCallId::new(Uuid::now_v7().to_string());
+        let result = self
+            .gateway
+            .application()
+            .execute(
+                auth,
+                AppCommand::AuthorizeSandboxedComponent {
+                    component_name: name.to_owned(),
+                    agent_id: lease.bot_id().clone(),
+                    arguments: arguments.clone(),
+                },
+            )
+            .await;
+        Some(match result {
+            Ok(AppReply::ComponentDecision(decision)) if decision.allowed => {
+                AgentToolReply::new(call_id, SANDBOXED_COMPONENT_CONFIRMATION.to_owned(), None)
+            }
+            Ok(AppReply::ComponentDecision(decision)) => match decision.refusal {
+                Some(refusal) => AgentToolReply::new(
+                    call_id,
+                    sandboxed_component_refusal_message(name, &refusal),
+                    Some(refusal.code_str().to_owned()),
+                ),
+                None => Err(AgentToolInvokeError::Unavailable),
+            },
+            Ok(_) => Err(AgentToolInvokeError::Unavailable),
+            Err(AppError::MalformedPayload { .. }) => Ok(normalized_error_reply(
+                call_id,
+                "invalid_arguments",
+                "Component arguments were invalid, so nothing was shown.",
+            )),
+            Err(AppError::NotVisible | AppError::ForbiddenRole { .. }) => {
+                Ok(normalized_error_reply(
+                    call_id,
+                    "component_not_available",
+                    "Component is not available, so nothing was shown.",
+                ))
+            }
+            Err(AppError::ReconciliationRequired { .. }) => {
+                Err(AgentToolInvokeError::ReconciliationRequired)
+            }
+            Err(
+                AppError::Unauthenticated
+                | AppError::DependencyUnavailable { .. }
+                | AppError::VendorFailure { .. }
+                | AppError::PolicyRefused { .. }
+                | AppError::StaleGeneration { .. }
+                | AppError::RequestConflict { .. }
+                | AppError::LeaseConflict { .. }
+                | AppError::IdentityConflict { .. }
+                | AppError::SensitiveWriteRefused { .. },
+            ) => Err(AgentToolInvokeError::Unavailable),
+        })
+    }
 }
 
 impl core::fmt::Debug for AuthorizedAgentToolGateway {
@@ -491,6 +557,12 @@ impl AgentToolInvoker for AuthorizedAgentToolGateway {
         }
         if let Some(result) = self
             .invoke_component(auth.clone(), lease, tool_name, &arguments)
+            .await
+        {
+            return result;
+        }
+        if let Some(result) = self
+            .invoke_sandboxed_component(auth.clone(), lease, tool_name, &arguments)
             .await
         {
             return result;
@@ -606,6 +678,23 @@ fn component_refusal_message(name: &str, refusal: &ComponentDecisionRefusal) -> 
     format!("Not shown: {title}. {reason} Nothing was displayed, so tell the person that.")
 }
 
+fn sandboxed_component_refusal_message(name: &str, refusal: &ComponentDecisionRefusal) -> String {
+    let reason = match refusal {
+        ComponentDecisionRefusal::UnknownComponent
+        | ComponentDecisionRefusal::Unpublished
+        | ComponentDecisionRefusal::WithheldFromAgent => {
+            "It is not available to this Bot at the moment."
+        }
+        ComponentDecisionRefusal::FunctionNotGranted { .. }
+        | ComponentDecisionRefusal::FunctionUnavailable { .. }
+        | ComponentDecisionRefusal::FunctionActorNotAuthorized { .. }
+        | ComponentDecisionRefusal::FunctionPolicyRefused { .. } => {
+            "Its sandbox contract was invalid."
+        }
+    };
+    format!("Not shown: {name}. {reason} Nothing was displayed, so tell the person that.")
+}
+
 impl core::fmt::Debug for AgentToolGateway {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("AgentToolGateway")
@@ -678,6 +767,11 @@ mod tests {
         answer: ComponentHumanDecisionAnswer,
     }
 
+    struct SandboxedComponentApplication {
+        decision: ComponentDecision,
+        calls: Mutex<Vec<(ActorId, String, BotId, Value)>>,
+    }
+
     #[async_trait]
     impl ApplicationService for ComponentApplication {
         async fn execute(
@@ -731,6 +825,41 @@ mod tests {
                     replayed: false,
                 },
             ))
+        }
+
+        async fn subscribe(
+            &self,
+            _auth: AuthContext,
+            _request: SubscriptionRequest,
+        ) -> Result<AppEventStream, AppError> {
+            Ok(openbot_application::use_cases::health_stream(
+                Duration::from_secs(1),
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl ApplicationService for SandboxedComponentApplication {
+        async fn execute(
+            &self,
+            auth: AuthContext,
+            command: AppCommand,
+        ) -> Result<AppReply, AppError> {
+            let AppCommand::AuthorizeSandboxedComponent {
+                component_name,
+                agent_id,
+                arguments,
+            } = command
+            else {
+                return Ok(AppReply::Health(HealthReport { ok: true }));
+            };
+            self.calls.lock().unwrap().push((
+                auth.actor().clone(),
+                component_name,
+                agent_id,
+                arguments,
+            ));
+            Ok(AppReply::ComponentDecision(self.decision.clone()))
         }
 
         async fn subscribe(
@@ -976,6 +1105,57 @@ mod tests {
             .unwrap();
         assert_eq!(reply.error_code(), Some("component_withheld"));
         assert!(reply.content().starts_with("Not shown: Quotation."));
+    }
+
+    #[tokio::test]
+    async fn sandboxed_component_uses_dynamic_authority_and_exact_upstream_confirmation() {
+        let application = Arc::new(SandboxedComponentApplication {
+            decision: ComponentDecision::allowed(),
+            calls: Mutex::new(Vec::new()),
+        });
+        let gateway =
+            AuthorizedAgentToolGateway::new(application.clone(), Arc::new(FixedAuthorization));
+        let arguments = json!({"title":"Delivery ETA"});
+        let reply = gateway
+            .invoke(
+                &lease(),
+                "provider-sandbox-1",
+                "custom_delivery_eta",
+                arguments.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.content(), SANDBOXED_COMPONENT_CONFIRMATION);
+        assert_eq!(reply.error_code(), None);
+        {
+            let calls = application.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].0.as_str(), "actor-verified");
+            assert_eq!(calls[0].1, "custom_delivery_eta");
+            assert_eq!(calls[0].2.as_str(), "bot-1");
+            assert_eq!(calls[0].3, arguments);
+        }
+
+        let refused = Arc::new(SandboxedComponentApplication {
+            decision: ComponentDecision::refused(ComponentDecisionRefusal::WithheldFromAgent),
+            calls: Mutex::new(Vec::new()),
+        });
+        let gateway = AuthorizedAgentToolGateway::new(refused, Arc::new(FixedAuthorization));
+        let reply = gateway
+            .invoke(
+                &lease(),
+                "provider-sandbox-2",
+                "custom_delivery_eta",
+                json!({"title":"Delivery ETA"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.error_code(), Some("component_withheld"));
+        assert!(
+            reply
+                .content()
+                .starts_with("Not shown: custom_delivery_eta.")
+        );
     }
 
     #[tokio::test]
