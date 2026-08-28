@@ -4,6 +4,9 @@
 > `ba38563`。固定上游`CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`。
 > 本机定向测试；不运行`cargo xtask ci`，不派发Actions，不触碰`docs/assets/`。
 
+> 已完成：implementation `c742adbfb23d1bdf03b36ffb09ce9dac2d696e2b`；正式证据见
+> `docs/2026-08-28-G6-GalleryActivityData-batch44.md`与R107。本文件保留为恢复点历史。
+
 ## 已核实的第一真源
 
 - v3 §3.3固定：data function每次调用重新检查component current state、Bot grant、actor ACL、policy
