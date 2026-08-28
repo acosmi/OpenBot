@@ -4,6 +4,9 @@
 > `19ff9a8`。固定上游`CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`。
 > 本机定向测试；不运行`cargo xtask ci`，不派发Actions，不触碰`docs/assets/`。
 
+> 已完成：implementation `15fdb401851f0fca666399e25270fc98cdd4a381`；正式证据见
+> `docs/2026-08-27-G6-ComponentRuntime-batch43.md`与R106。本文件保留为恢复点历史。
+
 ## 已亲自复核的第一真源
 
 - v3 §3.3：compiled gallery必须同时保留参数schema、published、per-Bot withholding、
@@ -31,4 +34,3 @@
    null description、withheld、function missing、audit rollback与撤权后旧snapshot再调用；
 6. Decisions、Activity data functions、admin mutation、sandbox、formal golden若无法与上述边界同批完整闭合，
    分到后续独立批次，不提前修改对应parity为done。
-
