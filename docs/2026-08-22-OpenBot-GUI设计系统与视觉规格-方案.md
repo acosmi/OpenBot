@@ -619,7 +619,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（2026-08-27，Batch 15–42）
+### 15.1 当前实施勾选（2026-08-28，Batch 15–47）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -713,12 +713,15 @@ G6 重写后的文本（替换 v3 原四条）：
   独立tool identity，Checklist只读且semantic badge背景0。Axum/Tauri同一typed command。ordinary 11项
   已接fresh provider grant/decision、closed args、durable call/result/Agent三向配对与conversation runtime；
   Activity两种非空report的follow-up ask已逐字接唯一BeginThreadRun，绑定component真实Agent；busy禁用，
-  首次503后Retry复用同一run id。Decisions两个HITL renderer、Refused sandbox共用与formal golden仍todo；
+  首次503后Retry复用同一run id。Batch47已为`askApproval`/`askChoice`建立独立native0023 durable
+  request/list/answer/wait、closed authority/answer与Axum/Tauri typed控制面；但两个name刻意尚未进入
+  production manifest/provider，Agent `AwaitingHuman`暂停/恢复与两个HITL renderer仍todo，不能把后端
+  地基冒充可交互GUI。Refused sandbox共用与formal golden也仍todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
 - [ ] 其余24个route journey、AppSidebar总项+其余32个业务组件、1 brand icon、6 runtime替代、Decisions
-  两个compiled HITL renderer与sandboxed gallery、multi-window lifecycle/ACL及真实macOS/Windows binary
+  Agent暂停/恢复与两个compiled HITL renderer、sandboxed gallery、multi-window lifecycle/ACL及真实macOS/Windows binary
   尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
@@ -744,7 +747,16 @@ G6 重写后的文本（替换 v3 原四条）：
 `docs/2026-08-27-G3-G6-DurableCancel与Queue-batch35.md`、
 `docs/2026-08-27-G3-G6-MemoryControls-batch36.md`、
 `docs/2026-08-27-G6-SettingsPreferences-batch37.md`、
-`docs/2026-08-27-G6-SettingsShell-batch38.md`；
+`docs/2026-08-27-G6-SettingsShell-batch38.md`、
+`docs/2026-08-27-G4-G6-ConnectedAccounts-batch39.md`、
+`docs/2026-08-27-G6-ComponentsGalleryQuote-batch40.md`、
+`docs/2026-08-27-G6-GalleryCards-batch41.md`、
+`docs/2026-08-27-G6-GalleryCharts-batch42.md`、
+`docs/2026-08-27-G6-ComponentRuntime-batch43.md`、
+`docs/2026-08-28-G6-GalleryActivityData-batch44.md`、
+`docs/2026-08-28-G6-ComponentConversation-batch45.md`、
+`docs/2026-08-28-G6-ActivityFollowUp-batch46.md` 与
+`docs/2026-08-28-G6-ComponentHumanDecisions-batch47.md`；
 G6 整关继续不勾。
 
 ---
