@@ -1,7 +1,8 @@
 # OpenBot 图标 allowlist 单一真源
 #
 # 真源文档：docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md §4.6
-# 文档 §4.6.2 的两张表是本文件在 2026-08-22 的人类快照；不一致以本文件为准，同 PR 改回文档。
+# 文档 §4.6.2 的映射表、本文件的 upstream_tabler/name 与 parity/ui.yaml 图标 target 由
+# design-lint 三向逐条 join；任一不一致直接判红，不允许在冲突时静默选择其中一份。
 #
 # 消费者（GUI 方案 §4.6.1、§13）：
 #   crates/openbot-ui/build.rs 读本文件 + design/icons/<name>.svg，生成 src/icons.rs 的

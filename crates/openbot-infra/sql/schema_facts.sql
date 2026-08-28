@@ -15,6 +15,10 @@
 -- enum 标签按 enumsortorder）：没有 ORDER BY 的聚合，其顺序取决于计划器当天选了什么，
 -- 那样的输出没法逐字段比对。
 --
+-- `NOT NULL` 只认 `columns[].notnull`。PostgreSQL 18 会把同一事实另以 `pg_constraint.contype='n'`
+-- 暴露，PostgreSQL 17 不会；把 `n` 再收进 constraints 会既重复计数，又让同一份 DDL 的输出
+-- 随服务端大版本变化。因此 constraints 显式排除 `n`，列级非空事实仍逐列完整保留。
+--
 -- 输出结构（与 `fixtures/db/schema-0012.json` 逐字段对应，Rust 侧类型见
 -- `openbot-infra::db::schema_facts::SchemaFacts`）：
 --   {tables:[{name,columns:[{name,type,notnull,default,ordinal}],
@@ -37,7 +41,7 @@ SELECT jsonb_pretty(jsonb_build_object(
         'constraints', (SELECT coalesce(jsonb_agg(jsonb_build_object(
              'name', con.conname, 'type', con.contype, 'def', pg_get_constraintdef(con.oid)
            ) ORDER BY con.conname), '[]'::jsonb)
-           FROM pg_constraint con WHERE con.conrelid=c.oid),
+           FROM pg_constraint con WHERE con.conrelid=c.oid AND con.contype <> 'n'),
         'indexes', (SELECT coalesce(jsonb_agg(jsonb_build_object(
              'name', ci.relname, 'def', pg_get_indexdef(i.indexrelid)
            ) ORDER BY ci.relname), '[]'::jsonb)

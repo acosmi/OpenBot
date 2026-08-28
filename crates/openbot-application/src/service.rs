@@ -101,6 +101,60 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
     match command {
         AppCommand::Health => "health",
         AppCommand::ListVisibleChannels { .. } => "list_visible_channels",
+        AppCommand::GetVisibleChannel { .. } => "get_visible_channel",
+        AppCommand::CreateChannel { .. } => "create_channel",
+        AppCommand::RouteChannelMessage { .. } => "route_channel_message",
+        AppCommand::ListVisibleAgents { .. } => "list_visible_agents",
+        AppCommand::GetVisibleAgent { .. } => "get_visible_agent",
+        AppCommand::ListComponents => "list_components",
+        AppCommand::SyncComponentCatalogue(_) => "sync_component_catalogue",
+        AppCommand::ListComponentsForAgent { .. } => "list_components_for_agent",
+        AppCommand::DecideComponent { .. } => "decide_component",
+        AppCommand::ListComponentDataFunctions => "list_component_data_functions",
+        AppCommand::CallComponentFunction { .. } => "call_component_function",
+        AppCommand::AwaitComponentHumanDecision(_) => "await_component_human_decision",
+        AppCommand::ListPendingComponentHumanDecisions => "list_pending_component_human_decisions",
+        AppCommand::ResolveComponentHumanDecision { .. } => "resolve_component_human_decision",
+        AppCommand::ListSandboxedComponents => "list_sandboxed_components",
+        AppCommand::ListPublishedSandboxedComponents => "list_published_sandboxed_components",
+        AppCommand::SaveSandboxedComponent(_) => "save_sandboxed_component",
+        AppCommand::PublishSandboxedComponent { .. } => "publish_sandboxed_component",
+        AppCommand::DeleteSandboxedComponent { .. } => "delete_sandboxed_component",
+        AppCommand::AuthorizeSandboxedComponent { .. } => "authorize_sandboxed_component",
+        AppCommand::GetCurrentUser => "get_current_user",
+        AppCommand::AdminStatus => "admin_status",
+        AppCommand::ListPeople { .. } => "list_people",
+        AppCommand::ChangePersonRole { .. } => "change_person_role",
+        AppCommand::ChangePersonAccess { .. } => "change_person_access",
+        AppCommand::ListAuditEvents { .. } => "list_audit_events",
+        AppCommand::GetActionPolicy => "get_action_policy",
+        AppCommand::SetActionPolicy { .. } => "set_action_policy",
+        AppCommand::InvokeTool(_) => "invoke_tool",
+        AppCommand::MintThreadId => "mint_thread_id",
+        AppCommand::GetThreadStatus { .. } => "get_thread_status",
+        AppCommand::BeginThreadRun(_) => "begin_thread_run",
+        AppCommand::CancelThreadRun(_) => "cancel_thread_run",
+        AppCommand::GetThreadHistory { .. } => "get_thread_history",
+        AppCommand::GetThreadConversation { .. } => "get_thread_conversation",
+        AppCommand::RememberMemory(_) => "remember_memory",
+        AppCommand::GetMemoryControl => "get_memory_control",
+        AppCommand::UpdateMemoryControl(_) => "update_memory_control",
+        AppCommand::ListMemories { .. } => "list_memories",
+        AppCommand::CorrectMemory { .. } => "correct_memory",
+        AppCommand::MutateMemory { .. } => "mutate_memory",
+        AppCommand::RecallMemories(_) => "recall_memories",
+        AppCommand::IssueAgentCallbackToken { .. } => "issue_agent_callback_token",
+        AppCommand::RevokeAgentCallbackToken { .. } => "revoke_agent_callback_token",
+        AppCommand::ListMcpConnections => "list_mcp_connections",
+        AppCommand::BeginMcpOAuth { .. } => "begin_mcp_oauth",
+        AppCommand::DisconnectMcpConnection { .. } => "disconnect_mcp_connection",
+        AppCommand::RegisterMcpOAuthClient { .. } => "register_mcp_oauth_client",
+        AppCommand::AddCuratedMcpServer { .. } => "add_curated_mcp_server",
+        AppCommand::RefreshMcpServer { .. } => "refresh_mcp_server",
+        AppCommand::ListPendingToolApprovals => "list_pending_tool_approvals",
+        AppCommand::DecideToolApproval { .. } => "decide_tool_approval",
+        AppCommand::GetUiPreferences => "get_ui_preferences",
+        AppCommand::UpdateUiPreferences(_) => "update_ui_preferences",
     }
 }
 
@@ -109,13 +163,19 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
 pub const fn subscription_kind(request: &SubscriptionRequest) -> &'static str {
     match request {
         SubscriptionRequest::Health => "health",
+        SubscriptionRequest::ThreadEvents { .. } => "thread_events",
+        SubscriptionRequest::ChannelActivity => "channel_activity",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openbot_contracts::auth::Role;
+    use openbot_contracts::ids::{ActorId, BotId, RunId, ToolCallId};
     use openbot_contracts::telemetry::is_allowed_metrics_label;
+    use openbot_contracts::tool::ToolInvocation;
+    use serde_json::json;
 
     /// §16.4 的可判定形式：span 上的每个字段，要么被论证过可以进 metrics label，
     /// 要么被显式登记为 trace-only。**两边都不在 = 有人加了字段却没做基数论证。**
@@ -145,15 +205,246 @@ mod tests {
 
     #[test]
     fn operation_names_are_closed_and_stable() {
-        assert_eq!(command_kind(&AppCommand::Health), "health");
-        assert_eq!(
-            command_kind(&AppCommand::ListVisibleChannels {
-                limit: None,
-                cursor: None,
-            }),
-            "list_visible_channels"
-        );
+        let commands = [
+            (AppCommand::Health, "health"),
+            (
+                AppCommand::ListVisibleChannels {
+                    limit: None,
+                    cursor: None,
+                },
+                "list_visible_channels",
+            ),
+            (
+                AppCommand::GetVisibleChannel {
+                    channel_id: openbot_contracts::ids::ChannelId::new("channel-1"),
+                },
+                "get_visible_channel",
+            ),
+            (AppCommand::GetCurrentUser, "get_current_user"),
+            (AppCommand::AdminStatus, "admin_status"),
+            (
+                AppCommand::ListPeople {
+                    search: None,
+                    cursor: None,
+                    limit: None,
+                },
+                "list_people",
+            ),
+            (
+                AppCommand::ChangePersonRole {
+                    user_id: ActorId::new("u"),
+                    role: Role::User,
+                },
+                "change_person_role",
+            ),
+            (
+                AppCommand::ChangePersonAccess {
+                    user_id: ActorId::new("u"),
+                    revoked: true,
+                },
+                "change_person_access",
+            ),
+            (
+                AppCommand::ListAuditEvents {
+                    cursor: None,
+                    event_type: None,
+                    actor_user_id: None,
+                    target_type: None,
+                    target_id: None,
+                    from: None,
+                    to: None,
+                    limit: None,
+                },
+                "list_audit_events",
+            ),
+            (AppCommand::GetActionPolicy, "get_action_policy"),
+            (
+                AppCommand::SetActionPolicy {
+                    policy: openbot_contracts::policy::ActionPolicyDocument {
+                        mode: openbot_contracts::policy::ActionPolicyMode::Enforce,
+                        deny: Vec::new(),
+                        allow: vec!["true".to_owned()],
+                    },
+                },
+                "set_action_policy",
+            ),
+            (
+                AppCommand::InvokeTool(ToolInvocation {
+                    call_id: ToolCallId::new("c"),
+                    run_id: RunId::new("r"),
+                    bot_id: BotId::new("b"),
+                    call_seq: 0,
+                    tool_name: "t".to_owned(),
+                    arguments: json!({}),
+                }),
+                "invoke_tool",
+            ),
+            (AppCommand::MintThreadId, "mint_thread_id"),
+            (
+                AppCommand::GetThreadStatus {
+                    thread_id: openbot_contracts::ids::ThreadId::new(
+                        "550e8400-e29b-41d4-a716-446655440000",
+                    ),
+                },
+                "get_thread_status",
+            ),
+            (
+                AppCommand::BeginThreadRun(openbot_contracts::command::BeginThreadRun {
+                    thread_id: openbot_contracts::ids::ThreadId::new(
+                        "550e8400-e29b-81d4-a716-446655440000",
+                    ),
+                    run_id: RunId::new("r2"),
+                    bot_id: BotId::new("b2"),
+                    anchor: openbot_contracts::command::ThreadRunAnchor::DirectBot,
+                    message: "hello".to_owned(),
+                }),
+                "begin_thread_run",
+            ),
+            (
+                AppCommand::GetThreadHistory {
+                    thread_id: openbot_contracts::ids::ThreadId::new(
+                        "550e8400-e29b-81d4-a716-446655440000",
+                    ),
+                },
+                "get_thread_history",
+            ),
+            (
+                AppCommand::RememberMemory(openbot_contracts::memory::RememberMemory {
+                    memory_kind: openbot_contracts::memory::MemoryKind::Preference,
+                    scope: openbot_contracts::memory::MemoryScope::User,
+                    content: "tea".to_owned(),
+                    tags: Vec::new(),
+                    sensitivity: openbot_contracts::memory::MemorySensitivity::Normal,
+                    source: None,
+                    expires_at: None,
+                }),
+                "remember_memory",
+            ),
+            (
+                AppCommand::ListMemories {
+                    cursor: None,
+                    limit: None,
+                },
+                "list_memories",
+            ),
+            (
+                AppCommand::CorrectMemory {
+                    memory_id: "m".to_owned(),
+                    correction: openbot_contracts::memory::CorrectMemory {
+                        content: "coffee".to_owned(),
+                        tags: Vec::new(),
+                        sensitivity: openbot_contracts::memory::MemorySensitivity::Normal,
+                        expires_at: None,
+                    },
+                },
+                "correct_memory",
+            ),
+            (
+                AppCommand::MutateMemory {
+                    memory_id: "m".to_owned(),
+                    mutation: openbot_contracts::memory::MemoryMutation::Delete,
+                },
+                "mutate_memory",
+            ),
+            (
+                AppCommand::RecallMemories(openbot_contracts::memory::RecallMemories {
+                    query: "office".to_owned(),
+                    tags: Vec::new(),
+                    bot_id: None,
+                    thread_id: None,
+                    limit: None,
+                }),
+                "recall_memories",
+            ),
+            (
+                AppCommand::IssueAgentCallbackToken {
+                    agent_id: BotId::new("remote"),
+                },
+                "issue_agent_callback_token",
+            ),
+            (
+                AppCommand::RevokeAgentCallbackToken {
+                    agent_id: BotId::new("remote"),
+                },
+                "revoke_agent_callback_token",
+            ),
+            (AppCommand::ListMcpConnections, "list_mcp_connections"),
+            (
+                AppCommand::BeginMcpOAuth {
+                    server_id: "notes".to_owned(),
+                    return_to: openbot_contracts::mcp::McpOAuthReturnTo::Settings,
+                },
+                "begin_mcp_oauth",
+            ),
+            (
+                AppCommand::DisconnectMcpConnection {
+                    server_id: "notes".to_owned(),
+                },
+                "disconnect_mcp_connection",
+            ),
+            (
+                AppCommand::RegisterMcpOAuthClient {
+                    server_id: "notes".to_owned(),
+                    registration: openbot_contracts::mcp::McpOAuthClientRegistration::new(
+                        "client".to_owned(),
+                        "secret".to_owned(),
+                        "https://issuer.example".to_owned(),
+                        openbot_contracts::mcp::McpOAuthClientAuthMethod::ClientSecretBasic,
+                        None,
+                    )
+                    .unwrap(),
+                },
+                "register_mcp_oauth_client",
+            ),
+            (
+                AppCommand::AddCuratedMcpServer {
+                    key: "google-drive".to_owned(),
+                },
+                "add_curated_mcp_server",
+            ),
+            (
+                AppCommand::RefreshMcpServer {
+                    server_id: "google-drive".to_owned(),
+                },
+                "refresh_mcp_server",
+            ),
+            (
+                AppCommand::ListPendingToolApprovals,
+                "list_pending_tool_approvals",
+            ),
+            (
+                AppCommand::DecideToolApproval {
+                    approval_id: "approval-1".to_owned(),
+                    decision: openbot_contracts::tool::ToolApprovalDecision::Grant,
+                },
+                "decide_tool_approval",
+            ),
+            (AppCommand::GetUiPreferences, "get_ui_preferences"),
+            (
+                AppCommand::UpdateUiPreferences(openbot_contracts::ui::UpdateUiPreferences {
+                    theme: Some(openbot_contracts::ui::UiTheme::Dark),
+                    locale: None,
+                }),
+                "update_ui_preferences",
+            ),
+        ];
+        for (command, expected) in commands {
+            assert_eq!(command_kind(&command), expected);
+        }
         assert_eq!(subscription_kind(&SubscriptionRequest::Health), "health");
+        assert_eq!(
+            subscription_kind(&SubscriptionRequest::ThreadEvents {
+                thread_id: openbot_contracts::ids::ThreadId::new(
+                    "550e8400-e29b-81d4-a716-446655440000",
+                ),
+                after_event_sequence: Some(3),
+            }),
+            "thread_events"
+        );
+        assert_eq!(
+            subscription_kind(&SubscriptionRequest::ChannelActivity),
+            "channel_activity"
+        );
     }
 
     /// `AppEventStream` 必须是 `Send` 的 boxed stream：transport 会把它挪进另一个任务。

@@ -37,6 +37,15 @@ pub struct RateLimitCounter {
 }
 
 impl RateLimitCounter {
+    /// PostgreSQL adapter 从自己写下的两字段状态水合；不接受自由 JSON 穿越 crate 边界。
+    #[must_use]
+    pub(crate) const fn restore(window_started_at: OffsetDateTime, count: u32) -> Self {
+        Self {
+            window_started_at,
+            count,
+        }
+    }
+
     /// 当前窗口的起点。
     #[must_use]
     pub const fn window_started_at(&self) -> OffsetDateTime {

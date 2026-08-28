@@ -107,7 +107,10 @@ impl IntoResponse for HttpError {
             | AppError::DependencyUnavailable { .. }
             | AppError::VendorFailure { .. }
             | AppError::StaleGeneration { .. }
+            | AppError::RequestConflict { .. }
             | AppError::LeaseConflict { .. }
+            | AppError::IdentityConflict { .. }
+            | AppError::SensitiveWriteRefused { .. }
             | AppError::ReconciliationRequired { .. } => None,
         };
 
@@ -115,7 +118,12 @@ impl IntoResponse for HttpError {
             code: self.0.code().as_str(),
             rule,
         };
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        response.headers_mut().insert(
+            http::header::CACHE_CONTROL,
+            http::HeaderValue::from_static("no-store"),
+        );
+        response
     }
 }
 
@@ -154,8 +162,15 @@ mod tests {
                     observed: ComputerGeneration::new(6),
                 },
             },
+            AppError::RequestConflict { resource: "run" },
             AppError::LeaseConflict {
                 holder: Some(ActorId::new("actor-other-tenant-user")),
+            },
+            AppError::IdentityConflict {
+                reason: openbot_contracts::error::IdentityConflictReason::RoleLastAdmin,
+            },
+            AppError::SensitiveWriteRefused {
+                reason: openbot_contracts::error::SensitiveWriteReason::OriginUntrusted,
             },
             AppError::ReconciliationRequired { accepted: true },
             AppError::ReconciliationRequired { accepted: false },
@@ -323,6 +338,13 @@ mod tests {
                 .get(http::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok()),
             Some("application/json")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(http::header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
         );
         let bytes = to_bytes(response.into_body(), 1024).await.expect("读得完");
         let value: serde_json::Value = serde_json::from_slice(&bytes).expect("body 必须是 JSON");

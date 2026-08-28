@@ -101,7 +101,8 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 | `--radius` | `radius` | |
 | `--sidebar*`（8 个） | `bg-sidebar` + 复用 `fg` / `fg-secondary` / `bg-chip` | 侧栏不再独立一套 |
 
-新增 token（上游无）：`fg-secondary`、`caution`、`info`、`shadow-popover`、`shadow-dialog`、`image-dim`。
+新增 token（上游无）：`fg-secondary`、`caution`、`info`、`shadow-popover`、`shadow-dialog`、
+`image-dim`、`avatar-0..7`、`modal-overlay`。
 
 ### 4.2 颜色（亮 / 暗两套，WCAG 对比度已实测）
 
@@ -124,11 +125,13 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 | `success` | `#067647` | `#47CD89` | 成功 / 在线 |
 | `info` | `#1552C5` | `#84ADFF` | 提示 |
 | `chart-1..5` | `#3B5BDB` `#0CA678` `#E8590C` `#AE3EC9` `#868E96` | `#748FFC` `#38D9A9` `#FFA94D` `#DA77F2` `#ADB5BD` | 仅图表数据系列 |
+| `avatar-0..7` | `#E8E8EA` `#E8ECEB` `#E9EBE4` `#EEE9E3` `#ECE7EA` `#E7E9EE` `#ECEBE5` `#E5ECEC` | `#2A2A2E` `#26302E` `#303027` `#312B27` `#30282E` `#282C34` `#302F28` `#263132` | deterministic initials avatar；只作 neutral-low-saturation 底 |
 | `shadow-popover` | `0 4px 16px rgb(0 0 0 / .10)` | `0 4px 16px rgb(0 0 0 / .45)` | |
 | `shadow-dialog` | `0 12px 40px rgb(0 0 0 / .18)` | `0 12px 40px rgb(0 0 0 / .60)` | |
 | `image-dim` | `1` | `.88` | 暗色下内容图片 `filter: brightness()` |
+| `modal-overlay` | `rgb(0 0 0 / .10)` | `rgb(0 0 0 / .35)` | Dialog/Sheet 共用 backdrop |
 
-**对比度判据**（机械，§9.2 单测 `token_contrast_wcag_aa` 读同一份 `tokens.toml`）：文字 token（`fg` / `fg-secondary` / `fg-muted` / `danger` / `caution` / `success` / `info`）对每个可作其底的背景 token（`bg` / `bg-subtle` / `bg-chip` / `bg-sidebar` / `bg-popover`）≥ **4.5:1**；`fg-inverse` 对 `bg-inverse` ≥ 4.5:1；`ring` 与 `chart-*` 对 `bg` ≥ **3:1**。上表两套值已在 2026-08-22 用 WCAG 相对亮度公式逐对算过：66 对全部通过，最低的一对是亮色 `fg-muted` on `bg-chip` = 4.81:1（暗色最低 `fg-muted` on `bg-chip` = 4.59:1）。改任何值都必须让该单测继续为绿。
+**对比度判据**（机械，§9.2 单测读同一份 `tokens.toml`）：文字 token（`fg` / `fg-secondary` / `fg-muted` / `danger` / `caution` / `success` / `info`）对每个可作其底的背景 token（`bg` / `bg-subtle` / `bg-chip` / `bg-sidebar` / `bg-popover`）≥ **4.5:1**；`fg-inverse` 对 `bg-inverse` ≥ 4.5:1；`ring` 与 `chart-*` 对 `bg` ≥ **3:1**；`fg` 对 `avatar-0..7` 亮暗 16 组均 ≥4.5:1。当前 core 超集 84 对 + avatar 16 对 = **100 对**全部通过，整体最低仍为暗色 `fg-muted` on `bg-chip` = 4.59:1。改任何值都必须让 `token_contrast_wcag_aa_covers_all_84_required_pairs` 与 `all_avatar_palettes_keep_initials_wcag_aa_in_both_themes` 继续为绿。
 
 ### 4.3 字体与排版
 
@@ -144,13 +147,14 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 - **圆角**：`radius = 8px`；`sm 6` / `md 8` / `lg 10` / `xl 14` / `full`。胶囊按钮与芯片 = `full`；输入框、菜单项、卡片 = `md`；popover / dialog = `lg`。
 - **边框**：1px `border`；只用于 Input / Select / Textarea / Separator / Table / Combobox 列表容器。
 - **焦点**：仅 `:focus-visible`：`outline: 2px solid var(--ring); outline-offset: 2px`；禁止 `outline: none` 而无替代。
-- **控件高度**：`sm 28` / `md 32`（默认）/ `lg 36`；表格行 36；侧栏项 32；顶栏 44。
+- **控件高度/固定尺寸**：`sm 28` / `md 32`（默认）/ `lg 36`；表格行 36；侧栏项 32；顶栏 44；
+  Avatar 24/32/40；Kbd 22；Textarea 十行 cap 218；modal gutter 32、Dialog max 512。
 - **z-index 阶**：base 0 / sticky 10 / sidebar 与 detail panel 20 / popover·menu·combobox 30 / sheet 40 / dialog 50 / tooltip 60 / toast 70。禁止其它值。
 - **阴影**：只有 `shadow-popover` 与 `shadow-dialog` 两个 token（§4.2）；卡片、按钮、输入框零阴影。
 
 ### 4.5 动效
 
-- 时长：hover / 底色 **120ms**；popover / menu / sheet 进入 **180ms**、退出 120ms；dialog 进入 **240ms**、退出 160ms；列表入场级联每项 +30ms、上限 8 项。
+- 时长：hover / 底色 **120ms**；popover / menu / sheet 进入 **180ms**、退出 120ms；dialog 进入 **240ms**、退出 160ms；列表入场级联每项 +30ms、上限 8 项；Agent thinking/speaking 状态环 **1200ms**、error 单次位移 **160ms**。
 - 缓动：进入 `cubic-bezier(0.2, 0, 0, 1)`，退出 `cubic-bezier(0.4, 0, 1, 1)`。（上游 `EASE_OUT` / 0.2s 是其自有值，本项目**新增**自定，不做 parity。）
 - 允许动画的清单（闭合，增项走 PR）：① 底色 / 文字色过渡；② popover / menu / sheet / dialog 出入；③ 列表入场级联（替代上游 `layout/stagger.tsx`）；④ detail panel 滑入（替代 `layout/detail-panel.tsx` 的 motion）；⑤ skeleton 呼吸；⑥ 运行中工具行的文字扫光（上游 `styles.css` 已有，parity）；⑦ agent 状态环（§6.7）。
 - `@media (prefers-reduced-motion: reduce)`：以上全部 `transition-duration: 0ms; animation: none`，扫光 / 呼吸 / 状态环降为静态；这是一条 token 级总开关，不允许组件自行豁免。
@@ -160,7 +164,7 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 
 #### 4.6.1 图标集
 
-- **Lucide 1.33.0**（ISC；`lucide-icons-1.33.0.zip` sha256 `53831c8def65621f88cae315cdb38ac70db1d937062df35c93546efb00260a98`，1,776 个 SVG）。
+- **Lucide 1.33.0**（ISC AND MIT：其 LICENSE 点名的 Feather 衍生子集另受 MIT；`lucide-icons-1.33.0.zip` sha256 `53831c8def65621f88cae315cdb38ac70db1d937062df35c93546efb00260a98`，1,776 个 SVG）。
 - **只随包用到的图标**：`crates/openbot-ui/design/icons/<name>.svg` + allowlist `design/icons.toml`；`build.rs` 生成 `Icon` 枚举与 `view!` 片段。闸门：源码里每个 `Icon::X` 必在 allowlist；目录里每个 SVG 必被引用；两向皆零漂移。许可证文本进 `NOTICE`。
 - 尺寸 16（行内 / 文字旁）与 20（导航 / 按钮）；`stroke-width` 1.75（生成时改写 Lucide 默认的 2）；颜色 `currentColor`。
 
@@ -508,8 +512,8 @@ CI 对 `parity/ui.yaml` 的规则与其它 parity 文件相同：未归类项与
   --text-base: 14px; --text-base--line-height: 20px;  /* lg/xl/2xl 同理 */
   --radius-sm: 6px; --radius-md: 8px; --radius-lg: 10px; --radius-xl: 14px;
 }
-@font-face { font-family: "Inter Variable"; src: url("../assets/fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
-@font-face { font-family: "Inter Variable"; font-style: italic; src: url("../assets/fonts/InterVariable-Italic.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Inter Variable"; src: url("/fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Inter Variable"; font-style: italic; src: url("/fonts/InterVariable-Italic.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0ms !important; animation: none !important; } }
 ```
 
@@ -615,6 +619,167 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
+### 15.1 当前实施勾选（2026-08-28，Batch 15–50）
+
+- [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
+- [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
+- [x] Server 用户偏好 typed PostgreSQL/native 0021 + closed cookie；Desktop Local closed 原子设置；
+  UI startup read/serialized partial write/reload persistence；
+- [x] Tauri 2.11.5 production custom-protocol adapter：window-label authority、typed in-process、
+  本地首帧/CSP/canonical asset；依赖只进入 macOS/Windows Desktop target；
+- [x] 截至 Batch23，27条 primitive 子账全 done：Batch18前20条 + Dialog/Sheet +
+  Menu + MessageScroller + Combobox/Select + Sidebar，当时 UI=`27/125/152`；
+  Batch24又以三向 join 关闭46条 Lucide 映射，当时 UI=`73/79/152`；
+  Batch25关闭 layout 组 detail-panel/page-shell/row-mark/stagger 四条，当时
+  UI=`77/75/152`；Batch26又关闭orb/ai-core→AgentPresence两条，当前
+  UI=`79/73/152`；Batch27又以唯一中性线稿关computer/placeholder与settings/background
+  两条，当时 UI=`81/71/152`；Batch30又关闭独立ChannelRow；Batch31关闭
+  abstract-avatar→Avatar与AgentCard；Batch32关闭RecipientField，当前UI=`85/67/152`；
+  AppSidebar总项与其余32业务/brand/runtime/golden仍按各自证据保持 todo；
+- [x] `design-gallery` compile feature 才有 `/_design`，production bundle WASM `_design` byte=0；
+  当前画廊用于状态/键盘/AX/目视 QA，不冒充正式 golden；
+- [x] Message 命名 article、neutral Bubble、跨平台 Kbd、SHA-256 deterministic Avatar、5s
+  generation-safe polite Toast、400ms hover/focus/Escape Tooltip 已过真实 Chromium/AX；
+- [x] Dialog/Sheet 共享 modal kernel：双向 focus trap、Escape/backdrop/return、scroll lock 与
+  path-sibling inert；Sheet top/right/bottom/left closed side；
+- [x] Menu compound：open/disabled `data-state`、根/子层 APG 全键位、500ms 多字符
+  typeahead、disabled skip、exactly-once activation、outside dismiss 与不落 body 的双向 Tab；
+- [x] MessageScroller：initial/following/free/anchored 三态，streaming resize、prepend reading
+  offset、48px user anchor、generation-safe content-change settlement 与命名 log/live/button；
+- [x] Combobox/Select 共用唯一 listbox 内核：editable filter/empty 与 select-only 500ms
+  typeahead，committed/active 分离、Field 自动接线、命名 AX、exactly-once selection；
+- [x] Sidebar：lg240/rail48、md auto rail、compact shared Sheet，Ctrl/Command+B、named nav/
+  current、external trigger返焦与同一 children 单挂载；
+- [x] §4.6.2 的46条Tabler→Lucide由design-lint做第一真源→icons.toml→UI ledger三向join；
+  `IconBrandGoogleDrive` 因官方SVG/条款/provenance缺失保持唯一icon todo；
+- [x] layout 组四条业务组件：PageShell 的960/1200/768闭集宽度与44px topbar、
+  same-origin back/PageSection/Rows/Empty；RowMark 中性 vendor tile；Stagger 纯CSS 30ms/8cap；
+  DetailPanel 由URL信号驱动四态，优先WAAPI、同token CSS fallback、reduce=0ms，关闭卸载并返焦；
+- [x] `AgentPresence` 同时关orb/ai-core两上游文件：20px、四态Signal、完整环/单弧/双弧/
+  danger环分形，thinking/speaking=1200ms、error=160ms×1，本地化AX，reduce全局静止；
+- [x] `ComputerPlaceholderArt` 是唯一1200×800中性currentColor线稿，无gradient/filter/
+  noise/shadow/defs/ID/remote/字面色；`ComputerPlaceholder` 只复用它，两入口均纯装饰AX隐藏；
+- [x] AppSidebar 的sign-out生产依赖：`GET /api/me/session` 只回revocable，
+  `POST /api/auth/sign-out` 以已验session+Origin只撤当前PG行并清cookie；UI helper只接受204；
+- [x] AppSidebar 的roster realtime生产依赖：`channels.last_message*`为PG真源，
+  `/api/channels/events`只发送不含member IDs的bounded提示；每帧回查当前membership，断线/错误/
+  queue pressure均要求客户端重连并refetch，不把NOTIFY当真源；
+- [x] ChannelRow：同源percent-encoded `/channel/:id`、中性装饰Avatar、name/last-message/
+  localized relative time/current；真实50→52分页、可见字段搜索、socket refetch与nested hard reload绿；
+- [x] `/agents`真实读面：GET list/detail只消费Server权威secret-free DTO；固定上游mine与
+  `!mine && public`分组、144×180 AgentCard、URL-owned只读profile、404/error/close返焦；
+  AppSidebar Agents destination已接。已有同名文字旁Avatar AX隐藏；Trunk最终CSS以根同源
+  `/fonts/*`加载Inter。T-UI-0029/0030已勾，mutation/start与整条route/golden仍不勾；
+- [x] `/channel/new`真实首发：静态route先于dynamic channel id；无recipient发送禁用且刷新零
+  create；URL/hard reload可恢复hidden但有权的Agent；RecipientField复用唯一Combobox键盘模型。
+  首发只按create channel→native BeginThreadRun→成功navigate；begin失败同channel/run-id重试，
+  create响应未知禁止二次提交。release WASM浏览器实得52→52→53、四视口overflow0、AX/id/
+  console绿；未实现的Enter提示已删除，完整Composer仍todo；
+- [x] Composer draft/queue纯状态：固定上游10+16条逐项Rust移植；`Cow`保留no-op identity，
+  single Agent、command prompt/chip/deferred action effect、busy park/settle/remove/一次turn合并与command
+  首次顺序去重均闭合。Queue刻意只活在当前mount、不写PG；Batch35已把text-only busy park、逐条
+  remove、busy→idle单次settle与Stop后drain接进production conversation，并以hard reload 1→0证明
+  mount边界。sources/附件/per-channel draft/steer仍未落，故T-UI-0043/0123与channel route继续todo；
+- [x] Channel conversation production slice：原子PG snapshot携history/foreground/active tail/cursor，
+  EventSource从cursor接durable replay/live并在terminal后refetch；Message/Bubble/Scroller呈现durable
+  user/assistant/tool activity，Enter/ShiftEnter/IME与idle send/无thread mint均接真实API。浏览器硬刷新
+  历史不丢、四视口X/Y overflow0；raw error只按closed terminal本地化。Batch35又接actor-owned durable
+  Stop→Cancelling→Cancelled、跨副本host cancel与mount-local queue/remove/settle。Markdown、完整tool
+  boundary、sources/附件/per-channel draft/steer/Screen未落，故ChannelChat/ChatTranscript/
+  ConversationView/Composer条目仍todo；
+- [x] `/settings/memory`新增route：native 0022以tenant/actor独立持久化writesEnabled，缺行默认开启；
+  disabled只拒绝GUI remember/correct与built-in remember tool，查看/recall/forbid/delete保持可用。
+  页面以typed no-store API呈现50→52 owner keyset、status/kind/sensitivity/scope/source/origin/tags，
+  correct生成replacement、forbid/delete擦除content；取消返原按钮，成功权威refetch后聚焦变更行。
+  release CSS真实445规则，中英、1440/1024/900/600 overflow0、duplicate IDs/visible alerts/console均0；
+- [x] `/settings` Preferences真实route：保留上游General/Theme，并按§7–§8增加system与locale；
+  页面/Sidebar复用同一native0021 context/API。LocaleSwitch由调用点传唯一bounded ID，双实例零重复；
+  快速theme+locale连续更新时页面唯一`role=status`，worker绑定AppShell稳定owner，locale重渲染不再
+  取消receipt收尾；队列排空后status消失且reload保留合并值。Sidebar Settings真实导航、APG键盘、
+  1440/1024/900/600 overflow0、console0；正式golden仍todo；
+- [x] Settings secondary shell：`/settings`、Connected Accounts、Components Gallery与
+  `/settings/memory`共用aside+named nav，`--size-subnav`实得200px；Back/General exact/Connected
+  prefix/Gallery prefix/Memory exact按上游顺序且current恰1。既有四视口shell证据保持；
+- [x] Connected Accounts index/detail：contract只传reviewed stable server id，PG要求管理员已add且
+  Google Drive的url/vendor/provenance/transport与编译期identity逐字段相等；未知/custom不进入个人页。
+  list/connect/disconnect均no-store，authorization receipt只接受同源根路径或安全HTTPS；full-page
+  callback、Connected/Not connected、vendor实际scope/time、APG Menu与local-first disconnect已接。
+  pending不冒充vendor revoked，权威refetch后返焦Connect；fixture不冒充真实Google OAuth。正式brand/
+  golden、Desktop Local OAuth与restricted-scope发布验证仍todo；
+- [x] Components Gallery index/detail只消费typed治理DTO：build manifest由Server所有，browser复述必须
+  逐字段相等；PG additive sync首次published且insert+audit同事务，existing管理员治理零覆盖。当前登记
+  `showQuote`、Cards四项、Charts五项与Activity共11个ordinary真实renderer；stale published有诚实
+  fallback，unpublished按不存在。`GalleryFrame`遵守中性chrome与四值语义tone；Cards schema/preview保留
+  独立tool identity，Checklist只读且semantic badge背景0。Axum/Tauri同一typed command。ordinary 11项
+  已接fresh provider grant/decision、closed args、durable call/result/Agent三向配对与conversation runtime；
+  Activity两种非空report的follow-up ask已逐字接唯一BeginThreadRun，绑定component真实Agent；busy禁用，
+  首次503后Retry复用同一run id。Batch47为`askApproval`/`askChoice`建立独立native0023 durable
+  request/list/answer/wait、closed authority/answer与Axum/Tauri typed控制面；Batch48再把两个Decision
+  同批加入13项manifest/provider/schema/Leptos registry。Agent在answer前进入`AwaitingHuman`，回答只回
+  `ExecutingTools`，durable exchange checkpoint后才resample；cancel waiter继续到PG写cancelled audit。
+  conversation按actor/current run画pending，Approval/Choice从recorded result重建complete；Choice支持
+  Enter/Space，默认文案与Input placeholder即时i18n。release实得approve/decline/Choice Enter与hard
+  reload、中英、四视口、Gallery14 tile/2 Decision；CSS96050B，预算余2254B。Refused sandbox共用与
+  formal golden仍todo；
+- [x] Sandboxed component 已分两批接通可独立验收的子面：Batch49以SERIALIZABLE事务闭合admin
+  draft/save/publish/delete、revision、sample与Axum/Tauri同一ApplicationService；Batch50再把当前
+  published/未withheld定义接入per-Agent provider与call-time authorize，沙箱port结构上无data function，
+  current JSON Schema/args与external `$ref`均fail-closed。Web production conversation与
+  `/admin/playground`复用唯一`SandboxedComponentFrame`；iframe `sandbox`恰为`allow-scripts`、无srcdoc，
+  source/args/capability只在fragment，Server runner逐响应32-byte nonce与exact CSP。custom/Tauri scheme
+  直接复用RefusedCard且零iframe。release IAB实得Playground invalid sample抑制iframe、会话双拒绝卡、
+  sandbox/srcdoc/query随机与DOM/overflow/console负面边界；但该环境没有可用MessageChannel/postMessage且
+  Chrome不可用，所以args注入、作者JS、无网络/回调、channel正向握手和sample正向执行不提前标绿。
+  当前components=`13/9/22`；Desktop独立Chromium renderer、帧流/input broker、
+  CPU/内存硬隔离、具名a11y豁免、admin正式route journey/golden/AX仍todo。Batch51只补其前置
+  HumanLease/epoch与closed BrowserInput，browser-operations=`7/39/46`、总parity=`693/993/1686`；没有
+  Electron/CDP/ScreenHub实证，不改变上述Desktop renderer与a11y todo；
+- [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
+  new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
+  markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
+- [ ] 其余24个route journey、AppSidebar总项与其余未完成业务组件、1 brand icon、6 runtime替代、
+  sandboxed正向执行/Desktop renderer、multi-window lifecycle/ACL及真实macOS/Windows binary
+  尚未闭合；
+- [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
+  bundle 摘要尚未闭合；
+- [ ] Tauri 图的 MPL-2.0×5、runtime UNIC unmaintained×5、Cargo Vet macOS 270/Windows 269
+  仍红；不得把 bans/sources 已绿写成供应链整关已绿。
+
+完整证据见 Batch16–18 文档、`docs/2026-08-25-G6-Dialog与Sheet-batch19.md`、
+`docs/2026-08-25-G6-Menu原语-batch20.md` 与
+`docs/2026-08-25-G6-MessageScroller原语-batch21.md`、
+`docs/2026-08-25-G6-Combobox与Select原语-batch22.md` 与
+`docs/2026-08-25-G6-Sidebar原语-batch23.md`、
+`docs/2026-08-25-G6-图标映射三向join-batch24.md` 与
+`docs/2026-08-25-G6-布局业务组件-batch25.md`、
+`docs/2026-08-25-G6-AgentPresence-batch26.md`、
+`docs/2026-08-25-G6-ComputerPlaceholderArt-batch27.md` 与
+`docs/2026-08-26-G2-生产SessionSignOut-batch28.md`、
+`docs/2026-08-26-G3-ChannelActivity与WebSocket-batch29.md`、
+`docs/2026-08-26-G3-G6-ChannelDetail与ChannelRow-batch30.md`、
+`docs/2026-08-26-G4-G6-AgentRoster与AgentsRoute-batch31.md`、
+`docs/2026-08-26-G3-G6-ChannelCreate与Routing-batch32.md`、
+`docs/2026-08-26-G6-ComposerDraft与Queue-batch33.md`、
+`docs/2026-08-26-G3-G6-ChannelTranscript与IdleSend-batch34.md`、
+`docs/2026-08-27-G3-G6-DurableCancel与Queue-batch35.md`、
+`docs/2026-08-27-G3-G6-MemoryControls-batch36.md`、
+`docs/2026-08-27-G6-SettingsPreferences-batch37.md`、
+`docs/2026-08-27-G6-SettingsShell-batch38.md`、
+`docs/2026-08-27-G4-G6-ConnectedAccounts-batch39.md`、
+`docs/2026-08-27-G6-ComponentsGalleryQuote-batch40.md`、
+`docs/2026-08-27-G6-GalleryCards-batch41.md`、
+`docs/2026-08-27-G6-GalleryCharts-batch42.md`、
+`docs/2026-08-27-G6-ComponentRuntime-batch43.md`、
+`docs/2026-08-28-G6-GalleryActivityData-batch44.md`、
+`docs/2026-08-28-G6-ComponentConversation-batch45.md`、
+`docs/2026-08-28-G6-ActivityFollowUp-batch46.md` 与
+`docs/2026-08-28-G6-ComponentHumanDecisions-batch47.md`、
+`docs/2026-08-28-G6-ComponentDecisionsRuntime-batch48.md`、
+`docs/2026-08-28-G6-SandboxedComponentGovernance-batch49.md` 与
+`docs/2026-08-28-G6-WebSandboxRuntime-batch50.md`、
+`docs/2026-08-28-G5-HumanLease与输入协议-batch51.md`；
+G6 整关继续不勾。
+
 ---
 
 ## 16. 一手来源
@@ -622,7 +787,7 @@ G6 重写后的文本（替换 v3 原四条）：
 - Tailwind CSS standalone CLI release v4.3.3：<https://github.com/tailwindlabs/tailwindcss/releases/tag/v4.3.3>
 - trunk v0.21.14 源码（`src/tools.rs` 工具查找、`src/pipelines/tailwind_css.rs` 调用参数、`src/config/models/build.rs` offline）：<https://github.com/trunk-rs/trunk/tree/v0.21.14>
 - leptos_i18n 0.6.2 与文档（配置 / 文件结构 / locale 解析）：<https://github.com/Baptistemontan/leptos_i18n>
-- Lucide 1.33.0（ISC）：<https://github.com/lucide-icons/lucide/releases/tag/1.33.0>
+- Lucide 1.33.0（ISC AND MIT，Feather 衍生子集）：<https://github.com/lucide-icons/lucide/releases/tag/1.33.0>
 - Inter 4.1（OFL-1.1）：<https://github.com/rsms/inter/releases/tag/v4.1>
 - WAI-ARIA Authoring Practices Guide（键盘模式）：<https://www.w3.org/WAI/ARIA/apg/patterns/>
 - WCAG 2.2 对比度（1.4.3 / 1.4.11）：<https://www.w3.org/TR/WCAG22/#contrast-minimum>

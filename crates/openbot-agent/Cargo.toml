@@ -11,3 +11,18 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+# Agent 不能直调 repository/executor；所有调用都穿过唯一 application service。
+openbot-application.workspace = true
+openbot-contracts.workspace = true
+openbot-domain.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+getrandom.workspace = true
+metrics.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+openbot-contracts = { workspace = true, features = ["testkit"] }

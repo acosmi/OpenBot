@@ -75,6 +75,45 @@ impl FromStr for Role {
     }
 }
 
+/// 一个权威 actor 的认证代际。
+///
+/// role / membership / access 变化时单调递增；旧 session、ticket、approval 与
+/// capability 必须立即失效。本类型不 serde：外部输入不能自报代际铸造身份。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AuthGeneration(u64);
+
+impl AuthGeneration {
+    /// 从数据库/session 权威值构造。
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// 取出数值。
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    /// 铸造下一代；到顶饱和，绝不回绕让旧授权复活。
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+
+    /// 从已验证上下文读取代际。
+    #[must_use]
+    pub const fn from_context(context: &AuthContext) -> Self {
+        context.auth_generation
+    }
+}
+
+impl fmt::Display for AuthGeneration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
 /// 一次已认证调用的权威上下文。
 ///
 /// # 它为什么既不 `Serialize` 也不 `Deserialize`
@@ -101,7 +140,7 @@ pub struct AuthContext {
     tenant: TenantId,
     actor: ActorId,
     roles: BTreeSet<Role>,
-    auth_generation: u64,
+    auth_generation: AuthGeneration,
     single_user: bool,
 }
 
@@ -133,7 +172,7 @@ impl AuthContext {
     /// auth generation。session 失效 / 角色变更时递增；旧 generation 的 ticket 与 capability
     /// 全部失效（§12.4 校验项之一）。
     #[must_use]
-    pub fn auth_generation(&self) -> u64 {
+    pub const fn auth_generation(&self) -> AuthGeneration {
         self.auth_generation
     }
 
@@ -167,7 +206,7 @@ impl AuthContext {
         tenant: TenantId,
         actor: ActorId,
         roles: impl IntoIterator<Item = Role>,
-        auth_generation: u64,
+        auth_generation: AuthGeneration,
         single_user: bool,
     ) -> Self {
         Self {
@@ -211,7 +250,7 @@ impl AuthContextBuilder {
         deployment: DeploymentId,
         tenant: TenantId,
         actor: ActorId,
-        auth_generation: u64,
+        auth_generation: AuthGeneration,
         single_user: bool,
     ) -> Self {
         Self {
@@ -309,7 +348,7 @@ mod tests {
             DeploymentId::new("dep-1"),
             TenantId::new("tenant-1"),
             ActorId::new("actor-1"),
-            3,
+            AuthGeneration::new(3),
             false,
         )
         .with_role(Role::User)
@@ -327,6 +366,8 @@ mod tests {
             !SerializeProbe::<AuthContext>::new().is_implemented(),
             "可序列化会诱导下游写出去再读回来，反过来逼着放开 Deserialize"
         );
+        assert!(!DeserializeProbe::<AuthGeneration>::new().is_implemented());
+        assert!(!SerializeProbe::<AuthGeneration>::new().is_implemented());
     }
 
     /// 正向对照：同一对探测器在**确实实现了** serde 的类型上返回 true。
@@ -353,7 +394,7 @@ mod tests {
             DeploymentId::new("dep-1"),
             TenantId::new("tenant-1"),
             ActorId::new("actor-1"),
-            0,
+            AuthGeneration::new(0),
             true,
         )
         .build();
@@ -369,7 +410,7 @@ mod tests {
             DeploymentId::new("dep-1"),
             TenantId::new("tenant-1"),
             ActorId::new("actor-1"),
-            0,
+            AuthGeneration::new(0),
             true,
         )
         .with_roles([Role::User, Role::Admin])
@@ -385,7 +426,7 @@ mod tests {
         assert_eq!(auth.deployment().as_str(), "dep-1");
         assert_eq!(auth.tenant().as_str(), "tenant-1");
         assert_eq!(auth.actor().as_str(), "actor-1");
-        assert_eq!(auth.auth_generation(), 3);
+        assert_eq!(auth.auth_generation(), AuthGeneration::new(3));
         assert!(!auth.is_single_user());
         assert!(auth.has_role(Role::User));
         assert!(!auth.has_role(Role::Admin));
@@ -398,11 +439,11 @@ mod tests {
             TenantId::new("tenant-2"),
             ActorId::new("actor-2"),
             [Role::Admin],
-            9,
+            AuthGeneration::new(9),
             false,
         );
         assert!(auth.has_role(Role::Admin));
-        assert_eq!(auth.auth_generation(), 9);
+        assert_eq!(auth.auth_generation(), AuthGeneration::new(9));
     }
 
     /// 未知角色字符串 fail-closed，不静默降级成 `User`。

@@ -40,7 +40,7 @@ fn reference_facts() -> SchemaFacts {
 
 /// 逐字段比较两份事实，返回人类可读的差异描述；完全相等返回 `None`。
 ///
-/// 刻意不直接 `assert_eq!` 两个 `SchemaFacts`：204 列 / 212 约束的结构体一整个打印出来
+/// 刻意不直接 `assert_eq!` 两个 `SchemaFacts`：204 列 / 59 约束的结构体一整个打印出来
 /// 没法读，定位不到是哪张表的哪一列。
 fn describe_difference(expected: &SchemaFacts, actual: &SchemaFacts) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();

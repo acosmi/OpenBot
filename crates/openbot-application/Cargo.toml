@@ -13,6 +13,9 @@ workspace = true
 [dependencies]
 # 输入类型（ID / AuthContext / AppCommand / AppReply / AppError / 关联字段）。
 openbot-contracts.workspace = true
+# §8.1 的类型状态机、metadata、policy/approval 与 commit_state 都是纯领域类型；application
+# 负责按固定顺序编排它们，不在 port 实现里另造第二条管线。
+openbot-domain.workspace = true
 
 # §5.2 的两个方法是 `async fn` 且必须对象安全（transport 持有 `dyn ApplicationService`），
 # edition 2024 的 AFIT 仍不给对象安全，所以走 `async_trait`。
@@ -24,6 +27,10 @@ thiserror.workspace = true
 # 游标载荷（`{recency, id}`）的编解码。
 serde = { workspace = true }
 serde_json.workspace = true
+# Tenant Package 五份 YAML 的纯解析/校验；文件 I/O 留在 infra。版本已由 xtask 台账解析钉住，
+# 本批只增加 application 的直接依赖边，不新增 package/许可面。
+serde_yaml.workspace = true
+sha2.workspace = true
 
 # 排序键 `coalesce(last_message_at, created_at)` 的类型，以及游标里的 RFC 3339 时间戳。
 time.workspace = true

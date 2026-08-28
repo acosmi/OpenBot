@@ -44,6 +44,8 @@ use super::payload::{AuditIdentifier, AuditLabel, AuditPayload};
 /// | grep -cE '^\s+"'`，在 commit `891df72f1827454d8b353d108fe5dd2313b7e30d` 上得 57）。
 /// 这些字面量是**跨系统契约**：它们进数据库、进管理页的筛选下拉、进上游既有数据。把它们
 /// 搬成 57 个 Rust 变体会得到一张两侧都要人工维护的映射表，而映射表漂了没有任何东西会红。
+/// 本项目新增的 deadline、explicit-memory tool 三事件与 MCP stale-grant suspension 单列在
+/// 相邻项后，并在 parity/events 标为新增；它们不冒充上游目录成员。
 ///
 /// 所以取值集合直接由 [`AUDIT_EVENT_TYPES`] 承载，类型本身只保证**封闭性**：
 /// [`AuditEventType::parse`] 只接受目录里的字面量，没有从任意 `String` 构造的入口。
@@ -52,6 +54,38 @@ use super::payload::{AuditIdentifier, AuditLabel, AuditPayload};
 pub struct AuditEventType(&'static str);
 
 impl AuditEventType {
+    /// A create-time channel recipient was explicitly chosen or inferred.
+    pub const CHANNEL_ROUTED: Self = Self("channel.routed");
+    /// Built-in/remote Agent run 已 durable activate。
+    pub const AGENT_INVOKED: Self = Self("agent.invoked");
+    /// Provider/remote Agent 真实 body read gap 超时。
+    pub const AGENT_STREAM_STALLED: Self = Self("agent.stream_stalled");
+    /// 新增 absolute run deadline 到点且 child 已停止。
+    pub const AGENT_RUN_DEADLINE_EXCEEDED: Self = Self("agent.run_deadline_exceeded");
+    /// Explicit remember tool was refused before execution.
+    pub const MEMORY_REMEMBER_REFUSED: Self = Self("memory.remember_refused");
+    /// Explicit remember tool committed a memory record.
+    pub const MEMORY_REMEMBER_SUCCEEDED: Self = Self("memory.remember_succeeded");
+    /// Explicit remember tool finished with a definite non-success outcome.
+    pub const MEMORY_REMEMBER_FAILED: Self = Self("memory.remember_failed");
+    /// Human proof-of-intent request became durable.
+    pub const TOOL_APPROVAL_REQUESTED: Self = Self("tool.approval_requested");
+    /// Human granted the exact stored binding.
+    pub const TOOL_APPROVAL_GRANTED: Self = Self("tool.approval_granted");
+    /// Human denied the request.
+    pub const TOOL_APPROVAL_DENIED: Self = Self("tool.approval_denied");
+    /// Pending request expired before a decision.
+    pub const TOOL_APPROVAL_EXPIRED: Self = Self("tool.approval_expired");
+    /// Run/scope cancellation retired a pending request.
+    pub const TOOL_APPROVAL_CANCELLED: Self = Self("tool.approval_cancelled");
+    /// A compiled decision component began waiting for its actor.
+    pub const COMPONENT_HUMAN_REQUESTED: Self = Self("component.human_requested");
+    /// The actor answered one durable compiled decision.
+    pub const COMPONENT_HUMAN_ANSWERED: Self = Self("component.human_answered");
+    /// A durable compiled decision reached its wait bound.
+    pub const COMPONENT_HUMAN_EXPIRED: Self = Self("component.human_expired");
+    /// Run/scope invalidation retired a durable compiled decision.
+    pub const COMPONENT_HUMAN_CANCELLED: Self = Self("component.human_cancelled");
     /// Bot 在其 computer 上执行的动作被放行。
     pub const COMPUTER_ACTION_ALLOWED: Self = Self("computer.action_allowed");
     /// Bot 在其 computer 上执行的动作被策略拒绝。
@@ -74,6 +108,8 @@ impl AuditEventType {
     pub const MCP_CALL_SUCCEEDED: Self = Self("mcp.call_succeeded");
     /// MCP 调用被放行但 vendor 没完成。
     pub const MCP_CALL_FAILED: Self = Self("mcp.call_failed");
+    /// Catalog refresh suspended a stale/missing/changed MCP grant.
+    pub const MCP_TOOL_SUSPENDED_MISSING: Self = Self("mcp.tool_suspended_missing");
 
     /// 从字符串解析。**只接受 [`AUDIT_EVENT_TYPES`] 里的字面量。**
     ///
@@ -100,7 +136,7 @@ impl fmt::Display for AuditEventType {
     }
 }
 
-/// 事件类型全集，逐字对应上游 `server/src/audit.ts::auditEventTypes`（57 项）。
+/// 事件类型全集：上游 57 项 + 本项目新增 deadline/memory/catalog/approval/component 14 项。
 ///
 /// 顺序也照抄上游，方便逐行对拍。
 pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
@@ -114,6 +150,15 @@ pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
     AuditEventType("channel.routed"),
     AuditEventType("agent.invoked"),
     AuditEventType("agent.stream_stalled"),
+    AuditEventType("agent.run_deadline_exceeded"),
+    AuditEventType("memory.remember_refused"),
+    AuditEventType("memory.remember_succeeded"),
+    AuditEventType("memory.remember_failed"),
+    AuditEventType("tool.approval_requested"),
+    AuditEventType("tool.approval_granted"),
+    AuditEventType("tool.approval_denied"),
+    AuditEventType("tool.approval_expired"),
+    AuditEventType("tool.approval_cancelled"),
     AuditEventType("mcp.call_succeeded"),
     AuditEventType("mcp.call_rejected"),
     AuditEventType("mcp.call_failed"),
@@ -121,6 +166,7 @@ pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
     AuditEventType("mcp.oauth_client_registered"),
     AuditEventType("mcp.account_connected"),
     AuditEventType("mcp.account_disconnected"),
+    AuditEventType("mcp.tool_suspended_missing"),
     AuditEventType("computer.action_allowed"),
     AuditEventType("computer.action_refused"),
     AuditEventType("computer.action_failed"),
@@ -145,6 +191,10 @@ pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
     AuditEventType("component.function_called"),
     AuditEventType("component.function_refused"),
     AuditEventType("component.function_failed"),
+    AuditEventType("component.human_requested"),
+    AuditEventType("component.human_answered"),
+    AuditEventType("component.human_expired"),
+    AuditEventType("component.human_cancelled"),
     AuditEventType("person.role_changed"),
     AuditEventType("person.access_revoked"),
     AuditEventType("person.access_restored"),
@@ -221,11 +271,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn catalog_matches_the_upstream_count_and_has_no_duplicates() {
-        // 复算命令写在 AuditEventType 的文档里；这里钉死它的结果。
-        assert_eq!(AUDIT_EVENT_TYPES.len(), 57);
+    fn catalog_is_upstream_fifty_seven_plus_fourteen_new_and_has_no_duplicates() {
+        assert_eq!(AUDIT_EVENT_TYPES.len(), 71);
         let unique: BTreeSet<&str> = AUDIT_EVENT_TYPES.iter().map(|t| t.0).collect();
-        assert_eq!(unique.len(), 57, "目录里有重复的事件类型");
+        assert_eq!(unique.len(), 71, "目录里有重复的事件类型");
     }
 
     #[test]
@@ -247,6 +296,16 @@ mod tests {
     #[test]
     fn associated_constants_are_all_catalog_members() {
         for constant in [
+            AuditEventType::AGENT_INVOKED,
+            AuditEventType::AGENT_STREAM_STALLED,
+            AuditEventType::AGENT_RUN_DEADLINE_EXCEEDED,
+            AuditEventType::MEMORY_REMEMBER_REFUSED,
+            AuditEventType::MEMORY_REMEMBER_SUCCEEDED,
+            AuditEventType::MEMORY_REMEMBER_FAILED,
+            AuditEventType::COMPONENT_HUMAN_REQUESTED,
+            AuditEventType::COMPONENT_HUMAN_ANSWERED,
+            AuditEventType::COMPONENT_HUMAN_EXPIRED,
+            AuditEventType::COMPONENT_HUMAN_CANCELLED,
             AuditEventType::COMPUTER_ACTION_ALLOWED,
             AuditEventType::COMPUTER_ACTION_REFUSED,
             AuditEventType::COMPUTER_ACTION_FAILED,

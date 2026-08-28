@@ -27,6 +27,8 @@
 
 use std::collections::BTreeMap;
 
+use openbot_domain::text::trim_ecmascript;
+
 /// 一次启动看见的全部环境变量。
 ///
 /// `BTreeMap` 而不是 `HashMap`：错误报告要把所有毛病一次列全（见
@@ -40,7 +42,7 @@ pub type EnvMap = BTreeMap<String, String>;
 /// 返回借用而不是 `String`：调用方多半只是拿去比一下或再切一刀，多一次分配没有意义。
 #[must_use]
 pub fn optional<'a>(env: &'a EnvMap, name: &str) -> Option<&'a str> {
-    let value = env.get(name)?.trim();
+    let value = trim_ecmascript(env.get(name)?);
     if value.is_empty() { None } else { Some(value) }
 }
 
@@ -54,7 +56,7 @@ pub fn comma_separated(env: &EnvMap, name: &str) -> Vec<String> {
     optional(env, name)
         .unwrap_or_default()
         .split(',')
-        .map(str::trim)
+        .map(trim_ecmascript)
         .filter(|part| !part.is_empty())
         .map(str::to_owned)
         .collect()
@@ -119,19 +121,40 @@ mod tests {
     /// 没有那条正向对照的话，一个恒返回 `None` 的 `optional` 也能过。
     #[test]
     fn blank_is_absent_and_a_real_value_is_not() {
-        let map = env(&[("EMPTY", ""), ("SPACES", "   "), ("REAL", "  v  ")]);
+        let map = env(&[
+            ("EMPTY", ""),
+            ("SPACES", "   "),
+            ("BOM", "\u{FEFF}\u{3000}"),
+            ("REAL", "\u{FEFF} v \u{3000}"),
+            ("NEL", "\u{0085}v\u{0085}"),
+        ]);
         assert_eq!(optional(&map, "EMPTY"), None);
         assert_eq!(optional(&map, "SPACES"), None);
+        assert_eq!(optional(&map, "BOM"), None);
         assert_eq!(optional(&map, "MISSING"), None);
         // 正向对照：有值时确实读得到，而且两侧已 trim。
         assert_eq!(optional(&map, "REAL"), Some("v"));
+        assert_eq!(
+            optional(&map, "NEL"),
+            Some("\u{0085}v\u{0085}"),
+            "U+0085 不能借 Rust White_Space 冒充 ECMAScript WhiteSpace"
+        );
     }
 
     /// 逐项 trim + 丢空项 —— 并配"正常列表原样保留顺序"的正向对照。
     #[test]
     fn comma_separated_drops_blanks_and_keeps_order() {
-        let map = env(&[("LIST", " a , ,b,, c ,"), ("ONE", "solo"), ("BLANK", " , ")]);
+        let map = env(&[
+            ("LIST", " a , ,b,, c ,"),
+            ("ONE", "solo"),
+            ("BLANK", " , "),
+            ("ECMA", "\u{FEFF}a\u{3000},\u{0085}b\u{0085}"),
+        ]);
         assert_eq!(comma_separated(&map, "LIST"), vec!["a", "b", "c"]);
+        assert_eq!(
+            comma_separated(&map, "ECMA"),
+            vec!["a", "\u{0085}b\u{0085}"]
+        );
         // 正向对照：单项与缺失各自给出应有的形状，否则上一条在
         // "comma_separated 恒返回空表"的世界里同样通过。
         assert_eq!(comma_separated(&map, "ONE"), vec!["solo"]);

@@ -12,7 +12,7 @@
 #            覆盖到了沙箱调用点，而不是"命令根本没扫到那里"）；
 #   替代   = 同一能力换实现（React → Leptos）。
 #
-# 未验证项一律 status: todo 并在 notes 里写明缺什么。本仓此刻零实现代码，因此不存在 done。
+# 未验证项一律 status: todo 并在 notes 里写明缺什么；Batch40起只按完整证据逐条推进done。
 
 schema: "components"
 schema_version: 1
@@ -85,7 +85,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0001"
     migration_rule: "preserve: 工具名 showActivityReport 与参数 schema 不变，React 实现换成 Leptos"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch44闭合showActivityReport exact schema、build-owned botActivity/recentRefusals、admin ACL/hot policy/function grant/call audit与两种typed report，并保留Settings不可预览；Batch45把fresh provider definition、args-derived function、call-time decision、durable call/result/Agent三向配对与safe conversation mount接入。Batch46把上游两条conversation follow-up ask逐字接入唯一native BeginThreadRun：按钮只在真实非空data与conversation callback存在时显示，busy/resumable/submitting明确disabled；PendingTurn绑定Server-derived Agent，失败Retry重放exact thread/run/Agent/message。UI conversation12/0/0、Activity1/0/0、Clippy/WASM/五bundle闸门绿。release浏览器Activity/Refusals两report与两按钮各1；busiest首次注入503后Retry可用、actions/textarea锁定，第二次以完全相同runId/botId/anchor/message得201；Refusals另一次201，两prompt逐字exact，durable user/assistant均agentId bot-0；hard reload后prompt/button/report各1，1440/600 overflow0、duplicate/nested application error0。"
     evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献 showActivityReport 一条"
     notes: "唯一会自己读部署数据的 gallery 组件。① 参数 schema = activity.tsx::ActivityReportProps；② published 状态 = server/src/db/schema/components.ts::components 的 publishedDescription（null 即模型永不被提供该组件）；③ per-Bot withholding = 同文件 componentExclusions（开放默认，有行才是例外）；④ data-function grant = 同文件 componentFunctions（缺行即拒，activity.tsx::GALLERY 的 reads 回调声明本次调用要读哪个函数）；⑤ tool-call-time 再授权 = app/src/lib/copilot/gallery-tools.tsx::GrantedTool 的 handler 调 decideComponent，服务端 server/src/components/routes.ts 的 POST /:name/decision 与 POST /:name/call 各自复核 canUseBot + store.decide + store.mayCall 并写 audit。本条实测 grep -c callComponentFunction 命中 3 次，是判定沙箱侧为零的正向对照。上游刻意不给它 preview（Admin 画廊里显示为不可预览），Leptos 版必须保留这个缺省，否则 Admin 页会用当前活跃 Bot 的身份发起一次真实读取。"
 
@@ -96,7 +97,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0002"
     migration_rule: "preserve: showRecord / showMetrics / showChecklist / showNotice 四个工具名与参数 schema 不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch45 把 showRecord/showMetrics/showChecklist/showNotice 四个独立名字、closed 参数 schema、上游逐字确认语句注册进共享 Rust registry；PostgreSQL provider-context 实测只向模型发当前 published 且未按 Agent withheld 的定义，下一次上下文立即反映撤权。每次调用重新校验参数并走 fresh component decision，拒绝形成单个 durable error tool reply；会话投影把 assistant tool-call + tool result 合成一个安全 Leptos renderer，拒绝时只画共享 RefusedCard。contracts5/0/0、gateway5/0/0、UI conversation11/0/0、runtime1/0/0、PG provider1/0/0；release 真浏览器成功 Quote/拒绝 Notice 证明同一生产投影、拒绝正文不泄露、hard reload/1440/1024/600 overflow0。"
     evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献 showRecord / showMetrics / showChecklist / showNotice 四条"
     notes: "一个文件四个注册项，Leptos 版必须仍是四个独立工具名而不是一个带 kind 参数的合并组件（工具名是目录键、Admin 行键与 grant 键，合并会静默改掉三处身份）。① 参数 schema = RecordCardProps / MetricsCardProps / ChecklistCardProps / NoticeCardProps；②③④⑤ 与 gallery-activity 同一套：components.publishedDescription / componentExclusions / componentFunctions / gallery-tools.tsx::GrantedTool 的 handler + routes.ts 的 /decision 与 /call。本文件无 reads 回调，即不读部署数据，只画模型给的参数。"
 
@@ -107,7 +109,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0003"
     migration_rule: "preserve: showBarChart / showPieChart / showLineChart / showAreaChart / showProgress 五个工具名与参数 schema 不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch45 把 showBarChart/showPieChart/showLineChart/showAreaChart/showProgress 五个独立工具定义接入与 renderer 同源的共享 registry；Line/Area 复用同一 points schema，所有 schema closed，未知/多余/越界参数在 fresh decision 前拒绝。真实 PostgreSQL provider-context 证明 definition 与 current published/per-Agent withholding exact 且撤权下一次 load 生效；gateway 每次调用复核 component decision，durable history 按 call id 合并后由 Leptos 安全画图或共享 RefusedCard。contracts5/0/0、gateway5/0/0、UI conversation11/0/0、runtime1/0/0、PG provider1/0/0；8-crate Clippy、WASM、release bundle 五闸门全绿。"
     evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献五条，是 8 个文件里注册项最多的一个"
     notes: "五个注册项，其中 AreaChartProps 直接等于 LineChartProps（charts.tsx::AreaChartProps），Leptos 版要保留这层复用而不是抄两份 schema，否则两个工具的参数会各自漂移。① 参数 schema = BarChartProps / PieChartProps / LineChartProps / AreaChartProps / ProgressChartProps；②③④⑤ 同 gallery-activity。上游图表是手写 SVG（charts.tsx::Plot / Legend / Empty），不依赖 JS 图表库，因此 Leptos 版不需要引入运行时库；这一点与设计系统文档 §6.3〈六个运行时 JavaScript 库的替代〉不冲突，本轮未逐库核对，见本文件末尾未验证项。"
 
@@ -118,7 +121,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0004"
     migration_rule: "preserve: askApproval / askChoice 两个工具名、参数 schema 与 HITL 挂起语义不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch48把askApproval/askChoice以kind=decision同批加入13项manifest/provider/schema/Leptos registry；runtime原样传provider call id、Rust UUIDv7另作decision/internal identity，HumanRequired进入AwaitingHuman，answer后只回ExecutingTools，durable exchange checkpoint提交后才load context/resample。取消时human waiter以detached JoinHandle继续到PG观察terminal并写cancelled audit，ordinary effect仍drop-first/reconciliation；拒绝/坏参数也返回单个error tool result，不挂死run。PG17.11完整竖切实得pending前run=running/tool result=0、跨Application answer、answered row与requested/answered audit各1、provider第二次context含exact assistant/tool pair；catalogue/human/provider-context另各1/0/0。最终release浏览器实得Approval/Choice pending各1、提交后complete、hard reload仍complete、Choice Enter有效且stored Production选中、坏/重复DOM与console均0。"
     evidence: "grep -c respond app/src/lib/copilot/sandboxed-tools.tsx app/src/components/gallery/decisions.tsx app/src/lib/copilot/gallery-tools.tsx = sandboxed-tools.tsx:0 decisions.tsx:12 gallery-tools.tsx:7"
     notes: "kind=decision 是唯一走 useHumanInTheLoop 的分支（gallery-tools.tsx::GrantedDecision），它会挂起整个 run，所以⑤ tool-call-time 再授权在这里的形态不同：被拒时 gallery-tools.tsx::RefusedDecision 必须调 respond 把 tool call 答掉，否则 run 永远挂着。这条 HITL 半边的落点是 openbot-application（v3 §8.5 Approval），本 ledger 按主控指定的 owner 域记为 openbot-ui（渲染面）——两侧同 PR 落地，缺任一即挂死。① 参数 schema = ApprovalCardProps / ChoiceCardProps；② published / ③ withholding / ④ data-function grant 同 gallery-activity。decisions.tsx::readResult / readDecision / readChoice 是结果回读，Leptos 版必须一并搬，否则已完成的决策卡重渲染会丢掉用户答案。"
 
@@ -129,7 +133,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0005"
     migration_rule: "preserve: 外框与 Badge 的语义色调词表不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch40 `GalleryFrame`保留optional title/caption/action/children语义，figure+figcaption命名结构；`GalleryTone`恰neutral/positive/caution/negative四值并由单测逐项锁定。视觉按本项目第一真源改为中性无边框chrome，语义色只落GalleryBadge文字+状态点；design-lint/CSS check/reduced-motion全绿。release Quote index/detail真实复用同一Frame，preview aria-hidden、nested interactive0、overflow0。"
     evidence: "grep -l '^export const GALLERY' app/src/components/gallery/*.tsx 不含 frame.tsx（5 个文件命中，frame/preview/refused 不在其中）"
     notes: "支撑件，不是注册项：它没有 GALLERY 导出，因此不占工具名、没有参数 schema、不参与 published/withholding/grant/再授权这四项——五项能力在这条上只有第①项以 props 形式存在（frame.tsx::GalleryFrame 的 title/caption/action/children）。frame.tsx::Tone 是固定四值语义色调词表（neutral/positive/caution/negative），Leptos 版必须仍是封闭枚举，落到 design token 而不是硬编码 Tailwind 颜色类。"
 
@@ -140,7 +145,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0006"
     migration_rule: "preserve: 不可预览组件显示为不可预览瓦片而非渲染失败"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch44 renderer/manifest加入无preview的showActivityReport；ComponentPreview对该current renderer走专用localized不可预览句子，不实例化ActivityReportCard。release浏览器index/detail/hard reload均实得Activity tile1、figure/runtime DOM0、unavailable句子true；12 published tiles中stale仍走另一renderer_unavailable文案，unpublished future为0，overflow/duplicate/nested/console均0。"
     evidence: "grep -l '^export const GALLERY' app/src/components/gallery/*.tsx 不含 preview.tsx；preview.tsx::PreviewOf 与 firstSentence 是其内部符号"
     notes: "支撑件，不是注册项（无 GALLERY 导出，不占工具名）。它消费 gallery-registry.ts::GalleryComponent 的可选 preview 字段：省略 preview 的组件（当前只有 activity）必须画成不可预览瓦片，而不是当成渲染失败——这是①参数 schema 之外唯一与五项能力相关的行为，且是 Admin 页避免以活跃 Bot 身份发起真实读取的那道闸。Leptos 版的 preview 数据来源同样必须与组件定义同处一地，否则新增组件时可以忘记决定它怎么自我介绍。"
 
@@ -151,7 +157,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0007"
     migration_rule: "preserve: showQuote 工具名与参数 schema 不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch45 保留 showQuote 与 quote/attribution/optional context 的 closed schema、逐字 confirmation、published/per-Agent withholding 和 call-time fresh decision；成功/拒绝均写成一个可重放 tool result，ThreadHistoryMessage 显式携带 toolName/errorCode，UI 按 provider call id 合并为唯一 Quote 或共享 RefusedCard。contracts/gateway/UI/PG 全绿；真实 release 浏览器实得 Quote figure1、文案1、拒绝 Notice status1且 Refused fixture 不可见，普通 assistant 文本仍在，hard reload 后一致，duplicate id/nested article/1440/1024/600 overflow 均0。"
     evidence: "grep -h '^    name: \"' app/src/components/gallery/*.tsx | wc -l = 13；本文件贡献 showQuote 一条"
     notes: "① 参数 schema = quote.tsx::QuoteCardProps；②③④⑤ 同 gallery-activity（components.publishedDescription / componentExclusions / componentFunctions / gallery-tools.tsx::GrantedTool 的 handler + routes.ts 的 /decision 与 /call）。无 reads 回调，不读部署数据。"
 
@@ -162,7 +169,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0008"
     migration_rule: "preserve: data-testid=component-refused 与 role=status 不变"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50把既有RefusedCard直接复用于SandboxedComponentFrame启动/host拒绝、SandboxedConversationComponent缺source/坏result以及compiled runtime；没有第二份沙箱拒绝DOM。固定data-testid=component-refused与role=status保持。release IAB会话实得compiled refusal+sandbox capability不可用两张共享卡，testid恰2、author source正文0；Playground同一组件testid1。"
     evidence: "grep -l '^export const GALLERY' app/src/components/gallery/*.tsx 不含 refused.tsx；被 gallery-tools.tsx 与 sandboxed-tools.tsx 双方 import"
     notes: "支撑件，不是注册项（无 GALLERY 导出）。它是⑤ tool-call-time 再授权与②③④三项拒绝的唯一可见出口：compiled 侧（gallery-tools.tsx::GrantedTool / GrantedDecision）与 sandboxed 侧（sandboxed-tools.tsx::SandboxedTool）都渲染它，所以 Leptos 版必须是两条路径共用的同一个组件，不能各画各的。上游把 data-testid=component-refused 与 role=status 写死，是拒绝可被自动化断言的唯一抓手，迁移必须逐字保留。"
 
@@ -189,7 +197,7 @@ entries:
     migration_rule: "preserve: 注入语句与作者脚本之间的先后次序不变"
     status: "todo"
     evidence: "grep -c 'window.__args' app/src/lib/copilot/sandboxed-tools.tsx app/src/routes/_authed/admin/playground.tsx = sandboxed-tools.tsx:1 playground.tsx:2"
-    notes: "wrapper 先写 window.__args = <本次调用参数 JSON>，换行，再拼作者的 jsFunctions —— 两个调用点（会话渲染与 playground 预览）逐字同构，playground 侧注入的是 sampleArguments。作者脚本拿到的全部输入就是这一个全局变量；Rust wrapper 必须自己做 JSON 序列化并保证它在作者代码之前求值，顺序反了作者脚本读到的是 undefined。上游未对参数做转义以外的任何校验（parametersFor 在 schema 读不懂时退回 z.object({}).catchall(z.unknown())），这是**上游现状**，不是本 ledger 认可的目标状态；是否加校验属 v3 未裁决项，见末尾未验证项。"
+    notes: "wrapper 先写 window.__args = <本次调用参数 JSON>，换行，再拼作者的 jsFunctions —— 两个调用点（会话渲染与 playground 预览）逐字同构，playground 侧注入的是 sampleArguments。作者脚本拿到的全部输入就是这一个全局变量；Rust wrapper 必须自己做 JSON 序列化并保证它在作者代码之前求值，顺序反了作者脚本读到的是 undefined。上游未对参数做转义以外的任何校验（parametersFor 在 schema 读不懂时退回 z.object({}).catchall(z.unknown())），这是**上游现状**；R113已按第一真源安全边界裁决为保存时编译object schema、调用时按current schema验证并拒绝external $ref。T-CMP-0009仍需可用浏览器证明注入顺序，不能只凭源码标绿。"
 
   - id: "sandbox-jsfunctions-exec"
     upstream: "app/src/lib/copilot/sandboxed-tools.tsx::SandboxedTool"
@@ -209,7 +217,8 @@ entries:
     owner: "openbot-application"
     test_id: "T-CMP-0011"
     migration_rule: "preserve: 沙箱侧不得新增 data function 通道"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50独立SandboxedComponentAdministration runtime port只有list granted与authorize(name,args)，无functions/call方法；dynamic provider definition只含published name/description/schema，Agent命令只带name/Agent/args。PG17.11真库手工给custom_delivery_eta插component_functions后，共享治理list以sandboxed_component_functions corruption fail-closed；删坏行后provider恢复，sandbox call-time路径从未查询/执行function。"
     evidence: "grep -c callComponentFunction app/src/lib/copilot/sandboxed-tools.tsx app/src/routes/_authed/admin/playground.tsx app/src/components/gallery/activity.tsx = sandboxed-tools.tsx:0 playground.tsx:0 activity.tsx:3"
     notes: "两重证据。① 词法：沙箱两个调用点对 callComponentFunction 零命中，而同一条命令在 compiled 侧 activity.tsx 命中 3 次——正向对照成立，不是命令没扫到。② 结构：server/drizzle/0000_schema.sql 里 component_functions 的外键只指向 public.components(name)（命中 1），零指向 sandboxed_components（命中 0）；sandboxed_components 是 server/src/db/schema/plugins.ts 里的独立表，名字带 custom_ 前缀（sandboxed.ts 里保证不与 compiled 名冲突），所以一个沙箱组件在库层面就无法持有 data-function 行。v3 §3.3 明确 R1 不新增这一通道，Rust 版必须让“沙箱组件没有可授予的 data function”仍是**结构性**事实而不是靠调用点自觉。"
 
@@ -253,7 +262,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0015"
     migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50 SANDBOX_IFRAME_POLICY唯一字面量恰allow-scripts，单测断词数=1并锁完整值；release IAB在Playground与durable conversation均实得sandbox='allow-scripts'、srcdoc=null、src为同源/sandbox/runner?render=<每次随机ID>#<local payload>，allow-same-origin/top-navigation/popups/downloads/forms/storage token均不存在。custom/Tauri scheme由host protocol gate直接画RefusedCard且不创建iframe。"
     evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0（正向对照见 T-CMP-0014）"
     notes: "sandbox 属性恰为 allow-scripts 一项；禁止 allow-same-origin（给了它 opaque origin 就没了，同源即可读宿主 storage 与 DOM）、禁止 top navigation、popup、download、storage。Rust 版应把这串属性做成常量并配双向断言（既断言 allow-scripts 在、也断言 allow-same-origin 不在），否则“少写一个属性”是静默失效。上游第一方源零命中，故 label=新增。"
 
@@ -264,7 +274,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0016"
     migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50 /sandbox/runner普通网络导航避免srcdoc继承父CSP；Server每响应以唯一builder下发逐字default-src 'none'; connect-src 'none'; script-src 'nonce-<random>'; style-src 'unsafe-inline'; img-src data: blob:。Server单测双响应前后缀exact、bootstrap恰一个nonce script；runner源码无fetch/XMLHttpRequest/atob/TextDecoder，用户script首句清nonce且bootstrap已自删除。"
     evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0（正向对照见 T-CMP-0014）"
     notes: "CSP 逐字固定为：default-src 'none'; connect-src 'none'; script-src 'nonce-<per-render-random>'; style-src 'unsafe-inline'; img-src data: blob:。connect-src 'none' 是 sandbox-no-network 在本仓的兑现方式；style-src 'unsafe-inline' 是有意放开的（作者 CSS 就是产品本身），img-src 只放 data: 与 blob: 即不出网。这串必须是单一常量并配单测逐字比对：CSP 写错一个指令不会报错，只会静默不生效。上游第一方源零 CSP 字面量，故 label=新增。"
 
@@ -275,7 +286,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-CMP-0017"
     migration_rule: "n/a: v3 §3.3 写死的加固，上游第一方源无对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch50 Server用ring SystemRandom每次GET /sandbox/runner生成32字节/64 hex nonce；双响应测试断言nonce各自合法且互不相等，HTML script nonce与同响应CSP exact相等。作者执行script由bootstrap临时赋同nonce，但固定前缀在作者代码前清空nonce/attribute；bootstrap自身执行开头保存nonce后立即清空并remove，作者HTML拿不到仍有效的nonce。"
     evidence: "grep -rE 'allow-scripts|allow-same-origin|default-src|Content-Security-Policy|nonce' app server shared | wc -l = 0（正向对照见 T-CMP-0014）"
     notes: "nonce 每次渲染重新随机；Rust wrapper **只**给本次封装后的用户脚本设置该 nonce，不给任何其它 script 标签。判据必须是“每次 render 取到的 nonce 互不相等”，而不是“nonce 非空”——常量 nonce 在 CSP 下同样能跑通，正好是失效模式。上游第一方源零命中，故 label=新增。"
 
@@ -297,7 +309,8 @@ entries:
     owner: "openbot-application"
     test_id: "T-CMP-0019"
     migration_rule: "preserve: draft/published 双列、单次 publish 原子提升、revision 单调递增"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch49以closed contracts/application独立port/PostgreSQL adapter闭合draft→published生命周期。save只更新draft/title/sample/author且保留published/revision；publish在一个SERIALIZABLE事务与同一DB时间戳内同时提升description/html/css/jsFunctions/argumentSchema、shared governance与allowlisted audit，revision checked单调递增；hasUnpublishedChanges逐字保留固定上游仅比较HTML/CSS/JS三列。PG17.11 SCRAM 1/0/0实得revision 0→1→2、两次publish audit payload revision=[1,2]，draft source/schema发布前不外泄，三种audit故障全回滚。Axum/Tauri同一Arc五接口语义对拍1/0/0。"
     evidence: "grep -c 'revision: row.revision + 1' server/src/components/sandboxed.ts = 2（update 语句 + audit payload 各一处）"
     notes: "publish 是一个动作同时提升描述与源码：sandboxed.ts::publish 一次 update 写 publishedDescription/Html/Css/JsFunctions/ArgumentSchema + published=true + publishedAt + revision+1，并同步把 components 行的 publishedDescription 与 published 一起提上去（沙箱与 compiled 共用同一张治理表与同一套 grant 面）。拆成两个端点即产生“有措辞没源码”或“有源码没措辞”两种没人想要的中间态。hasUnpublishedChanges 由 draft 三列与 published 三列逐一比对得出（sandboxed.ts::toRecord），不是另存的标志位。前端 publishSandboxedMutationOptions 先 POST /api/sandboxed 存草稿再 POST /:name/publish，save 失败即中止 publish。**注意**：v3 §3.3 要求 data function 每次调用重新检查 component revision，而上游 /call 与 store 侧对 revision 零命中（routes.ts:0 store.ts:0，sandboxed.ts:4 是正向对照）——即 revision 复检是 R1 新加的，本条只覆盖上游已有的 draft/publish/revision 生命周期。"
 
@@ -375,8 +388,9 @@ entries:
 #     （openbot-ui 渲染 / openbot-application grant-policy-HITL）记为 openbot-ui。
 #     解除条件：主控裁决是否把这三条改挂 openbot-computer / openbot-desktop。
 #
-# U5. T-CMP-0009 里的参数校验缺口。
-#     缺什么：上游 sandboxed-tools.tsx::parametersFor 在作者 JSON Schema 读不懂时
-#     退回 z.object({}).catchall(z.unknown())，即模型可以给沙箱组件传任意参数。这是
-#     上游现状（已如实记为 parity），但 v3 没有对"是否加校验"下裁决。
-#     解除条件：主控裁决保留现状还是加严；加严即新开一条 label=新增 的 entry。
+# U5. T-CMP-0009 的参数校验已裁决，正向执行证据仍缺。
+#     R113/Batch50 已加严为保存时编译 object JSON Schema、拒绝 external $ref，并在每次
+#     authorize 时按 current schema 校验参数；这部分有 PG17.11 真库证据。缺的是可用浏览器中
+#     作者脚本实际读到 window.__args 且顺序先于 authored JS 的正向证据。
+#     解除条件：在具备真实 MessageChannel/postMessage 的 release 浏览器跑通同一 production
+#     wrapper 的 args/order 用例；在此之前 T-CMP-0009 保持 todo。

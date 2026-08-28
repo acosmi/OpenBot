@@ -3,8 +3,8 @@
 //! # 三态必须分清，非法值**不能**折成"未配置"
 //!
 //! v3 §8.6 逐字：「`AUDIT_RETENTION_DAYS` 原名原义保留（未设 = 永久；≥ 1 的整数；非法值
-//! 拒绝启动）」；`parity/env.yaml::audit-retention-days` 的 notes 同样写着「非整数或 < 1
-//! 拒绝启动而不是强转，Rust 侧保持」。所以取值域是**三态**：
+//! 拒绝启动）」；R51 进一步把上游 `Number(raw)` 与本解析器的差异明确标为“变量名 preserve、
+//! 数值语义替代”。所以 Rust 取值域是**三态**：
 //!
 //! | 输入 | 结果 | 后果 |
 //! | --- | --- | --- |
@@ -28,15 +28,18 @@
 //! | `"0x10"` | 16 | **是（16 天）** | **拒绝** |
 //! | `"1e3"` | 1000 | **是（1000 天）** | **拒绝** |
 //! | `"+7"` | 7 | **是** | **拒绝** |
+//! | `"7.0"` / `"0b101"` / `"1."` | 7 / 5 / 1 | **是** | **拒绝** |
 //! | `"7.5"` / `"abc"` / `"0"` / `"-1"` | — | 否 | 拒绝 |
 //!
-//! 分歧只发生在中间三行，方向是**收紧**。理由不是口味：台账写的是"拒绝启动而不是**强转**"，
+//! 分歧发生在“`Number` 强转后是正整数、但原文不是十进制整数”的集合，方向是**收紧**。
+//! 理由不是口味：台账写的是"拒绝启动而不是**强转**"，
 //! 而 `Number("0x10") === 16` 恰恰就是一次强转 —— 管理员写下 `0x10`，系统执行 16 天，而
 //! 保留策略是一项会被审计方逐字核对的控制。上游自己的注释也说「"我们接受了你的保留策略，
 //! 但不是你写的那个"是一个坏答案」。
 //!
-//! **迁移可见的后果**：现网若真有部署把它写成 `1e3` / `0x10` / `+7`，切到 Rust 后会拒绝
-//! 启动。这条已在交付报告里单列，需要迁移 preflight 扫一遍环境。
+//! **迁移可见的后果**：现网若真有部署把它写成 `1e3` / `0x10` / `+7` 等形态，切到 Rust
+//! 后会拒绝启动。`openbot-migrate preflight-audit-retention` 会在 cutover 前给出不含原值的
+//! 规范十进制替代值；不能表示成 `u32` 的值要求人工选择策略。
 //!
 //! # 删除是数据库授权的，本模块只做判定
 //!
@@ -75,6 +78,8 @@
 //! 上游才知道这套机制长什么样，也为了让"改锁号"这种改动能被搜到。
 
 use time::{Duration, OffsetDateTime};
+
+use crate::text::trim_ecmascript;
 
 use super::chain::StoredAuditRow;
 use super::checkpoint::{AuditCheckpoint, AuditCheckpointKind, ChainSegment};
@@ -136,7 +141,7 @@ pub enum RetentionConfigError {
 ///
 /// 见 [`RetentionConfigError`]。**任何一种都必须让启动失败**，理由见模块文档。
 pub fn parse_retention_days(raw: Option<&str>) -> Result<RetentionPolicy, RetentionConfigError> {
-    let Some(text) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+    let Some(text) = raw.map(trim_ecmascript).filter(|value| !value.is_empty()) else {
         return Ok(RetentionPolicy::Forever);
     };
 
@@ -373,6 +378,10 @@ mod tests {
             parse_retention_days(Some("   ")),
             Ok(RetentionPolicy::Forever)
         );
+        assert_eq!(
+            parse_retention_days(Some("\u{FEFF}\u{3000}")),
+            Ok(RetentionPolicy::Forever)
+        );
     }
 
     #[test]
@@ -384,6 +393,10 @@ mod tests {
         // trim 之后再判，与上游 `optional()` 同。
         assert_eq!(
             parse_retention_days(Some("  30  ")),
+            Ok(RetentionPolicy::Days(RetentionDays::new(30).unwrap()))
+        );
+        assert_eq!(
+            parse_retention_days(Some("\u{FEFF}\u{3000}30\u{00A0}")),
             Ok(RetentionPolicy::Days(RetentionDays::new(30).unwrap()))
         );
         // 前导零无歧义，接受。
@@ -411,6 +424,7 @@ mod tests {
             ("7abc", RetentionConfigError::NotAWholeNumber),
             ("3 0", RetentionConfigError::NotAWholeNumber),
             ("Infinity", RetentionConfigError::NotAWholeNumber),
+            ("\u{0085}30\u{0085}", RetentionConfigError::NotAWholeNumber),
             ("99999999999", RetentionConfigError::TooLarge),
         ];
         for (raw, expected) in cases {
@@ -426,9 +440,9 @@ mod tests {
 
     /// 与上游 JS 数值强转的**有意分歧**，逐条钉死。
     ///
-    /// 本轮实测（node，2026-08-22）：`Number("0x10") === 16`、`Number("1e3") === 1000`、
-    /// `Number("+7") === 7`，三者上游都会接受。这条测试是"我们知道并且故意不这么做"的
-    /// 可执行记录 —— 哪天有人为了"和上游一致"把它改成接受，会先看到这段。
+    /// 本轮实测（node）：`0x10` / `1e3` / `+7` / `0b101` 上游都会接受；`1_000` 是上游也
+    /// 拒绝的负向对照。这条测试是“我们知道并且故意不强转”的可执行记录 —— 哪天有人为了
+    /// “和上游一致”把它改成接受，会先看到这段。
     #[test]
     fn javascript_numeric_coercions_are_deliberately_refused() {
         for raw in ["0x10", "1e3", "+7", "0b101", "1_000"] {

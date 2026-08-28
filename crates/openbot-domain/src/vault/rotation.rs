@@ -408,7 +408,7 @@ impl PendingReadBack {
 /// 这就是"在没校验时就标记 retired"写不出来的原因。
 ///
 /// 它**不再持有明文**：走到这一步明文的使命已经完成，继续带着它只是延长一段不必要的
-/// 驻留时间（[`SecretBytes`] 在上一步被 drop 时已经尽力擦除）。
+/// 驻留时间（[`SecretBytes`] 在上一步被 drop 时已经由 `zeroize` 清除当前 allocation）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedMigration {
     secret_id: SecretId,

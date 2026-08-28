@@ -144,39 +144,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL account_id",
-          "name": "accounts_account_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "accounts_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "accounts_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "accounts_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL provider_id",
-          "name": "accounts_provider_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "accounts_updated_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL user_id",
-          "name": "accounts_user_id_not_null",
-          "type": "n"
         },
         {
           "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
@@ -244,34 +214,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL allow",
-          "name": "action_policy_allow_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL deny",
-          "name": "action_policy_deny_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "action_policy_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL mode",
-          "name": "action_policy_mode_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "action_policy_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "action_policy_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -314,19 +259,9 @@
           "type": "f"
         },
         {
-          "def": "NOT NULL agent_id",
-          "name": "agent_preferences_agent_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (user_id, agent_id)",
           "name": "agent_preferences_user_id_agent_id_pk",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL user_id",
-          "name": "agent_preferences_user_id_not_null",
-          "type": "n"
         },
         {
           "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
@@ -430,21 +365,6 @@
           "type": "f"
         },
         {
-          "def": "NOT NULL agent_id",
-          "name": "agent_profiles_agent_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL avatar_seed",
-          "name": "agent_profiles_avatar_seed_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "agent_profiles_created_at_not_null",
-          "type": "n"
-        },
-        {
           "def": "FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL",
           "name": "agent_profiles_owner_user_id_users_id_fk",
           "type": "f"
@@ -453,26 +373,6 @@
           "def": "PRIMARY KEY (agent_id)",
           "name": "agent_profiles_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL role_description",
-          "name": "agent_profiles_role_description_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL title",
-          "name": "agent_profiles_title_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "agent_profiles_updated_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL visibility",
-          "name": "agent_profiles_visibility_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -549,26 +449,6 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL configuration",
-          "name": "agents_configuration_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "agents_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "agents_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL name",
-          "name": "agents_name_not_null",
-          "type": "n"
-        },
-        {
           "def": "FOREIGN KEY (package_id) REFERENCES deployment_packages(id) ON DELETE SET NULL",
           "name": "agents_package_id_deployment_packages_id_fk",
           "type": "f"
@@ -577,16 +457,6 @@
           "def": "PRIMARY KEY (id)",
           "name": "agents_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL type",
-          "name": "agents_type_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "agents_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -652,34 +522,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "audit_events_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL event_type",
-          "name": "audit_events_event_type_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "audit_events_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL payload",
-          "name": "audit_events_payload_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "audit_events_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL target_type",
-          "name": "audit_events_target_type_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -747,11 +592,6 @@
           "type": "f"
         },
         {
-          "def": "NOT NULL agent_id",
-          "name": "channel_agents_agent_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (channel_id, agent_id)",
           "name": "channel_agents_channel_id_agent_id_pk",
           "type": "p"
@@ -760,16 +600,6 @@
           "def": "FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE",
           "name": "channel_agents_channel_id_channels_id_fk",
           "type": "f"
-        },
-        {
-          "def": "NOT NULL channel_id",
-          "name": "channel_agents_channel_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "channel_agents_created_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -812,24 +642,9 @@
           "type": "f"
         },
         {
-          "def": "NOT NULL channel_id",
-          "name": "channel_memberships_channel_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (channel_id, user_id)",
           "name": "channel_memberships_channel_id_user_id_pk",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "channel_memberships_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL user_id",
-          "name": "channel_memberships_user_id_not_null",
-          "type": "n"
         },
         {
           "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
@@ -935,34 +750,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL allowed_groups",
-          "name": "channels_allowed_groups_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "channels_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL description",
-          "name": "channels_description_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "channels_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "FOREIGN KEY (last_message_agent_id) REFERENCES agents(id) ON DELETE SET NULL",
           "name": "channels_last_message_agent_id_agents_id_fk",
           "type": "f"
-        },
-        {
-          "def": "NOT NULL name",
-          "name": "channels_name_not_null",
-          "type": "n"
         },
         {
           "def": "FOREIGN KEY (package_id) REFERENCES deployment_packages(id) ON DELETE SET NULL",
@@ -973,16 +763,6 @@
           "def": "PRIMARY KEY (id)",
           "name": "channels_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL suggested_prompts",
-          "name": "channels_suggested_prompts_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "channels_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -1043,11 +823,6 @@
           "type": "f"
         },
         {
-          "def": "NOT NULL agent_id",
-          "name": "component_exclusions_agent_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (component_name, agent_id)",
           "name": "component_exclusions_component_name_agent_id_pk",
           "type": "p"
@@ -1056,21 +831,6 @@
           "def": "FOREIGN KEY (component_name) REFERENCES components(name) ON DELETE CASCADE",
           "name": "component_exclusions_component_name_components_name_fk",
           "type": "f"
-        },
-        {
-          "def": "NOT NULL component_name",
-          "name": "component_exclusions_component_name_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "component_exclusions_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "component_exclusions_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -1130,26 +890,6 @@
           "def": "PRIMARY KEY (component_name, function_name)",
           "name": "component_functions_component_name_function_name_pk",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL component_name",
-          "name": "component_functions_component_name_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "component_functions_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL function_name",
-          "name": "component_functions_function_name_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "component_functions_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -1236,44 +976,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "components_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL draft_description",
-          "name": "components_draft_description_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL kind",
-          "name": "components_kind_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL name",
-          "name": "components_name_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (name)",
           "name": "components_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL published",
-          "name": "components_published_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL title",
-          "name": "components_title_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "components_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -1325,34 +1030,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL computer_id",
-          "name": "computer_snapshot_computer_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL elements",
-          "name": "computer_snapshot_elements_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (computer_id)",
           "name": "computer_snapshot_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL snapshot_id",
-          "name": "computer_snapshot_snapshot_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL taken_at",
-          "name": "computer_snapshot_taken_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL url",
-          "name": "computer_snapshot_url_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -1432,49 +1112,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "credentials_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL encrypted_value",
-          "name": "credentials_encrypted_value_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "credentials_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL key_id",
-          "name": "credentials_key_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL kind",
-          "name": "credentials_kind_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL metadata",
-          "name": "credentials_metadata_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "credentials_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL provider",
-          "name": "credentials_provider_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "credentials_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -1526,34 +1166,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL checksum",
-          "name": "deployment_packages_checksum_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "deployment_packages_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL loaded_at",
-          "name": "deployment_packages_loaded_at_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "deployment_packages_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL source_path",
-          "name": "deployment_packages_source_path_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL tenant_id",
-          "name": "deployment_packages_tenant_id_not_null",
-          "type": "n"
         },
         {
           "def": "UNIQUE (tenant_id)",
@@ -1619,34 +1234,9 @@
           "type": "f"
         },
         {
-          "def": "NOT NULL channel_id",
-          "name": "intelligence_channel_mappings_channel_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "intelligence_channel_mappings_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL thread_id",
-          "name": "intelligence_channel_mappings_thread_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "intelligence_channel_mappings_updated_at_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (user_id, channel_id)",
           "name": "intelligence_channel_mappings_user_id_channel_id_pk",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL user_id",
-          "name": "intelligence_channel_mappings_user_id_not_null",
-          "type": "n"
         },
         {
           "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
@@ -1749,49 +1339,14 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "mcp_servers_created_at_not_null",
-          "type": "n"
-        },
-        {
           "def": "FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE RESTRICT",
           "name": "mcp_servers_credential_id_credentials_id_fk",
           "type": "f"
         },
         {
-          "def": "NOT NULL id",
-          "name": "mcp_servers_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "mcp_servers_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL provenance",
-          "name": "mcp_servers_provenance_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL title",
-          "name": "mcp_servers_title_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "mcp_servers_updated_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL url",
-          "name": "mcp_servers_url_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL vendor",
-          "name": "mcp_servers_vendor_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -1843,26 +1398,6 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "mcp_tools_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL description",
-          "name": "mcp_tools_description_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL input_schema",
-          "name": "mcp_tools_input_schema_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL name",
-          "name": "mcp_tools_name_not_null",
-          "type": "n"
-        },
-        {
           "def": "FOREIGN KEY (server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE",
           "name": "mcp_tools_server_id_mcp_servers_id_fk",
           "type": "f"
@@ -1871,11 +1406,6 @@
           "def": "PRIMARY KEY (server_id, name)",
           "name": "mcp_tools_server_id_name_pk",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL server_id",
-          "name": "mcp_tools_server_id_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -1934,24 +1464,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL connected_at",
-          "name": "mcp_user_credentials_connected_at_not_null",
-          "type": "n"
-        },
-        {
           "def": "FOREIGN KEY (credential_id) REFERENCES credentials(id)",
           "name": "mcp_user_credentials_credential_id_credentials_id_fk",
           "type": "f"
-        },
-        {
-          "def": "NOT NULL credential_id",
-          "name": "mcp_user_credentials_credential_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL scope",
-          "name": "mcp_user_credentials_scope_not_null",
-          "type": "n"
         },
         {
           "def": "FOREIGN KEY (server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE",
@@ -1959,24 +1474,9 @@
           "type": "f"
         },
         {
-          "def": "NOT NULL server_id",
-          "name": "mcp_user_credentials_server_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (server_id, user_id)",
           "name": "mcp_user_credentials_server_id_user_id_pk",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "mcp_user_credentials_updated_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL user_id",
-          "name": "mcp_user_credentials_user_id_not_null",
-          "type": "n"
         },
         {
           "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
@@ -2049,34 +1549,9 @@
           "type": "f"
         },
         {
-          "def": "NOT NULL agent_id",
-          "name": "plugin_grants_agent_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL created_at",
-          "name": "plugin_grants_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL kind",
-          "name": "plugin_grants_kind_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (kind, ref, agent_id)",
           "name": "plugin_grants_kind_ref_agent_id_pk",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL ref",
-          "name": "plugin_grants_ref_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "plugin_grants_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -2118,24 +1593,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL email",
-          "name": "revoked_access_email_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (email)",
           "name": "revoked_access_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL revoked_at",
-          "name": "revoked_access_revoked_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL revoked_by",
-          "name": "revoked_access_revoked_by_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -2285,69 +1745,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "sandboxed_components_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL draft_argument_schema",
-          "name": "sandboxed_components_draft_argument_schema_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL draft_css",
-          "name": "sandboxed_components_draft_css_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL draft_description",
-          "name": "sandboxed_components_draft_description_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL draft_html",
-          "name": "sandboxed_components_draft_html_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL draft_js_functions",
-          "name": "sandboxed_components_draft_js_functions_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL name",
-          "name": "sandboxed_components_name_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (name)",
           "name": "sandboxed_components_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL published",
-          "name": "sandboxed_components_published_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL revision",
-          "name": "sandboxed_components_revision_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL sample_arguments",
-          "name": "sandboxed_components_sample_arguments_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL title",
-          "name": "sandboxed_components_title_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "sandboxed_components_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -2420,44 +1820,14 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "sessions_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL expires_at",
-          "name": "sessions_expires_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "sessions_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "sessions_pkey",
           "type": "p"
         },
         {
-          "def": "NOT NULL token",
-          "name": "sessions_token_not_null",
-          "type": "n"
-        },
-        {
           "def": "UNIQUE (token)",
           "name": "sessions_token_unique",
           "type": "u"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "sessions_updated_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL user_id",
-          "name": "sessions_user_id_not_null",
-          "type": "n"
         },
         {
           "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
@@ -2553,26 +1923,6 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "skills_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "skills_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL instructions",
-          "name": "skills_instructions_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL origin",
-          "name": "skills_origin_not_null",
-          "type": "n"
-        },
-        {
           "def": "FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE",
           "name": "skills_owner_user_id_users_id_fk",
           "type": "f"
@@ -2581,26 +1931,6 @@
           "def": "PRIMARY KEY (id)",
           "name": "skills_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL slug",
-          "name": "skills_slug_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL summary",
-          "name": "skills_summary_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL title",
-          "name": "skills_title_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "skills_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -2681,29 +2011,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL domain",
-          "name": "sso_providers_domain_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "sso_providers_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL issuer",
-          "name": "sso_providers_issuer_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "sso_providers_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL provider_id",
-          "name": "sso_providers_provider_id_not_null",
-          "type": "n"
         },
         {
           "def": "UNIQUE (provider_id)",
@@ -2754,21 +2064,6 @@
         }
       ],
       "constraints": [
-        {
-          "def": "NOT NULL created_at",
-          "name": "user_roles_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL role",
-          "name": "user_roles_role_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL user_id",
-          "name": "user_roles_user_id_not_null",
-          "type": "n"
-        },
         {
           "def": "PRIMARY KEY (user_id, role)",
           "name": "user_roles_user_id_role_pk",
@@ -2850,44 +2145,14 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "users_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL email",
-          "name": "users_email_not_null",
-          "type": "n"
-        },
-        {
           "def": "UNIQUE (email)",
           "name": "users_email_unique",
           "type": "u"
         },
         {
-          "def": "NOT NULL email_verified",
-          "name": "users_email_verified_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL groups",
-          "name": "users_groups_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "users_id_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "users_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "users_updated_at_not_null",
-          "type": "n"
         }
       ],
       "indexes": [
@@ -2950,39 +2215,9 @@
       ],
       "constraints": [
         {
-          "def": "NOT NULL created_at",
-          "name": "verifications_created_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL expires_at",
-          "name": "verifications_expires_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL id",
-          "name": "verifications_id_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL identifier",
-          "name": "verifications_identifier_not_null",
-          "type": "n"
-        },
-        {
           "def": "PRIMARY KEY (id)",
           "name": "verifications_pkey",
           "type": "p"
-        },
-        {
-          "def": "NOT NULL updated_at",
-          "name": "verifications_updated_at_not_null",
-          "type": "n"
-        },
-        {
-          "def": "NOT NULL value",
-          "name": "verifications_value_not_null",
-          "type": "n"
         }
       ],
       "indexes": [

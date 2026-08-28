@@ -24,7 +24,7 @@
 //! - **读环境变量**：连接参数一律由调用方以 [`db::pool::DatabaseConfig`] 显式传入。env 的三档
 //!   裁决（v3 §15.4）属于启动 / transport 层，不在本 crate。
 //!
-//! # G1 状态（Rust Foundation，W5–10）
+//! # 当前状态（G1 + W-1/W-2 + W-3a/W-3b + W-5 batch 6）
 //!
 //! 已落地的是数据库 schema 层，也就是 v3 §24 G1 判据「28 表/13 migration 映射」的执行面：
 //!
@@ -35,14 +35,75 @@
 //! - [`db::compat`] —— 迁移边界检查（v3 §14.1「Rust 不接收更早 schema」）。
 //! - [`db::schema_facts`] —— schema 事实提取，与 `fixtures/db/schema-0012.json` 同构。
 //! - [`db::pool`] —— `deadpool-postgres` 连接池。
-//! - [`repo::channels::ChannelRepo`] —— 首个 vertical slice 的读侧：
-//!   `openbot_application::ChannelReader` 的 PostgreSQL 实现。
+//! - [`db::native`] —— Rust-owned 0013–0023，自有 SHA-256 账本与并发施加锁；0021 增加
+//!   actor/deployment/tenant scoped UI preference，0022 增加 actor/tenant scoped runtime memory
+//!   write control，0023 独立增加 compiled-component human decision state；三者均保持 expand-only。
+//! - [`repo::IMPLEMENTED_REPOSITORIES`] —— 当前 40 个规划落点全部有物理表与具名 repository；
+//!   [`repo::channels::ChannelRepo`] 同时实现 `openbot_application::ChannelReader`。
+//! - [`vault::CredentialRepo`] —— credential CAS 轮换/撤销；
+//!   [`repo::audit::AuditEventRepo`] —— hash chain/checkpoint；
+//!   [`repo::audit::PostgresAuditReader`] —— admin filter/keyset 读面；
+//!   [`repo::tools`] —— decision+attempt 同事务与 commit 后 receipt；
+//! - [`repo::people_admin`] —— `PeopleAdministration` 的 PostgreSQL 原子适配器：role/access
+//!   判定、业务写、auth generation 与 audit 同事务（R40）。
+//! - [`repo::tools::PostgresToolJournal`] —— application 的 decision/attempt/capability/outcome
+//!   journal；outcome 与 audit 同事务，unknown 固定进 reconciliation（R41）。
+//! - [`policy`] —— action policy 权威行、raw+预编译内存快照、同事务 NOTIFY 与专用重连
+//!   listener（R56）。
+//! - [`store::plugin_user_credential`] —— per-user OAuth 按 `(server, actor)` 的网络前选择、
+//!   refresh/access 类型隔离，以及 People 移除后的正常/孤儿 credential 事务退役（R59）。
+//! - [`tenant`] —— 五 YAML 有界 loader、checksum、collision-safe PostgreSQL package sync 与
+//!   materialized membership/generation/session 原子投影（R60）。
+//! - [`thread_directory`] —— OS CSPRNG mint、scope status、同事务 BeginThreadRun 与
+//!   LISTEN-before-replay/SSE producer；最终请求路径零 Intelligence fallback（R64–R65）。
+//! - [`memory_admin`] —— explicit user_action create/list/correct/supersede/forbid/delete 与
+//!   user+exact Bot/thread FTS + structured-tag recall；无 background extraction（R66）。
+//! - [`run_runtime`] —— replay-safe dispatch claim、fencing renew/takeover、semantic chunk/terminal、
+//!   stale delivered run reconciliation 与 production relay（R67）。
+//! - [`intelligence_bundle`] / [`intelligence_import`] —— one-shot signed+encrypted bundle verifier、
+//!   target mapping、逐 thread 原子 import、四 cursor、DB 重算 checksum 与 staged FK finalize（R68）。
+//! - [`component_catalogue`] —— compiled component治理read与exact build manifest additive sync；
+//!   首次published insert与hash-chain audit同事务，既有管理员治理零覆盖（R103）。
+//! - [`sandboxed_components`] —— sandboxed source草稿、原子发布/revision、删除与共享治理/audit
+//!   同事务；published投影对双表漂移与残缺源fail-closed（R112）。
 //!
-//! 尚未落地，也不在此假装存在：outbox、vault、safe dialer、provider adapters，以及
-//! `ChannelReader` 之外的各个 port。
-//! `parity/tables.yaml` 里 12 张 native 新表与 `db::migrations::*` 的 13 条 migration 台账落点
-//! 同样仍是 `status: todo`。
+//! W-7a/W-7b 已在独立 TLS/FFI delta 后落 safe dialer、环境/动态 OIDC、SAML XMLDSig、
+//! v2 SSO config、session/group/replay/admin 写面；仍未落地、也不在此假装存在：SAML 外审、
+//! Server KMS/HSM、多平台原生发行，以及 G4 的真实 browser/file/shell/MCP/Drive executor。
+//! 0016 已把 `thread/run/outbox/memory/import` 的 10 个 repo 与对应物理表同批实现；R64/R65
+//! 又接 mint/status、transactional begin 与 SSE live，R66 接 history 与 explicit memory backend。
+//! Thread WebSocket 与 terminal/outbox/lease recovery 已由 R67 接上，Intelligence importer 由 R68
+//! 接上；真实 Agent consumer/provider producer、remember tool/Memory GUI 仍归后续 G3/G4/G6。
 
+pub mod agent_audit;
+pub mod agent_callback;
+pub mod agent_tools;
 pub mod auth;
+mod channel_activity;
+pub mod component_catalogue;
 pub mod db;
+pub mod google_drive;
+pub mod google_drive_oauth;
+pub mod intelligence_bundle;
+pub mod intelligence_import;
+pub mod mcp;
+pub mod mcp_catalog;
+pub mod mcp_connections;
+pub mod mcp_credentials;
+pub mod mcp_oauth;
+pub mod memory_admin;
+pub mod net;
+pub mod policy;
+pub mod provider;
+pub mod remote_agui;
 pub mod repo;
+pub mod routing;
+pub mod run_runtime;
+pub mod sandboxed_components;
+pub mod store;
+pub mod tenant;
+pub mod thread_directory;
+pub mod thread_id;
+pub mod tool_approval;
+pub mod ui_preferences;
+pub mod vault;

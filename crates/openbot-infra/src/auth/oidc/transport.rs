@@ -13,9 +13,9 @@
 //! `openidconnect` 声明成 `default-features = false` 正是同一条裁决的另一半：它自带的
 //! `reqwest` + `rustls-tls` 一旦进来就是那第二条路径。
 //!
-//! **safe dialer 本身本轮不实现**：它牵涉 TLS 栈选型（`rustls` 需要 `aws-lc-rs` 或 `ring`，
-//! 两者都带 C / 汇编构建脚本），按 v3 §16.3 那是一次需要独立 delta audit 的供应链决定，
-//! 不能作为「加一个 OIDC 库」的副作用发生。
+//! W-7 已在完成独立 delta audit 后实现 [`crate::net::safe_http::SafeDialer`]：TLS 选
+//! rustls + ring，ring 的 C/汇编 build.rs 与 Windows 预生成对象被显式记入审计和 deny guard。
+//! 本模块只实现从窄 GET port 到该 dialer 的一条适配；socket/DNS/TLS 仍不在 OIDC 协议代码里。
 //!
 //! # 为什么是自己的窄 trait，而不是直接用 `oauth2::AsyncHttpClient`
 //!
@@ -40,7 +40,10 @@
 //! 与 `.well-known` 路径拼接仍然复用 `openidconnect` 的类型与方法，见 `discovery` 模块。
 
 use async_trait::async_trait;
+use http::header::CONTENT_TYPE;
 use url::Url;
+
+use crate::net::safe_http::{SafeDialer, SafeHttpBudget, SafeHttpRequest, SchemePolicy};
 
 use super::error::OidcError;
 
@@ -219,6 +222,26 @@ pub trait MetadataTransport: Send + Sync {
         &self,
         request: &MetadataRequest,
     ) -> Result<MetadataResponse, TransportUnavailable>;
+}
+
+#[async_trait]
+impl MetadataTransport for SafeDialer {
+    async fn get(
+        &self,
+        request: &MetadataRequest,
+    ) -> Result<MetadataResponse, TransportUnavailable> {
+        let budget = SafeHttpBudget::new(request.max_body_bytes(), request.timeout())
+            .map_err(|_| TransportUnavailable)?;
+        let plan = SafeHttpRequest::get(request.url().clone(), SchemePolicy::HttpsOnly, budget)
+            .map_err(|_| TransportUnavailable)?;
+        let response = self.execute(plan).await.map_err(|_| TransportUnavailable)?;
+        let content_type = response
+            .header(&CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, _, body) = response.into_parts();
+        Ok(MetadataResponse::new(status.as_u16(), content_type, body))
+    }
 }
 
 /// discovery 与 JWKS 都接受的 JSON essence。

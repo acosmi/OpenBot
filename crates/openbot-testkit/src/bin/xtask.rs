@@ -10,6 +10,11 @@
 //! - `parity-check` —— 校验 `parity/*.yaml` **与** `fixtures/MANIFEST.yaml`，强制统一
 //!   schema v1 的 8 条规则。
 //! - `recount`      —— 真跑每份台账 `recount` 数组里的复算命令，把 `expect` 与实得 stdout 逐条对账。
+//! - `i18n-check`   —— 中英文键与插值占位符集合逐字相等。
+//! - `design-lint`  —— GUI 反向视觉约束与图标 allowlist。
+//! - `css-check`    —— Rust class 字面量必须存在于实际编译 CSS。
+//! - `bundle-budget`—— WASM gzip、CSS 与字体体积预算。
+//! - `tools`        —— 获取并校验 GUI 构建期钉版二进制。
 //! - `ci`           —— 按 v3 §16.3 的固定顺序跑本机可执行的那一段闸门。
 //!
 //! 用法（`.cargo/config.toml` 已配 alias）：
@@ -37,6 +42,18 @@ use serde::Serialize;
 // 挂在 lib 上会把五个 oxc crate 拖进不开 feature 的 `cargo build --workspace`。
 #[path = "../xtask/test_inventory.rs"]
 mod test_inventory;
+
+#[path = "../xtask/ui_gates.rs"]
+mod ui_gates;
+
+#[path = "../xtask/ui_assets.rs"]
+mod ui_assets;
+
+#[path = "../xtask/ui_finalize.rs"]
+mod ui_finalize;
+
+#[path = "../xtask/tools.rs"]
+mod tools;
 
 // ---------------------------------------------------------------------------
 // 契约常量
@@ -177,6 +194,17 @@ fn main() -> ExitCode {
         Some("parity-check") => cmd_parity_check(&args[1..]),
         Some("recount") => cmd_recount(&args[1..]),
         Some("test-inventory") => cmd_test_inventory(&args[1..]),
+        Some("i18n-check") => workspace_root().and_then(|root| ui_gates::i18n_check(&root)),
+        Some("design-lint") => workspace_root().and_then(|root| ui_gates::design_lint(&root)),
+        Some("css-check") => {
+            workspace_root().and_then(|root| ui_gates::css_check(&root, &args[1..]))
+        }
+        Some("bundle-budget") => {
+            workspace_root().and_then(|root| ui_gates::bundle_budget(&root, &args[1..]))
+        }
+        Some("ui-assets") => workspace_root().and_then(|root| ui_assets::run(&root)),
+        Some("ui-finalize") => ui_finalize::run(),
+        Some("tools") => workspace_root().and_then(|root| tools::run(&root, &args[1..])),
         Some("ci") => cmd_ci(),
         Some("help") | Some("--help") | Some("-h") | None => {
             print_usage();
@@ -214,6 +242,17 @@ xtask —— OpenBot 仓库闸门驱动器
   cargo xtask test-inventory --upstream <上游干净克隆路径> [--dry-run]
                                       用 oxc_parser 做 AST 级 test inventory（v3 §24 G0 / G8），
                                       产出 parity/tests.yaml 与 fixtures/tests/upstream-ast-inventory.json
+  cargo xtask i18n-check             中英文叶子键与每键插值占位符集合逐字相等
+  cargo xtask design-lint            执行 GUI §12.6 反向约束与图标 allowlist 两向检查
+  cargo xtask css-check [--css <实际编译 CSS>]
+                                      断言每个 Rust class 字面量都出现在编译 CSS
+  cargo xtask bundle-budget [--dist <Trunk dist 目录>]
+                                      检查 app.wasm gzip、CSS 与随包字体预算
+  cargo xtask ui-assets               用与 openbot-ui build.rs 同一生成器物化 ignored tokens.css
+  cargo xtask ui-finalize             仅供 Trunk post-build 生成外部 WASM bootstrap
+  cargo xtask tools fetch            获取当前平台的钉版 Tailwind/wasm-opt，并按 lock 安装
+                                      trunk/wasm-bindgen CLI 到 target/tools/bin
+  cargo xtask tools verify           校验四个工具的 sha256（下载件）、版本输出与退出码
   cargo xtask ci                      按 v3 §16.3 顺序跑本机可执行的闸门段
   cargo xtask help                    打印本帮助
 "
@@ -1444,14 +1483,15 @@ fn cmd_ci() -> Result<()> {
 }
 
 fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
-    // 顺序 = v3 §16.3〈Supply chain〉固定清单的前三条，加上 v3 §19.3 的 parity 闸门。
+    // 顺序 = v3 §16.3〈Supply chain〉固定清单的前三条、W-7 safe-dialer/SAML 两条依赖 guard，
+    // 加上 v3 §19.3 的 parity/recount 闸门。
     //
     // 后面几条（cargo deny / cargo audit / cargo vet / OSV / secret scan /
     // license-NOTICE-provenance / SBOM / 可复现构建 / 签名校验）刻意**不**在这里跑：
     // 它们各自需要一份本仓此刻还不存在的基线（`supply-chain/` 目录、SBOM 工具链、
     // Electron shim 产物、签名密钥），塞进来只会得到一条恒红的闸门 —— 恒红等于没有闸门。
     // 它们在 .github/workflows/ci.yml 里以独立 job 编排，并在那里写明解除条件。
-    let steps: [(&str, &str, &[&str]); 3] = [
+    let steps: [(&str, &str, &[&str]); 5] = [
         (
             "cargo fmt --check",
             "cargo",
@@ -1475,11 +1515,21 @@ fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
             "cargo",
             &["test", "--workspace", "--all-features", "--locked"],
         ),
+        (
+            "safe dialer dependency guard",
+            "bash",
+            &["tools/check-safe-dialer-dependencies.sh"],
+        ),
+        (
+            "SAML/xmlsec dependency guard",
+            "bash",
+            &["tools/check-saml-dependencies.sh"],
+        ),
     ];
 
     for (index, (label, program, args)) in steps.iter().enumerate() {
         let step_no = index + 1;
-        println!("\n=== xtask ci [{step_no}/5] {label} ===");
+        println!("\n=== xtask ci [{step_no}/7] {label} ===");
         // 显式钉死子构建的 target 目录，不靠继承：alias 那侧的 `--target-dir` 会不会
         // 经环境变量传下来是 cargo 的实现细节，而不变量不能建在实现细节上。
         let status = Command::new(program)
@@ -1499,12 +1549,12 @@ fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
         }
     }
 
-    println!("\n=== xtask ci [4/5] parity-check ===");
+    println!("\n=== xtask ci [6/7] parity-check ===");
     // 进程内调用而不是再 spawn 一次 cargo：避免把刚跑完的 4 分钟编译再等一遍，
     // 也让 parity 违规的退出码来源唯一。
-    cmd_parity_check(&[]).context("第 4 步失败：parity-check")?;
+    cmd_parity_check(&[]).context("第 6 步失败：parity-check")?;
 
-    // 第 5 步 = recount。裁决与理由：
+    // 最后一步 = recount。裁决与理由：
     //
     // **判红口径 = 任何失配都判红，不分 repo / upstream；SKIPPED 不判红但必须打印条数。**
     //
@@ -1516,12 +1566,12 @@ fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
     //    本轮没有被验证"的原文，下面再单独重复一次总数。"静默跳过"与"打印了跳过数"是两回事。
     // 4) 想把跳过也变成硬闸门的场合（CI 里已经 checkout 了上游克隆）用
     //    `cargo xtask recount --require-upstream` —— 这是一条真正的杠杆，不是装饰。
-    println!("\n=== xtask ci [5/5] recount ===");
-    let recount = run_recount(false, false).context("第 5 步失败：recount")?;
+    println!("\n=== xtask ci [7/7] recount ===");
+    let recount = run_recount(false, false).context("第 7 步失败：recount")?;
 
     if recount.skipped > 0 {
         println!(
-            "\nxtask ci: 5/5 通过，但 recount 有 {} 条**没有跑**（{}/{} 条实跑）。\n\
+            "\nxtask ci: 7/7 通过，但 recount 有 {} 条**没有跑**（{}/{} 条实跑）。\n\
              这 {} 条是 cwd:upstream 的判据，本机没有上游克隆。要覆盖它们：\n\
              设 {UPSTREAM_DIR_ENV}=<上游克隆路径> 后 `cargo xtask recount`；\n\
              要让跳过直接判红，用 `cargo xtask recount --require-upstream`。",
@@ -1532,7 +1582,7 @@ fn run_ci_steps(root: &Path, child_target: &Path) -> Result<()> {
         );
     } else {
         println!(
-            "\nxtask ci: 5/5 全绿（recount {} 条全部实跑）",
+            "\nxtask ci: 7/7 全绿（recount {} 条全部实跑）",
             recount.passed
         );
     }

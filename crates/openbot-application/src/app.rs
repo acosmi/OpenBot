@@ -21,27 +21,385 @@ use openbot_contracts::command::{AppCommand, AppReply, SubscriptionRequest};
 use openbot_contracts::error::AppError;
 use tracing::Span;
 
-use crate::ports::ChannelReader;
+use crate::agent_admin::{
+    AgentCallbackTokenAdministration, NoAgentCallbackTokenAdministration,
+    issue_agent_callback_token, revoke_agent_callback_token,
+};
+use crate::approval_admin::{
+    NoToolApprovalAdministration, ToolApprovalAdministration, decide_tool_approval,
+    list_pending_tool_approvals,
+};
+use crate::components::{
+    ComponentAdministration, NoComponentAdministration, await_component_human_decision,
+    call_component_function, decide_component, list_component_data_functions, list_components,
+    list_components_for_agent, list_pending_component_human_decisions,
+    resolve_component_human_decision, sync_component_catalogue,
+};
+use crate::mcp_connections::{
+    McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
+    begin_mcp_oauth, disconnect_mcp_connection, list_mcp_connections, refresh_mcp_server,
+    register_mcp_oauth_client,
+};
+use crate::ports::{
+    AgentDirectory, AuditReader, ChannelAdministration, ChannelReader, ChannelRoutingBackend,
+    MemoryAdministration, NoAgentDirectory, NoAuditReader, NoChannelAdministration,
+    NoChannelRoutingBackend, NoMemoryAdministration, NoPeopleAdministration,
+    NoPolicyAdministration, NoThreadDirectory, PeopleAdministration, PolicyAdministration,
+    ThreadDirectory,
+};
+use crate::sandboxed_components::{
+    NoSandboxedComponentAdministration, SandboxedComponentAdministration,
+    authorize_sandboxed_component, delete_sandboxed_component, list_published_sandboxed_components,
+    list_sandboxed_components, publish_sandboxed_component, save_sandboxed_component,
+};
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
-use crate::use_cases::{DEFAULT_HEARTBEAT_PERIOD, health, health_stream, list_visible_channels};
+use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
+use crate::ui_preferences::{
+    NoUiPreferenceAdministration, UiPreferenceAdministration, get_ui_preferences,
+    update_ui_preferences,
+};
+use crate::use_cases::{
+    DEFAULT_HEARTBEAT_PERIOD, admin_status, begin_thread_run, cancel_thread_run,
+    change_person_access, change_person_role, correct_memory, create_channel, current_user,
+    get_action_policy, get_memory_control, get_thread_conversation, get_thread_history,
+    get_thread_status, get_visible_agent, get_visible_channel, health, health_stream,
+    list_audit_events, list_memories, list_people, list_visible_agents, list_visible_channels,
+    mint_thread_id, mutate_memory, recall_memories, remember_memory, route_channel_message,
+    set_action_policy, subscribe_channel_activity, subscribe_thread_events, update_memory_control,
+};
 
 /// [`ApplicationService`] 的生产实现。
 ///
 /// 它对具体数据源一无所知：`R` 是任何满足 [`ChannelReader`] 的类型。`openbot-server` 与
 /// `openbot-desktop` 各自注入 `openbot-infra` 的实现，测试注入内存 fake —— 三条路径穿的
 /// 是同一份业务代码，这正是 §24 G1「ApplicationService 经 Axum/Tauri 结果一致」的前提。
-pub struct OpenBotApplication<R> {
+pub struct OpenBotApplication<
+    R,
+    P = NoPeopleAdministration,
+    A = NoAuditReader,
+    K = NoPolicyAdministration,
+    C = NoToolControlPlane,
+    J = NoToolJournal,
+    T = NoThreadDirectory,
+    M = NoMemoryAdministration,
+    B = NoAgentCallbackTokenAdministration,
+> {
     channels: R,
+    people: P,
+    audit: A,
+    policies: K,
+    tool_control: C,
+    tool_journal: J,
+    threads: T,
+    memory: M,
+    callback_tokens: B,
+    agents: std::sync::Arc<dyn AgentDirectory>,
+    components: std::sync::Arc<dyn ComponentAdministration>,
+    sandboxed_components: std::sync::Arc<dyn SandboxedComponentAdministration>,
+    channel_administration: std::sync::Arc<dyn ChannelAdministration>,
+    channel_routing: std::sync::Arc<dyn ChannelRoutingBackend>,
+    mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
+    tool_approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
+    ui_preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
     heartbeat_period: Duration,
 }
 
-impl<R> OpenBotApplication<R> {
+impl<R>
+    OpenBotApplication<
+        R,
+        NoPeopleAdministration,
+        NoAuditReader,
+        NoPolicyAdministration,
+        NoToolControlPlane,
+        NoToolJournal,
+        NoThreadDirectory,
+        NoMemoryAdministration,
+        NoAgentCallbackTokenAdministration,
+    >
+{
     /// 注入端口实现。
     pub fn new(channels: R) -> Self {
         Self {
             channels,
+            people: NoPeopleAdministration,
+            audit: NoAuditReader,
+            policies: NoPolicyAdministration,
+            tool_control: NoToolControlPlane,
+            tool_journal: NoToolJournal,
+            threads: NoThreadDirectory,
+            memory: NoMemoryAdministration,
+            callback_tokens: NoAgentCallbackTokenAdministration,
+            agents: std::sync::Arc::new(NoAgentDirectory),
+            components: std::sync::Arc::new(NoComponentAdministration),
+            sandboxed_components: std::sync::Arc::new(NoSandboxedComponentAdministration),
+            channel_administration: std::sync::Arc::new(NoChannelAdministration),
+            channel_routing: std::sync::Arc::new(NoChannelRoutingBackend),
+            mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
+            tool_approvals: std::sync::Arc::new(NoToolApprovalAdministration),
+            ui_preferences: std::sync::Arc::new(NoUiPreferenceAdministration),
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
+    }
+}
+
+impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
+    /// 注入 people/auth 原子端口。
+    #[must_use]
+    pub fn with_people<Q>(self, people: Q) -> OpenBotApplication<R, Q, A, K, C, J, T, M, B> {
+        OpenBotApplication {
+            channels: self.channels,
+            people,
+            audit: self.audit,
+            policies: self.policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            threads: self.threads,
+            memory: self.memory,
+            callback_tokens: self.callback_tokens,
+            agents: self.agents,
+            components: self.components,
+            sandboxed_components: self.sandboxed_components,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
+            mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入管理员 audit keyset reader。
+    #[must_use]
+    pub fn with_audit<Q>(self, audit: Q) -> OpenBotApplication<R, P, Q, K, C, J, T, M, B> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit,
+            policies: self.policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            threads: self.threads,
+            memory: self.memory,
+            callback_tokens: self.callback_tokens,
+            agents: self.agents,
+            components: self.components,
+            sandboxed_components: self.sandboxed_components,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
+            mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入 deployment-wide action policy 管理端口。
+    #[must_use]
+    pub fn with_policy<Q>(self, policies: Q) -> OpenBotApplication<R, P, A, Q, C, J, T, M, B> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit: self.audit,
+            policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            threads: self.threads,
+            memory: self.memory,
+            callback_tokens: self.callback_tokens,
+            agents: self.agents,
+            components: self.components,
+            sandboxed_components: self.sandboxed_components,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
+            mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入 tool control plane 与 durable journal；二者分开，application 才能掌握固定顺序。
+    #[must_use]
+    pub fn with_tools<Q, L>(
+        self,
+        control: Q,
+        journal: L,
+    ) -> OpenBotApplication<R, P, A, K, Q, L, T, M, B> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit: self.audit,
+            policies: self.policies,
+            tool_control: control,
+            tool_journal: journal,
+            threads: self.threads,
+            memory: self.memory,
+            callback_tokens: self.callback_tokens,
+            agents: self.agents,
+            components: self.components,
+            sandboxed_components: self.sandboxed_components,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
+            mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入 native thread ID / scope-aware directory；未注入时绝不回退 Intelligence。
+    #[must_use]
+    pub fn with_threads<Q>(self, threads: Q) -> OpenBotApplication<R, P, A, K, C, J, Q, M, B> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit: self.audit,
+            policies: self.policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            threads,
+            memory: self.memory,
+            callback_tokens: self.callback_tokens,
+            agents: self.agents,
+            components: self.components,
+            sandboxed_components: self.sandboxed_components,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
+            mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// 注入 explicit memory administration；未注入时 fail-closed。
+    #[must_use]
+    pub fn with_memory<Q>(self, memory: Q) -> OpenBotApplication<R, P, A, K, C, J, T, Q, B> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit: self.audit,
+            policies: self.policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            threads: self.threads,
+            memory,
+            callback_tokens: self.callback_tokens,
+            agents: self.agents,
+            components: self.components,
+            sandboxed_components: self.sandboxed_components,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
+            mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// Inject callback-token administration; absence remains fail-closed.
+    #[must_use]
+    pub fn with_agent_callback_tokens<Q>(
+        self,
+        callback_tokens: Q,
+    ) -> OpenBotApplication<R, P, A, K, C, J, T, M, Q> {
+        OpenBotApplication {
+            channels: self.channels,
+            people: self.people,
+            audit: self.audit,
+            policies: self.policies,
+            tool_control: self.tool_control,
+            tool_journal: self.tool_journal,
+            threads: self.threads,
+            memory: self.memory,
+            callback_tokens,
+            agents: self.agents,
+            components: self.components,
+            sandboxed_components: self.sandboxed_components,
+            channel_administration: self.channel_administration,
+            channel_routing: self.channel_routing,
+            mcp_connections: self.mcp_connections,
+            tool_approvals: self.tool_approvals,
+            ui_preferences: self.ui_preferences,
+            heartbeat_period: self.heartbeat_period,
+        }
+    }
+
+    /// Attach current-schema Agent roster/detail reads.
+    #[must_use]
+    pub fn with_agent_directory(mut self, agents: std::sync::Arc<dyn AgentDirectory>) -> Self {
+        self.agents = agents;
+        self
+    }
+
+    /// Attach authenticated component governance reads and additive build catalogue sync.
+    #[must_use]
+    pub fn with_component_administration(
+        mut self,
+        components: std::sync::Arc<dyn ComponentAdministration>,
+    ) -> Self {
+        self.components = components;
+        self
+    }
+
+    /// Attach sandboxed source lifecycle governance; the port exposes no data-function channel.
+    #[must_use]
+    pub fn with_sandboxed_component_administration(
+        mut self,
+        components: std::sync::Arc<dyn SandboxedComponentAdministration>,
+    ) -> Self {
+        self.sandboxed_components = components;
+        self
+    }
+
+    /// Attach the atomic user-channel creation transaction.
+    #[must_use]
+    pub fn with_channel_administration(
+        mut self,
+        administration: std::sync::Arc<dyn ChannelAdministration>,
+    ) -> Self {
+        self.channel_administration = administration;
+        self
+    }
+
+    /// Attach deployment-model completion, reach hints, and hash-chained routing audit.
+    #[must_use]
+    pub fn with_channel_routing(
+        mut self,
+        routing: std::sync::Arc<dyn ChannelRoutingBackend>,
+    ) -> Self {
+        self.channel_routing = routing;
+        self
+    }
+
+    /// Attach the authenticated MCP connection service used by Server and Desktop.
+    #[must_use]
+    pub fn with_mcp_connections(
+        mut self,
+        connections: std::sync::Arc<dyn McpConnectionAdministration>,
+    ) -> Self {
+        self.mcp_connections = connections;
+        self
+    }
+
+    /// Attach the durable human proof-of-intent administration surface.
+    #[must_use]
+    pub fn with_tool_approvals(
+        mut self,
+        approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
+    ) -> Self {
+        self.tool_approvals = approvals;
+        self
+    }
+
+    /// Attach authenticated UI preference storage shared by Server and Desktop.
+    #[must_use]
+    pub fn with_ui_preferences(
+        mut self,
+        preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
+    ) -> Self {
+        self.ui_preferences = preferences;
+        self
     }
 
     /// 覆盖心跳间隔。
@@ -55,9 +413,17 @@ impl<R> OpenBotApplication<R> {
     }
 }
 
-impl<R> OpenBotApplication<R>
+impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B>
 where
     R: ChannelReader,
+    P: PeopleAdministration,
+    A: AuditReader,
+    K: PolicyAdministration,
+    C: ToolControlPlane,
+    J: ToolJournal,
+    T: ThreadDirectory,
+    M: MemoryAdministration,
+    B: AgentCallbackTokenAdministration,
 {
     /// 命令派发。**穷举 match 无通配** —— 新增 `AppCommand` 变体会在这里编译失败，
     /// 而不是落进一个 `_ => Err(unknown_method)` 分支。那个分支正是 §5.2 逐字禁止的
@@ -74,14 +440,289 @@ where
                     list_visible_channels(&self.channels, auth, limit, cursor.as_deref()).await?;
                 Ok(AppReply::Channels(page))
             }
+            AppCommand::GetVisibleChannel { channel_id } => Ok(AppReply::Channel(
+                get_visible_channel(&self.channels, auth, channel_id).await?,
+            )),
+            AppCommand::CreateChannel { agent_ids } => Ok(AppReply::Channel(
+                create_channel(self.channel_administration.as_ref(), auth, agent_ids).await?,
+            )),
+            AppCommand::RouteChannelMessage { text, agent_id } => Ok(AppReply::ChannelRouting(
+                route_channel_message(
+                    self.agents.as_ref(),
+                    self.channel_routing.as_ref(),
+                    auth,
+                    text,
+                    agent_id,
+                )
+                .await?,
+            )),
+            AppCommand::ListVisibleAgents { hidden } => Ok(AppReply::Agents(
+                list_visible_agents(self.agents.as_ref(), auth, hidden).await?,
+            )),
+            AppCommand::GetVisibleAgent { agent_id } => Ok(AppReply::Agent(
+                get_visible_agent(self.agents.as_ref(), auth, agent_id).await?,
+            )),
+            AppCommand::ListComponents => Ok(AppReply::Components(
+                list_components(self.components.as_ref(), auth).await?,
+            )),
+            AppCommand::SyncComponentCatalogue(request) => Ok(AppReply::ComponentCatalogueAdded(
+                sync_component_catalogue(self.components.as_ref(), auth, request).await?,
+            )),
+            AppCommand::ListComponentsForAgent { agent_id } => Ok(AppReply::GrantedComponents(
+                list_components_for_agent(self.components.as_ref(), auth, agent_id).await?,
+            )),
+            AppCommand::DecideComponent {
+                component_name,
+                request,
+            } => Ok(AppReply::ComponentDecision(
+                decide_component(self.components.as_ref(), auth, component_name, request).await?,
+            )),
+            AppCommand::ListComponentDataFunctions => Ok(AppReply::ComponentDataFunctions(
+                list_component_data_functions(),
+            )),
+            AppCommand::CallComponentFunction {
+                component_name,
+                request,
+            } => Ok(AppReply::ComponentFunctionCall(
+                call_component_function(self.components.as_ref(), auth, component_name, request)
+                    .await?,
+            )),
+            AppCommand::AwaitComponentHumanDecision(request) => {
+                Ok(AppReply::ComponentHumanDecisionResolved(
+                    await_component_human_decision(self.components.as_ref(), auth, request).await?,
+                ))
+            }
+            AppCommand::ListPendingComponentHumanDecisions => {
+                Ok(AppReply::PendingComponentHumanDecisions(
+                    list_pending_component_human_decisions(self.components.as_ref(), auth).await?,
+                ))
+            }
+            AppCommand::ResolveComponentHumanDecision {
+                decision_id,
+                answer,
+            } => Ok(AppReply::ComponentHumanDecisionResolved(
+                resolve_component_human_decision(
+                    self.components.as_ref(),
+                    auth,
+                    decision_id,
+                    answer,
+                )
+                .await?,
+            )),
+            AppCommand::ListSandboxedComponents => Ok(AppReply::SandboxedComponents(
+                list_sandboxed_components(self.sandboxed_components.as_ref(), auth).await?,
+            )),
+            AppCommand::ListPublishedSandboxedComponents => {
+                Ok(AppReply::PublishedSandboxedComponents(
+                    list_published_sandboxed_components(self.sandboxed_components.as_ref(), auth)
+                        .await?,
+                ))
+            }
+            AppCommand::SaveSandboxedComponent(request) => Ok(AppReply::SandboxedComponent(
+                save_sandboxed_component(self.sandboxed_components.as_ref(), auth, request).await?,
+            )),
+            AppCommand::PublishSandboxedComponent { component_name } => {
+                Ok(AppReply::SandboxedComponent(
+                    publish_sandboxed_component(
+                        self.sandboxed_components.as_ref(),
+                        auth,
+                        component_name,
+                    )
+                    .await?,
+                ))
+            }
+            AppCommand::DeleteSandboxedComponent { component_name } => {
+                Ok(AppReply::SandboxedComponentDeleted(
+                    delete_sandboxed_component(
+                        self.sandboxed_components.as_ref(),
+                        auth,
+                        component_name,
+                    )
+                    .await?,
+                ))
+            }
+            AppCommand::AuthorizeSandboxedComponent {
+                component_name,
+                agent_id,
+                arguments,
+            } => Ok(AppReply::ComponentDecision(
+                authorize_sandboxed_component(
+                    self.sandboxed_components.as_ref(),
+                    auth,
+                    component_name,
+                    agent_id,
+                    arguments,
+                )
+                .await?,
+            )),
+            AppCommand::GetCurrentUser => Ok(AppReply::CurrentUser(
+                current_user(&self.people, auth).await?,
+            )),
+            AppCommand::AdminStatus => Ok(AppReply::AdminStatus(admin_status(auth)?)),
+            AppCommand::ListPeople {
+                search,
+                cursor,
+                limit,
+            } => Ok(AppReply::People(
+                list_people(&self.people, auth, search, cursor, limit).await?,
+            )),
+            AppCommand::ChangePersonRole { user_id, role } => Ok(AppReply::Person(
+                change_person_role(&self.people, auth, &user_id, role).await?,
+            )),
+            AppCommand::ChangePersonAccess { user_id, revoked } => Ok(AppReply::Person(
+                change_person_access(&self.people, auth, &user_id, revoked).await?,
+            )),
+            AppCommand::ListAuditEvents {
+                cursor,
+                event_type,
+                actor_user_id,
+                target_type,
+                target_id,
+                from,
+                to,
+                limit,
+            } => Ok(AppReply::AuditEvents(
+                list_audit_events(
+                    &self.audit,
+                    auth,
+                    cursor,
+                    event_type,
+                    actor_user_id,
+                    target_type,
+                    target_id,
+                    from,
+                    to,
+                    limit,
+                )
+                .await?,
+            )),
+            AppCommand::GetActionPolicy => Ok(AppReply::ActionPolicy {
+                policy: get_action_policy(&self.policies, auth).await?,
+            }),
+            AppCommand::SetActionPolicy { policy } => Ok(AppReply::ActionPolicy {
+                policy: Some(set_action_policy(&self.policies, auth, policy).await?),
+            }),
+            AppCommand::InvokeTool(invocation) => Ok(AppReply::Tool(
+                invoke_tool(&self.tool_control, &self.tool_journal, auth, invocation).await?,
+            )),
+            AppCommand::MintThreadId => Ok(AppReply::ThreadMinted(
+                mint_thread_id(&self.threads, auth).await?,
+            )),
+            AppCommand::GetThreadStatus { thread_id } => Ok(AppReply::ThreadStatus(
+                get_thread_status(&self.threads, auth, &thread_id).await?,
+            )),
+            AppCommand::BeginThreadRun(command) => Ok(AppReply::ThreadRunStarted(
+                begin_thread_run(&self.threads, auth, command).await?,
+            )),
+            AppCommand::CancelThreadRun(command) => Ok(AppReply::ThreadRunCancellation(
+                cancel_thread_run(&self.threads, auth, command).await?,
+            )),
+            AppCommand::GetThreadHistory { thread_id } => Ok(AppReply::ThreadHistory(
+                get_thread_history(&self.threads, auth, thread_id).await?,
+            )),
+            AppCommand::GetThreadConversation { thread_id } => Ok(AppReply::ThreadConversation(
+                get_thread_conversation(&self.threads, auth, thread_id).await?,
+            )),
+            AppCommand::RememberMemory(input) => Ok(AppReply::Memory(
+                remember_memory(&self.memory, auth, input).await?,
+            )),
+            AppCommand::GetMemoryControl => Ok(AppReply::MemoryControl(
+                get_memory_control(&self.memory, auth).await?,
+            )),
+            AppCommand::UpdateMemoryControl(update) => Ok(AppReply::MemoryControl(
+                update_memory_control(&self.memory, auth, update).await?,
+            )),
+            AppCommand::ListMemories { cursor, limit } => Ok(AppReply::Memories(
+                list_memories(&self.memory, auth, cursor, limit).await?,
+            )),
+            AppCommand::CorrectMemory {
+                memory_id,
+                correction,
+            } => Ok(AppReply::Memory(
+                correct_memory(&self.memory, auth, memory_id, correction).await?,
+            )),
+            AppCommand::MutateMemory {
+                memory_id,
+                mutation,
+            } => Ok(AppReply::Memory(
+                mutate_memory(&self.memory, auth, memory_id, mutation).await?,
+            )),
+            AppCommand::RecallMemories(input) => Ok(AppReply::MemoryRecall(
+                recall_memories(&self.memory, auth, input).await?,
+            )),
+            AppCommand::IssueAgentCallbackToken { agent_id } => Ok(AppReply::AgentCallbackToken(
+                issue_agent_callback_token(&self.callback_tokens, auth, &agent_id).await?,
+            )),
+            AppCommand::RevokeAgentCallbackToken { agent_id } => {
+                Ok(AppReply::AgentCallbackTokenRevoked(
+                    revoke_agent_callback_token(&self.callback_tokens, auth, &agent_id).await?,
+                ))
+            }
+            AppCommand::ListMcpConnections => Ok(AppReply::McpConnections(
+                list_mcp_connections(self.mcp_connections.as_ref(), auth).await?,
+            )),
+            AppCommand::BeginMcpOAuth {
+                server_id,
+                return_to,
+            } => Ok(AppReply::McpOAuthAuthorization(
+                begin_mcp_oauth(self.mcp_connections.as_ref(), auth, &server_id, return_to).await?,
+            )),
+            AppCommand::DisconnectMcpConnection { server_id } => {
+                Ok(AppReply::McpConnectionDisconnected(
+                    disconnect_mcp_connection(self.mcp_connections.as_ref(), auth, &server_id)
+                        .await?,
+                ))
+            }
+            AppCommand::RegisterMcpOAuthClient {
+                server_id,
+                registration,
+            } => Ok(AppReply::McpOAuthClientRegistered(
+                register_mcp_oauth_client(
+                    self.mcp_connections.as_ref(),
+                    auth,
+                    &server_id,
+                    &registration,
+                )
+                .await?,
+            )),
+            AppCommand::AddCuratedMcpServer { key } => Ok(AppReply::McpServerMutation(
+                add_curated_mcp_server(self.mcp_connections.as_ref(), auth, &key).await?,
+            )),
+            AppCommand::RefreshMcpServer { server_id } => Ok(AppReply::McpServerMutation(
+                refresh_mcp_server(self.mcp_connections.as_ref(), auth, &server_id).await?,
+            )),
+            AppCommand::ListPendingToolApprovals => Ok(AppReply::PendingToolApprovals(
+                list_pending_tool_approvals(self.tool_approvals.as_ref(), auth).await?,
+            )),
+            AppCommand::DecideToolApproval {
+                approval_id,
+                decision,
+            } => Ok(AppReply::ToolApprovalResolved(
+                decide_tool_approval(self.tool_approvals.as_ref(), auth, &approval_id, decision)
+                    .await?,
+            )),
+            AppCommand::GetUiPreferences => Ok(AppReply::UiPreferences(
+                get_ui_preferences(self.ui_preferences.as_ref(), auth).await?,
+            )),
+            AppCommand::UpdateUiPreferences(update) => Ok(AppReply::UiPreferences(
+                update_ui_preferences(self.ui_preferences.as_ref(), auth, update).await?,
+            )),
         }
     }
 }
 
 #[async_trait]
-impl<R> ApplicationService for OpenBotApplication<R>
+impl<R, P, A, K, C, J, T, M, B> ApplicationService for OpenBotApplication<R, P, A, K, C, J, T, M, B>
 where
     R: ChannelReader + 'static,
+    P: PeopleAdministration + 'static,
+    A: AuditReader + 'static,
+    K: PolicyAdministration + 'static,
+    C: ToolControlPlane + 'static,
+    J: ToolJournal + 'static,
+    T: ThreadDirectory + 'static,
+    M: MemoryAdministration + 'static,
+    B: AgentCallbackTokenAdministration + 'static,
 {
     #[tracing::instrument(
         name = "application.execute",
@@ -116,17 +757,6 @@ where
             error.code = tracing::field::Empty,
         )
     )]
-    // `auth` **是被用了的** —— 上面三个 span 字段就在读它（`subscribe_is_instrumented_too`
-    // 断言了这三个值确实落地）。但 `#[async_trait]` 与 `#[instrument]` 叠在一起时，字段
-    // 表达式落在展开后的另一个卫生上下文里，`unused_variables` 看不见它，于是误报。
-    //
-    // 用 `expect` 而不是 `allow`：`expect` 在这条 lint **不再触发**时会自己报 unfulfilled。
-    // 也就是说，等哪天 `auth` 在方法体里有了真实用途、或者宏的展开方式变了，这行会主动
-    // 提醒把它删掉 —— 一个会自己退休的抑制，而不是一条永久失效的静音。
-    #[expect(
-        unused_variables,
-        reason = "auth 由 #[instrument] 的 span 字段消费；async-trait 展开后 lint 看不见"
-    )]
     async fn subscribe(
         &self,
         auth: AuthContext,
@@ -135,6 +765,15 @@ where
         // 穷举 match，理由同 `dispatch`。
         match request {
             SubscriptionRequest::Health => Ok(health_stream(self.heartbeat_period)),
+            SubscriptionRequest::ThreadEvents {
+                thread_id,
+                after_event_sequence,
+            } => {
+                subscribe_thread_events(&self.threads, &auth, thread_id, after_event_sequence).await
+            }
+            SubscriptionRequest::ChannelActivity => {
+                subscribe_channel_activity(&self.threads, &auth).await
+            }
         }
     }
 }
@@ -142,14 +781,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fakes::{FakeChannelReader, SENTINEL_AUTH_GENERATION, auth_for, summary_at};
+    use crate::fakes::{
+        FakeChannelReader, FakePeopleAdministration, SENTINEL_AUTH_GENERATION, auth_for,
+        sample_person, summary_at,
+    };
     use crate::service::{APPLICATION_SPAN_FIELDS, EXECUTE_SPAN_NAME, SUBSCRIBE_SPAN_NAME};
     use core::fmt;
     use core::future::Future;
-    use openbot_contracts::auth::AuthContext;
-    use openbot_contracts::command::AppEvent;
+    use openbot_contracts::auth::{AuthContext, Role};
+    use openbot_contracts::command::{AppEvent, BeginThreadRun, ThreadRunAnchor, ThreadRunStarted};
     use openbot_contracts::error::ErrorCode;
-    use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
+    use openbot_contracts::ids::{
+        ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
+    };
+    use openbot_contracts::memory::{
+        CorrectMemory, MemoryKind, MemoryMutation, MemoryScope, MemorySensitivity, RecallMemories,
+        RememberMemory,
+    };
+    use openbot_contracts::policy::{ActionPolicyDocument, ActionPolicyMode};
+    use openbot_contracts::tool::ToolInvocation;
+    use serde_json::json;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};
     use tracing::span::{Attributes, Id, Record};
@@ -234,11 +885,15 @@ mod tests {
         (out, captured)
     }
 
-    fn app() -> OpenBotApplication<FakeChannelReader> {
+    fn app() -> OpenBotApplication<FakeChannelReader, FakePeopleAdministration> {
         OpenBotApplication::new(
             FakeChannelReader::empty()
                 .with_visible("actor-1", vec![summary_at("c-1", "2026-08-22T04:00:00Z")]),
         )
+        .with_people(FakePeopleAdministration::seeded([
+            sample_person("actor-1", Role::Admin),
+            sample_person("actor-2", Role::User),
+        ]))
         .with_heartbeat_period(Duration::from_millis(1))
     }
 
@@ -258,7 +913,7 @@ mod tests {
         );
 
         let (channels_reply, _) = capture(service.execute(
-            auth,
+            auth.clone(),
             AppCommand::ListVisibleChannels {
                 limit: None,
                 cursor: None,
@@ -270,6 +925,196 @@ mod tests {
                 assert!(page.next_cursor.is_none());
             }
             other => panic!("命令与应答必须一一对应，拿到 {other:?}"),
+        }
+
+        let (channel_reply, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::GetVisibleChannel {
+                channel_id: openbot_contracts::ids::ChannelId::new("c-1"),
+            },
+        ));
+        assert!(matches!(channel_reply, Ok(AppReply::Channel(_))));
+
+        let (me, _) = capture(service.execute(auth.clone(), AppCommand::GetCurrentUser));
+        assert!(matches!(me, Ok(AppReply::CurrentUser(_))));
+
+        let (status, _) = capture(service.execute(auth.clone(), AppCommand::AdminStatus));
+        assert!(matches!(status, Ok(AppReply::AdminStatus(_))));
+
+        let (people, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::ListPeople {
+                search: None,
+                cursor: None,
+                limit: None,
+            },
+        ));
+        assert!(matches!(people, Ok(AppReply::People(_))));
+
+        let (role, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::ChangePersonRole {
+                user_id: ActorId::new("actor-2"),
+                role: Role::Admin,
+            },
+        ));
+        assert!(matches!(role, Ok(AppReply::Person(_))));
+
+        let (access, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::ChangePersonAccess {
+                user_id: ActorId::new("actor-2"),
+                revoked: true,
+            },
+        ));
+        assert!(matches!(access, Ok(AppReply::Person(_))));
+
+        let (audit, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::ListAuditEvents {
+                cursor: None,
+                event_type: None,
+                actor_user_id: None,
+                target_type: None,
+                target_id: None,
+                from: None,
+                to: None,
+                limit: None,
+            },
+        ));
+        assert!(matches!(
+            audit,
+            Err(AppError::DependencyUnavailable {
+                dependency: "database"
+            })
+        ));
+
+        let (get_policy, _) = capture(service.execute(auth.clone(), AppCommand::GetActionPolicy));
+        assert!(matches!(
+            get_policy,
+            Err(AppError::DependencyUnavailable {
+                dependency: "policy_store"
+            })
+        ));
+        let (set_policy, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::SetActionPolicy {
+                policy: ActionPolicyDocument {
+                    mode: ActionPolicyMode::Enforce,
+                    deny: Vec::new(),
+                    allow: vec!["true".to_owned()],
+                },
+            },
+        ));
+        assert!(matches!(
+            set_policy,
+            Err(AppError::DependencyUnavailable {
+                dependency: "policy_store"
+            })
+        ));
+
+        let (tool, _) = capture(service.execute(
+            auth.clone(),
+            AppCommand::InvokeTool(ToolInvocation {
+                call_id: ToolCallId::new("call-1"),
+                run_id: RunId::new("run-1"),
+                bot_id: BotId::new("bot-1"),
+                call_seq: 0,
+                tool_name: "computer.write".to_owned(),
+                arguments: json!({}),
+            }),
+        ));
+        assert!(matches!(
+            tool,
+            Err(AppError::DependencyUnavailable {
+                dependency: "tool_catalog"
+            })
+        ));
+
+        for command in [
+            AppCommand::MintThreadId,
+            AppCommand::GetThreadStatus {
+                thread_id: ThreadId::new("550e8400-e29b-41d4-a716-446655440000"),
+            },
+            AppCommand::BeginThreadRun(BeginThreadRun {
+                thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+                run_id: RunId::new("run-thread"),
+                bot_id: BotId::new("bot-1"),
+                anchor: ThreadRunAnchor::DirectBot,
+                message: "hello".to_owned(),
+            }),
+            AppCommand::GetThreadHistory {
+                thread_id: ThreadId::new("550e8400-e29b-41d4-a716-446655440000"),
+            },
+        ] {
+            let (reply, _) = capture(service.execute(auth.clone(), command));
+            assert!(matches!(
+                reply,
+                Err(AppError::DependencyUnavailable {
+                    dependency: "thread_directory"
+                })
+            ));
+        }
+
+        for command in [
+            AppCommand::RememberMemory(RememberMemory {
+                memory_kind: MemoryKind::Preference,
+                scope: MemoryScope::User,
+                content: "tea".to_owned(),
+                tags: Vec::new(),
+                sensitivity: MemorySensitivity::Normal,
+                source: None,
+                expires_at: None,
+            }),
+            AppCommand::ListMemories {
+                cursor: None,
+                limit: None,
+            },
+            AppCommand::CorrectMemory {
+                memory_id: "memory-1".to_owned(),
+                correction: CorrectMemory {
+                    content: "coffee".to_owned(),
+                    tags: Vec::new(),
+                    sensitivity: MemorySensitivity::Normal,
+                    expires_at: None,
+                },
+            },
+            AppCommand::MutateMemory {
+                memory_id: "memory-1".to_owned(),
+                mutation: MemoryMutation::Delete,
+            },
+            AppCommand::RecallMemories(RecallMemories {
+                query: "office".to_owned(),
+                tags: Vec::new(),
+                bot_id: None,
+                thread_id: None,
+                limit: None,
+            }),
+        ] {
+            let (reply, _) = capture(service.execute(auth.clone(), command));
+            assert!(matches!(
+                reply,
+                Err(AppError::DependencyUnavailable {
+                    dependency: "memory_store"
+                })
+            ));
+        }
+
+        for command in [
+            AppCommand::IssueAgentCallbackToken {
+                agent_id: BotId::new("remote-1"),
+            },
+            AppCommand::RevokeAgentCallbackToken {
+                agent_id: BotId::new("remote-1"),
+            },
+        ] {
+            let (reply, _) = capture(service.execute(auth.clone(), command));
+            assert!(matches!(
+                reply,
+                Err(AppError::DependencyUnavailable {
+                    dependency: "agent_callback_tokens"
+                })
+            ));
         }
     }
 
@@ -327,11 +1172,28 @@ mod tests {
         let service = app();
         let (_, captured) = capture(service.execute(auth_for("actor-1"), AppCommand::Health));
 
+        let tool_secret = "SENTINEL-TOOL-ARGUMENT-SECRET";
+        let (_, tool_captured) = capture(service.execute(
+            auth_for("actor-1"),
+            AppCommand::InvokeTool(ToolInvocation {
+                call_id: ToolCallId::new("call-secret"),
+                run_id: RunId::new("run-1"),
+                bot_id: BotId::new("bot-1"),
+                call_seq: 0,
+                tool_name: "computer.write".to_owned(),
+                arguments: json!({"password":tool_secret}),
+            }),
+        ));
+
         let sentinel = SENTINEL_AUTH_GENERATION.to_string();
-        for (name, value) in &captured.fields {
+        for (name, value) in captured.fields.iter().chain(&tool_captured.fields) {
             assert!(
                 !value.contains(&sentinel),
                 "auth_generation 不得出现在 span 里：{name}={value}"
+            );
+            assert!(
+                !value.contains(tool_secret),
+                "tool arguments 不得出现在 span 里：{name}={value}"
             );
             for forbidden in ["AuthContext", "roles", "Admin", "single_user"] {
                 assert!(
@@ -348,6 +1210,7 @@ mod tests {
         // 正向对照：捕获层确实看见了字段（否则上面的循环体一次都不执行）。
         assert!(!captured.fields.is_empty(), "捕获层必须真的看到字段");
         assert_eq!(captured.value_of("actor_id"), Some("actor-1"));
+        assert_eq!(tool_captured.value_of("operation"), Some("invoke_tool"));
     }
 
     /// span 字段集合恰好是登记过的那些 —— 多记一个就判红，逼作者去做基数裁决。
@@ -420,7 +1283,7 @@ mod tests {
 
     /// 零角色的**已认证** actor 不被拒绝：G1 的两个用例都不设角色门（parity）。
     ///
-    /// 这条同时是「本 crate 不产出 403」的行为证据 —— 如果有人凭空加了角色门，它会红。
+    /// 同一个 roleless actor：普通读取不凭空加角色门，admin 用例则必须产出 403。
     #[test]
     fn a_roleless_authenticated_actor_is_not_rejected() {
         let roleless = AuthContext::for_test(
@@ -428,7 +1291,7 @@ mod tests {
             TenantId::new("tenant-g1"),
             ActorId::new("actor-1"),
             [],
-            1,
+            openbot_contracts::auth::AuthGeneration::new(1),
             false,
         );
         assert!(roleless.roles().is_empty());
@@ -438,13 +1301,21 @@ mod tests {
         assert!(health_reply.is_ok(), "探活不看角色");
 
         let (list_reply, _) = capture(service.execute(
-            roleless,
+            roleless.clone(),
             AppCommand::ListVisibleChannels {
                 limit: None,
                 cursor: None,
             },
         ));
         assert!(list_reply.is_ok(), "列表只看 membership，不看角色");
+
+        let (admin_reply, _) = capture(service.execute(roleless, AppCommand::AdminStatus));
+        assert!(matches!(
+            admin_reply,
+            Err(AppError::ForbiddenRole {
+                required: Role::Admin
+            })
+        ));
     }
 
     /// 正向对照：本 crate **确实**会返回错误 —— 上一条的 `is_ok()` 不是靠
@@ -460,6 +1331,108 @@ mod tests {
             },
         ));
         assert!(result.is_err());
+    }
+
+    struct FixedThreadBegin;
+
+    #[async_trait]
+    impl ThreadDirectory for FixedThreadBegin {
+        async fn mint_thread_id(
+            &self,
+            _deployment: &DeploymentId,
+        ) -> Result<ThreadId, crate::ports::ThreadDirectoryError> {
+            Err(crate::ports::ThreadDirectoryError::Unavailable)
+        }
+
+        async fn thread_known(
+            &self,
+            _deployment: &DeploymentId,
+            _tenant: &TenantId,
+            _actor: &ActorId,
+            _thread: &ThreadId,
+        ) -> Result<bool, crate::ports::ThreadDirectoryError> {
+            Err(crate::ports::ThreadDirectoryError::Unavailable)
+        }
+
+        async fn begin_thread_run(
+            &self,
+            request: crate::ports::BeginThreadRunRequest,
+        ) -> Result<ThreadRunStarted, crate::ports::ThreadDirectoryError> {
+            Ok(ThreadRunStarted {
+                thread_id: request.command.thread_id,
+                run_id: request.command.run_id,
+                message_sequence: 4,
+                event_sequence: 9,
+                replayed: false,
+            })
+        }
+
+        async fn subscribe_thread_events(
+            &self,
+            _request: crate::ports::ThreadEventSubscription,
+        ) -> Result<AppEventStream, crate::ports::ThreadDirectoryError> {
+            Ok(health_stream(core::time::Duration::from_secs(1)))
+        }
+
+        async fn subscribe_channel_activity(
+            &self,
+            _request: crate::ports::ChannelActivitySubscription,
+        ) -> Result<AppEventStream, crate::ports::ThreadDirectoryError> {
+            Ok(health_stream(core::time::Duration::from_secs(1)))
+        }
+    }
+
+    #[test]
+    fn begin_thread_run_reaches_the_port_through_application_service_execute() {
+        let service =
+            OpenBotApplication::new(FakeChannelReader::empty()).with_threads(FixedThreadBegin);
+        let thread_id = ThreadId::new("550e8400-e29b-81d4-a716-446655440000");
+        let run_id = RunId::new("run-through-service");
+        let (reply, _) = capture(service.execute(
+            auth_for("actor-1"),
+            AppCommand::BeginThreadRun(BeginThreadRun {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+                bot_id: BotId::new("bot-1"),
+                anchor: ThreadRunAnchor::DirectBot,
+                message: "hello".to_owned(),
+            }),
+        ));
+        assert_eq!(
+            reply,
+            Ok(AppReply::ThreadRunStarted(ThreadRunStarted {
+                thread_id,
+                run_id,
+                message_sequence: 4,
+                event_sequence: 9,
+                replayed: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn thread_subscription_reaches_the_port_through_application_service_subscribe() {
+        let service =
+            OpenBotApplication::new(FakeChannelReader::empty()).with_threads(FixedThreadBegin);
+        let (result, captured) = capture(service.subscribe(
+            auth_for("actor-1"),
+            SubscriptionRequest::ThreadEvents {
+                thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
+                after_event_sequence: Some(0),
+            },
+        ));
+        assert!(result.is_ok());
+        assert_eq!(captured.value_of("operation"), Some("thread_events"));
+    }
+
+    #[test]
+    fn channel_subscription_reaches_the_port_through_application_service_subscribe() {
+        let service =
+            OpenBotApplication::new(FakeChannelReader::empty()).with_threads(FixedThreadBegin);
+        let (result, captured) =
+            capture(service.subscribe(auth_for("actor-1"), SubscriptionRequest::ChannelActivity));
+        assert!(result.is_ok());
+        assert_eq!(captured.value_of("operation"), Some("channel_activity"));
     }
 
     /// `dyn ApplicationService` 必须可用：transport 持有的是 trait 对象。

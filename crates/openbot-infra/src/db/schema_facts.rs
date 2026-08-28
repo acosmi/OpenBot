@@ -87,7 +87,10 @@ pub struct ConstraintFacts {
     pub def: String,
     /// 约束名。
     pub name: String,
-    /// `pg_constraint.contype`：`p` 主键 / `u` 唯一 / `f` 外键 / `c` 检查 / `n` NOT NULL。
+    /// `pg_constraint.contype`：`p` 主键 / `u` 唯一 / `f` 外键 / `c` 检查。
+    ///
+    /// `n`（NOT NULL）刻意不在这里：它由 [`ColumnFacts::notnull`] 表达；PG18 会额外把它
+    /// 放进 `pg_constraint`，PG17 不会，双记会让同一份 DDL 的事实随服务端版本漂移。
     #[serde(rename = "type")]
     pub kind: String,
 }
@@ -161,7 +164,23 @@ mod tests {
                 .iter()
                 .map(|t| t.constraints.len())
                 .sum::<usize>(),
-            212,
+            59,
+        );
+        assert_eq!(
+            facts
+                .tables
+                .iter()
+                .flat_map(|t| &t.columns)
+                .filter(|column| column.notnull)
+                .count(),
+            153,
+        );
+        assert!(
+            facts
+                .tables
+                .iter()
+                .flat_map(|t| &t.constraints)
+                .all(|constraint| constraint.kind != "n"),
         );
         assert_eq!(
             facts.tables.iter().map(|t| t.indexes.len()).sum::<usize>(),

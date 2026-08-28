@@ -18,6 +18,11 @@ default = []
 # 的唯一测试入口 `AuthContext::for_test` 住在那边同名 feature 下。
 testkit = ["openbot-contracts/testkit"]
 
+[[bin]]
+name = "openbot-ui-fixture"
+path = "src/bin/openbot-ui-fixture.rs"
+required-features = ["testkit"]
+
 [dependencies]
 # 穿越边界的类型：AuthContext / AppCommand / AppReply / AppError / ChannelPage。
 openbot-contracts.workspace = true
@@ -25,10 +30,15 @@ openbot-contracts.workspace = true
 openbot-application.workspace = true
 # G2 起启动配置要落成领域类型（retention 窗口等），而不是一堆裸字符串。
 openbot-domain.workspace = true
+# W-4 生产组装与 PostgreSQL session resolver；依赖方向 server -> infra -> application，无环。
+openbot-infra.workspace = true
+openbot-agent.workspace = true
 
 # `AuthResolver` / `ReadinessProbe` 都要对象安全（state 里持的是 `dyn`），
 # edition 2024 的 AFIT 仍不给对象安全，所以走 `async_trait`。
 async-trait.workspace = true
+# SSE framing wrapper 直接实现 `Stream`，不复制业务流、不引 futures-util。
+futures-core.workspace = true
 
 # transport 本体。
 axum.workspace = true
@@ -36,6 +46,8 @@ axum.workspace = true
 # 但直接依赖 `http` 让这个 port 的签名不绑定在 axum 上 —— 它是**认证边界**，
 # 不是 axum 的扩展点。
 http.workspace = true
+deadpool-postgres.workspace = true
+tokio-postgres.workspace = true
 # §5.2 点名的 transport 四件事之一：输入大小限制。
 tower-http.workspace = true
 
@@ -47,6 +59,7 @@ serde = { workspace = true }
 # **不给 `ActionPolicy` 派生 `Deserialize`**：那会开一条"自由 JSON 直接铸造领域类型"的路（§5.2
 # 明令禁止的形态）。这里逐字段读、逐字段校验、再显式构造。
 serde_json = { workspace = true }
+url.workspace = true
 
 # 请求 span。
 tracing.workspace = true
@@ -60,6 +73,13 @@ tracing-subscriber.workspace = true
 # request_id 的铸造源。UUIDv7 而不是自增计数：多副本 Server 下自增会重号，
 # 而 request_id 的唯一用途就是跨副本、跨进程把一次请求的日志串起来。
 uuid.workspace = true
+# production session resolver/main 需要墙钟与 Tokio runtime。
+time.workspace = true
+tokio.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+ring.workspace = true
+zeroize.workspace = true
 
 # §16.4「Server 暴露 Prometheus metrics」。**门面 + exporter 两层**，不直接依赖 prometheus
 # 客户端库：库代码只调 `metrics` 门面，不知道 exporter 是谁 —— 没装 recorder 时每次调用
@@ -75,19 +95,22 @@ metrics-exporter-prometheus.workspace = true
 # 生产构建不受影响）。
 openbot-contracts = { workspace = true, features = ["testkit"] }
 
-# 测试里造 `ChannelSummary` 的时间戳。
-time.workspace = true
-
 # `ServiceExt::oneshot` —— 内存里跑 Axum service，不监听端口。它在 `util` feature 下，
 # 而 workspace 根给 `tower` 开的是 `timeout` / `limit`。feature 是可加的：这里追加
 # `util` 不改根 Cargo.toml，也不影响任何生产依赖图（`tower` 不在 `[dependencies]` 里）。
 tower = { workspace = true, features = ["util"] }
 
+# 真实 TCP/WebSocket handshake + frame 测试；不进 production dependency 图。
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+# Official pinned RMCP server used only by the real callback HTTP integration test.
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
+aes-gcm.workspace = true
+ed25519-dalek.workspace = true
+base64.workspace = true
+hkdf.workspace = true
+
 # 注：`serde_json` 已上移到 [dependencies]（G2 起启动期要解析 `AGENT_COMPUTER_POLICY`），
 # 这里不再重复声明。它进生产依赖**不等于**放开"自由 params"：那条禁令针对的是
 # `AppCommand` 面接受任意 JSON，而 `AppCommand` 仍是封闭 enum，本 crate 的路由一个
 # `serde_json::Value` 参数都不收。
-
-# `#[tokio::test]`。生产侧不依赖 tokio：本 crate 不 spawn、不计时，
-# 运行时由宿主二进制提供。
-tokio.workspace = true

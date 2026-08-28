@@ -9,8 +9,8 @@
 //!
 //! - [`ProviderKind::Google`] —— issuer 是常量 [`GOOGLE_ISSUER`]，变体里**没有 issuer 字段**。
 //!   管理员改不动它不是因为有一条校验，而是因为没有那个字段可填。
-//! - [`ProviderKind::Entra`] —— issuer 由管理员给出（每个租户一个 authority），并额外带一份
-//!   [`EntraTenantPolicy`]，这是唯一一个 `tid` claim 有意义的变体。
+//! - [`ProviderKind::Entra`] —— authority 只接受固定 Microsoft host 上的官方四类取值，并额外
+//!   带一份 [`EntraTenantPolicy`]；这是唯一一个 `tid` claim 有意义的变体。
 //! - [`ProviderKind::DeploymentOwned`] —— Okta 与一切动态注册的 provider，整个 issuer 由
 //!   管理员给出。上游 `docs/configuration.md` 的 `OKTA_OAUTH_ISSUER` 示例
 //!   `https://example.okta.com/oauth2/default` 说明了为什么它必须走 discovery：**每个客户
@@ -115,6 +115,13 @@ pub enum IssuerTrust {
 pub enum EntraTenantPolicy {
     /// 不额外限制 `tid`（issuer 已经把范围钉死在单租户 authority 上时的正常档）。
     IssuerScoped,
+    /// `common` / `organizations` 的 tenant-independent metadata。
+    ///
+    /// `tid` 必须是 canonical GUID；`allow_personal=false` 另外拒绝 Microsoft consumer tenant。
+    TenantIndependent {
+        /// `common=true`，`organizations=false`。
+        allow_personal: bool,
+    },
     /// `tid` 必须落在这个集合内。
     ///
     /// 多租户 authority（Entra 的 `common` / `organizations`）下这是**唯一**的边界：
@@ -132,9 +139,24 @@ impl EntraTenantPolicy {
         match self {
             Self::IssuerScoped => true,
             Self::AllowList(allowed) => tid.is_some_and(|t| allowed.contains(t)),
+            Self::TenantIndependent { allow_personal } => tid.is_some_and(|tenant| {
+                let Ok(parsed) = uuid::Uuid::parse_str(tenant) else {
+                    return false;
+                };
+                let canonical = parsed.hyphenated().to_string();
+                canonical == tenant && (*allow_personal || tenant != MICROSOFT_CONSUMER_TENANT_ID)
+            }),
         }
     }
+
+    #[must_use]
+    pub const fn is_tenant_independent(&self) -> bool {
+        matches!(self, Self::TenantIndependent { .. })
+    }
 }
+
+/// Microsoft personal accounts 的固定 tenant GUID（官方 ID token claims reference）。
+pub const MICROSOFT_CONSUMER_TENANT_ID: &str = "9188040d-6c67-4c5b-b112-36a304b66dad";
 
 /// provider 的种类。见模块文档。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -143,10 +165,11 @@ pub enum ProviderKind {
     Google,
     /// Microsoft Entra。
     ///
-    /// `issuer` 由管理员给出：Entra 的 authority 形状虽然众所周知，但本轮**没有**可实跑
-    /// 验证的来源可以把模板钉进代码（本模块不联网，仓内与 `openidconnect` 源码里都没有
-    /// 这个字符串），按证据铁律就不写。代价记在交付报告的「未做」里。
+    /// authority/issuer 由环境配置 adapter 按固定 Microsoft host 与官方 tenant 形态构造；
+    /// 本变体不把任意管理员 URL 当成 Entra。
     Entra {
+        /// 用来拉 discovery 的 authority（可能是 `common` / `organizations`）。
+        authority: IssuerUrl,
         /// 该租户的 issuer。
         issuer: IssuerUrl,
         /// `tid` 策略。
@@ -171,6 +194,15 @@ impl ProviderKind {
             Self::Google => IssuerUrl::new(GOOGLE_ISSUER.to_owned())
                 .unwrap_or_else(|_| unreachable!("GOOGLE_ISSUER 由测试实测可解析")),
             Self::Entra { issuer, .. } | Self::DeploymentOwned { issuer } => issuer.clone(),
+        }
+    }
+
+    /// discovery authority。普通 OIDC 与 token issuer 相同；tenant-independent Entra 不同。
+    #[must_use]
+    pub fn discovery_issuer(&self) -> IssuerUrl {
+        match self {
+            Self::Entra { authority, .. } => authority.clone(),
+            Self::Google | Self::DeploymentOwned { .. } => self.issuer(),
         }
     }
 
@@ -270,6 +302,34 @@ impl OidcProviderConfig {
     #[must_use]
     pub fn issuer(&self) -> IssuerUrl {
         self.kind.issuer()
+    }
+
+    /// 用来拉 `.well-known` 的 authority。
+    #[must_use]
+    pub fn discovery_issuer(&self) -> IssuerUrl {
+        self.kind.discovery_issuer()
+    }
+
+    pub(crate) fn with_entra_token_issuer(&self, issuer: IssuerUrl) -> Result<Self, OidcError> {
+        let ProviderKind::Entra {
+            authority, tenants, ..
+        } = &self.kind
+        else {
+            return Err(OidcError::IdTokenRejected);
+        };
+        Ok(Self {
+            id: self.id.clone(),
+            kind: ProviderKind::Entra {
+                authority: authority.clone(),
+                issuer,
+                tenants: tenants.clone(),
+            },
+            origin: self.origin,
+            client_id: self.client_id.clone(),
+            redirect_uri: self.redirect_uri.clone(),
+            domains: self.domains.clone(),
+            registered_by: self.registered_by.clone(),
+        })
     }
 
     /// OAuth client id。
@@ -455,8 +515,10 @@ pub(super) mod fixtures {
 
     /// Entra 形态的 kind。
     pub fn entra_kind(issuer: &str, tenants: EntraTenantPolicy) -> ProviderKind {
+        let issuer = super::parse_issuer(issuer).expect("夹具 issuer 必须合法");
         ProviderKind::Entra {
-            issuer: super::parse_issuer(issuer).expect("夹具 issuer 必须合法"),
+            authority: issuer.clone(),
+            issuer,
             tenants,
         }
     }

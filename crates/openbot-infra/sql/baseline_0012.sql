@@ -10,8 +10,10 @@
 -- 注释、以及与本项目无关的会话级 SET。DDL 语句本身逐字保留，未做任何改写。
 --
 -- 终态事实（由 crates/openbot-infra/sql/schema_facts.sql 在参照库上实跑得出）：
---   28 张表 / 204 列 / 212 个约束 / 44 个索引 / 2 个触发器 / 4 个 enum / 1 个函数 / 0 个 extension。
---   212 个约束 = 153 NOT NULL + 28 PRIMARY KEY + 27 FOREIGN KEY + 4 UNIQUE。
+--   28 张表 / 204 列 / 59 个非 NOT-NULL 约束 / 44 个索引 / 2 个触发器 /
+--   4 个 enum / 1 个函数 / 0 个 extension；另有 153 个列级 NOT NULL 事实。
+--   59 个 pg_constraint = 28 PRIMARY KEY + 27 FOREIGN KEY + 4 UNIQUE；NOT NULL 由
+--   schema_facts.sql 的 columns[].notnull 表达，不在 PostgreSQL 17 的 pg_constraint 里重复计。
 --
 -- 刻意**不含** `CREATE EXTENSION vector`：0010 已 `DROP EXTENSION vector`，v3 §14.1 的 Rust 兼容
 -- migration 对 extension 零操作，本项目不需要 pgvector（CLAUDE.md §3〈数据库〉）。同理刻意不建

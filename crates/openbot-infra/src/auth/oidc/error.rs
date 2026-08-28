@@ -78,6 +78,8 @@ oidc_errors![
     MetadataTooLarge => "oidc_metadata_too_large",
     /// 响应体不是一份能解开的 OIDC 元数据 / JWKS 文档。
     MetadataMalformed => "oidc_metadata_malformed",
+    /// discovery 给出的 authorization/token/JWKS endpoint 不是可接受的 HTTPS 绝对 URL。
+    MetadataEndpointRejected => "oidc_metadata_endpoint_rejected",
 
     // ---- issuer ------------------------------------------------------------
     /// issuer 不是 `https`。
@@ -131,6 +133,18 @@ oidc_errors![
     /// 存在的理由是 §6.2 点名的 callback flood：一个只增不减的在飞表就是内存耗尽面。
     AttemptStoreFull => "oidc_attempt_store_full",
 
+    // ---- authorization code / token endpoint -----------------------------
+    /// discovery 文档没有 token endpoint，无法完成 Authorization Code flow。
+    TokenEndpointMissing => "oidc_token_endpoint_missing",
+    /// token request 形态、HTTP 交换或 OAuth 错误响应有一项失败。
+    ///
+    /// 不把 IdP 的 error_description 带出：它是不可信远端字节，也会成为 callback oracle。
+    TokenExchangeRejected => "oidc_token_exchange_rejected",
+    /// IdP 返回了限流/5xx 或无法解析的 token/JWKS 响应；属于上游 vendor failure。
+    ProviderResponseInvalid => "oidc_provider_response_invalid",
+    /// token response 没有 ID token；access token 不能替代身份断言。
+    IdTokenMissing => "oidc_id_token_missing",
+
     // ---- ID token ----------------------------------------------------------
     /// ID token 不是一个能解开的 JWT。
     IdTokenMalformed => "oidc_id_token_malformed",
@@ -146,6 +160,12 @@ oidc_errors![
     EmailClaimMissing => "oidc_email_claim_missing",
     /// ID token 的 `tid`（Entra 租户）不在该 provider 允许的租户集内。
     TenantNotAllowed => "oidc_tenant_not_allowed",
+    /// `MICROSOFT_OAUTH_TENANT_ID` 不是 common/organizations/consumers/canonical GUID。
+    EntraTenantMalformed => "oidc_entra_tenant_malformed",
+    /// 调用方把 A provider 的 group mapping 用在 B provider 的已验证 token 上。
+    GroupMappingMismatch => "oidc_group_mapping_mismatch",
+    /// 已验证 token 的 group claim 路径/形状不符合该 provider 的显式 mapping。
+    GroupClaimRejected => "oidc_group_claim_rejected",
 
     // ---- provider 注册 ------------------------------------------------------
     /// 引用了一个未注册的 provider。
@@ -265,6 +285,14 @@ mod tests {
                 OidcError::ProviderIdConflict => 25,
                 OidcError::DomainMalformed => 26,
                 OidcError::DomainConflict => 27,
+                OidcError::TokenEndpointMissing => 28,
+                OidcError::TokenExchangeRejected => 29,
+                OidcError::ProviderResponseInvalid => 30,
+                OidcError::IdTokenMissing => 31,
+                OidcError::GroupMappingMismatch => 32,
+                OidcError::GroupClaimRejected => 33,
+                OidcError::MetadataEndpointRejected => 34,
+                OidcError::EntraTenantMalformed => 35,
             }
         }
 

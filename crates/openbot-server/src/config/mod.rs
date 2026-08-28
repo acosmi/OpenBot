@@ -44,15 +44,21 @@
 //! 因为那是启动期唯一一次看得见整张环境表的地方。
 
 pub mod address;
+pub mod agent;
 pub mod env;
 pub mod error;
 pub mod migration;
 pub mod policy;
+pub mod preflight;
 pub mod secret;
 pub mod server;
 pub mod transport;
 
 pub use address::{AddressParseError, DeploymentAddress, Scheme, is_loopback_host};
+pub use agent::{
+    AgentBudgets, ManagedProviderConfig, ManagedProviderKind, PackageOpenAiProviderConfig,
+    parse_agent_config,
+};
 pub use env::{EnvMap, env_map_from_process};
 pub use error::{ConfigError, ConfigProblem, Expectation};
 pub use migration::{
@@ -60,6 +66,10 @@ pub use migration::{
     RenamedEnvVar, Replacement, RetiredEnvVar, RetirementReason, check_migrated_env_vars,
 };
 pub use policy::parse_action_policy;
+pub use preflight::{
+    AuditRetentionPreflightCode, AuditRetentionPreflightFinding, AuditRetentionPreflightReport,
+    preflight_audit_retention,
+};
 pub use secret::Secret;
 pub use server::{
     AuditRetention, ComputerConfig, ComputerProvider, DEFAULT_PORT, DEFAULT_TENANT_PACKAGE_DIR,
@@ -89,11 +99,13 @@ mod tests {
         // 因为断言本身而被自己判红。
         let needle = concat!("std::", "env");
 
-        let parsers: [(&str, &str); 7] = [
+        let parsers: [(&str, &str); 9] = [
             ("address.rs", include_str!("address.rs")),
+            ("agent.rs", include_str!("agent.rs")),
             ("error.rs", include_str!("error.rs")),
             ("migration.rs", include_str!("migration.rs")),
             ("policy.rs", include_str!("policy.rs")),
+            ("preflight.rs", include_str!("preflight.rs")),
             ("secret.rs", include_str!("secret.rs")),
             ("server.rs", include_str!("server.rs")),
             ("transport.rs", include_str!("transport.rs")),

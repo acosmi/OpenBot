@@ -22,11 +22,12 @@
 //!    [`crate::cursor`] 的模块文档（这是相对上游的**刻意行为变更**）。
 
 use openbot_contracts::auth::AuthContext;
-use openbot_contracts::command::{ChannelPage, ChannelSummary, MAX_CHANNEL_PAGE};
+use openbot_contracts::command::{ChannelDetail, ChannelPage, ChannelSummary, MAX_CHANNEL_PAGE};
 use openbot_contracts::error::AppError;
+use openbot_contracts::ids::ChannelId;
 
 use crate::cursor::ChannelCursor;
-use crate::ports::ChannelReader;
+use crate::ports::{ChannelReadScope, ChannelReader};
 
 /// 未指定 `limit` 时的页大小。
 ///
@@ -81,8 +82,9 @@ where
     // 技巧留在 application 侧 —— 端口拿到的 `limit` 就是要读的行数，实现不必知道其中
     // 有一行是探针（`ChannelReader` 的文档里写明了）。
     let probe_size = page_size.saturating_add(1);
+    let scope = channel_read_scope(auth);
     let mut rows = reader
-        .list_visible_channels(auth.actor(), probe_size, cursor)
+        .list_visible_channels_scoped(&scope, probe_size, cursor)
         .await
         .map_err(crate::ports::PortError::into_app_error)?;
 
@@ -107,6 +109,45 @@ where
         channels: rows,
         next_cursor,
     })
+}
+
+/// Read one membership-visible channel and project only its current scope-matching native thread.
+pub async fn get_visible_channel<R>(
+    reader: &R,
+    auth: &AuthContext,
+    channel_id: ChannelId,
+) -> Result<ChannelDetail, AppError>
+where
+    R: ChannelReader + ?Sized,
+{
+    if channel_id.as_str().is_empty()
+        || channel_id.as_str().len() > 512
+        || channel_id.as_str().chars().any(char::is_control)
+    {
+        return Err(AppError::MalformedPayload {
+            field: "channel_id",
+        });
+    }
+    let summary = reader
+        .get_visible_channel(&channel_read_scope(auth), &channel_id)
+        .await
+        .map_err(crate::ports::PortError::into_app_error)?
+        .ok_or(AppError::NotVisible)?;
+    Ok(ChannelDetail {
+        id: summary.id,
+        name: summary.name,
+        agent_ids: summary.agent_ids,
+        thread_id: summary.thread_id,
+        active: summary.active,
+    })
+}
+
+fn channel_read_scope(auth: &AuthContext) -> ChannelReadScope {
+    ChannelReadScope {
+        deployment: auth.deployment().clone(),
+        tenant: auth.tenant().clone(),
+        actor: auth.actor().clone(),
+    }
 }
 
 /// 复现上游 `Math.min(Math.max(limit ?? DEFAULT, 1), MAX)`。
@@ -181,6 +222,64 @@ mod tests {
     }
 
     use core::future::Future;
+
+    #[test]
+    fn detail_injects_full_scope_and_projects_only_detail_fields() {
+        let mut summary = summary_at("channel-1", "2026-08-22T04:59:00Z");
+        summary.agent_ids = vec![openbot_contracts::ids::BotId::new("bot-1")];
+        summary.thread_id = Some(openbot_contracts::ids::ThreadId::new("thread-1"));
+        summary.active = false;
+        let reader = FakeChannelReader::empty().with_visible("actor-a", [summary.clone()]);
+        let detail = block_on(get_visible_channel(
+            &reader,
+            &auth_for("actor-a"),
+            ChannelId::new("channel-1"),
+        ))
+        .unwrap();
+        assert_eq!(detail.id, summary.id);
+        assert_eq!(detail.name, summary.name);
+        assert_eq!(detail.agent_ids, summary.agent_ids);
+        assert_eq!(detail.thread_id, summary.thread_id);
+        assert!(!detail.active);
+        assert_eq!(
+            reader.detail_calls(),
+            vec![(
+                ChannelReadScope {
+                    deployment: openbot_contracts::ids::DeploymentId::new("dep-g1"),
+                    tenant: openbot_contracts::ids::TenantId::new("tenant-g1"),
+                    actor: openbot_contracts::ids::ActorId::new("actor-a"),
+                },
+                ChannelId::new("channel-1"),
+            )]
+        );
+    }
+
+    #[test]
+    fn detail_unknown_or_invisible_is_not_visible_and_malformed_never_calls_port() {
+        let reader = FakeChannelReader::empty();
+        assert_eq!(
+            block_on(get_visible_channel(
+                &reader,
+                &auth_for("actor-a"),
+                ChannelId::new("missing"),
+            )),
+            Err(AppError::NotVisible)
+        );
+        let before = reader.detail_calls().len();
+        for invalid in ["", "bad\nchannel"] {
+            assert_eq!(
+                block_on(get_visible_channel(
+                    &reader,
+                    &auth_for("actor-a"),
+                    ChannelId::new(invalid),
+                )),
+                Err(AppError::MalformedPayload {
+                    field: "channel_id"
+                })
+            );
+        }
+        assert_eq!(reader.detail_calls().len(), before);
+    }
 
     // -----------------------------------------------------------------------
     // 空列表：成功 + 空页，不是 404、不是错误（§15.3 末条 / 上游 #72 同族）
@@ -648,5 +747,13 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(reader.calls()[0].actor.as_str(), "actor-authoritative");
+        assert_eq!(
+            reader.scoped_calls(),
+            vec![ChannelReadScope {
+                deployment: openbot_contracts::ids::DeploymentId::new("dep-g1"),
+                tenant: openbot_contracts::ids::TenantId::new("tenant-g1"),
+                actor: openbot_contracts::ids::ActorId::new("actor-authoritative"),
+            }]
+        );
     }
 }

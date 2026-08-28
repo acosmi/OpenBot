@@ -30,6 +30,8 @@ sha2 = { workspace = true }
 hmac = { workspace = true }
 # 常量时间比较。token / hash 的比较提前返回会泄漏「前几个字节对了」。
 subtle = { workspace = true }
+# 明文和密钥容器 drop 时的编译器层清零保证；只开 Vec 需要的 alloc。
+zeroize = { workspace = true }
 # Vault 的 v1 信封（12 字节 IV、无 AAD）与 v2 AEAD（§6.4）。**只做给定密钥与 nonce 的纯变换**，
 # nonce 与 DEK 的生成在 infra —— 随机数不进领域层。
 aes-gcm = { workspace = true }

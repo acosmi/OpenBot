@@ -13,11 +13,15 @@ use async_trait::async_trait;
 use openbot_contracts::auth::{AuthContext, Role};
 use openbot_contracts::command::ChannelSummary;
 use openbot_contracts::ids::{ActorId, ChannelId, DeploymentId, TenantId};
+use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::cursor::{ChannelCursor, channel_recency};
-use crate::ports::{ChannelReader, PortError};
+use crate::ports::{
+    ChannelReadScope, ChannelReader, PeopleAdministration, PeoplePageRequest, PeoplePortError,
+    PortError,
+};
 
 /// 解析测试里用的 RFC 3339 字面量。解析不了就是测试写错了，直接 panic。
 pub(crate) fn ts(raw: &str) -> OffsetDateTime {
@@ -38,9 +42,8 @@ pub(crate) fn summary_at(id: &str, last_message_at: &str) -> ChannelSummary {
         last_message_at: Some(last),
         last_message_agent_id: None,
         created_at: last - time::Duration::days(1),
-        // G1 还没有 native `threads` 表，本字段恒 None（contracts 里 `thread_id` 的文档
-        // 写明了理由：上游那个非空是 `intelligence_channel_mappings` 的 INNER JOIN 造出来
-        // 的假象，join 一删「可见但还没有 thread」就是合法状态）。
+        // `None` 模拟尚未开始 native thread 的合法 channel；production scoped reader 在 G3
+        // 已从 native threads 投影，不读取 legacy Intelligence mapping。
         thread_id: None,
         active: true,
     }
@@ -74,7 +77,7 @@ pub(crate) fn auth_for(actor: &str) -> AuthContext {
         TenantId::new("tenant-g1"),
         ActorId::new(actor),
         [Role::Admin, Role::User],
-        SENTINEL_AUTH_GENERATION,
+        openbot_contracts::auth::AuthGeneration::new(SENTINEL_AUTH_GENERATION),
         false,
     )
 }
@@ -95,6 +98,8 @@ pub(crate) struct FakeChannelReader {
     rows: Vec<(ActorId, ChannelSummary)>,
     failure: Option<PortError>,
     calls: Mutex<Vec<PortCall>>,
+    scoped_calls: Mutex<Vec<ChannelReadScope>>,
+    detail_calls: Mutex<Vec<(ChannelReadScope, ChannelId)>>,
 }
 
 impl FakeChannelReader {
@@ -104,6 +109,8 @@ impl FakeChannelReader {
             rows: Vec::new(),
             failure: None,
             calls: Mutex::new(Vec::new()),
+            scoped_calls: Mutex::new(Vec::new()),
+            detail_calls: Mutex::new(Vec::new()),
         }
     }
 
@@ -125,6 +132,8 @@ impl FakeChannelReader {
             rows: Vec::new(),
             failure: Some(failure),
             calls: Mutex::new(Vec::new()),
+            scoped_calls: Mutex::new(Vec::new()),
+            detail_calls: Mutex::new(Vec::new()),
         }
     }
 
@@ -136,6 +145,20 @@ impl FakeChannelReader {
     /// 调用次数。
     pub(crate) fn call_count(&self) -> usize {
         self.calls.lock().expect("fake 的互斥锁不会中毒").len()
+    }
+
+    pub(crate) fn scoped_calls(&self) -> Vec<ChannelReadScope> {
+        self.scoped_calls
+            .lock()
+            .expect("fake 的互斥锁不会中毒")
+            .clone()
+    }
+
+    pub(crate) fn detail_calls(&self) -> Vec<(ChannelReadScope, ChannelId)> {
+        self.detail_calls
+            .lock()
+            .expect("fake 的互斥锁不会中毒")
+            .clone()
     }
 }
 
@@ -179,5 +202,191 @@ impl ChannelReader for FakeChannelReader {
         // 四、截断到调用方要的行数（调用方已经把探测用的 +1 算进来了）。
         visible.truncate(limit as usize);
         Ok(visible)
+    }
+
+    async fn list_visible_channels_scoped(
+        &self,
+        scope: &ChannelReadScope,
+        limit: u32,
+        cursor: Option<ChannelCursor>,
+    ) -> Result<Vec<ChannelSummary>, PortError> {
+        self.scoped_calls
+            .lock()
+            .expect("fake 的互斥锁不会中毒")
+            .push(scope.clone());
+        self.list_visible_channels(&scope.actor, limit, cursor)
+            .await
+    }
+
+    async fn get_visible_channel(
+        &self,
+        scope: &ChannelReadScope,
+        channel_id: &ChannelId,
+    ) -> Result<Option<ChannelSummary>, PortError> {
+        self.detail_calls
+            .lock()
+            .expect("fake 的互斥锁不会中毒")
+            .push((scope.clone(), channel_id.clone()));
+        if let Some(failure) = self.failure {
+            return Err(failure);
+        }
+        Ok(self
+            .rows
+            .iter()
+            .find(|(owner, row)| owner == &scope.actor && &row.id == channel_id)
+            .map(|(_, row)| row.clone()))
+    }
+}
+
+/// people port 收到的调用。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PeopleCall {
+    Current(ActorId),
+    List(PeoplePageRequest),
+    Role {
+        actor: ActorId,
+        subject: ActorId,
+        role: Role,
+    },
+    Access {
+        actor: ActorId,
+        subject: ActorId,
+        revoked: bool,
+    },
+}
+
+/// 内存 people adapter；只模拟 port 事务的可观察结果，domain 拒绝另由 use case 映射测试覆盖。
+pub(crate) struct FakePeopleAdministration {
+    people: Mutex<Vec<Person>>,
+    failure: Option<PeoplePortError>,
+    calls: Mutex<Vec<PeopleCall>>,
+}
+
+impl FakePeopleAdministration {
+    pub(crate) fn seeded(people: impl IntoIterator<Item = Person>) -> Self {
+        Self {
+            people: Mutex::new(people.into_iter().collect()),
+            failure: None,
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn failing(failure: PeoplePortError) -> Self {
+        Self {
+            people: Mutex::new(Vec::new()),
+            failure: Some(failure),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn calls(&self) -> Vec<PeopleCall> {
+        self.calls.lock().expect("fake 锁不应中毒").clone()
+    }
+}
+
+#[async_trait]
+impl PeopleAdministration for FakePeopleAdministration {
+    async fn current_user(&self, actor: &ActorId) -> Result<CurrentUser, PeoplePortError> {
+        self.calls
+            .lock()
+            .expect("fake 锁不应中毒")
+            .push(PeopleCall::Current(actor.clone()));
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let people = self.people.lock().expect("fake 锁不应中毒");
+        let person = people
+            .iter()
+            .find(|person| &person.id == actor)
+            .ok_or(PeoplePortError::NotFound)?;
+        Ok(CurrentUser {
+            id: person.id.clone(),
+            email: person.email.clone(),
+            name: person.name.clone(),
+            image: person.image.clone(),
+            role: person.role,
+        })
+    }
+
+    async fn list_people(&self, request: PeoplePageRequest) -> Result<PeoplePage, PeoplePortError> {
+        self.calls
+            .lock()
+            .expect("fake 锁不应中毒")
+            .push(PeopleCall::List(request.clone()));
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let mut people = self.people.lock().expect("fake 锁不应中毒").clone();
+        people.truncate(request.limit as usize);
+        Ok(PeoplePage {
+            people,
+            next_cursor: None,
+        })
+    }
+
+    async fn change_role(
+        &self,
+        actor: &ActorId,
+        subject: &ActorId,
+        desired: Role,
+    ) -> Result<Person, PeoplePortError> {
+        self.calls
+            .lock()
+            .expect("fake 锁不应中毒")
+            .push(PeopleCall::Role {
+                actor: actor.clone(),
+                subject: subject.clone(),
+                role: desired,
+            });
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let mut people = self.people.lock().expect("fake 锁不应中毒");
+        let person = people
+            .iter_mut()
+            .find(|person| &person.id == subject)
+            .ok_or(PeoplePortError::NotFound)?;
+        person.role = desired;
+        Ok(person.clone())
+    }
+
+    async fn change_access(
+        &self,
+        actor: &ActorId,
+        subject: &ActorId,
+        revoked: bool,
+    ) -> Result<Person, PeoplePortError> {
+        self.calls
+            .lock()
+            .expect("fake 锁不应中毒")
+            .push(PeopleCall::Access {
+                actor: actor.clone(),
+                subject: subject.clone(),
+                revoked,
+            });
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let mut people = self.people.lock().expect("fake 锁不应中毒");
+        let person = people
+            .iter_mut()
+            .find(|person| &person.id == subject)
+            .ok_or(PeoplePortError::NotFound)?;
+        person.revoked = revoked;
+        Ok(person.clone())
+    }
+}
+
+pub(crate) fn sample_person(id: &str, role: Role) -> Person {
+    Person {
+        id: ActorId::new(id),
+        email: format!("{id}@example.invalid"),
+        name: Some(id.to_owned()),
+        image: None,
+        role,
+        providers: vec!["google".to_owned()],
+        last_signed_in_at: Some(ts("2026-08-23T00:00:00Z")),
+        revoked: false,
+        configured_admin: false,
     }
 }

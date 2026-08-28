@@ -21,7 +21,35 @@
 //! - 浏览器 / 文件 / shell 的实际执行与隔离 —— 在 `openbot-computer`。
 //! - 信任 MCP server、remote Agent 或模型回传的身份字段（v3 §5.3：一律视为普通不可信输入）。
 //!
-//! # Phase 0 状态
+//! # 当前状态
 //!
-//! 刻意为空。Agent/AG-UI/MCP/Drive 是 G4 的产物；Phase 0 只产出它们的 fixture 与 parity ledger
-//! （v3 §19.3：`fixtures/agui/*.jsonl` / `fixtures/provider/*.jsonl` / `fixtures/mcp/*.json`）。
+//! [`AgentToolGateway`] 铸造 call ID/sequence，并把调用交给同一个 `ApplicationService`；
+//! production built-in host 可注入 [`AuthorizedAgentToolGateway`] 以在每次 effect 前重读 DB ACL。
+//! RMCP/Drive/browser/file/shell executor 仍未因内建 remember tool 而完成。
+
+#![deny(missing_docs)]
+
+pub mod agui;
+mod gateway;
+mod provider_router;
+mod remote_provider;
+mod retry;
+mod runtime;
+
+pub use agui::{
+    AGUI_EVENT_TYPES, AGUI_SCHEMA_VERSION, AguiDecoder, AguiEvent, AguiProtocolError, AguiRole,
+    MAX_AGUI_COLLECTION_ITEMS, MAX_AGUI_EVENT_BYTES, MAX_AGUI_RUN_INPUT_BYTES,
+    apply_patch as apply_agui_json_patch, encode_run_agent_input,
+};
+pub use gateway::{
+    AgentToolGateway, AgentToolInvokeError, AgentToolInvoker, AgentToolReply,
+    AuthorizedAgentToolGateway, NoAgentToolInvoker, RemoteAgentToolInvoker,
+};
+pub use provider_router::ProviderRouter;
+pub use remote_provider::RemoteAguiProvider;
+pub use retry::{RetryingProvider, RetryingProviderConfig};
+pub use runtime::{
+    AGENT_SHUTDOWN_DEADLINE, BuiltInAgentConfig, BuiltInAgentRuntime, DEFAULT_AGENT_CONCURRENCY,
+    DEFAULT_AGENT_QUEUE_CAPACITY, DEFAULT_LEASE_RENEW_INTERVAL, DEFAULT_RUN_DEADLINE,
+    TOOL_STEP_CAP,
+};

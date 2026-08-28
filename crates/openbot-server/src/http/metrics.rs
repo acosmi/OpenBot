@@ -10,16 +10,10 @@
 //! 请求 span、以及 G2 要加的 method/origin 判定），所以仓根把它的 `default-features`
 //! 关掉了（见 `Cargo.toml` 注释）。
 //!
-//! # 访问控制：G1 不做，生产必须做
+//! # 访问控制：与 API 共用 session
 //!
-//! **这条路由现在是 public 的，和 `/health` / `/readiness` 一样。** 它暴露的是本副本的
-//! 请求量、延迟分布与状态码分布 —— 不含身份、不含租户数据（label 基数白名单挡住了
-//! `actor_id` / `tenant_id` 之外的一切，见 [`crate::metrics`] 模块文档），但仍然是运营
-//! 情报。
-//!
-//! **生产部署必须把 `/metrics` 挡在内网或鉴权之后。** 这属于 G2 的 method/origin 面
-//! （与 `/api/*` 的 session 判定是同一套东西），不是在这里加一个临时的 token 检查能解决
-//! 的 —— 那会变成第二个认证脑，正是 [`crate::auth`] 模块文档拒绝的形态。
+//! handler 签名要求 [`crate::auth::Authenticated`]；未登录 401。没有第二枚 metrics token，
+//! 因而 session 撤权/代际变化会与其它 API 同时生效。
 //!
 //! # 没装 recorder 时 fail-closed
 //!
@@ -33,6 +27,7 @@ use axum::response::{IntoResponse, Response};
 use http::{StatusCode, header};
 use openbot_contracts::error::AppError;
 
+use crate::auth::Authenticated;
 use crate::error::HttpError;
 use crate::http::ServerState;
 
@@ -47,7 +42,10 @@ pub const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=ut
 /// # Errors
 ///
 /// 宿主没有交出渲染句柄时返回 503 `dependency_unavailable`（见模块文档〈fail-closed〉）。
-pub async fn render(State(state): State<ServerState>) -> Result<Response, HttpError> {
+pub async fn render(
+    State(state): State<ServerState>,
+    Authenticated(_auth): Authenticated,
+) -> Result<Response, HttpError> {
     let Some(handle) = state.metrics_handle() else {
         tracing::warn!("GET /metrics 但宿主没有安装 metrics recorder —— fail-closed 回 503");
         return Err(AppError::DependencyUnavailable {

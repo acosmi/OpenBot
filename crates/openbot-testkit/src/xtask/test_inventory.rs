@@ -10,7 +10,7 @@
 //!
 //! # 解析器
 //!
-//! `oxc_parser` `0.139.0`（纯 Rust，配套 `oxc_allocator` / `oxc_ast` / `oxc_ast_visit` /
+//! `oxc_parser` `0.146.0`（纯 Rust，配套 `oxc_allocator` / `oxc_ast` / `oxc_ast_visit` /
 //! `oxc_span` 同版本）。选纯 Rust 而不是起 Node/Bun 子进程：v3 §3.5 已裁决删除 Bun launcher，
 //! 把闸门的正确性系在一个本仓刻意不安装的运行时上等于把闸门交给环境。
 //!
@@ -46,7 +46,7 @@ use oxc_ast::ast::{Argument, CallExpression, Expression, TemplateLiteral};
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // 契约常量
@@ -57,7 +57,7 @@ const UPSTREAM_COMMIT: &str = "891df72f1827454d8b353d108fe5dd2313b7e30d";
 
 /// 解析器版本。与仓根 `Cargo.toml` 的 `[workspace.dependencies] oxc_parser` 同值，
 /// 由 `tests::oxc_version_matches_workspace_manifest` 双向钉死 —— 写进产物的
-/// "用 0.139.0 解析"必须是真的，不能是注释里的旧值。
+/// “用 OXC_VERSION 解析”必须是真的，不能是注释里的旧值。
 const OXC_VERSION: &str = "0.146.0";
 
 /// v3 §1.3 的词法基线，只用于交叉检查（`§28.4` 的
@@ -270,8 +270,8 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
         reason: "v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。" },
     FileRule { file: "server/tests/audit-retention.integration.test.ts", owner: "openbot-infra", target_module: "openbot_infra::store::audit_retention", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §16.5 Retention：审计留存策略的裁剪判据逐条移植。" },
-    FileRule { file: "server/tests/audit.test.ts", owner: "openbot-application", target_module: "openbot_application::audit", tier: Tier::Ported, label: Label::Parity,
-        reason: "v3 §8.6 Audit：脱敏、不可变与管理端读取判据逐条移植（写面唯一入口是 ApplicationService，v3 §5.2）。" },
+    FileRule { file: "server/tests/audit.test.ts", owner: "openbot-application", target_module: "openbot_application::audit", tier: Tier::Ported, label: Label::Substitute,
+        reason: "v3 §8.6 Audit：上游自由 JSON + 敏感键黑名单改为封闭 AuditFact 字段 allowlist；事件目录、不可变与管理端读取判据逐条移植（写/读面均穿 ApplicationService，v3 §5.2）。" },
     FileRule { file: "server/tests/bot-access.test.ts", owner: "openbot-server", target_module: "openbot_server::routes::bot_access", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §3.2 无权访问统一 404 + §10.1：Bot 对 computer / 工具 / component 面的可达性判据逐条移植。" },
     FileRule { file: "server/tests/bot-lifecycle-audit.test.ts", owner: "openbot-application", target_module: "openbot_application::bot::lifecycle_audit", tier: Tier::Ported, label: Label::Parity,
@@ -292,8 +292,8 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
         reason: "v3 §10.4 Server v1 + §15.1：列举部署内全部 computer 的路由判据逐条移植。" },
     FileRule { file: "server/tests/computer-gateway.test.ts", owner: "openbot-computer", target_module: "openbot_computer::gateway", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §8.1 唯一执行管线 + §10.4：网关裁决、人工输入命名手势而非路径、跨副本解析 ref，判据逐条移植。" },
-    FileRule { file: "server/tests/computer-policy-route.test.ts", owner: "openbot-server", target_module: "openbot_server::routes::computer_policy", tier: Tier::Ported, label: Label::Parity,
-        reason: "v3 §15.1 + §8.3：部署边界的读写路由判据逐条移植。" },
+    FileRule { file: "server/tests/computer-policy-route.test.ts", owner: "openbot-server", target_module: "openbot_server::routes::computer_policy", tier: Tier::Ported, label: Label::Substitute,
+        reason: "v3 §15.1 + §8.3 + R57：部署边界读写判据逐条移植；PUT 额外要求 fresh admin + trusted Origin，且 Axum 精确路由取代 Hono wildcard exemption。" },
     FileRule { file: "server/tests/computer-policy.test.ts", owner: "openbot-domain", target_module: "openbot_domain::policy::computer", tier: Tier::Ported, label: Label::Substitute,
         reason: "v3 §8.3 CEL：表达式引擎从 cel-js@0.8.2 换成 crate cel 0.14.3，且已核实两处引擎差异（cel-js 无字符串方法、靠注入的全局 contains/matches 工作）必须进 golden corpus，故求值语义承载物换了一个；deny 先于 allow、fail-closed、拒绝描述等判据逐条移植。" },
     FileRule { file: "server/tests/computer-provider.test.ts", owner: "openbot-computer", target_module: "openbot_computer::provider", tier: Tier::Ported, label: Label::Parity,
@@ -318,11 +318,11 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
         reason: "v3 §14.1 单数据库裁决：构造数据库边界时不发查询，判据逐条移植。" },
     FileRule { file: "server/tests/deployment-route-bot-end-to-end.test.ts", owner: "openbot-server", target_module: "openbot_server::routes::deployment_route_bot", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §3.2 Routing：以部署路由命名的 Bot 端到端判据逐条移植。" },
-    FileRule { file: "server/tests/dev-actor.integration.test.ts", owner: "openbot-infra", target_module: "openbot_infra::store::dev_actor", tier: Tier::Ported, label: Label::Parity,
+    FileRule { file: "server/tests/dev-actor.integration.test.ts", owner: "openbot-infra", target_module: "openbot_infra::auth::single_user", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §6.1 Desktop 与 Server 身份模型：开发态 actor 的持久化判据逐条移植。" },
     FileRule { file: "server/tests/encrypt-sso-config.test.ts", owner: "openbot-infra", target_module: "openbot_infra::vault::sso_config", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §6.4 Vault：身份提供方配置在数据库里的加密形态判据逐条移植。" },
-    FileRule { file: "server/tests/entra-profile.test.ts", owner: "openbot-infra", target_module: "openbot_infra::auth::entra_profile", tier: Tier::Ported, label: Label::Parity,
+    FileRule { file: "server/tests/entra-profile.test.ts", owner: "openbot-infra", target_module: "openbot_infra::auth::oidc::claims", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §6.2 必须实现的认证面：Entra 档案映射判据逐条移植。" },
     FileRule { file: "server/tests/google-drive-rest.test.ts", owner: "openbot-agent", target_module: "openbot_agent::connectors::google_drive", tier: Tier::Ported, label: Label::Substitute,
         reason: "v3 §9.5 Google Drive REST 不是 MCP；且 §2.4 第 6 行明写上游 disconnect 尚未实现、Rust 版必须本地立即 deny + tombstone + vendor revoke + revocation_pending 重试，故连接生命周期语义换了一个；搜索/读取/告知模型什么的判据逐条移植。" },
@@ -354,7 +354,7 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
         reason: "v3 §8.3：运行中设置的边界必须持久，判据逐条移植。" },
     FileRule { file: "server/tests/policy-fanout.integration.test.ts", owner: "openbot-infra", target_module: "openbot_infra::events::policy_fanout", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §8.3 明写沿用上游 policy-listener.ts 形态（LISTEN/NOTIFY 只做唤醒、每个 replica 整表重读、policy_version 进 decision），故 fanout 判据逐条移植。" },
-    FileRule { file: "server/tests/roles.test.ts", owner: "openbot-domain", target_module: "openbot_domain::people::roles", tier: Tier::Ported, label: Label::Parity,
+    FileRule { file: "server/tests/roles.test.ts", owner: "openbot-domain", target_module: "openbot_domain::identity::roles", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §6.1 / §6.2：按邮箱定角色、设角色、应用配置管理员与种子角色是纯领域规则，判据逐条移植（§6.5 修正的是 group，不是 role）。" },
     FileRule { file: "server/tests/routing-classify.test.ts", owner: "openbot-domain", target_module: "openbot_domain::routing::classify", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §3.2 Routing：无 @mention 时的分派与按 coworker 可达面分派，判据逐条移植。" },
@@ -368,14 +368,14 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
         reason: "v3 §14.2 28 表 parity ledger + §21.1 条 3：schema 断言逐条移植，并与 parity/tables.yaml 同一批 28 张表交叉。" },
     FileRule { file: "server/tests/server-side-tools.integration.test.ts", owner: "openbot-agent", target_module: "openbot_agent::tools::server_side", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §8.1 唯一执行管线：Bot 在服务端被交到手上的工具集判据逐条移植。" },
-    FileRule { file: "server/tests/single-user.test.ts", owner: "openbot-server", target_module: "openbot_server::single_user", tier: Tier::Ported, label: Label::Parity,
-        reason: "v3 §6.1 + §6.5 条 3（单用户模式唯一 principal 被 provision 进全部包 channel）：无登录运行判据逐条移植。" },
+    FileRule { file: "server/tests/single-user.test.ts", owner: "openbot-server", target_module: "openbot_infra::auth::config", tier: Tier::Ported, label: Label::Substitute,
+        reason: "v3 §6.1 + §6.5 条 3：无登录运行判据逐条移植；但 §28.1 R34 已把旧 `OPENBOT_DEV_NO_AUTH` 从继续生效改为 rename→`OPENBOT_SINGLE_USER` 且启动拒绝，因此整文件按保守粒度标替代，不能把旧别名那条写成 parity。" },
     FileRule { file: "server/tests/skill-ownership.integration.test.ts", owner: "openbot-application", target_module: "openbot_application::skills::ownership", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §9.6 Skills 与 tool discovery：可见性、归属、编辑保持归属与 HTTP 可做什么，判据逐条移植。" },
     FileRule { file: "server/tests/stall-guard.test.ts", owner: "openbot-agent", target_module: "openbot_agent::stall_guard", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §7.4 Retry、Cancel、Budget 与 Commit：停流判定、留给人的那句话与不该碰的东西，判据逐条移植。" },
     FileRule { file: "server/tests/tenant-package.test.ts", owner: "openbot-application", target_module: "openbot_application::tenant::package", tier: Tier::Ported, label: Label::Substitute,
-        reason: "v3 §6.5 + §2.4 第 7 行：allowed_groups 语义被重新固定（保留字 all / 具名组需 IdP mapping / 空列表是校验错误），synchronizeTenantPackage 的 membership 写入是新增行为，故包校验语义换了一个；主题与 YAML 校验、环境展开判据逐条移植。" },
+        reason: "v3 §3.2 / §6.5 + GUI 第一真源 §4.1：allowed_groups 改为真实 membership projection；runtime tenant theme 被 tokens.toml 单一来源取代且 loader 只读五份 YAML；其余 schema/reference/env/sync 判据逐条移植。" },
     FileRule { file: "server/tests/thread-identity.test.ts", owner: "openbot-contracts", target_module: "openbot_contracts::ids::thread", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §5.3：ThreadId 携带铸造它的 deployment，兼容端必须接受上游既有字符串，判据逐条移植。" },
     FileRule { file: "server/tests/thread-routes.test.ts", owner: "openbot-server", target_module: "openbot_server::routes::threads", tier: Tier::Ported, label: Label::Substitute,
@@ -404,8 +404,8 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
         reason: "v3 §3.5 删除 Bun launcher：'只跑过 bun install 的克隆'换成'只跑过 cargo fetch 的克隆'；'依赖必须在根解析得到'与'租户包不得要求 .env'两条判据逐条移植到 cargo workspace 与 fixture 上。" },
     FileRule { file: "tests/compose.test.ts", owner: "openbot-testkit", target_module: "openbot_testkit::repo::compose", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §14.1 单数据库裁决（PostgreSQL + pgvector）：docker-compose 提供本地开发数据库的判据逐条移植。" },
-    FileRule { file: "tests/fintech-package.test.ts", owner: "openbot-testkit", target_module: "openbot_testkit::fixtures::tenant_package::fintech", tier: Tier::Ported, label: Label::Parity,
-        reason: "v3 §3.2 Tenant Package + §6.5 条 2 明确引用 examples/fintech/channels.yaml 的 all 写法：随包示例完整性判据逐条移植为 fixture 断言。" },
+    FileRule { file: "tests/fintech-package.test.ts", owner: "openbot-testkit", target_module: "openbot_testkit::fixtures::tenant_package::fintech", tier: Tier::Ported, label: Label::Substitute,
+        reason: "v3 §3.2 / §6.5 保留五文件示例与 all audience；§16.2 禁止对外 product name 复用 OpenBot/CopilotKit 标记，所以 fixture 改为 fintech/Ledgerline 并增加反向品牌断言。" },
     FileRule { file: "tests/smoke/journey.test.ts", owner: "openbot-testkit", target_module: "openbot_testkit::smoke::journey", tier: Tier::Ported, label: Label::Parity,
         reason: "v3 §21.5 性能/稳定性 + §21.1：一次贯穿运行中部署的旅程（服务器→supervisor→网关→浏览器→轨迹）判据逐条移植；上游同样不在默认套件里，按名字调用。" },
     FileRule { file: "tests/workspace.test.ts", owner: "openbot-testkit", target_module: "openbot_testkit::repo::workspace", tier: Tier::Ported, label: Label::Substitute,
@@ -415,6 +415,61 @@ const FILE_RULES: [FileRule; UPSTREAM_TEST_FILE_COUNT] = [
     FileRule { file: "worker/tests/status.test.ts", owner: "openbot-testkit", target_module: "openbot_testkit::retired::worker_status", tier: Tier::NotApplicableWithProof, label: Label::Substitute,
         reason: "v3 §3.5 逐字：'当前 worker 只返回 {status:\"idle\"} 且没有 job，Rust 版不发布空 worker binary；该测试标记 not-applicable-with-proof'。证明面 = 发行物清单里不得出现 worker 二进制（v3 §16.1/§16.2），由 openbot_testkit::retired::worker_status 做反向断言，不是把 idle 断言照抄一遍。" },
 ];
+
+// ---------------------------------------------------------------------------
+// 阶段队列（v3 §24 G2 / G6；§28.1 R52）
+// ---------------------------------------------------------------------------
+
+/// G2 的上游 test inventory 文件集合。
+///
+/// 取 `FILE_RULES.reason` 引用 §6（Auth/Vault）或 §8（Policy/Audit/Tool control）的全集，
+/// 再减去 [`G6_DEFERRED_G2_GUI_FILES`]。`tool-name` / `tool-result` 留在这里是刻意的：它们
+/// 分别承载 §8.2 tool metadata 与 policy refusal 解码后的可识别性，不依赖 route/视觉落地。
+const G2_TEST_FILES: [&str; 21] = [
+    "agent-computer/tests/shell.test.ts",
+    "app/tests/tool-name.test.ts",
+    "app/tests/tool-result.test.ts",
+    "server/tests/audit.test.ts",
+    "server/tests/bot-lifecycle-audit.test.ts",
+    "server/tests/computer-gateway.test.ts",
+    "server/tests/computer-policy-route.test.ts",
+    "server/tests/computer-policy.test.ts",
+    "server/tests/dev-actor.integration.test.ts",
+    "server/tests/encrypt-sso-config.test.ts",
+    "server/tests/entra-profile.test.ts",
+    "server/tests/human-input-end-to-end.test.ts",
+    "server/tests/people-paging.integration.test.ts",
+    "server/tests/plugin-user-credential.integration.test.ts",
+    "server/tests/policy-durability.integration.test.ts",
+    "server/tests/policy-fanout.integration.test.ts",
+    "server/tests/roles.test.ts",
+    "server/tests/server-side-tools.integration.test.ts",
+    "server/tests/single-user.test.ts",
+    "server/tests/tenant-package.test.ts",
+    "tests/fintech-package.test.ts",
+];
+
+/// 引用 §6/§8、但明确归 §24 G6 的 GUI 文件。
+///
+/// 三者验证的是 audit 页可见文案、浏览器登录 client 与 credential form；后端闭合不能把
+/// 它们冒充完成。固定上游 AST 中分别为 5 / 6 / 1 条。
+#[cfg(test)]
+const G6_DEFERRED_G2_GUI_FILES: [&str; 3] = [
+    "app/tests/audit-silence.test.ts",
+    "app/tests/auth-client.test.ts",
+    "app/tests/credential-form.test.ts",
+];
+
+/// 固定上游 AST 中 G2 队列的用例数；由同名测试与 `parity/tests.yaml::recount` 双重复算。
+const G2_TEST_CASE_COUNT: usize = 234;
+
+/// 延后到 G6 的三个 GUI 文件用例数。
+#[cfg(test)]
+const G6_DEFERRED_G2_GUI_CASE_COUNT: usize = 12;
+
+/// `FILE_RULES.reason` 引用 §6 或 §8 的完整用例数。
+#[cfg(test)]
+const G2_SECTION_REFERENCED_TEST_CASE_COUNT: usize = 246;
 
 // ---------------------------------------------------------------------------
 // AST 抽取结果
@@ -520,6 +575,58 @@ struct Inventory {
     cross_check: CrossCheck,
     per_file: Vec<FileSummary>,
     nodes: Vec<RawNode>,
+}
+
+/// 已有 ledger 里需要跨 AST 重生成保留的实施进度。
+///
+/// `id/upstream/label/owner/test_id/evidence` 仍由固定上游 AST 与 FILE_RULES 重建；只有已经离开
+/// `todo` 的条目才允许覆盖目标、迁移裁决与完成证据。这样上游 inventory 可重放，又不会把
+/// W-5/G8 已经亲跑过的证据静默抹回 todo。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProgressOverlay {
+    target: String,
+    migration_rule: String,
+    status: String,
+    done_evidence: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExistingLedger {
+    entries: Vec<ExistingProgressEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExistingProgressEntry {
+    id: String,
+    #[serde(default)]
+    upstream: String,
+    target: String,
+    migration_rule: String,
+    status: String,
+    done_evidence: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct G2ProgressCounts {
+    done: usize,
+    todo: usize,
+    in_progress: usize,
+}
+
+impl G2ProgressCounts {
+    const fn total(self) -> usize {
+        self.done + self.todo + self.in_progress
+    }
+
+    fn rendered(self) -> String {
+        format!(
+            "done={} todo={} in_progress={} total={}",
+            self.done,
+            self.todo,
+            self.in_progress,
+            self.total()
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -681,12 +788,15 @@ pub fn run(args: &[String], root: &Path) -> Result<()> {
         return Ok(());
     }
 
+    let yaml_path = root.join("parity/tests.yaml");
+    let progress = load_progress_overlays(&yaml_path)?;
+    let g2_progress = load_g2_progress_counts(&yaml_path)?;
+    let yaml = render_ledger(&inventory, &progress, g2_progress)?;
+
     let json_path = root.join("fixtures/tests/upstream-ast-inventory.json");
     write_json(&json_path, &inventory)?;
     println!("已写 {}", json_path.display());
 
-    let yaml_path = root.join("parity/tests.yaml");
-    let yaml = render_ledger(&inventory)?;
     write_text(&yaml_path, &yaml)?;
     println!("已写 {}", yaml_path.display());
 
@@ -1050,7 +1160,111 @@ fn rule_for(file: &str) -> &'static FileRule {
         .expect("nodes 全部来自 FILE_RULES 的路径清单")
 }
 
-fn render_ledger(inv: &Inventory) -> Result<String> {
+fn load_progress_overlays(path: &Path) -> Result<BTreeMap<String, ProgressOverlay>> {
+    if !path.is_file() {
+        return Ok(BTreeMap::new());
+    }
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("读取已有 test parity ledger {} 失败", path.display()))?;
+    parse_progress_overlays(&source)
+        .with_context(|| format!("读取已有 test parity 进度 {} 失败", path.display()))
+}
+
+fn load_g2_progress_counts(path: &Path) -> Result<G2ProgressCounts> {
+    if !path.is_file() {
+        return Ok(G2ProgressCounts {
+            todo: G2_TEST_CASE_COUNT,
+            ..G2ProgressCounts::default()
+        });
+    }
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("读取已有 G2 test 进度 {} 失败", path.display()))?;
+    let ledger: ExistingLedger =
+        serde_yaml::from_str(&source).context("tests.yaml 不是合法 YAML")?;
+    let files: HashSet<&str> = G2_TEST_FILES.into_iter().collect();
+    let mut counts = G2ProgressCounts::default();
+    for entry in ledger.entries {
+        let file = entry.upstream.split("::").next().unwrap_or_default();
+        if !files.contains(file) {
+            continue;
+        }
+        match entry.status.as_str() {
+            "done" => counts.done += 1,
+            "todo" => counts.todo += 1,
+            "in_progress" => counts.in_progress += 1,
+            other => bail!(
+                "test-inventory: G2 条目 `{}` 的 status `{other}` 非法",
+                entry.id
+            ),
+        }
+    }
+    if counts.total() != G2_TEST_CASE_COUNT {
+        bail!(
+            "test-inventory: G2 进度总数实得 {}，固定队列应为 {G2_TEST_CASE_COUNT}",
+            counts.total()
+        );
+    }
+    Ok(counts)
+}
+
+fn parse_progress_overlays(source: &str) -> Result<BTreeMap<String, ProgressOverlay>> {
+    let ledger: ExistingLedger =
+        serde_yaml::from_str(source).context("tests.yaml 不是合法 YAML")?;
+    let mut progress = BTreeMap::new();
+    for entry in ledger.entries {
+        match entry.status.as_str() {
+            "todo" => {
+                if entry.done_evidence.is_some() {
+                    bail!(
+                        "test-inventory: todo 条目 `{}` 不得携带 done_evidence",
+                        entry.id
+                    );
+                }
+                continue;
+            }
+            "done" => {
+                if entry
+                    .done_evidence
+                    .as_deref()
+                    .is_none_or(|evidence| evidence.trim().is_empty())
+                {
+                    bail!(
+                        "test-inventory: done 条目 `{}` 缺非空 done_evidence",
+                        entry.id
+                    );
+                }
+            }
+            "in_progress" => {}
+            other => bail!(
+                "test-inventory: 条目 `{}` 的 status `{other}` 不在 todo/in_progress/done 封闭域",
+                entry.id
+            ),
+        }
+        if entry.target.trim().is_empty() || entry.migration_rule.trim().is_empty() {
+            bail!(
+                "test-inventory: 非 todo 条目 `{}` 缺 target 或 migration_rule",
+                entry.id
+            );
+        }
+        let id = entry.id;
+        let overlay = ProgressOverlay {
+            target: entry.target,
+            migration_rule: entry.migration_rule,
+            status: entry.status,
+            done_evidence: entry.done_evidence,
+        };
+        if progress.insert(id.clone(), overlay).is_some() {
+            bail!("test-inventory: 已有 ledger 出现重复进度 ID `{id}`");
+        }
+    }
+    Ok(progress)
+}
+
+fn render_ledger(
+    inv: &Inventory,
+    progress: &BTreeMap<String, ProgressOverlay>,
+    g2_progress: G2ProgressCounts,
+) -> Result<String> {
     let cases: Vec<&RawNode> = inv
         .nodes
         .iter()
@@ -1075,15 +1289,23 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     writeln!(w, "#")?;
     writeln!(
         w,
-        "# 本文件由 `cargo xtask test-inventory --upstream <上游干净克隆>` 生成，**不要手改**："
+        "# 本文件的 AST 身份字段由 `cargo xtask test-inventory --upstream <上游干净克隆>` 生成："
     )?;
     writeln!(
         w,
-        "# 手改会在下一次生成时被覆盖，且与 fixtures/tests/upstream-ast-inventory.json 的 nodes[] 下标失配。"
+        "# id/upstream/label/owner/test_id/evidence 不手改；非 todo 的 target/migration_rule/status/done_evidence 会按稳定 id 保留。"
+    )?;
+    writeln!(
+        w,
+        "# 已完成 id 若在重生成后消失会硬失败，不会静默丢证据或错接到另一条 AST 用例。"
     )?;
     writeln!(
         w,
         "# 分类真源 = crates/openbot-testkit/src/xtask/test_inventory.rs::FILE_RULES（{UPSTREAM_TEST_FILE_COUNT} 行，一行一个上游文件）。"
+    )?;
+    writeln!(
+        w,
+        "# G2 队列真源 = 同文件 G2_TEST_FILES（21 文件 / {G2_TEST_CASE_COUNT} 用例）；§6/§8 的 3 个 GUI 文件另归 G6。"
     )?;
     writeln!(w, "#")?;
     writeln!(w, "# 真源与依据：")?;
@@ -1133,7 +1355,7 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     writeln!(w, "# label 粒度与取向（CLAUDE.md §4）：")?;
     writeln!(
         w,
-        "# label / tier / owner / target 取**文件**粒度。label 取保守方向 —— 只要该文件的被测面在 v3 里"
+        "# label / tier / owner / 初始 target 取**文件**粒度。label 取保守方向 —— 只要该文件的被测面在 v3 里"
     )?;
     writeln!(
         w,
@@ -1163,7 +1385,7 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     )?;
     writeln!(
         w,
-        "# - target = `<Rust 模块路径>::tests::<函数名>`，函数名由用例标题派生。"
+        "# - target 初值由用例标题派生；条目闭合时改成亲跑证据的真实 Rust 落点，并由生成器保留。"
     )?;
     writeln!(
         w,
@@ -1171,7 +1393,7 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     )?;
     writeln!(
         w,
-        "# - status 全为 todo：本仓当前零 Rust 实现代码，任何 done 都会是假 done（校验器规则 4 也会当场红）。"
+        "# - status 初值为 todo；只有本轮亲跑证据齐全时改 done，done_evidence 缺失会被生成器与 parity-check 双重拒绝。"
     )?;
     writeln!(w, "#")?;
     writeln!(
@@ -1230,6 +1452,8 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     writeln!(w, "generated_by: \"xtask test-inventory\"")?;
     writeln!(w, "recount:")?;
 
+    let g2_files_json =
+        serde_json::to_string(&G2_TEST_FILES).context("序列化 G2 test file 集合失败")?;
     let recounts: Vec<(String, &str, String)> = vec![
         (
             "git ls-files '*.test.ts' '*.test.tsx' | wc -l".to_string(),
@@ -1270,6 +1494,20 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
                 .to_string(),
             "repo",
             cases.len().to_string(),
+        ),
+        (
+            format!(
+                "jq --argjson files '{g2_files_json}' '[.nodes[] | select(.kind == \"test\" and (.file as $file | $files | index($file)))] | length' fixtures/tests/upstream-ast-inventory.json"
+            ),
+            "repo",
+            G2_TEST_CASE_COUNT.to_string(),
+        ),
+        (
+            format!(
+                "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '{g2_files_json}'"
+            ),
+            "repo",
+            g2_progress.rendered(),
         ),
         (
             "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
@@ -1345,7 +1583,11 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
         (
             "grep -c '^    status: todo$' parity/tests.yaml".to_string(),
             "repo",
-            cases.len().to_string(),
+            cases
+                .len()
+                .checked_sub(progress.len())
+                .context("test-inventory: 进度条目数超过 AST 用例数")?
+                .to_string(),
         ),
         (
             r#"grep -oE '^    upstream: "[^:"]+' parity/tests.yaml | sed 's/.*"//' | sort -u | wc -l"#
@@ -1375,6 +1617,7 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
     writeln!(w, "entries:")?;
 
     let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut used_progress: HashSet<String> = HashSet::new();
     let mut current_file = "";
     for (ordinal, case) in cases.iter().enumerate() {
         let rule = rule_for(&case.file);
@@ -1461,6 +1704,10 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
             56,
         );
         let target = format!("{}::tests::{}", rule.target_module, fn_name);
+        let overlay = progress.get(&id);
+        if overlay.is_some() {
+            used_progress.insert(id.clone());
+        }
 
         let mut markers: Vec<&str> = Vec::new();
         if case.skip {
@@ -1494,15 +1741,26 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
         writeln!(w, "  - id: {}", yaml_quote(&id))?;
         writeln!(w, "    upstream: {}", yaml_quote(&upstream))?;
         writeln!(w, "    label: {}", rule.label.as_str())?;
-        writeln!(w, "    target: {}", yaml_quote(&target))?;
+        writeln!(
+            w,
+            "    target: {}",
+            yaml_quote(overlay.map_or(target.as_str(), |item| item.target.as_str()))
+        )?;
         writeln!(w, "    owner: {}", rule.owner)?;
         writeln!(w, "    test_id: {TEST_ID_PREFIX}{:04}", ordinal + 1)?;
+        let default_migration_rule = rule.tier.migration_rule(rule.label);
         writeln!(
             w,
             "    migration_rule: {}",
-            yaml_quote(&rule.tier.migration_rule(rule.label))
+            yaml_quote(overlay.map_or(default_migration_rule.as_str(), |item| {
+                item.migration_rule.as_str()
+            }))
         )?;
-        writeln!(w, "    status: todo")?;
+        writeln!(
+            w,
+            "    status: {}",
+            overlay.map_or("todo", |item| item.status.as_str())
+        )?;
         writeln!(
             w,
             "    evidence: {}",
@@ -1511,7 +1769,23 @@ fn render_ledger(inv: &Inventory) -> Result<String> {
                 case.index, OXC_VERSION
             ))
         )?;
+        if let Some(done_evidence) = overlay.and_then(|item| item.done_evidence.as_deref()) {
+            writeln!(w, "    done_evidence: {}", yaml_quote(done_evidence))?;
+        }
         writeln!(w, "    notes: {}", yaml_quote(&notes))?;
+    }
+
+    if used_progress.len() != progress.len() {
+        let missing = progress
+            .keys()
+            .filter(|id| !used_progress.contains(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        bail!(
+            "test-inventory: {} 个已有非 todo ID 在重建 AST inventory 后消失；拒绝丢证据：{}",
+            missing.len(),
+            missing.join(", ")
+        );
     }
 
     if cases.len() > 9999 {
@@ -1615,6 +1889,54 @@ mod tests {
             unique.len(),
             UPSTREAM_TEST_FILE_COUNT,
             "FILE_RULES 里有重复路径"
+        );
+    }
+
+    /// 移交指南里的“G2 相关 234 条”必须是一张封闭分区，不是碰巧加出同一个数字。
+    #[test]
+    fn g2_test_inventory_is_exactly_234() {
+        let cited: std::collections::BTreeSet<&str> = FILE_RULES
+            .iter()
+            .filter(|rule| rule.reason.contains("§6") || rule.reason.contains("§8"))
+            .map(|rule| rule.file)
+            .collect();
+        let g2: std::collections::BTreeSet<&str> = G2_TEST_FILES.into_iter().collect();
+        let deferred: std::collections::BTreeSet<&str> =
+            G6_DEFERRED_G2_GUI_FILES.into_iter().collect();
+        assert!(g2.is_disjoint(&deferred), "一个文件不能同时归 G2 与 G6");
+        let partition: std::collections::BTreeSet<&str> = g2.union(&deferred).copied().collect();
+        assert_eq!(
+            partition, cited,
+            "§6/§8 引用文件必须恰好分到 G2 或显式延后的 G6，不能漏也不能多"
+        );
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("crates/openbot-testkit 的祖父目录 = 仓根");
+        let fixture =
+            std::fs::read_to_string(root.join("fixtures/tests/upstream-ast-inventory.json"))
+                .expect("读取固定上游 AST fixture");
+        let inventory: serde_json::Value = serde_json::from_str(&fixture).expect("fixture 是 JSON");
+        let nodes = inventory["nodes"].as_array().expect("fixture.nodes 是数组");
+        let count = |files: &std::collections::BTreeSet<&str>| {
+            nodes
+                .iter()
+                .filter(|node| {
+                    node["kind"].as_str() == Some("test")
+                        && node["file"]
+                            .as_str()
+                            .is_some_and(|file| files.contains(file))
+                })
+                .count()
+        };
+
+        assert_eq!(count(&g2), G2_TEST_CASE_COUNT);
+        assert_eq!(count(&deferred), G6_DEFERRED_G2_GUI_CASE_COUNT);
+        assert_eq!(count(&cited), G2_SECTION_REFERENCED_TEST_CASE_COUNT);
+        assert_eq!(
+            G2_TEST_CASE_COUNT + G6_DEFERRED_G2_GUI_CASE_COUNT,
+            G2_SECTION_REFERENCED_TEST_CASE_COUNT
         );
     }
 
@@ -1750,6 +2072,80 @@ if (re.test("x")) {
     fn yaml_quote_escapes_quotes_and_backslashes() {
         assert_eq!(yaml_quote(r#"a"b\c"#), "\"a\\\"b\\\\c\"");
         assert_eq!(yaml_quote("x\ny"), "\"x\\ny\"");
+    }
+
+    #[test]
+    fn regeneration_preserves_only_evidenced_non_todo_progress() {
+        let source = r#"
+entries:
+  - id: todo-case
+    target: generated::todo
+    migration_rule: "preserve: ported"
+    status: todo
+  - id: done-case
+    target: real::integration::test
+    migration_rule: "rename: ported"
+    status: done
+    done_evidence: "cargo test => 1/0/0"
+  - id: active-case
+    target: real::work_in_progress
+    migration_rule: "preserve: ported"
+    status: in_progress
+"#;
+        let progress = parse_progress_overlays(source).expect("合法进度 overlay");
+        assert_eq!(progress.len(), 2);
+        assert!(!progress.contains_key("todo-case"));
+        assert_eq!(
+            progress.get("done-case"),
+            Some(&ProgressOverlay {
+                target: "real::integration::test".to_owned(),
+                migration_rule: "rename: ported".to_owned(),
+                status: "done".to_owned(),
+                done_evidence: Some("cargo test => 1/0/0".to_owned()),
+            })
+        );
+        assert_eq!(
+            progress
+                .get("active-case")
+                .expect("in_progress 也不能被重置")
+                .status,
+            "in_progress"
+        );
+    }
+
+    #[test]
+    fn regeneration_rejects_done_without_evidence_and_duplicate_progress_ids() {
+        let missing = r#"
+entries:
+  - id: done-case
+    target: real::test
+    migration_rule: "preserve: ported"
+    status: done
+"#;
+        assert!(
+            parse_progress_overlays(missing)
+                .unwrap_err()
+                .to_string()
+                .contains("缺非空 done_evidence")
+        );
+
+        let duplicate = r#"
+entries:
+  - id: same
+    target: real::one
+    migration_rule: "preserve: ported"
+    status: in_progress
+  - id: same
+    target: real::two
+    migration_rule: "preserve: ported"
+    status: in_progress
+"#;
+        assert!(
+            parse_progress_overlays(duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("重复进度 ID")
+        );
     }
 
     #[test]

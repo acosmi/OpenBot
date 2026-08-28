@@ -32,6 +32,16 @@ pub async fn apply(client: &tokio_postgres::Client) -> Result<(), crate::db::Inf
         .map_err(|source| crate::db::InfraError::query("应用 baseline_0012.sql", source))
 }
 
+/// 在调用方已有事务里施加 baseline；只供 fresh bootstrap 把 baseline 与 native 账本同批提交。
+pub(crate) async fn apply_in_transaction(
+    transaction: &tokio_postgres::Transaction<'_>,
+) -> Result<(), crate::db::InfraError> {
+    transaction
+        .batch_execute(BASELINE_0012_SQL)
+        .await
+        .map_err(|source| crate::db::InfraError::query("事务内应用 baseline_0012.sql", source))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

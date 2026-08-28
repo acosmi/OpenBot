@@ -74,6 +74,8 @@ serde_json = "1.0.151"
 # 只在开发期 xtask 里编译，不进发行物）。
 serde_yaml = "0.9.34"
 walkdir = "2.5.0"
+flate2 = "=1.1.9"
+tar = "=0.4.46"
 # `xtask test-inventory`（v3 §24 G0 / G8 点名的 AST 级 test inventory）的 TS/TSX 解析器。
 #
 # **版本 `0.146.0`（2026-08-22 实测最新）。五个 crate 同版本 —— oxc 全家桶同步发版。**
@@ -102,7 +104,7 @@ oxc_span = "0.146.0"
 
 async-trait = "0.1.92"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal", "io-util"] }
 
 # 可观测性（v3 §16.4）：tracing 是全链真源，Server 侧再由 openbot-server 暴露 Prometheus。
 # **刻意不在 G1 引入 opentelemetry SDK**：§16.4 要求 exporter「只在管理员显式配置 collector
@@ -123,11 +125,70 @@ deadpool-postgres = "0.14.1"
 postgres-types = { version = "0.2", features = ["derive", "with-serde_json-1", "with-time-0_3", "with-uuid-1"] }
 time = { version = "0.3.55", features = ["serde", "formatting", "parsing", "macros"] }
 
+# G6 single Rust GUI (frontend first source §12.4). Exact pins are deliberate: router 0.8.14+
+# requires Leptos 0.8.20, while this release is audited against Leptos 0.8.19.
+leptos = { version = "=0.8.19", features = ["csr"] }
+leptos_router = "=0.8.13"
+leptos_meta = "=0.8.6"
+leptos_i18n = { version = "=0.6.2", features = ["csr", "plurals", "format_datetime", "format_nums", "icu_compiled_data"] }
+leptos_i18n_build = "=0.6.2"
+tauri = { version = "=2.11.5", default-features = false, features = ["wry"] }
+sys-locale = "=0.3.2"
+toml = "=0.9.8"
+gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json", "websocket"] }
+js-sys = "=0.3.104"
+wasm-bindgen-futures = "=0.4.77"
+wasm-bindgen = "=0.2.127"
+web-sys = { version = "=0.3.104", features = ["Crypto", "CssStyleDeclaration", "Document", "DomRect", "DomTokenList", "Element", "Event", "EventSource", "EventTarget", "HtmlCollection", "HtmlElement", "HtmlIFrameElement", "HtmlInputElement", "HtmlTextAreaElement", "KeyboardEvent", "Location", "MediaQueryList", "MessageChannel", "MessageEvent", "MessagePort", "MutationObserver", "MutationObserverInit", "Navigator", "Node", "NodeList", "ResizeObserver", "Window"] }
+
 # Axum transport（v3 §5.2：transport 只做认证 / framing / 大小限制 / 错误映射）
-axum = { version = "0.8.9", features = ["macros"] }
+axum = { version = "0.8.9", features = ["macros", "ws"] }
+# 只给 Server WebSocket 真 socket 测试使用；生产走 axum::extract::ws 的同一 tungstenite 图。
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "async-await", "std"] }
 tower = { version = "0.5.3", features = ["timeout", "limit"] }
-tower-http = { version = "0.6", features = ["trace", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "limit", "fs"] }
 http = "1.5.0"
+httpdate = "1.0.3"
+
+# W-7 HTTP safe dialer（v3 §6.2 / §7.5 / §10.5，R29 delta audit）。这里不引入
+# reqwest：它会再带一层代理、自动 retry/redirect 与 resolver 组合，反而让「连接必须绑定
+# 已验证 IP」只能靠配置约定。dialer 直接把 `TcpStream` 连到已验证 `SocketAddr`，再交给
+# rustls（TLS SNI 仍用原 host）与 Hyper HTTP/1 framing；因此 DNS rebinding 边界在一处可证明。
+#
+# `hyper` / `hyper-util` / `http-body-util` / `bytes` 在 W-4 的 Axum 图中已锁定，本批只是把
+# 真实消费者上收为 workspace 直接依赖，不新增版本。新增 TLS 图刻意选择 rustls 0.23 的
+# `ring` provider，而不是默认 `aws-lc-rs`：rustls 官方将 ring 定位为更易跨平台构建的
+# first-party provider；代价是 ring 仍含 C/汇编 build.rs 与 Windows 预生成对象。该代价已在
+# `docs/2026-08-23-W7-safe-dialer-TLS-delta审计.md` 和 deny.toml 单列，绝不称为纯 Rust。
+# webpki-roots 是随 lock 固定的 Mozilla 根集合：不读宿主代理/根证书环境，构建与运行答案可复算；
+# 私有 CA 必须作为未来显式配置输入，不能靠隐藏的系统状态改变认证答案。
+bytes = "1.12.1"
+http-body-util = "0.1.5"
+hyper = { version = "1.11.0", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1.20", default-features = false, features = ["tokio"] }
+ipnet = { version = "2.12.1", default-features = false, features = ["std"] }
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
+ring = "0.17.14"
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1.0.9"
+
+# G4 MCP runtime（v3 §1.2 / §9.1）：只启 client + generic Streamable HTTP transport。
+# 明确不启 reqwest/stdio/server/resources/prompts/tasks/elicitation；HTTP backend 由唯一 SafeDialer 实现。
+rmcp = { version = "=3.1.4", default-features = false, features = ["client", "transport-streamable-http-client"] }
+sse-stream = "=0.2.4"
+# MCP arguments are validated against the vendor's real schema before policy/decision.  All
+# resolver features stay off: a catalog schema must be self-contained and cannot make the Server
+# fetch arbitrary HTTP/file `$ref` targets while compiling an untrusted schema.
+jsonschema = { version = "=0.51.0", default-features = false }
+
+# W-7b SAML：第一真源 §6.2 精确钉 samael 0.0.22，并要求 xmlsec 签名验证，不允许用
+# `default-features = false` 关闭验证能力冒充对等完成。OpenSSL/libxml2/xmlsec/libclang 的
+# FFI/build delta 必须先判红、审计、再由机器 guard 放行（R29）。
+samael = { version = "=0.0.22", default-features = false, features = ["xmlsec"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
+quick-xml = { version = "=0.41.0", features = ["serialize"] }
+openssl = { version = "=0.10.81", default-features = false }
 
 # metrics（v3 §16.4「Server 暴露 Prometheus metrics」+ §24 G1 判据第四条）
 # 选门面 + exporter 两层，而不是直接依赖 prometheus 客户端库：库代码只调 metrics 门面，
@@ -173,18 +234,22 @@ base64 = "0.22.1"         # channel keyset 游标的 base64url 编解码
 # §8.3 原文允许「标准 CEL 方法形式作为超集存在」，是**允许**不是**要求**，所以按 parity 取窄的那侧。
 cel = { version = "0.14.3", default-features = false }
 
-# 密码学原语（RustCrypto 系，纯 Rust，无 C / 汇编构建脚本）。四个用途，逐个点名：
+# 密码学原语（RustCrypto 系，纯 Rust，无 C / 汇编构建脚本）。五个用途，逐个点名：
 #   - `sha2`：审计 hash chain 的 row_hash / prev_hash（§8.6）、policy 文档的内容版本
 #     （§8.3「policy version 进入 approval 和 capability」）。
 #   - `hmac`：session token 的 keyed hash（§6.3「数据库只保存 keyed hash」），以及上游
 #     server/src/auth/signed-value.ts 那套「按标签派生子密钥再签名」的签名值。
 #   - `subtle`：常量时间比较。token 比较提前返回会泄漏「前几个字节对了」。
 #   - `aes-gcm`：Vault v1 信封读兼容（12 字节 IV、无 AAD）与 v2 AEAD（§6.4）。
+#   - `zeroize`：Vault 明文/密钥容器 drop 时清除当前整个 Vec allocation，并防优化器删写。
 # 刻意不用 `ring`：它带 C / 汇编构建脚本，会把一整套非 Rust 工具链拉进本项目的可复现构建面（§16.3）。
 sha2 = "0.10.9"
 hmac = "0.12.1"
+hkdf = "0.12.4"
 subtle = "2.6.1"
 aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
+zeroize = { version = "1.9.0", default-features = false, features = ["alloc"] }
 
 # CSPRNG。直接用 `getrandom` 而不是 `rand`：本项目需要的全部随机数都是「给我 N 个密码学随机
 # 字节」（DEK、IV、session token、state / nonce / PKCE verifier），没有一处需要分布、采样或

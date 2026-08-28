@@ -6,7 +6,7 @@
 //! - malformed payload 400，不产生 acting decision；
 //! - policy refusal 403 + stable error code/rule ID；
 //! - unavailable dependency 503；vendor failure 502/normalized tool error；
-//! - stale snapshot/generation 409；lease conflict 409；
+//! - stale snapshot/generation 409；request/idempotency conflict 409；lease conflict 409；
 //! - unknown commit 202/409 对应 reconciliation，不伪装 500 或 success；
 //! - 空、新 thread history 200 + empty list。
 //!
@@ -57,8 +57,36 @@ impl ErrorCode {
     pub const VENDOR_FAILURE: Self = Self("vendor_failure");
     /// snapshot / generation 陈旧（409）。
     pub const STALE_GENERATION: Self = Self("stale_generation");
+    /// 同一个请求/幂等 ID 已绑定到不同内容（409）。
+    pub const REQUEST_CONFLICT: Self = Self("request_conflict");
     /// lease 冲突（409）。
     pub const LEASE_CONFLICT: Self = Self("lease_conflict");
+    /// 配置 admin floor 阻止降权。
+    pub const IDENTITY_ROLE_CONFIGURED_ADMIN: Self = Self("identity_role_change_configured_admin");
+    /// 管理员不能给自己降权。
+    pub const IDENTITY_ROLE_SELF_DEMOTION: Self = Self("identity_role_change_self_demotion");
+    /// 不能移除最后一个有效管理员角色。
+    pub const IDENTITY_ROLE_LAST_ADMIN: Self = Self("identity_role_change_last_admin");
+    /// 配置 admin floor 阻止撤权。
+    pub const IDENTITY_ACCESS_CONFIGURED_ADMIN: Self =
+        Self("identity_access_change_configured_admin");
+    /// 管理员不能移除自己的访问。
+    pub const IDENTITY_ACCESS_SELF_REVOCATION: Self =
+        Self("identity_access_change_self_revocation");
+    /// 不能撤销最后一个有效管理员的访问。
+    pub const IDENTITY_ACCESS_LAST_ADMIN: Self = Self("identity_access_change_last_admin");
+    /// 敏感写要求 admin。
+    pub const SENSITIVE_WRITE_ROLE_INSUFFICIENT: Self =
+        Self("identity_sensitive_write_role_insufficient");
+    /// 敏感写缺 Origin。
+    pub const SENSITIVE_WRITE_ORIGIN_MISSING: Self =
+        Self("identity_sensitive_write_origin_missing");
+    /// 敏感写 Origin 不可信。
+    pub const SENSITIVE_WRITE_ORIGIN_UNTRUSTED: Self =
+        Self("identity_sensitive_write_origin_untrusted");
+    /// 敏感写 session 不再 fresh。
+    pub const SENSITIVE_WRITE_SESSION_NOT_FRESH: Self =
+        Self("identity_sensitive_write_session_not_fresh");
     /// commit 状态未知，需要和解（202 或 409）。
     pub const RECONCILIATION_REQUIRED: Self = Self("reconciliation_required");
 
@@ -170,6 +198,76 @@ impl fmt::Display for StaleGenerationSubject {
     }
 }
 
+/// people role/access 变更的六种稳定冲突原因（上游前四项 parity，last-admin 两项新增）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IdentityConflictReason {
+    /// 地址在 configured admin floor，不能降权。
+    RoleConfiguredAdmin,
+    /// 不能给自己降 admin。
+    RoleSelfDemotion,
+    /// 会留下零有效 admin。
+    RoleLastAdmin,
+    /// 地址在 configured admin floor，不能撤权。
+    AccessConfiguredAdmin,
+    /// 不能撤销自己的访问。
+    AccessSelfRevocation,
+    /// 会留下零有效 admin。
+    AccessLastAdmin,
+}
+
+impl IdentityConflictReason {
+    /// 对应领域 rejection 的稳定码。
+    #[must_use]
+    pub const fn code(self) -> ErrorCode {
+        match self {
+            Self::RoleConfiguredAdmin => ErrorCode::IDENTITY_ROLE_CONFIGURED_ADMIN,
+            Self::RoleSelfDemotion => ErrorCode::IDENTITY_ROLE_SELF_DEMOTION,
+            Self::RoleLastAdmin => ErrorCode::IDENTITY_ROLE_LAST_ADMIN,
+            Self::AccessConfiguredAdmin => ErrorCode::IDENTITY_ACCESS_CONFIGURED_ADMIN,
+            Self::AccessSelfRevocation => ErrorCode::IDENTITY_ACCESS_SELF_REVOCATION,
+            Self::AccessLastAdmin => ErrorCode::IDENTITY_ACCESS_LAST_ADMIN,
+        }
+    }
+}
+
+impl fmt::Display for IdentityConflictReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code().as_str())
+    }
+}
+
+/// 敏感 admin 写的四种稳定拒绝原因。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SensitiveWriteReason {
+    /// 角色不足。
+    RoleInsufficient,
+    /// 缺 Origin。
+    OriginMissing,
+    /// Origin 不可信。
+    OriginUntrusted,
+    /// session 不 fresh。
+    SessionNotFresh,
+}
+
+impl SensitiveWriteReason {
+    /// 稳定错误码。
+    #[must_use]
+    pub const fn code(self) -> ErrorCode {
+        match self {
+            Self::RoleInsufficient => ErrorCode::SENSITIVE_WRITE_ROLE_INSUFFICIENT,
+            Self::OriginMissing => ErrorCode::SENSITIVE_WRITE_ORIGIN_MISSING,
+            Self::OriginUntrusted => ErrorCode::SENSITIVE_WRITE_ORIGIN_UNTRUSTED,
+            Self::SessionNotFresh => ErrorCode::SENSITIVE_WRITE_SESSION_NOT_FRESH,
+        }
+    }
+}
+
+impl fmt::Display for SensitiveWriteReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code().as_str())
+    }
+}
+
 /// 应用层错误。封闭 enum，恰好覆盖 §15.3 列举的每一条语义。
 ///
 /// # 三样东西必须与文案解耦
@@ -241,12 +339,35 @@ pub enum AppError {
         subject: StaleGenerationSubject,
     },
 
+    /// 一个 durable request/idempotency ID 已绑定到不同内容（409）。
+    ///
+    /// `resource` 只能是静态类别名，绝不携带冲突 ID 或原始请求内容。
+    #[error("request_conflict resource={resource}")]
+    RequestConflict {
+        /// 冲突资源类别，例如 `"run"`。
+        resource: &'static str,
+    },
+
     /// lease 冲突（409）。human lease 期间 Agent acting 立即拒绝、不排队（§17.2 条 7）。
     #[error("lease_conflict")]
     LeaseConflict {
         /// 当前持有者（若权威方知道）。**transport 不得把它回给调用方** —— 那会泄漏
         /// 同租户内其他 actor 的存在；它只进受控日志。
         holder: Option<ActorId>,
+    },
+
+    /// people role/access 变更被 floor/self/last-admin 不变量拒绝（409）。
+    #[error("{reason}")]
+    IdentityConflict {
+        /// 稳定拒绝原因。
+        reason: IdentityConflictReason,
+    },
+
+    /// fresh-session / CSRF / admin role 敏感写闸门拒绝。
+    #[error("{reason}")]
+    SensitiveWriteRefused {
+        /// 稳定拒绝原因。
+        reason: SensitiveWriteReason,
     },
 
     /// commit 状态未知，需要和解（§15.3「unknown commit 202/409 对应 reconciliation，
@@ -275,7 +396,10 @@ impl AppError {
             Self::DependencyUnavailable { .. } => ErrorCode::DEPENDENCY_UNAVAILABLE,
             Self::VendorFailure { .. } => ErrorCode::VENDOR_FAILURE,
             Self::StaleGeneration { .. } => ErrorCode::STALE_GENERATION,
+            Self::RequestConflict { .. } => ErrorCode::REQUEST_CONFLICT,
             Self::LeaseConflict { .. } => ErrorCode::LEASE_CONFLICT,
+            Self::IdentityConflict { reason } => reason.code(),
+            Self::SensitiveWriteRefused { reason } => reason.code(),
             Self::ReconciliationRequired { .. } => ErrorCode::RECONCILIATION_REQUIRED,
         }
     }
@@ -286,13 +410,20 @@ impl AppError {
     #[must_use]
     pub const fn http_status(&self) -> u16 {
         match self {
-            Self::Unauthenticated => 401,
+            Self::Unauthenticated
+            | Self::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            } => 401,
             Self::ForbiddenRole { .. } | Self::PolicyRefused { .. } => 403,
             Self::NotVisible => 404,
             Self::MalformedPayload { .. } => 400,
             Self::DependencyUnavailable { .. } => 503,
             Self::VendorFailure { .. } => 502,
-            Self::StaleGeneration { .. } | Self::LeaseConflict { .. } => 409,
+            Self::StaleGeneration { .. }
+            | Self::RequestConflict { .. }
+            | Self::LeaseConflict { .. }
+            | Self::IdentityConflict { .. } => 409,
+            Self::SensitiveWriteRefused { .. } => 403,
             // 「不伪装 500 或 success」：已受理 → 202（Accepted，明说还没定），
             // 未受理 → 409（Conflict，明说现在不能继续）。两个都不是 2xx 成功语义里的 200。
             Self::ReconciliationRequired { accepted } => {
@@ -316,9 +447,16 @@ impl AppError {
             Self::PolicyRefused { .. } => AuditKind::PolicyRefusal,
             Self::DependencyUnavailable { .. } => AuditKind::DependencyFailure,
             Self::VendorFailure { .. } => AuditKind::VendorFailure,
-            Self::StaleGeneration { .. } | Self::LeaseConflict { .. } => {
-                AuditKind::ConcurrencyConflict
-            }
+            Self::StaleGeneration { .. }
+            | Self::RequestConflict { .. }
+            | Self::LeaseConflict { .. } => AuditKind::ConcurrencyConflict,
+            Self::IdentityConflict { .. } => AuditKind::AuthorizationDenied,
+            Self::SensitiveWriteRefused { reason } => match reason {
+                SensitiveWriteReason::SessionNotFresh => AuditKind::AuthFailure,
+                SensitiveWriteReason::RoleInsufficient
+                | SensitiveWriteReason::OriginMissing
+                | SensitiveWriteReason::OriginUntrusted => AuditKind::AuthorizationDenied,
+            },
             Self::ReconciliationRequired { .. } => AuditKind::ReconciliationRequired,
         }
     }
@@ -337,7 +475,7 @@ mod tests {
 
     /// 变体总数。新增变体必须同 PR 改这里 —— 它与 [`variant_index`] 和
     /// [`all_variants_for_test`] 三者互相咬合，见下方三条测试。
-    const VARIANT_COUNT: usize = 10;
+    const VARIANT_COUNT: usize = 13;
 
     /// 无通配 `_` 的穷举 match：**新增变体在这里编译失败**，逼作者同 PR 更新下面的变体台账。
     ///
@@ -354,8 +492,11 @@ mod tests {
             AppError::DependencyUnavailable { .. } => 5,
             AppError::VendorFailure { .. } => 6,
             AppError::StaleGeneration { .. } => 7,
-            AppError::LeaseConflict { .. } => 8,
-            AppError::ReconciliationRequired { .. } => 9,
+            AppError::RequestConflict { .. } => 8,
+            AppError::LeaseConflict { .. } => 9,
+            AppError::IdentityConflict { .. } => 10,
+            AppError::SensitiveWriteRefused { .. } => 11,
+            AppError::ReconciliationRequired { .. } => 12,
         }
     }
 
@@ -389,8 +530,39 @@ mod tests {
                     observed: ComputerGeneration::new(2),
                 },
             },
+            AppError::RequestConflict { resource: "run" },
             AppError::LeaseConflict {
                 holder: Some(ActorId::new("actor-9")),
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::RoleConfiguredAdmin,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::RoleSelfDemotion,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::RoleLastAdmin,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::AccessConfiguredAdmin,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::AccessSelfRevocation,
+            },
+            AppError::IdentityConflict {
+                reason: IdentityConflictReason::AccessLastAdmin,
+            },
+            AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::RoleInsufficient,
+            },
+            AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::OriginMissing,
+            },
+            AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::OriginUntrusted,
+            },
+            AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
             },
             AppError::ReconciliationRequired { accepted: true },
             AppError::ReconciliationRequired { accepted: false },
@@ -415,10 +587,9 @@ mod tests {
     /// 所以按 `variant_index` 去重后再比。
     #[test]
     fn stable_codes_are_pairwise_distinct_per_variant() {
-        let mut seen: BTreeSet<usize> = BTreeSet::new();
         let mut codes: BTreeSet<&'static str> = BTreeSet::new();
         for error in all_variants_for_test() {
-            if !seen.insert(variant_index(&error)) {
+            if matches!(error, AppError::ReconciliationRequired { accepted: false }) {
                 continue;
             }
             assert!(
@@ -427,7 +598,11 @@ mod tests {
                 error.code()
             );
         }
-        assert_eq!(codes.len(), VARIANT_COUNT, "稳定码数量必须等于变体数量");
+        assert_eq!(
+            codes.len(),
+            VARIANT_COUNT + 8,
+            "IdentityConflict 多 5 个码，SensitiveWriteRefused 多 3 个码",
+        );
     }
 
     /// 每个变体的 HTTP 状态码逐条对齐 §15.3，且全部落在 [`HTTP_STATUS_DOMAIN`] 内。
@@ -466,7 +641,26 @@ mod tests {
                 },
                 409,
             ),
+            (AppError::RequestConflict { resource: "run" }, 409),
             (AppError::LeaseConflict { holder: None }, 409),
+            (
+                AppError::IdentityConflict {
+                    reason: IdentityConflictReason::RoleLastAdmin,
+                },
+                409,
+            ),
+            (
+                AppError::SensitiveWriteRefused {
+                    reason: SensitiveWriteReason::OriginUntrusted,
+                },
+                403,
+            ),
+            (
+                AppError::SensitiveWriteRefused {
+                    reason: SensitiveWriteReason::SessionNotFresh,
+                },
+                401,
+            ),
             (AppError::ReconciliationRequired { accepted: true }, 202),
             (AppError::ReconciliationRequired { accepted: false }, 409),
         ];

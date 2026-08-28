@@ -45,13 +45,23 @@
 //! | [`identity`] | email 规范化、角色与 admin floor、撤权、group → membership 投影、session 寿命 | §6.1–§6.3 / §6.5 |
 //! | [`vault`] | v1 信封读兼容、v2 AEAD 的 AAD 绑定、轮换状态机 | §6.4 |
 //! | [`audit`] | hash chain、checkpoint、payload allowlist、retention 边界 | §8.6 |
+//! | [`components`] | compiled component publication/withholding/data-function纯判定 | §3.3 |
 //! | [`tool`] | tool metadata、effect 分类、decision → attempt → outcome 状态机、approval 绑定 | §8.1 / §8.2 / §8.5 |
 
 // 领域层的每个公开条目都必须有中文文档：不变量写在类型上，而不变量的**理由**只能写在文档里。
 #![deny(missing_docs)]
 
+pub mod agent;
 pub mod audit;
+pub mod channel;
+pub mod components;
 pub mod identity;
+pub mod memory;
 pub mod policy;
+pub mod remote_callback;
+pub mod routing;
+pub mod run;
+pub mod text;
+pub mod thread;
 pub mod tool;
 pub mod vault;

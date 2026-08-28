@@ -65,6 +65,13 @@ pub async fn health() -> Json<HealthBody> {
 pub struct ReadinessBody {
     /// 三态之一。
     pub status: ReadinessStatus,
+    /// 仅非 loopback 明文 HTTP 为 true；安全档位省略该字段以保持最小响应。
+    #[serde(skip_serializing_if = "is_false")]
+    pub insecure_transport: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// `GET /readiness` —— 就绪探针。
@@ -107,7 +114,13 @@ pub async fn readiness(State(state): State<ServerState>) -> (StatusCode, Json<Re
     // 不可达；真要不可达变可达，宁可回 503 也不回 200。
     let code =
         StatusCode::from_u16(status.http_status()).unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
-    (code, Json(ReadinessBody { status }))
+    (
+        code,
+        Json(ReadinessBody {
+            status,
+            insecure_transport: state.insecure_transport(),
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -140,7 +153,13 @@ mod tests {
     /// 三态各自的线上形状。
     #[test]
     fn readiness_body_renders_all_three_states() {
-        let render = |status| serde_json::to_string(&ReadinessBody { status }).expect("可序列化");
+        let render = |status| {
+            serde_json::to_string(&ReadinessBody {
+                status,
+                insecure_transport: false,
+            })
+            .expect("可序列化")
+        };
         assert_eq!(render(ReadinessStatus::Ready), r#"{"status":"ready"}"#);
         assert_eq!(
             render(ReadinessStatus::Unverified),
@@ -149,6 +168,14 @@ mod tests {
         assert_eq!(
             render(ReadinessStatus::NotReady),
             r#"{"status":"not_ready"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ReadinessBody {
+                status: ReadinessStatus::Ready,
+                insecure_transport: true,
+            })
+            .unwrap(),
+            r#"{"status":"ready","insecure_transport":true}"#,
         );
     }
 }

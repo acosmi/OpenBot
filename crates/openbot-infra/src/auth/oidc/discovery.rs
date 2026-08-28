@@ -104,14 +104,27 @@ pub async fn discover(
     transport: &dyn MetadataTransport,
     budget: FetchBudget,
 ) -> Result<CoreProviderMetadata, OidcError> {
-    let request = budget.request(discovery_url(issuer)?);
+    discover_with_expected_issuer(issuer, issuer, transport, budget).await
+}
+
+/// 从 `authority` 拉取、但要求文档声明 `expected_issuer`。
+///
+/// 普通 OIDC 两者相同；Microsoft `common` / `organizations` authority 返回
+/// `{tenantid}` issuer 模板，两者必须分开表达，不能放宽成“不检查 issuer”。
+pub async fn discover_with_expected_issuer(
+    authority: &IssuerUrl,
+    expected_issuer: &IssuerUrl,
+    transport: &dyn MetadataTransport,
+    budget: FetchBudget,
+) -> Result<CoreProviderMetadata, OidcError> {
+    let request = budget.request(discovery_url(authority)?);
     let response = transport.get(&request).await?;
     let body = response.into_json_body(&request, JSON_ESSENCES)?;
 
     let metadata: CoreProviderMetadata =
         serde_json::from_slice(&body).map_err(|_| OidcError::MetadataMalformed)?;
 
-    if metadata.issuer() != issuer {
+    if metadata.issuer() != expected_issuer {
         return Err(OidcError::IssuerMismatch);
     }
     Ok(metadata)
@@ -145,7 +158,9 @@ pub(super) mod fixtures {
 #[cfg(test)]
 mod tests {
     use super::fixtures::discovery_document;
-    use super::{DISCOVERY_PATH_SUFFIX, FetchBudget, discover, discovery_url};
+    use super::{
+        DISCOVERY_PATH_SUFFIX, FetchBudget, discover, discover_with_expected_issuer, discovery_url,
+    };
     use crate::auth::oidc::error::OidcError;
     use crate::auth::oidc::provider::{GOOGLE_ISSUER, parse_issuer};
     use crate::auth::oidc::transport::MetadataResponse;
@@ -159,6 +174,32 @@ mod tests {
 
     fn budget() -> FetchBudget {
         FetchBudget::new(64 * 1024, core::time::Duration::from_secs(5))
+    }
+
+    #[tokio::test]
+    async fn entra_common_authority_and_tenant_template_are_distinct_without_disabling_issuer_check()
+     {
+        let authority = parse_issuer("https://login.microsoftonline.com/common/v2.0").unwrap();
+        let expected = parse_issuer("https://login.microsoftonline.com/{tenantid}/v2.0").unwrap();
+        let url = discovery_url(&authority).unwrap();
+        let body = discovery_document(
+            expected.as_str(),
+            "https://login.microsoftonline.com/common/discovery/v2.0/keys",
+        );
+        let transport = FakeTransport::new();
+        transport.push_json(url.as_str(), &body);
+        let metadata = discover_with_expected_issuer(&authority, &expected, &transport, budget())
+            .await
+            .unwrap();
+        assert_eq!(metadata.issuer(), &expected);
+
+        let ordinary = FakeTransport::new();
+        ordinary.push_json(url.as_str(), &body);
+        assert_eq!(
+            discover(&authority, &ordinary, budget()).await,
+            Err(OidcError::IssuerMismatch),
+            "tenant-independent 支持不能退化成关闭 issuer check"
+        );
     }
 
     /// 带路径段的 issuer 拼出正确的 well-known URL；无路径段的也对。

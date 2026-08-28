@@ -88,12 +88,12 @@ use axum::http::{StatusCode, Uri};
 use axum::middleware::Next;
 use axum::response::Response;
 use openbot_application::{
-    ApplicationService, ChannelCursor, ChannelReader, DEFAULT_CHANNEL_PAGE, OpenBotApplication,
-    PortError, channel_recency,
+    ApplicationService, ChannelCursor, ChannelReadScope, ChannelReader, DEFAULT_CHANNEL_PAGE,
+    OpenBotApplication, PortError, channel_recency,
 };
 use openbot_contracts::auth::{AuthContext, Role};
 use openbot_contracts::command::{
-    AppCommand, AppReply, ChannelPage, ChannelSummary, MAX_CHANNEL_PAGE,
+    AppCommand, AppReply, ChannelDetailResponse, ChannelPage, ChannelSummary, MAX_CHANNEL_PAGE,
 };
 use openbot_contracts::error::ErrorCode;
 use openbot_contracts::ids::{ActorId, ChannelId, DeploymentId, TenantId};
@@ -189,7 +189,7 @@ fn auth_for(actor: &str) -> AuthContext {
         TenantId::new("tenant-g1"),
         ActorId::new(actor),
         [Role::Admin, Role::User],
-        SENTINEL_AUTH_GENERATION,
+        openbot_contracts::auth::AuthGeneration::new(SENTINEL_AUTH_GENERATION),
         false,
     )
 }
@@ -210,10 +210,17 @@ struct PortCall {
     cursor: Option<ChannelCursor>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DetailCall {
+    scope: ChannelReadScope,
+    channel_id: ChannelId,
+}
+
 struct FakeState {
     rows: Vec<(ActorId, ChannelSummary)>,
     failure: Mutex<Option<PortError>>,
     calls: Mutex<Vec<PortCall>>,
+    detail_calls: Mutex<Vec<DetailCall>>,
 }
 
 /// 确定性内存 [`ChannelReader`]。
@@ -229,6 +236,7 @@ impl FakeChannels {
             rows,
             failure: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
+            detail_calls: Mutex::new(Vec::new()),
         }))
     }
 
@@ -243,6 +251,16 @@ impl FakeChannels {
     /// 取走并清空迄今为止的调用记录。
     fn drain_calls(&self) -> Vec<PortCall> {
         core::mem::take(&mut *self.0.calls.lock().expect("fake 的互斥锁不会中毒"))
+    }
+
+    fn drain_detail_calls(&self) -> Vec<DetailCall> {
+        core::mem::take(
+            &mut *self
+                .0
+                .detail_calls
+                .lock()
+                .expect("fake detail lock is healthy"),
+        )
     }
 }
 
@@ -289,6 +307,30 @@ impl ChannelReader for FakeChannels {
         visible.truncate(limit as usize);
         Ok(visible)
     }
+
+    async fn get_visible_channel(
+        &self,
+        scope: &ChannelReadScope,
+        channel_id: &ChannelId,
+    ) -> Result<Option<ChannelSummary>, PortError> {
+        self.0
+            .detail_calls
+            .lock()
+            .expect("fake detail lock is healthy")
+            .push(DetailCall {
+                scope: scope.clone(),
+                channel_id: channel_id.clone(),
+            });
+        if let Some(failure) = *self.0.failure.lock().expect("fake 的互斥锁不会中毒") {
+            return Err(failure);
+        }
+        Ok(self
+            .0
+            .rows
+            .iter()
+            .find(|(owner, row)| owner == &scope.actor && &row.id == channel_id)
+            .map(|(_, row)| row.clone()))
+    }
 }
 
 // ===========================================================================
@@ -299,10 +341,10 @@ impl ChannelReader for FakeChannels {
 ///
 /// 它的字段表本身就是"比什么"的定义：没有状态码、没有头部、没有 JSON 文本的位置，
 /// 所以那三样**不可能**被偷偷比进来。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum Outcome {
     /// 成功：typed 应答。
-    Reply(AppReply),
+    Reply(Box<AppReply>),
     /// 失败：只有 §15.3 的稳定码。
     Failure { code: String },
 }
@@ -311,7 +353,7 @@ impl Outcome {
     /// 把 in-process 腿的 `Result` 归一。
     fn from_typed(result: Result<AppReply, openbot_contracts::error::AppError>) -> Self {
         match result {
-            Ok(reply) => Self::Reply(reply),
+            Ok(reply) => Self::Reply(Box::new(reply)),
             Err(error) => Self::Failure {
                 code: error.code().as_str().to_owned(),
             },
@@ -324,9 +366,14 @@ impl Outcome {
     /// 装回 `AppReply::Channels` —— 那一层外壳是 framing 差异，不是语义差异。
     fn from_http(status: StatusCode, body: &str) -> Self {
         if status == StatusCode::OK {
+            if body.starts_with("{\"channel\":") {
+                let detail: ChannelDetailResponse = serde_json::from_str(body)
+                    .unwrap_or_else(|e| panic!("200 detail body must decode: {e}; source {body}"));
+                return Self::Reply(Box::new(AppReply::Channel(detail.channel)));
+            }
             let page: ChannelPage = serde_json::from_str(body)
                 .unwrap_or_else(|e| panic!("200 的 body 必须能解回 ChannelPage：{e}；原文 {body}"));
-            return Self::Reply(AppReply::Channels(page));
+            return Self::Reply(Box::new(AppReply::Channels(page)));
         }
 
         let envelope: serde_json::Value = serde_json::from_str(body)
@@ -343,16 +390,22 @@ impl Outcome {
     /// 取出 channel id 列表（正向对照用）。
     fn channel_ids(&self) -> Vec<&str> {
         match self {
-            Self::Reply(AppReply::Channels(page)) => {
-                page.channels.iter().map(|row| row.id.as_str()).collect()
-            }
+            Self::Reply(reply) => match reply.as_ref() {
+                AppReply::Channels(page) => {
+                    page.channels.iter().map(|row| row.id.as_str()).collect()
+                }
+                _ => panic!("不是一页 channel：{self:?}"),
+            },
             _ => panic!("不是一页 channel：{self:?}"),
         }
     }
 
     fn next_cursor(&self) -> Option<&str> {
         match self {
-            Self::Reply(AppReply::Channels(page)) => page.next_cursor.as_deref(),
+            Self::Reply(reply) => match reply.as_ref() {
+                AppReply::Channels(page) => page.next_cursor.as_deref(),
+                _ => panic!("不是一页 channel：{self:?}"),
+            },
             _ => panic!("不是一页 channel：{self:?}"),
         }
     }
@@ -402,6 +455,73 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
             }
             Some(uri)
         }
+        AppCommand::GetVisibleChannel { channel_id } => {
+            assert!(
+                channel_id
+                    .as_str()
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
+                "matrix channel id must be one URI-safe segment"
+            );
+            Some(format!("/api/channels/{}", channel_id.as_str()))
+        }
+        // People/audit/policy/thread/MCP/approval/UI preference 的 HTTP 腿由同目录专项
+        // transport parity 或各自 handler framing 测试覆盖；本文件只维护 channel 专项矩阵。
+        // InvokeTool 尚无公开 HTTP 路由。仍逐变体列出且无 wildcard：新增命令必须在这里明确
+        // 选择“channel 矩阵有 route”或“由哪一份专项证据承担”。
+        AppCommand::GetCurrentUser
+        | AppCommand::CreateChannel { .. }
+        | AppCommand::RouteChannelMessage { .. }
+        | AppCommand::ListVisibleAgents { .. }
+        | AppCommand::GetVisibleAgent { .. }
+        | AppCommand::ListComponents
+        | AppCommand::SyncComponentCatalogue(_)
+        | AppCommand::ListComponentsForAgent { .. }
+        | AppCommand::DecideComponent { .. }
+        | AppCommand::ListComponentDataFunctions
+        | AppCommand::CallComponentFunction { .. }
+        | AppCommand::AwaitComponentHumanDecision(_)
+        | AppCommand::ListPendingComponentHumanDecisions
+        | AppCommand::ResolveComponentHumanDecision { .. }
+        | AppCommand::ListSandboxedComponents
+        | AppCommand::ListPublishedSandboxedComponents
+        | AppCommand::SaveSandboxedComponent(_)
+        | AppCommand::PublishSandboxedComponent { .. }
+        | AppCommand::DeleteSandboxedComponent { .. }
+        | AppCommand::AuthorizeSandboxedComponent { .. }
+        | AppCommand::AdminStatus
+        | AppCommand::ListPeople { .. }
+        | AppCommand::ChangePersonRole { .. }
+        | AppCommand::ChangePersonAccess { .. }
+        | AppCommand::ListAuditEvents { .. }
+        | AppCommand::GetActionPolicy
+        | AppCommand::SetActionPolicy { .. }
+        | AppCommand::InvokeTool(_)
+        | AppCommand::MintThreadId
+        | AppCommand::GetThreadStatus { .. }
+        | AppCommand::BeginThreadRun(_)
+        | AppCommand::CancelThreadRun(_)
+        | AppCommand::GetThreadHistory { .. }
+        | AppCommand::GetThreadConversation { .. }
+        | AppCommand::RememberMemory(_)
+        | AppCommand::GetMemoryControl
+        | AppCommand::UpdateMemoryControl(_)
+        | AppCommand::ListMemories { .. }
+        | AppCommand::CorrectMemory { .. }
+        | AppCommand::MutateMemory { .. }
+        | AppCommand::RecallMemories(_)
+        | AppCommand::IssueAgentCallbackToken { .. }
+        | AppCommand::RevokeAgentCallbackToken { .. }
+        | AppCommand::ListMcpConnections
+        | AppCommand::BeginMcpOAuth { .. }
+        | AppCommand::DisconnectMcpConnection { .. }
+        | AppCommand::RegisterMcpOAuthClient { .. }
+        | AppCommand::AddCuratedMcpServer { .. }
+        | AppCommand::RefreshMcpServer { .. }
+        | AppCommand::ListPendingToolApprovals
+        | AppCommand::DecideToolApproval { .. }
+        | AppCommand::GetUiPreferences
+        | AppCommand::UpdateUiPreferences(_) => None,
     }
 }
 
@@ -515,15 +635,20 @@ impl Fixture {
     async fn run(&self, actor: &str, command: &AppCommand) -> LegPair {
         // 先清干净，免得上一个用例的记录混进来。
         self.reader.drain_calls();
+        self.reader.drain_detail_calls();
         let http = self.via_http(actor, command).await;
         let http_calls = self.reader.drain_calls();
+        let http_detail_calls = self.reader.drain_detail_calls();
         let in_process = self.via_in_process(actor, command).await;
         let in_process_calls = self.reader.drain_calls();
+        let in_process_detail_calls = self.reader.drain_detail_calls();
         LegPair {
             http,
             http_calls,
+            http_detail_calls,
             in_process,
             in_process_calls,
+            in_process_detail_calls,
         }
     }
 }
@@ -531,8 +656,10 @@ impl Fixture {
 struct LegPair {
     http: HttpLeg,
     http_calls: Vec<PortCall>,
+    http_detail_calls: Vec<DetailCall>,
     in_process: Outcome,
     in_process_calls: Vec<PortCall>,
+    in_process_detail_calls: Vec<DetailCall>,
 }
 
 /// 对拍本体。**矩阵里每一条、以及负向对照，用的都是这一个函数。**
@@ -548,6 +675,10 @@ fn assert_legs_agree(case: &str, pair: &LegPair) {
         pair.http_calls, pair.in_process_calls,
         "[{case}] 两条腿递到 ChannelReader 上的调用必须逐字段相同 —— \
          不同即说明有一层 transport 在替 application 改写命令"
+    );
+    assert_eq!(
+        pair.http_detail_calls, pair.in_process_detail_calls,
+        "[{case}] both legs must pass the same authoritative detail scope and channel id"
     );
 }
 
@@ -632,6 +763,36 @@ async fn both_legs_share_one_application_instance() {
     ));
 }
 
+#[tokio::test]
+async fn channel_detail_has_the_same_typed_result_and_port_scope_on_both_legs() {
+    let fx = Fixture::new();
+    let command = AppCommand::GetVisibleChannel {
+        channel_id: ChannelId::new("c-a1"),
+    };
+    let pair = fx.run(ACTOR_A, &command).await;
+    assert_legs_agree("channel detail", &pair);
+    for outcome in [&pair.http.outcome, &pair.in_process] {
+        match outcome {
+            Outcome::Reply(reply) => match reply.as_ref() {
+                AppReply::Channel(detail) if detail.id == ChannelId::new("c-a1") => {}
+                other => panic!("channel detail reply drifted: {other:?}"),
+            },
+            other => panic!("channel detail unexpectedly failed: {other:?}"),
+        }
+    }
+    assert_eq!(
+        pair.http_detail_calls,
+        vec![DetailCall {
+            scope: ChannelReadScope {
+                deployment: DeploymentId::new("dep-g1"),
+                tenant: TenantId::new("tenant-g1"),
+                actor: ActorId::new(ACTOR_A),
+            },
+            channel_id: ChannelId::new("c-a1"),
+        }]
+    );
+}
+
 // ===========================================================================
 // 2. 对拍矩阵
 // ===========================================================================
@@ -697,10 +858,11 @@ async fn transport_parity_matrix() {
     // 交错确实存在：`c-a3` / `c-a5` 没有 `last_message_at`，却排在中间而不是末尾。
     assert!(matches!(
         &pair.http.outcome,
-        Outcome::Reply(AppReply::Channels(page))
-            if page.channels[2].last_message_at.is_none()
-                && page.channels[4].last_message_at.is_none()
-                && page.channels[0].last_message_at.is_some()
+        Outcome::Reply(reply)
+            if matches!(reply.as_ref(), AppReply::Channels(page)
+                if page.channels[2].last_message_at.is_none()
+                    && page.channels[4].last_message_at.is_none()
+                    && page.channels[0].last_message_at.is_some())
     ));
 
     // --- 3. limit 越界 ---------------------------------------------------
@@ -958,8 +1120,8 @@ async fn the_comparison_normalizes_away_transport_shape_on_purpose() {
 
     // (d) in-process 是 typed 值，带着 `AppReply` 的外壳。
     assert!(matches!(
-        pair.in_process,
-        Outcome::Reply(AppReply::Channels(_))
+        &pair.in_process,
+        Outcome::Reply(reply) if matches!(reply.as_ref(), AppReply::Channels(_))
     ));
 
     // 归一之后（HTTP 的字节**反序列化回** typed 值，in-process 的 typed 值原样使用），
@@ -1042,8 +1204,10 @@ async fn the_matrix_goes_red_when_a_business_rule_moves_into_the_transport() {
     let tampered = LegPair {
         http,
         http_calls,
+        http_detail_calls: Vec::new(),
         in_process,
         in_process_calls,
+        in_process_detail_calls: Vec::new(),
     };
 
     // 篡改确实生效了（否则下面的"判红"会在"什么都没变"的世界里失败，那是另一回事）。
@@ -1105,8 +1269,10 @@ async fn the_matrix_goes_red_when_a_transport_substitutes_the_page_size() {
     let pair = LegPair {
         http,
         http_calls,
+        http_detail_calls: Vec::new(),
         in_process,
         in_process_calls,
+        in_process_detail_calls: Vec::new(),
     };
 
     // 结果那一半确实**相等** —— 这正是本条存在的理由。

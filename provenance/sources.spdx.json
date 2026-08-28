@@ -42,6 +42,104 @@
       "primaryPackagePurpose": "APPLICATION"
     },
     {
+      "SPDXID": "SPDXRef-Package-webpki-roots",
+      "name": "webpki-roots",
+      "versionInfo": "1.0.9",
+      "downloadLocation": "https://crates.io/api/v1/crates/webpki-roots/1.0.9/download",
+      "filesAnalyzed": false,
+      "licenseConcluded": "CDLA-Permissive-2.0",
+      "licenseDeclared": "CDLA-Permissive-2.0",
+      "copyrightText": "NOASSERTION",
+      "comment": "W-7 HTTP safe dialer 的锁定 Mozilla TLS 根证书数据。精确版本来自 Cargo.lock；crate 内 LICENSE 2,371 B，SHA-256 e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8，全文已逐字进入 NOTICE §6A。CDLA-Permissive-2.0 第 2.1 条要求分享数据时提供协议文本。TLS/ring 构建面与静态 roots 升级边界见 docs/2026-08-23-W7-safe-dialer-TLS-delta审计.md。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/webpki-roots@1.0.9"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-samael",
+      "name": "samael",
+      "versionInfo": "0.0.22",
+      "downloadLocation": "https://crates.io/api/v1/crates/samael/0.0.22/download",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "3507857cc308877abafd0db18e30b2852623db961006ba38b402e0eff048ee7f"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2020 Nathan Jaremko",
+      "comment": "第一真源固定的 SAML 2.0 实现；xmlsec feature 必开。crate LICENSE 1,070 B，SHA-256 0544f2095045dd6f52fff94000333399cd4fe2dcd6a50659a0a55e4d2b543334。build/FFI/XSW 边界见 W-7b delta audit；30 条新增 Cargo Vet exemption 明示不是源码审计。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/samael@0.0.22"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-libxml2-native",
+      "name": "libxml2",
+      "versionInfo": "2.15.3",
+      "downloadLocation": "https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.3.tar.xz",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "78262a6e7ac170d6528ebfe2efccdf220191a5af6a6cd61ea4a9a9a5042c7a07"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (C) 1998-2012 Daniel Veillard; Copyright (C) The Libxml2 Contributors",
+      "comment": "macOS W-7b 实测动态库；Homebrew Copyright 1,314 B，SHA-256 5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626。必须与 xmlsec1 加载同一份 libxml2；双版本实测 SIGSEGV。",
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-xmlsec-native",
+      "name": "xmlsec",
+      "versionInfo": "1.3.12",
+      "downloadLocation": "https://github.com/lsh123/xmlsec/releases/download/1.3.12/xmlsec1-1.3.12.tar.gz",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "24045199af12d93fe5fdbbbf7e386e823e4842071e9432e2b90ac108b889a923"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (C) 2002-2026 Aleksey Sanin",
+      "comment": "samael xmlsec feature 的 XMLDSig FFI；Homebrew Copyright 7,333 B，SHA-256 a6d217151f3d423e06639c075bad8e442ea1936828d3a660105122ef78ecd96d。",
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-openssl-native",
+      "name": "OpenSSL",
+      "versionInfo": "3.6.3",
+      "downloadLocation": "https://github.com/openssl/openssl/releases/download/openssl-3.6.3/openssl-3.6.3.tar.gz",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "243a86649cf6f23eeb6a2ff2456e09e5d77dd9018a54d3d96b0c6bdd6ba6c7f1"
+        }
+      ],
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "Copyright OpenSSL Project Authors",
+      "comment": "macOS W-7b xmlsec crypto backend；LICENSE.txt 10,175 B，SHA-256 7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a。3.6.3 尚受两条 2026-08 低危 QUIC/OCSP advisory 影响，但本仓只走 XMLDSig/X509、无 QUIC/TLS/OCSP 调用；3.6.4 可得即重审升级。",
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
       "SPDXID": "SPDXRef-Package-copilotkit-openbot",
       "name": "CopilotKit/openbot",
       "versionInfo": "891df72f1827454d8b353d108fe5dd2313b7e30d",
@@ -92,7 +190,7 @@
       "licenseDeclared": "Apache-2.0",
       "copyrightText": "NOASSERTION",
       "comment": "v3 §1.2 固定基线：commit `4a738b9dd99eaca418b614afa433a0cbdaf8d056`，发布版 `3.1.4`。本轮证据：(a) GitHub API commit HTTP 200；(b) crates.io `/api/v1/crates/rmcp/3.1.4` 的 `.version.license` = `Apache-2.0`；(c) 同 commit 的 `LICENSE` **不是**一份许可证全文，原文首段为：『The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 (\"Apache-2.0\")… Contributions made by authors who originally licensed their work under the MIT License and who have not yet granted explicit permission to relicense remain licensed under the MIT License.』；(d) 同 commit 的 `NOTICE` HTTP 404。因此 licenseConcluded = NOASSERTION：这正是 v3 §23.1 条 4『不能给整个仓库套一个猜测』所指的情形，逐文件 license 判定须在实际复用任何文件之前完成。",
-      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "sourceInfo": "Batch 11 已作为 production dependency 锁入 Cargo.lock；crates.io .crate checksum = 1a15bc53261a9dc37e105df006e4656c598379a8f9581f8950debb130f27a7cf，.cargo_vcs_info.json 同时绑定 commit 4a738b9dd99eaca418b614afa433a0cbdaf8d056。",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -103,6 +201,31 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:github/modelcontextprotocol/rust-sdk@4a738b9dd99eaca418b614afa433a0cbdaf8d056"
+        }
+      ],
+      "primaryPackagePurpose": "LIBRARY"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-jsonschema",
+      "name": "jsonschema",
+      "versionInfo": "0.51.0",
+      "downloadLocation": "https://crates.io/api/v1/crates/jsonschema/0.51.0/download",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "152999731bfbe0bb82d561550be73b0c31a9827d6ebe3fe96ad47563703b5328"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2020-2026 Dmitry Dygalo",
+      "comment": "G4 Batch 11 的 MCP vendor input-schema validator。Cargo.lock 精确版本/摘要如上；crate LICENSE 1,075 B，SHA-256 117829c3ca21efb132d81a44b55363d395ab8eea18526873bc828da4c0e5f038。Production 关闭默认 HTTP/file resolver features，并显式选择线性 regex engine；32 条新增 Cargo Vet exemption 明示不是源码审计。",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/jsonschema@0.51.0"
         }
       ],
       "primaryPackagePurpose": "LIBRARY"
@@ -1005,6 +1128,33 @@
   ],
   "relationships": [
     {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-webpki-roots",
+      "comment": "W-7 safe dialer 将该锁定根证书数据静态链接进发行物；许可全文见 NOTICE §6A。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-samael",
+      "comment": "W-7b SAML 协议实现，固定 0.0.22+xmlsec。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-samael",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-xmlsec-native"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-xmlsec-native",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-libxml2-native"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-xmlsec-native",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-openssl-native"
+    },
+    {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
       "relatedSpdxElement": "SPDXRef-Package-openbot-rs"
@@ -1026,6 +1176,12 @@
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-rmcp",
       "comment": "MCP runtime（v3 §9.1）。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-jsonschema",
+      "comment": "MCP vendor input-schema validation；HTTP/file resolver features disabled。"
     },
     {
       "spdxElementId": "SPDXRef-Package-openbot-rs",

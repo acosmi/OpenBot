@@ -23,6 +23,8 @@
 //! 本模块只负责「把正确的 keyset 交出来」。签名校验、`iss` / `aud` / 时间窗 / `nonce`
 //! 全在 [`super::claims`]，由 `openidconnect` 的 `IdTokenVerifier` 执行。
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use openidconnect::core::{CoreJsonWebKey, CoreProviderMetadata};
 use openidconnect::{JsonWebKey, JsonWebKeyId, JsonWebKeySet, JsonWebKeySetUrl};
 use time::{Duration, OffsetDateTime};
@@ -84,6 +86,8 @@ pub struct JwksCache {
     jwks_uri: JsonWebKeySetUrl,
     keys: JsonWebKeySet<CoreJsonWebKey>,
     last_fetch_at: Option<OffsetDateTime>,
+    /// Microsoft tenant-independent JWKS 的 per-key issuer；普通 IdP 为空。
+    key_issuers: BTreeMap<String, String>,
 }
 
 impl JwksCache {
@@ -94,6 +98,7 @@ impl JwksCache {
             jwks_uri,
             keys: JsonWebKeySet::new(Vec::new()),
             last_fetch_at: None,
+            key_issuers: BTreeMap::new(),
         }
     }
 
@@ -135,6 +140,12 @@ impl JwksCache {
                 .iter()
                 .any(|key| key.key_id().is_some_and(|id| id == kid)),
         }
+    }
+
+    /// 选中 key 自带的 issuer（Microsoft tenant-independent metadata 的额外硬闸门）。
+    #[must_use]
+    pub fn key_issuer(&self, kid: &JsonWebKeyId) -> Option<&str> {
+        self.key_issuers.get(kid.as_str()).map(String::as_str)
     }
 
     /// 取一份能覆盖 `kid` 的 keyset，必要且被允许时重新拉取。
@@ -197,9 +208,49 @@ impl JwksCache {
 
         let fetched: JsonWebKeySet<CoreJsonWebKey> =
             serde_json::from_slice(&body).map_err(|_| OidcError::MetadataMalformed)?;
+        let key_issuers = parse_key_issuers(&body)?;
         self.keys = fetched;
+        self.key_issuers = key_issuers;
         Ok(())
     }
+}
+
+#[derive(serde::Deserialize)]
+struct RawJwksIssuerProjection {
+    keys: Vec<RawJwkIssuerProjection>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawJwkIssuerProjection {
+    #[serde(default)]
+    kid: Option<String>,
+    #[serde(default)]
+    issuer: Option<String>,
+}
+
+fn parse_key_issuers(body: &[u8]) -> Result<BTreeMap<String, String>, OidcError> {
+    let raw: RawJwksIssuerProjection =
+        serde_json::from_slice(body).map_err(|_| OidcError::MetadataMalformed)?;
+    let mut seen = BTreeSet::new();
+    let mut issuers = BTreeMap::new();
+    for key in raw.keys {
+        let Some(kid) = key.kid else {
+            continue;
+        };
+        if kid.is_empty() || kid.len() > 256 || kid.chars().any(char::is_control) {
+            return Err(OidcError::MetadataMalformed);
+        }
+        if !seen.insert(kid.clone()) {
+            return Err(OidcError::MetadataMalformed);
+        }
+        if let Some(issuer) = key.issuer {
+            if issuer.is_empty() || issuer.len() > 2048 || issuer.chars().any(char::is_control) {
+                return Err(OidcError::MetadataMalformed);
+            }
+            issuers.insert(kid, issuer);
+        }
+    }
+    Ok(issuers)
 }
 
 #[cfg(test)]
@@ -278,6 +329,39 @@ mod tests {
             .expect("冷启动必须拉得到");
         assert_eq!(keys.keys().len(), 1);
         assert_eq!(transport.calls_for(JWKS_URI), 1);
+    }
+
+    #[tokio::test]
+    async fn per_key_issuer_is_preserved_for_entra_and_duplicate_kid_is_rejected() {
+        let mut document: serde_json::Value =
+            serde_json::from_str(&jwks_document(&["key-a"])).unwrap();
+        document["keys"][0]["issuer"] = serde_json::Value::String(
+            "https://login.microsoftonline.com/{tenantid}/v2.0".to_owned(),
+        );
+        let transport = FakeTransport::new();
+        transport.push_json(JWKS_URI, &serde_json::to_string(&document).unwrap());
+        let mut cache = new_cache();
+        cache
+            .key_set_for(Some(&kid("key-a")), &transport, budget(), policy(), t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            cache.key_issuer(&kid("key-a")),
+            Some("https://login.microsoftonline.com/{tenantid}/v2.0")
+        );
+
+        let duplicated = serde_json::json!({
+            "keys": [document["keys"][0].clone(), document["keys"][0].clone()]
+        });
+        let duplicate_transport = FakeTransport::new();
+        duplicate_transport.push_json(JWKS_URI, &serde_json::to_string(&duplicated).unwrap());
+        let mut duplicate_cache = new_cache();
+        assert_eq!(
+            duplicate_cache
+                .refresh(&duplicate_transport, budget(), t0())
+                .await,
+            Err(OidcError::MetadataMalformed)
+        );
     }
 
     /// 命中缓存不出网 —— 这是限速之外的第一道，也是最重要的一道减压。

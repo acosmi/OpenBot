@@ -6,32 +6,58 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.leptos-i18n]
+default = "en"
+locales = ["en", "zh-CN"]
+locales-dir = "locales"
+
+[package.metadata.openbot-ui]
+generated-assets = ["design/tokens.css"]
 
 [lints]
 workspace = true
 
+[features]
+default = []
+# Compile-time-only primitive gallery from GUI first source §10.3. Production Trunk builds do not
+# enable it, and bundle-budget rejects the route literal if it ever appears in the release WASM.
+design-gallery = []
+
 [dependencies]
-# Phase 0 刻意不引 Leptos —— G0 不编 WASM，本机也没有 `wasm32-unknown-unknown` target 与
-# trunk / Tailwind standalone / wasm-bindgen CLI / wasm-opt 这四件钉 sha256 的构建期二进制
-# （设计系统文档 §12.1）。提前写 `leptos = "0.8.19"` 会让 `cargo build --workspace` 拉进
-# 一大棵只在 wasm 下有意义的依赖树，而闸门却一行 UI 代码都没有跑过 —— 那是假绿。
-#
-# 下面是 **G6 开工时逐行照抄** 的钉版表，来源 = 设计系统文档 §12.4〈Leptos 生态钉版〉
-# （已并入 v3 §1.2，并写进 CLAUDE.md §3 固定基线表）。改任一行 = 新建 delta audit。
-#
-#   leptos              = "0.8.19"    # v3 既定，不动（crates.io 已有 0.8.20，刻意不升）
-#   leptos_router       = "=0.8.13"   # 精确版本号，`=` 不可省：0.8.14 / 0.8.15 依赖
-#                                     # `leptos ^0.8.20`，在 0.8.19 上无法解析；0.8.13 要求
-#                                     # `^0.8.17`。升 Leptos 到 0.8.20 的 delta audit 必须
-#                                     # 同 PR 把 router 升到 0.8.15。
-#   leptos_meta         = "0.8.6"     # 要求 `leptos ^0.8.16`；`<title>` / `<html lang class>` 同步
-#   leptos_i18n         = "0.6.2"     # 设计系统文档 §8.1；en 为源、zh-CN 首版
-#   pulldown-cmark      = "0.13.4"    # 设计系统文档 §6.4 transcript markdown 渲染
-#   syntect             = "5.3.0"     # 设计系统文档 §6.4，feature `default-fancy`
-#
-# 仅 `openbot-desktop`：sys-locale = "0.3.2"（设计系统文档 §8.4 locale 解析）
-# 仅 `openbot-testkit`：image = "0.25.10"、xcap = "0.9.8"（设计系统文档 §10.4 golden 比对）
-#
-# [build-dependencies] 同样留到 G6：leptos_i18n_build = "0.6.2"，配合 build.rs 做
-# tokens.toml → tokens.css + tokens.rs、icons.toml + svg → icons.rs、i18n 代码生成
-# （设计系统文档 §13）。
+openbot-contracts.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+time.workspace = true
+url.workspace = true
+leptos.workspace = true
+leptos_router.workspace = true
+leptos_meta.workspace = true
+leptos_i18n.workspace = true
+sha2.workspace = true
+uuid = { workspace = true, features = ["js"] }
+
+# G6 has started. Remaining transcript-only pins (pulldown-cmark/syntect) land with the first
+# markdown consumer rather than as zero-call dependencies.
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-util.workspace = true
+gloo-net.workspace = true
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys.workspace = true
+
+[build-dependencies]
+leptos_i18n_build.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

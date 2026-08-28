@@ -2,13 +2,21 @@
 //!
 //! # 落点逐字对齐 parity ledger
 //!
-//! `parity/api.yaml` 把四条 G1 路由的落点写死到**模块路径**这一级：
+//! `parity/api.yaml` 把路由落点写死到**模块路径**这一级；W-4 在 G1 四条之上追加
+//! `/api/me`、admin status/people 与 W-5 audit 读面。
 //!
 //! ```text
 //! health-get              target: "openbot-server::http::health (GET /health)"
 //! readiness-get           target: "openbot-server::http::readiness (GET /readiness)"
 //! metrics-get             target: "openbot-server::http::metrics (GET /metrics)"
 //! api-channels-list-get   target: "openbot-server::http::channels::list (GET /api/channels)"
+//! api-threads-mint-post   target: "openbot-server::http::threads::mint (POST /api/threads/mint)"
+//! api-threads-get         target: "openbot-server::http::threads::status (GET /api/threads/{thread_id})"
+//! thread-events-sse-get   target: "openbot-server::http::threads::events (GET /api/threads/{thread_id}/events)"
+//! thread-events-ws-get    target: "openbot-server::http::threads::websocket (GET /api/threads/{thread_id}/ws)"
+//! memory-list/remember/correct/delete/forbid/recall —— R66 新增 explicit memory API
+//! components list/catalogue —— R103 compiled component治理读面与exact additive build sync
+//! sandboxed draft/published/save/publish/delete —— R112 sandboxed source原子治理
 //! ```
 //!
 //! 所以 [`health`] / [`channels`] / [`metrics`] 这几个模块名、[`channels::list`] 这个函数名
@@ -34,32 +42,56 @@
 //! "记了但被拒"的日志，在排障时是完全不同的证据。metrics 紧贴其内，同样在体积上限
 //! **之外**：一次 413 也是一次真实请求，不计进延迟分布就等于把被拒流量藏起来。
 
+pub mod admin;
+pub mod agent_tools;
+pub mod agents;
+pub mod approvals;
+pub mod auth_oidc;
+pub mod auth_sso;
 pub mod channels;
+pub mod components;
+pub mod computers;
 pub mod health;
+pub mod memories;
 pub mod metrics;
+pub mod plugins;
+pub mod routing;
+pub mod sandbox_runner;
+pub mod sandboxed;
+pub mod session;
+pub mod static_app;
+pub mod threads;
+pub mod ui_preferences;
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use axum::Router;
+use axum::extract::MatchedPath;
 use axum::extract::{DefaultBodyLimit, Request};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::routing::get;
-use openbot_application::ApplicationService;
+use axum::routing::{delete, get, post};
+use openbot_agent::RemoteAgentToolInvoker;
+use openbot_application::{ApplicationService, McpOAuthCallback, RemoteCallbackAuthenticator};
+use openbot_domain::identity::session::TrustedOrigins;
+use openbot_infra::auth::oidc::{OidcLoginCoordinator, PreAuthSurface};
+use openbot_infra::auth::sso::DynamicSsoService;
 use tower_http::limit::RequestBodyLimitLayer;
 
-use crate::auth::AuthResolver;
+use crate::auth::{AuthResolver, ResolvedAuth, SensitiveWriteSecurity};
 use crate::limits::REQUEST_BODY_LIMIT_BYTES;
 use crate::metrics::MetricsHandle;
 use crate::readiness::ReadinessProbe;
 use crate::telemetry::trace_request;
 
+use self::static_app::StaticApp;
+
 /// router 的共享状态。
 ///
-/// 四样东西，恰好对应 transport 的四个外部接缝：业务入口、认证边界、readiness 判据、
-/// metrics 渲染句柄。**没有第五样** —— 数据库连接、配置、密钥都不在这里，因为
-/// transport 都不该碰它们。
+/// 五样东西对应 transport 的受控外部接缝：业务入口、认证边界、readiness 判据、metrics
+/// 渲染句柄，以及已经由启动配置裁决好的 `insecure_transport` 布尔事实。数据库连接、原始
+/// 配置和密钥都不在这里，因为 transport 不该碰它们。
 #[derive(Clone)]
 pub struct ServerState {
     inner: Arc<StateInner>,
@@ -70,6 +102,17 @@ struct StateInner {
     auth: Arc<dyn AuthResolver>,
     readiness: Vec<Arc<dyn ReadinessProbe>>,
     metrics: Option<MetricsHandle>,
+    sensitive_write: Option<SensitiveWriteSecurity>,
+    insecure_transport: bool,
+    oidc: Option<Arc<OidcLoginCoordinator>>,
+    preauth: PreAuthSurface,
+    login_origins: Option<TrustedOrigins>,
+    secure_session_cookie: bool,
+    dynamic_sso: Option<Arc<DynamicSsoService>>,
+    remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
+    remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
+    mcp_oauth_callback: Option<Arc<dyn McpOAuthCallback>>,
+    static_app: Option<StaticApp>,
 }
 
 impl ServerState {
@@ -98,6 +141,115 @@ impl ServerState {
     pub fn metrics_handle(&self) -> Option<&MetricsHandle> {
         self.inner.metrics.as_ref()
     }
+
+    /// 非 loopback 明文 HTTP 是否正在承载会话；只投影到 readiness 元数据。
+    #[must_use]
+    pub fn insecure_transport(&self) -> bool {
+        self.inner.insecure_transport
+    }
+
+    /// OIDC 协调器；单用户模式为 `None`，handler 必须 fail-closed 503。
+    #[must_use]
+    pub fn oidc_login(&self) -> Option<&OidcLoginCoordinator> {
+        self.inner.oidc.as_deref()
+    }
+
+    /// 匿名能力投影；类型本身装不下动态 provider/domain。
+    #[must_use]
+    pub fn preauth_surface(&self) -> &PreAuthSurface {
+        &self.inner.preauth
+    }
+
+    /// 登录 start POST 的 Origin 是否属于配置集合。
+    #[must_use]
+    pub fn trusts_login_origin(&self, origin: &str) -> bool {
+        self.inner
+            .login_origins
+            .as_ref()
+            .is_some_and(|trusted| trusted.trusts(origin))
+    }
+
+    /// `Secure` iff OPENBOT_PUBLIC_URL 是 https；与 resolver/cookie 共用同一配置事实。
+    #[must_use]
+    pub fn secure_session_cookie(&self) -> bool {
+        self.inner.secure_session_cookie
+    }
+
+    /// deployment-owned OIDC/SAML；未注入时管理写面与 email routing fail-closed。
+    #[must_use]
+    pub fn dynamic_sso(&self) -> Option<&DynamicSsoService> {
+        self.inner.dynamic_sso.as_deref()
+    }
+
+    /// Remote machine-to-machine callback verifier; absent means the public route returns 503.
+    #[must_use]
+    pub fn remote_callback_authenticator(&self) -> Option<&dyn RemoteCallbackAuthenticator> {
+        self.inner.remote_callback_auth.as_deref()
+    }
+
+    /// Governed callback executor; absent means authenticated calls fail closed with 503.
+    #[must_use]
+    pub fn remote_callback_tools(&self) -> Option<&dyn RemoteAgentToolInvoker> {
+        self.inner.remote_callback_tools.as_deref()
+    }
+
+    /// Public MCP OAuth callback authenticator/coordinator.
+    #[must_use]
+    pub fn mcp_oauth_callback(&self) -> Option<&dyn McpOAuthCallback> {
+        self.inner.mcp_oauth_callback.as_deref()
+    }
+
+    /// Validated static GUI bundle, when `APP_DIST_DIR` is configured.
+    #[must_use]
+    pub fn static_app(&self) -> Option<&StaticApp> {
+        self.inner.static_app.as_ref()
+    }
+
+    /// 敏感写 guard；未注入时 fail-closed 503，不给 handler 任何“暂时跳过”路径。
+    pub async fn authorize_sensitive_write(
+        &self,
+        resolved: &ResolvedAuth,
+        origin: Option<&str>,
+    ) -> Result<(), openbot_contracts::error::AppError> {
+        let Some(security) = &self.inner.sensitive_write else {
+            return Err(openbot_contracts::error::AppError::DependencyUnavailable {
+                dependency: "sensitive_write_security",
+            });
+        };
+        let _approved = security.authorize(resolved, origin)?;
+        self.inner.auth.touch(resolved).await
+    }
+
+    /// Same-origin authenticated operation：Memory owner 写与 thread WebSocket 共用；
+    /// 不额外要求 admin/fresh，但 Origin 失败不得 touch session idle。
+    pub async fn authorize_authenticated_origin(
+        &self,
+        resolved: &ResolvedAuth,
+        origin: Option<&str>,
+    ) -> Result<(), openbot_contracts::error::AppError> {
+        let Some(security) = &self.inner.sensitive_write else {
+            return Err(openbot_contracts::error::AppError::DependencyUnavailable {
+                dependency: "sensitive_write_security",
+            });
+        };
+        security.authorize_origin(origin)?;
+        self.inner.auth.touch(resolved).await
+    }
+
+    /// Fresh same-origin write whose per-resource authorization remains in application/infra.
+    pub async fn authorize_fresh_origin_write(
+        &self,
+        resolved: &ResolvedAuth,
+        origin: Option<&str>,
+    ) -> Result<(), openbot_contracts::error::AppError> {
+        let Some(security) = &self.inner.sensitive_write else {
+            return Err(openbot_contracts::error::AppError::DependencyUnavailable {
+                dependency: "sensitive_write_security",
+            });
+        };
+        security.authorize_fresh_origin(resolved, origin)?;
+        self.inner.auth.touch(resolved).await
+    }
 }
 
 /// [`ServerState`] 的构造器。
@@ -111,6 +263,17 @@ pub struct ServerBuilder {
     auth: Arc<dyn AuthResolver>,
     readiness: Vec<Arc<dyn ReadinessProbe>>,
     metrics: Option<MetricsHandle>,
+    sensitive_write: Option<SensitiveWriteSecurity>,
+    insecure_transport: bool,
+    oidc: Option<Arc<OidcLoginCoordinator>>,
+    preauth: PreAuthSurface,
+    login_origins: Option<TrustedOrigins>,
+    secure_session_cookie: bool,
+    dynamic_sso: Option<Arc<DynamicSsoService>>,
+    remote_callback_auth: Option<Arc<dyn RemoteCallbackAuthenticator>>,
+    remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
+    mcp_oauth_callback: Option<Arc<dyn McpOAuthCallback>>,
+    static_app: Option<StaticApp>,
 }
 
 impl ServerBuilder {
@@ -122,6 +285,17 @@ impl ServerBuilder {
             auth,
             readiness: Vec::new(),
             metrics: None,
+            sensitive_write: None,
+            insecure_transport: false,
+            oidc: None,
+            preauth: PreAuthSurface::default(),
+            login_origins: None,
+            secure_session_cookie: false,
+            dynamic_sso: None,
+            remote_callback_auth: None,
+            remote_callback_tools: None,
+            mcp_oauth_callback: None,
+            static_app: None,
         }
     }
 
@@ -148,6 +322,85 @@ impl ServerBuilder {
         self
     }
 
+    /// 注入 fresh-session + trusted-origin 敏感写配置。
+    #[must_use]
+    pub fn with_sensitive_write_security(mut self, security: SensitiveWriteSecurity) -> Self {
+        self.sensitive_write = Some(security);
+        self
+    }
+
+    /// 注入由 [`crate::config::PublicTransport`] 单点裁决出的明文暴露事实。
+    #[must_use]
+    pub const fn with_insecure_transport(mut self, insecure: bool) -> Self {
+        self.insecure_transport = insecure;
+        self
+    }
+
+    /// 注入所有登录协议共用的 Origin 与 cookie 策略。
+    ///
+    /// 它不能附着在 OIDC coordinator 上：只有数据库动态 SAML/OIDC 的部署同样需要这两项，
+    /// 否则匿名 email routing 会在配置正确时仍恒定拒绝。
+    #[must_use]
+    pub fn with_login_security(
+        mut self,
+        trusted_origins: TrustedOrigins,
+        secure_cookie: bool,
+    ) -> Self {
+        self.login_origins = Some(trusted_origins);
+        self.secure_session_cookie = secure_cookie;
+        self
+    }
+
+    /// 注入环境配置的 OIDC coordinator 与其公开投影。
+    #[must_use]
+    pub fn with_oidc_login(
+        mut self,
+        coordinator: Arc<OidcLoginCoordinator>,
+        preauth: PreAuthSurface,
+    ) -> Self {
+        self.oidc = Some(coordinator);
+        self.preauth = preauth;
+        self
+    }
+
+    /// 注入跨 replica 的 deployment-owned OIDC/SAML 服务。
+    #[must_use]
+    pub fn with_dynamic_sso(mut self, service: Arc<DynamicSsoService>) -> Self {
+        self.dynamic_sso = Some(service);
+        self
+    }
+
+    /// Attach the production per-Agent token + signed-run callback verifier.
+    #[must_use]
+    pub fn with_remote_callback_authenticator(
+        mut self,
+        authenticator: Arc<dyn RemoteCallbackAuthenticator>,
+    ) -> Self {
+        self.remote_callback_auth = Some(authenticator);
+        self
+    }
+
+    /// Attach the callback side of the same governed Agent tool gateway used by built-in runs.
+    #[must_use]
+    pub fn with_remote_callback_tools(mut self, tools: Arc<dyn RemoteAgentToolInvoker>) -> Self {
+        self.remote_callback_tools = Some(tools);
+        self
+    }
+
+    /// Attach the one-time-state MCP OAuth callback coordinator.
+    #[must_use]
+    pub fn with_mcp_oauth_callback(mut self, callback: Arc<dyn McpOAuthCallback>) -> Self {
+        self.mcp_oauth_callback = Some(callback);
+        self
+    }
+
+    /// Attach a validated static Leptos bundle.
+    #[must_use]
+    pub fn with_static_app(mut self, app: StaticApp) -> Self {
+        self.static_app = Some(app);
+        self
+    }
+
     /// 收口成 [`ServerState`]。
     #[must_use]
     pub fn build(self) -> ServerState {
@@ -157,6 +410,17 @@ impl ServerBuilder {
                 auth: self.auth,
                 readiness: self.readiness,
                 metrics: self.metrics,
+                sensitive_write: self.sensitive_write,
+                insecure_transport: self.insecure_transport,
+                oidc: self.oidc,
+                preauth: self.preauth,
+                login_origins: self.login_origins,
+                secure_session_cookie: self.secure_session_cookie,
+                dynamic_sso: self.dynamic_sso,
+                remote_callback_auth: self.remote_callback_auth,
+                remote_callback_tools: self.remote_callback_tools,
+                mcp_oauth_callback: self.mcp_oauth_callback,
+                static_app: self.static_app,
             }),
         }
     }
@@ -175,15 +439,20 @@ impl ServerBuilder {
 async fn record_http_metrics(request: Request, next: Next) -> Response {
     let _in_flight = crate::metrics::track_in_flight();
     let method = request.method().clone();
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or(crate::metrics::ROUTE_UNMATCHED, MatchedPath::as_str)
+        .to_owned();
     let started = Instant::now();
     let response = next.run(request).await;
-    crate::metrics::record_http_request(&method, response.status(), started.elapsed());
+    crate::metrics::record_http_request(&method, response.status(), started.elapsed(), &route);
     response
 }
 
-/// 组装 G1 的路由表。
+/// 组装当前 Server 路由表。
 ///
-/// 四条路由，逐条的 ledger 出处见 crate 文档。层序见模块文档。
+/// 每条路由的 ledger 出处见 crate 文档。层序见模块文档。
 ///
 /// # 未匹配的路径
 ///
@@ -192,18 +461,175 @@ async fn record_http_metrics(request: Request, next: Next) -> Response {
 /// 事。把两者渲染成同一个 `not_visible`，会让客户端把"接口拼错了"读成"这条资源你看不
 /// 到"，也会让防枚举那条判据的含义变得含混。
 pub fn router(state: ServerState) -> Router {
-    Router::new()
+    let static_app = state.static_app().cloned();
+    let router = Router::new()
         .route("/health", get(health::health))
         .route("/readiness", get(health::readiness))
         .route("/metrics", get(metrics::render))
-        .route("/api/channels", get(channels::list))
+        .route("/api/capabilities", get(auth_oidc::capabilities))
+        .route("/api/auth/oidc/{provider_id}/start", post(auth_oidc::start))
+        .route(
+            "/api/auth/oidc/{provider_id}/callback",
+            get(auth_oidc::callback),
+        )
+        .route("/api/auth/sso/start", post(auth_sso::route_email))
+        .route("/api/auth/sso/continue", get(auth_sso::continue_route))
+        .route("/api/auth/sso/register", post(auth_sso::register))
+        .route("/api/auth/sso/update-provider", post(auth_sso::update))
+        .route(
+            "/api/auth/sso/delete-provider",
+            post(auth_sso::remove_compat),
+        )
+        .route(
+            "/api/auth/sso/saml2/sp/acs/{provider_id}",
+            post(auth_sso::saml_acs),
+        )
+        .route(
+            "/api/auth/sso/saml2/sp/metadata/{provider_id}",
+            get(auth_sso::saml_metadata),
+        )
+        .route("/api/channels", get(channels::list).post(channels::create))
+        .route("/api/channels/events", get(channels::events))
+        .route("/api/channels/{channel_id}", get(channels::get))
+        .route("/api/route", post(routing::choose))
+        .route("/api/agents", get(agents::list_get))
+        .route("/api/agents/{agent_id}", get(agents::get))
+        .route("/api/components", get(components::list_get))
+        .route(
+            "/api/components/catalogue",
+            axum::routing::put(components::catalogue_put),
+        )
+        .route(
+            "/api/components/for-agent/{agent_id}",
+            get(components::for_agent_get),
+        )
+        .route(
+            "/api/components/{name}/decision",
+            post(components::decision_post),
+        )
+        .route("/api/components/functions", get(components::functions_get))
+        .route(
+            "/api/components/human-decisions",
+            get(components::human_decisions_get),
+        )
+        .route(
+            "/api/components/human-decisions/{decision_id}/answer",
+            post(components::human_decision_answer_post),
+        )
+        .route("/api/components/{name}/call", post(components::call_post))
+        .route(
+            "/api/sandboxed",
+            get(sandboxed::list_get).post(sandboxed::create_post),
+        )
+        .route("/api/sandboxed/published", get(sandboxed::published_get))
+        .route(
+            "/api/sandboxed/{name}/publish",
+            post(sandboxed::publish_post),
+        )
+        .route("/api/sandboxed/{name}", delete(sandboxed::delete))
+        .route("/sandbox/runner", get(sandbox_runner::document))
+        .route("/api/tool-approvals", get(approvals::pending_get))
+        .route(
+            "/api/tool-approvals/{approval_id}",
+            post(approvals::decision_post),
+        )
+        .route("/api/plugins/connections", get(plugins::connections_get))
+        .route("/api/plugins/servers", post(plugins::servers_post))
+        .route(
+            "/api/plugins/connections/{server_id}",
+            delete(plugins::connections_delete),
+        )
+        .route(
+            "/api/plugins/servers/{server_id}/connect",
+            post(plugins::servers_connect_post),
+        )
+        .route(
+            "/api/plugins/servers/{server_id}/oauth-client",
+            post(plugins::servers_oauth_client_post),
+        )
+        .route(
+            "/api/plugins/servers/{server_id}/refresh",
+            post(plugins::servers_refresh_post),
+        )
+        .route(
+            "/api/plugins/oauth/callback",
+            get(plugins::oauth_callback_get),
+        )
+        .route(
+            "/api/memories",
+            get(memories::list).post(memories::remember),
+        )
+        .route(
+            "/api/memories/control",
+            get(memories::control_get).put(memories::control_put),
+        )
+        .route("/api/memories/recall", post(memories::recall))
+        .route(
+            "/api/memories/{memory_id}",
+            axum::routing::put(memories::correct).delete(memories::delete),
+        )
+        .route("/api/memories/{memory_id}/forbid", post(memories::forbid))
+        .route("/api/threads/mint", post(threads::mint))
+        .route(
+            "/api/threads/{thread_id}/conversation",
+            get(threads::conversation),
+        )
+        .route("/api/threads/{thread_id}/runs", post(threads::begin_run))
+        .route(
+            "/api/threads/{thread_id}/runs/{run_id}/cancel",
+            post(threads::cancel_run),
+        )
+        .route("/api/threads/{thread_id}/ws", get(threads::websocket))
+        .route("/api/threads/{thread_id}/events", get(threads::events))
+        .route("/api/threads/{thread_id}", get(threads::status))
+        .route(
+            "/api/copilotkit/threads/{thread_id}/messages",
+            get(threads::history),
+        )
+        .route("/api/me", get(admin::me))
+        .route("/api/me/session", get(session::status))
+        .route("/api/auth/sign-out", post(session::sign_out))
+        .route(
+            "/api/me/preferences",
+            get(ui_preferences::get).put(ui_preferences::put),
+        )
+        .route("/api/admin/status", get(admin::status))
+        .route("/api/admin/identity-providers", get(auth_sso::list))
+        .route(
+            "/api/admin/identity-providers/{provider_id}",
+            delete(auth_sso::remove_admin),
+        )
+        .route("/api/admin/people", get(admin::people_list))
+        .route("/api/agent-tools/call", post(agent_tools::call))
+        .route(
+            "/api/agents/{agent_id}/callback-token",
+            post(agents::callback_token_post).delete(agents::callback_token_delete),
+        )
+        .route("/api/admin/audit-events", get(admin::audit_events))
+        .route(
+            "/api/computers/policy",
+            get(computers::policy_get).put(computers::policy_put),
+        )
+        .route("/api/admin/people/{user_id}/role", post(admin::people_role))
+        .route(
+            "/api/admin/people/{user_id}/access",
+            post(admin::people_access),
+        )
+        .with_state(state);
+    let router = match static_app {
+        Some(app) => static_app::mount(router, app),
+        None => router,
+    };
+    // Static routes are mounted before these layers so GUI HTML/assets and their 404/405 paths
+    // retain the same request-id, tracing, metrics and bounded-body transport contract as APIs.
+    // Axum only applies `Router::layer` to routes already present at the call site.
+    router
         // Axum 自带一个 2 MiB 的默认上限，且只对消费 body 的提取器生效。关掉它，让
         // `REQUEST_BODY_LIMIT_BYTES` 成为唯一真源 —— 两个上限就是两个答案。
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(axum::middleware::from_fn(record_http_metrics))
         .layer(axum::middleware::from_fn(trace_request))
-        .with_state(state)
 }
 
 #[cfg(test)]
@@ -212,11 +638,11 @@ mod tests {
     use crate::auth::FixedAuthResolver;
     use crate::metrics::{
         HTTP_METRIC_LABELS, HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_IN_FLIGHT, LABEL_METHOD,
-        LABEL_STATUS, LABEL_TRANSPORT, METHOD_OTHER,
+        LABEL_ROUTE, LABEL_STATUS, LABEL_TRANSPORT, METHOD_OTHER, ROUTE_UNMATCHED,
     };
     use crate::readiness::{ReadinessStatus, ReadinessVerdict};
     use crate::telemetry::{
-        ACTOR_ID_FIELD, REQUEST_ID_HEADER, REQUEST_SPAN_FIELDS, REQUEST_SPAN_NAME,
+        ACTOR_ID_FIELD, HTTP_ROUTE_FIELD, REQUEST_ID_HEADER, REQUEST_SPAN_FIELDS, REQUEST_SPAN_NAME,
     };
     use metrics_exporter_prometheus::PrometheusBuilder;
     use std::collections::BTreeSet;
@@ -260,7 +686,7 @@ mod tests {
             TenantId::new("tenant-g1"),
             ActorId::new(ACTOR),
             [Role::Admin, Role::User],
-            SENTINEL_AUTH_GENERATION,
+            openbot_contracts::auth::AuthGeneration::new(SENTINEL_AUTH_GENERATION),
             false,
         )
     }
@@ -422,6 +848,26 @@ mod tests {
             FixedAuthResolver::granting(auth()),
             Vec::new(),
         ))
+    }
+
+    #[tokio::test]
+    async fn anonymous_capabilities_exposes_no_dynamic_provider_shape_and_is_no_store() {
+        let captured = send(
+            router_for(app_with_rows(Vec::new())),
+            get("/api/capabilities"),
+        )
+        .await;
+        assert_eq!(captured.status, StatusCode::OK);
+        assert_eq!(captured.headers.get("cache-control").unwrap(), "no-store");
+        assert_eq!(
+            captured.json(),
+            serde_json::json!({
+                "mode": "rust",
+                "durableHistory": true,
+                "authProviders": [],
+                "ssoConfigured": false,
+            })
+        );
     }
 
     struct Captured {
@@ -782,6 +1228,30 @@ mod tests {
         );
     }
 
+    /// 非 loopback 明文暴露必须在线上 readiness 里可见；安全档位不能多一个 false 字段。
+    #[tokio::test]
+    async fn readiness_projects_only_a_real_insecure_transport_flag() {
+        let application: Arc<dyn ApplicationService> = app_with_rows(Vec::new());
+        let state = ServerBuilder::new(
+            Arc::clone(&application),
+            Arc::new(FixedAuthResolver::granting(auth())),
+        )
+        .with_readiness_probe(Arc::new(StaticProbe("database", ReadinessVerdict::Ready)))
+        .with_insecure_transport(true)
+        .build();
+        let exposed = send(router(state), get("/readiness")).await;
+        assert_eq!(exposed.status, StatusCode::OK);
+        assert_eq!(exposed.json()["insecure_transport"], true);
+
+        let safe = state_with(
+            application,
+            FixedAuthResolver::granting(auth()),
+            vec![Arc::new(StaticProbe("database", ReadinessVerdict::Ready))],
+        );
+        let safe = send(router(safe), get("/readiness")).await;
+        assert!(safe.json().get("insecure_transport").is_none());
+    }
+
     /// 依赖名进日志、不进响应体。
     #[tokio::test]
     async fn readiness_body_never_names_the_dependency() {
@@ -1007,7 +1477,7 @@ mod tests {
         (out, captured)
     }
 
-    /// 正向对照：请求 span 确实带着台账里那四个字段，值也对。
+    /// 正向对照：请求 span 确实带着台账里的字段，值也对。
     ///
     /// 没有这一条，下面"span 里没有凭据"的断言在"捕获层什么都没看见"的世界里恒真。
     #[test]
@@ -1024,6 +1494,10 @@ mod tests {
         assert_eq!(request_span.value_of("request_id").map(str::len), Some(36));
         assert_eq!(request_span.value_of("http.method"), Some("GET"));
         assert_eq!(request_span.value_of("http.status_code"), Some("200"));
+        assert_eq!(
+            request_span.value_of(HTTP_ROUTE_FIELD),
+            Some("/api/channels")
+        );
         // 身份**只**取 ID 字段，而且确实取到了（§16.4）。
         assert_eq!(request_span.value_of(ACTOR_ID_FIELD), Some(ACTOR));
 
@@ -1187,6 +1661,20 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn metrics_endpoint_uses_the_same_session_auth_boundary() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let state = ServerBuilder::new(
+            app_with_rows(Vec::new()),
+            Arc::new(FixedAuthResolver::rejecting(AppError::Unauthenticated)),
+        )
+        .with_metrics_handle(MetricsHandle::new(recorder.handle()))
+        .build();
+        let captured = send(router(state), get("/metrics")).await;
+        assert_eq!(captured.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(captured.json()["code"], "unauthenticated");
+    }
+
     /// §16.4 点名的两组指标确实被记下来了：**latency 与 status**、在飞数。
     ///
     /// 判据是渲染出来的文本，不是"我调用了 histogram!" —— 后者在 recorder 从未被接上
@@ -1216,6 +1704,7 @@ mod tests {
         assert!(rendered.contains(r#"status="200""#), "{rendered}");
         assert!(rendered.contains(r#"method="GET""#), "{rendered}");
         assert!(rendered.contains(r#"transport="http""#), "{rendered}");
+        assert!(rendered.contains(r#"route="/api/channels""#), "{rendered}");
         // 请求结束后在飞数回到 0（守卫真的执行了）。
         assert!(
             rendered.contains(&format!(
@@ -1330,8 +1819,8 @@ mod tests {
                 "{forbidden} 出现在 metrics label 里：{rendered}"
             );
         }
-        // 正向对照：台账里那三个确实都在渲染文本里出现过。
-        for label in [LABEL_TRANSPORT, LABEL_METHOD, LABEL_STATUS] {
+        // 正向对照：台账里的四个确实都在渲染文本里出现过。
+        for label in [LABEL_TRANSPORT, LABEL_METHOD, LABEL_STATUS, LABEL_ROUTE] {
             assert!(rendered.contains(&format!("{label}=")), "{rendered}");
         }
     }
@@ -1346,5 +1835,28 @@ mod tests {
         assert_eq!(captured.status, StatusCode::NOT_FOUND);
         // 刻意不套 §15.3 的错误信封：路由不存在 ≠ 资源不可见（见 `router` 的文档）。
         assert!(!captured.body.contains("not_visible"), "{}", captured.body);
+    }
+
+    #[test]
+    fn unmatched_paths_collapse_to_one_safe_route_label() {
+        let hostile = "/attacker-controlled-unique-path-987654";
+        let rendered = with_metrics(|handle| async move {
+            let state = ServerBuilder::new(
+                app_with_rows(Vec::new()),
+                Arc::new(FixedAuthResolver::granting(auth())),
+            )
+            .with_metrics_handle(handle)
+            .build();
+            let captured = send(router(state), get(hostile)).await;
+            assert_eq!(captured.status, StatusCode::NOT_FOUND);
+        });
+        assert!(
+            rendered.contains(&format!(r#"route="{ROUTE_UNMATCHED}""#)),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains(hostile),
+            "原始 path 泄漏进 label：{rendered}"
+        );
     }
 }

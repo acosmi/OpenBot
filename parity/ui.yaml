@@ -30,22 +30,25 @@
 # status
 # ---------------------------------------------------------------------------
 #
-# 本仓此刻零 GUI 实现代码（`crates/openbot-ui/src` 不存在），因此全部 152 条 status: todo，
-# 零条 done。`done_evidence` 键按 schema v1 规则 4 一律不出现。
+# Batch 15–40 已有真实 Leptos/Trunk/WASM/映射 join 证据，目前精确勾 86 条：
+# Batch18 前 20 条 + Batch19 Dialog/Sheet + Batch20 Menu + Batch21 MessageScroller +
+# Batch22 Combobox/Select + Batch23 Sidebar，27 条 primitive 子账全 done；Batch24 又关闭46条
+# Lucide映射；Batch25 layout 4条；Batch26 AgentPresence 2条；Batch27 共享占位线稿2条；
+# Batch30 ChannelRow；Batch31 又关闭 abstract-avatar→Avatar 与 AgentCard；Batch32关闭RecipientField。
+# Batch33–35虽已接draft/queue纯状态、plain conversation与durable Stop/production queue，但完整
+# Composer/channel组件仍缺sources/markdown/Screen等判据，未倒算整条。Google Drive品牌标、其余33业务、
+# Batch40关闭SettingsSidebar；Google Drive品牌标、其余32业务、6 runtime与27 golden保持todo；
+# 不能用已有地基冒充全量完成。
 #
 # ---------------------------------------------------------------------------
 # 未验证项（主控复核用，不得当成已核实）
 # ---------------------------------------------------------------------------
 #
-#   U1. Lucide 1.33.0 的 46 个目标图标名是否真的存在于该版本 SVG 集 —— 本轮**未验证**。
-#       缺 `lucide-icons-1.33.0.zip`（设计系统文档 §4.6.1 记的 sha256
-#       53831c8def65621f88cae315cdb38ac70db1d937062df35c93546efb00260a98），本机无该文件、
-#       且本任务禁网。解除条件 = 下载并校验该 zip 后跑
-#       `for n in <46 名>; do test -f icons/$n.svg || echo MISSING $n; done`。
-#       (c) 组每条的 evidence 只覆盖"上游确实用了这个 Tabler 图标"，不覆盖"Lucide 侧确实有这个名"。
-#   U2. 28 个新增图标同上，本 ledger 不逐条登记（设计系统文档 §4.6.2 说 `icons.toml` 是真源，
-#       本表是快照）。首版 allowlist = 46 + 28 = 74 个，该数只在设计系统文档 §4.6.2 与
-#       crates/openbot-ui/design/icons.toml 里，本 ledger 的 (c) 组只登记 46 Lucide + 1 品牌标。
+#   U1. **46条Lucide映射已于Batch24解除**：design-lint 对 GUI §4.6.2→icons.toml→UI ledger
+#       做逐条三向join，并继续校74 manifest/SVG安全与source zip SHA声明。唯一剩余的是
+#       IconBrandGoogleDrive：brand manifest/status、ledger均保持todo，官方SVG/条款/provenance未落。
+#   U2. 28 个新增图标已进入同一 74 项 allowlist 并由 design-lint 实证；本 ledger 本来就不
+#       逐条登记它们；Google Drive 品牌标仍不由这28条替代。
 #   U3. golden PNG 一张都还不存在（`fixtures/ui/` 目录未建），(e) 组的 evidence 只覆盖
 #       "上游确实有这个 route 文件"，不覆盖"golden 已生成"。
 
@@ -80,7 +83,7 @@ recount:
     cwd: "upstream"
     expect: 852
   # §17 倒数第 2 条：六库各自的引用文件数，(d) 组 5 条 + (c) 组作用域锚点
-  - command: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done"
+  - command: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done"
     cwd: "upstream"
     expect: "13 8 4 3 1 32 "
   # tw-animate-css 是 CSS `@import` 不是 JS `from`，所以上一条的 for 循环照不到它；(d) 第 6 条靠这条
@@ -139,10 +142,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # 全部 152 条 status=todo，零条 done（本仓此刻零 GUI 实现代码）
+  # Batch48累计完成前述地基、SettingsSidebar与Decisions；其余todo
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 152
+    expect: 65
+  - command: "grep -c '    status: \"done\"' parity/ui.yaml"
+    cwd: "repo"
+    expect: 87
+  - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
+    cwd: "repo"
+    expect: 87
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -164,7 +173,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0001"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "openbot_ui::primitives::button::Button 以闭集实现 chip/primary/ghost/danger-text、sm/md/lg 与 default/hover/focus-visible/active/disabled/loading/invalid/selected/open；selected/open/invalid/busy 显式映射 ARIA，callback 不暴露 MouseEvent。真实 Chromium 对同一 button 的 Enter/Space 得 count 0→1→2，loading/disabled 不可激活；Rust closed-state test、UI all-features 30/0/0、WASM/Clippy/gates 全绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG button；Space/Enter 激活。状态子集：全部 9 态（default/hover/focus-visible/active/disabled/loading/invalid/selected/open）。替代的无头库 = base-ui Button。variant `chip`（默认）/ `primary` / `ghost` / `danger-text`，size `sm/md/lg`。GUI 裁决：主按钮唯一合法实心色 `--accent-black`，彩色背景与彩色边框一律禁止。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -175,7 +185,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0002"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Combobox 与 Select 共用唯一 listbox context。Editable Combobox 保留 native 文本编辑，输入 contains filter/empty，Arrow/Home/End、disabled skip、Enter/click exactly once，Escape/outside/Tab cancel 并恢复 committed label；中文张命中张三。owner DOM focus + aria-activedescendant，named listbox/options，Field id/described/invalid exact。当前 Chromium Combobox 13/13 + final smoke 10/10，DOM target/五类/console 0；UI49/0/0、WASM/Clippy/gates绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG combobox + listbox；↑↓ Home End Enter Esc、typeahead。状态子集：default/focus/open/disabled/invalid。替代的无头库 = base-ui Combobox。Composer 的 `@coworker` / `/skill` 弹层复用它（§6.5），键盘模式必须与独立使用时逐条相同。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -186,7 +197,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0003"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Dialog 与 Sheet 共用唯一 modal kernel。Dialog trigger 显式 haspopup/expanded/controls；panel role=dialog、aria-modal、title/description IDs exact。Chromium 打开首焦点 close，focusables=close/cancel/save；Shift+Tab 首→末、Tab 末→首；Escape/Cancel/真实 CUA backdrop 点击均关闭，body scroll 与16个 path-sibling inert/aria-hidden 全恢复，焦点回 trigger。closed DOM duplicate/unnamed/nested=0，final bundle error=0；UI42/0/0、WASM/Clippy/gates绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG modal dialog；焦点陷阱、Esc 关闭、关闭后焦点归还触发元素。状态子集：open。替代的无头库 = base-ui Dialog。焦点归还触发元素这条是 a11y 闸门（§9.2）的机械判据之一，不是「尽量」。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -197,7 +209,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0004"
     migration_rule: "rename: dropdown-menu → Menu"
-    status: "todo"
+    status: "done"
+    done_evidence: "Menu compound 实现 root/trigger/content/item/separator 与一层 submenu；open/disabled 由 closed data-state 驱动并同步 native/ARIA。真实 Chromium 断言根级 ↑↓ wrap/Home/End/disabled skip、500ms 多字符 typeahead、子级 →/←/Escape 隔层、Enter/Space/click exactly once、outside dismiss、Tab/ShiftTab 出菜单且焦点不落 body；AX root/sub menu 与 menuitem 命名 exact，DOM 五类缺陷 0、console error 0。UI44/0/0、WASM/Clippy/fmt/i18n/design/css/bundle 全绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG menu button；↑↓ Home End Enter Esc、typeahead、子菜单 → ←。状态子集：open/disabled。替代的无头库 = base-ui Menu。改名而非改能力，故 label 仍是 parity。子菜单的 → ← 是 APG 要求，上游 base-ui 已实现，替代实现必须补齐。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -208,7 +221,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0005"
     migration_rule: "rename: empty → EmptyState"
-    status: "todo"
+    status: "done"
+    done_evidence: "openbot_ui::primitives::empty_state::EmptyState 为纯展示 section+h2+p，调用方必须给 stable heading id，避免原语级重复 ID；真实浏览器审批清空后呈现命名 region，DOM audit 重复 ID=0、标题跳级=0。UI 定向测试 19/0/0、WASM/Clippy 绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：纯展示，无键盘交互。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。改名理由：`empty` 在 Rust 里作模块名太泛；能力不变，label 仍是 parity。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -219,7 +233,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0006"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Field 以 scoped Provider 单点派生 control/description/error ID，避免 sibling context shadow；nested Input/Textarea/Switch 自动得到 id、aria-describedby、aria-invalid 与 disabled。Chromium 实得 labelFor=design-name、describedBy=design-name-description；invalid Textarea 只指向可见 design-notes-error(role=alert)，duplicate id=0。非法/可拆 ARIA token 的 control_id 负向 panic test 绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：label + 控件 + 说明 + 错误；`aria-describedby` / `aria-invalid` 自动接线。状态子集：invalid/disabled。上游此原语无无头库依赖（自绘）。自动接线是 §9.3 编码规则的落点：控件不允许自己手写 aria-describedby，一律由 Field 生成 id 并绑定，否则 a11y 闸门在「两处各写一遍」的漂移里恒绿。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -230,7 +245,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0007"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "InputGroup + closed Prefix/Suffix affix 保持焦点在内层控件；CSS 同时支持真实 :focus-within 与 data-state~focus-within。Chromium 点击 design-search 后 activeId 精确为 design-search、group outline=2px；compile-time gallery forced state 与 UI/WASM/Clippy/css-check 全绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：前后缀槽；焦点落在内层控件上。状态子集：focus-within。上游此原语无无头库依赖（自绘）。`focus-within` 是唯一状态，靠 CSS `:focus-within` 与 `data-state~=\"focus-within\"` 双通道，使 §10.3 设计画廊能静态渲染该态。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -241,7 +257,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0008"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "controlled Input 只接受闭集 text/email/password/search/url；Field context 自动接线，standalone 要 id/aria-label；invalid/disabled/focus 有 explicit aria/data state。Chromium fill 后 value=Ada Lovelace、aria-invalid=false、description exact；另一个 Field-disabled Input 原生 disabled=true，search input 可命名且获得真 focus。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG textbox。状态子集：focus/disabled/invalid。替代的无头库 = base-ui Input。invalid 态由 Field 下传 `aria-invalid`，不由 Input 自己判断。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -252,7 +269,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0009"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "ItemAction 只有 bounded same-origin absolute Link 或 unit-callback Button，scheme-relative/external path 负向拒绝；compound media/title/description/actions slot 与 automatic selected check。真实 Chromium Button Enter/Space count 0→1→2，disabled 不增；selected state=hover selected、check aria-hidden=true、nested interactive=0。selected 本身只改文字/图标，对 forced hover 才换 neutral surface。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：列表行；可渲染为 link 或 button，语义随之切换。状态子集：hover/selected/disabled。上游此原语无无头库依赖（自绘）。selected 只由文字色 + 图标色 + 对勾表达（GUI 裁决），不许上背景色或边框。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -263,7 +281,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0010"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Label 只渲染 semantic label[for]，Field 是关联 ID 唯一来源。真实 Chromium 三组 label 分别 exact 绑定 design-name/design-notes/design-switch；AX snapshot 中得到 textbox「显示名称/备注」与 switch「启用设置」，unnamed focusable=0。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：`for` 绑定到控件 id。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。id 由 Field 铸造并同时交给 Label 与控件，避免两处各生成一个。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -274,7 +293,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0011"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "MessageScroller compound 实现 initial end、following/free/anchored 三态、streaming ResizeObserver、child-list MutationObserver、prepend reading-item offset 恢复、48px user anchor、self-managed end button 与 production scroll_to_end controller。真实 Chromium 两组 9/9+8/8：wheel/scroll-key yield，free append/prepend/resize 不移阅读项，following append+收缩竞态/stream growth 恒 end，same-count swap 不回旧 anchor；AX named region→log/live polite、button exact，DOM 五类缺陷与 console error 0。UI47/0/0、WASM/Clippy/fmt/i18n/design/css/bundle 全绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：`role=\"log\"`、`aria-live=\"polite\"`。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。自动贴底 + \"回到底部\"胶囊 + 新消息时保持阅读位置。上游用 `IconArrowDown`（见 T-UI-0074），替代实现用 Lucide `arrow-down`。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -285,7 +305,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0012"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "MessageGroup + Message(article) + Avatar/Content/Header/Footer compound 全部落 Rust；MessageAlign 只 start/end，article 要非空 aria-label。真实 Chromium AX 得 article Ada Lovelace:start 与 张三:end，header/footer/bubble 均在各自 article 内；Bubble/markdown 语义不混入本条。UI all-features 40/0/0、WASM/Clippy/gates 绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：`article` 语义。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。Bot 正文的 markdown 渲染不在本条，见 (d) 组 streamdown → pulldown-cmark + syntect。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -296,7 +317,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0013"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "BubbleKind 只 Assistant/User，纯展示 div 无独立 role；两类无 border、neutral bg，forced hover 只换 neutral popover surface。Chromium 实得 assistant/user borderWidth=0px、data-kind exact，用户端随 MessageAlign=end；无彩色 background/border、无 remote asset。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：纯展示外框，无独立语义。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。用户 / Bot 两种气泡外框；卡片无边框、hover 只换底（GUI 裁决）。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -307,7 +329,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0014"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Select-only owner 与 Combobox 共用 navigation/selection/dismiss/state 内核。Committed value 与 active suggestion 分离；Arrow/Home/End、disabled skip、Escape retain、Enter/Space/click exactly once、Tab commit；500ms multi-character `p`+`u` 命中 Public，reset 后 p 命中 Private。owner focus/active-descendant、named listbox/option selected、Field disabled exact。当前 Chromium Select 14/14 + final smoke 10/10，UI49/0/0、WASM/Clippy/gates绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG select-only combobox；↑↓ Home End Enter Esc、typeahead。状态子集：default/focus/open/disabled/invalid。替代的无头库 = base-ui Select。上游用 `IconChevronUp` + `IconSelector`（见 T-UI-0086 / T-UI-0109），替代实现用 `chevron-up` + `chevrons-up-down`。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -318,7 +341,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0015"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "SeparatorOrientation 闭集 horizontal/vertical；decorative 时 role/orientation 均无且 aria-hidden=true，semantic 时 role=separator 并显式 aria-orientation。Chromium/AX 实得 decorative 0 landmark、horizontal/vertical 两条 semantic separator；Rust enum test 与 token-only CSS gates 绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：`role=\"separator\"`（装饰用途时 `aria-hidden`）。状态子集：无状态子集。替代的无头库 = base-ui Separator。装饰性分隔线必须 `aria-hidden`，否则屏幕阅读器读出一串无意义的 separator。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -329,7 +353,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0016"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Sheet 只选择 shared modal kernel 的 presentation+side，不复制焦点/关闭规则；SheetSide 闭集 top/right/bottom/left。Chromium right 样本 role=dialog/aria-modal、width=360、height=720=viewport，首焦点close；Shift+Tab/Tab 环 exact，Escape/Done 均关闭并把焦点还给 sheet trigger，scroll/inert marker 归零。四 side enum/CSS selectors 与 production WASM/Clippy gates 全绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：同 Dialog（焦点陷阱、Esc 关闭、焦点归还）。状态子集：open。上游此原语无无头库依赖（自绘）。侧向 dialog；Sidebar 在窄视口下折叠成 Sheet 形态（见 T-UI-0017）。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -340,7 +365,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0017"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "SidebarProvider 唯一 context 实现 lg≥1024 expanded240/user rail48、md自动rail48、<md同一 children 复用既有 Sheet。Ctrl/Cmd+B、trigger controls/expanded、named nav、same-origin links/current check、header/content/footer compound闭合；mobile Escape/shortcut/resize均清16 inert markers/body lock并返焦外部trigger。Chromium lg/md 8/8 + compact 8/8 + Meta+B；DOM/AX/overflow/errors绿。UI51/0/0、WASM/Clippy/gates绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：`nav` landmark；`aria-current=\"page\"`。状态子集：collapsed。替代的无头库 = shadcn sidebar。折叠 / rail / Sheet 三形态。上游业务层的 `app-sidebar` / `admin-sidebar` / `settings-sidebar` 都往它里面填内容——`app-sidebar` 那条按 §6.2 记 `替代`（见 T-UI-0037），另两条同名记 parity。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -351,7 +377,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0018"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "SkeletonShape 闭集 line/block/circle，三者真实 DOM 均 aria-hidden=true、AX snapshot 零 skeleton；normal-motion Chromium animationName=ob-skeleton-pulse。Rust CSS contract test 同时钉 prefers-reduced-motion 段含 transition-duration:0ms!important 与 animation:none!important；无信息仅靠动画表达。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：`aria-hidden`（加载占位不进无障碍树）。状态子集：无状态子集。上游此原语无无头库依赖（自绘）。动画在 reduced-motion 下必须静止（§4.5），否则 golden 在两种 media 下不确定。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -362,7 +389,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0019"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Switch 为 controlled native button role=switch，aria-checked 永远显式 true/false；Space handler preventDefault 后恰切一次，Field 可自动接线 id/description/invalid/disabled。Chromium Space 得 false→true，disabled+checked 样本仍 aria-checked=true 且不可用；AX name=启用设置，track/thumb 只用 neutral token。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG switch；Space 切换。状态子集：checked/disabled。替代的无头库 = base-ui Switch。语义色只落文字 / 图标 / 状态点，开关本体保持中性（GUI 裁决）。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -373,7 +401,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0020"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "controlled Textarea 是 multiline textbox，Field 自动接线；Rust/WASM 以真实 scrollHeight 设置 inline height，跨引擎 max-height 取 tokens.toml 唯一 --size-textarea-max=218px（十行×20 + padding16 + border2），不把十行公式分裂到手写 CSS typed arithmetic。Chromium 输入16行得 client=216/max=218/scroll=374、capped=true；invalid/error/disabled/focus 与 UI/WASM/Clippy 全绿。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG textbox multiline。状态子集：focus/disabled/invalid。上游此原语无无头库依赖（自绘）。自动增高上限 10 行。Composer 内嵌它（§6.5），输入法组合期间 Enter 不发送那条是 Composer 的新增行为，不在本条。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -384,7 +413,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0021"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Tooltip/TooltipTrigger 用 scoped Provider；trigger 只 bounded same-origin Link 或 unit Button。hover/focus 共用 exact 400ms generation，分别跟踪 hovered/focused，leave 不会关掉仍 focused 的提示；blur-before-delay 取消，Escape 立即关并清 aria-describedby。Chromium：immediate hidden→450ms visible(role=tooltip/exact describedBy)→Escape hidden；blur-before-delay 恒 hidden；preview forced open，external link 负向拒绝。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG tooltip；hover/focus 显示、Esc 隐藏、延迟 400ms。状态子集：open。替代的无头库 = base-ui Tooltip。400ms 延迟是确定值，golden 截图前必须等过它或强制 `data-state=\"open\"`，否则截图不确定。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
 
@@ -399,7 +429,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0022"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Toast role=status + aria-live=polite，exact 5000ms timeout、manual dismiss、compile-gallery forced open；ToastViewport 提供固定有界 stack。Chromium 初始自动 dismiss count=1；reopen 3s→manual count=2→立即 reopen，旧 deadline 后仍 visible/count=2，新 deadline 后 hidden/count=3，证明 generation 防 stale timer。preview toast 在 AX 为 polite status；未把它冒充所有 accepted:false 业务面已接线。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1"
     notes: "键盘 / ARIA：`role=\"status\"`（不是 alert：非阻塞反馈不该打断屏幕阅读器当前朗读），5s 自动消失，可手动关闭。 用于一切 `accepted:false` 类用户可见反馈——「静默失败」在这套 UI 里是缺陷不是省事。5s 与 `role` 都是确定值，golden 里必须靠 `data-state` 强制而不是等真定时器。"
 
@@ -410,7 +441,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0023"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "BadgeTone 封闭 neutral/caution/success/info/danger 五值，渲染 visible text + aria-hidden 状态点，语义色只落文字/currentColor、背景/边框保持中性；tone 单测 + tokens.toml 84 对 WCAG AA 对比度测试通过，Approval 浏览器卡片实显 caution。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1"
     notes: "键盘 / ARIA：纯展示，无键盘交互。 纯文字状态；语义色（danger / caution / success / info）只落文字与状态点，永不落背景与边框（GUI 裁决）。这条与 §4.2 的对比度单测绑定：文字色对 bg / bg-chip 必须 ≥ 4.5:1。"
 
@@ -421,7 +453,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0024"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "Kbd 使用 semantic <kbd>，modifier 闭集 Primary/Control/Alt/Shift，key 闭集 Enter/Escape/Slash/ASCII alphanumeric；任意标点负向拒绝。WASM 读 Navigator platform：Apple Primary/Alt/Shift→⌘/⌥/⇧，其它平台→Ctrl/Alt/Shift+，纯函数双平台测试钉映射；特殊键文案走 i18n。Mac Chromium 显示⌘K并读 Command K，另有回车/⇧回车/Esc/斜杠 exact AX name。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1"
     notes: "键盘 / ARIA：`<kbd>` 语义，无交互。 渲染快捷键字面（`Enter` / `Shift+Enter` / `Esc` / `⌘K`）。跨平台修饰键名由 i18n + 平台探测决定，不 hardcode 单一平台写法。"
 
@@ -432,7 +465,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0025"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "AvatarSize 闭集24/32/40；image 只允许 bounded same-origin absolute path且 alt空，remote URL负向拒绝；fallback 英文首/末词 initials、CJK首字。SHA-256(principal_id) 前32bit mod8 选 tokenized light/dark palette，16组 fg 对比均≥4.5。Chromium 三样本=AL/张/AL、32/24/40，same principal palette 1/1、另一 principal 3；外层 role=img 只按 name 宣读一次。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1；另 find app/src/components -name '*avatar*.tsx' | wc -l = 2（业务层确实有，原语层确实没有）"
     notes: "键盘 / ARIA：`img` 或首字母文本 + `aria-label`；无交互。 §6.6。上游 primitives 层零 avatar（本条 evidence），但业务层有 2 个（find app/src/components -name '*avatar*.tsx' | wc -l = 2），它们各自在 (b) 组记一条 `替代`（T-UI-0029 abstract-avatar、T-UI-0040 channels/avatar）。本条 label=新增 的作用域是**原语层**，不是「OpenBot 从来没有头像」——两者不冲突，但混起来就是把新增写成当前行为。确定性：同一 principal_id 在任何平台任何时间得到同一头像（SHA-256 前 8 位 → 8 个预设中性低饱和底色），golden 依赖这条。"
 
@@ -443,7 +477,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0026"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "真实 Chromium/WASM：APG radiogroup 名称经 i18n；system/light/dark 的 aria-checked 显式 true/false、roving tabindex 0/-1；Arrow 四向循环、Home/End 均即时切换 html class 并把焦点移到选项。Trunk strict-CSP bundle 外部脚本 1/内联 0。偏好持久化不归本新增 control 条目，仍由 T-UI-0072 theme 模块保持 todo。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1；另 grep -E 'prefers-color-scheme' app/src/lib/theme.ts app/src/components/theme-provider.tsx app/src/styles.css | wc -l = 0，正向对照 grep -c 'prefers-reduced-motion' app/src/styles.css = 1"
     notes: "键盘 / ARIA：APG radiogroup 或 menu button（三选一）；`aria-label` 经 i18n。 §7 三态 `system` / `light` / `dark`。上游只有手动 light/dark（`lib/theme.ts::THEME_STORAGE_KEY = \"openbot-theme\"` + `<html class=\"dark\">`），`prefers-color-scheme` 在 lib/theme.ts / theme-provider.tsx / styles.css 三处合计 0 命中（recount 第 14 条），正向对照 prefers-reduced-motion 在 styles.css 命中 1（recount 第 15 条）⇒ 命令确实扫得到 media query。所以 light/dark 两态是 parity（由 T-UI-0072 theme-provider → theme 模块那条承担），`system` 第三态是本条的新增部分。图标 `sun` / `moon` / `sun-moon` 属 §4.6.2 的 28 个新增图标（见头部 U2）。"
 
@@ -454,7 +489,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0027"
     migration_rule: "n/a: 上游 primitives 层零对应物"
-    status: "todo"
+    status: "done"
+    done_evidence: "真实 Chromium/WASM：trigger 的 aria-expanded 显式 false/true，Enter/Space/ArrowDown/ArrowUp 打开并聚焦当前语言；menuitemradio 的 aria-checked 显式 true/false、aria-current 只落当前项；Arrow/Home/End 移动焦点，Enter/Space 选择，Escape 关闭并把焦点还给 trigger。选择 zh-CN/en 即时更新 html lang；Batch16 经 typed partial PUT 持久化，reload immediate+settled 均保持所选 locale，失败有本地化 role=alert。UI 19/0/0、WASM/Clippy 绿。"
     evidence: "ls app/src/components/ui | grep -E 'toast|badge|kbd|avatar|theme|locale' | wc -l = 0；正向对照 ls app/src/components/ui | grep -E '…|button' | wc -l = 1；另 i18n 框架 0 命中 / 正向对照 38"
     notes: "键盘 / ARIA：APG menu button；当前语言 `aria-current`。 §8。上游零 i18n 框架命中（grep -rlE 'useTranslation|i18next|react-intl|next-intl|<Trans\\b' … = 0），正向对照同一条命令加 `useQuery` 后命中 38 个文件 ⇒ 作用域确实覆盖到了 app/src。字符串全部硬编码英文，所以整个 i18n 面（含本原语）都是新增，不存在 parity 面。图标 `languages` 属 28 个新增图标。"
 
@@ -476,12 +512,13 @@ entries:
   - id: "biz-agents-abstract-avatar"
     upstream: "app/src/components/agents/abstract-avatar.tsx"
     label: "替代"
-    target: "openbot_ui::primitives::avatar::Avatar"
+    target: "openbot_ui::primitives::avatar::Avatar + openbot_ui::features::agents::{agent_card,agent_profile}"
     owner: "openbot-ui"
     test_id: "T-UI-0029"
     migration_rule: "remove: 生成式头像收敛进统一 Avatar 原语"
-    status: "todo"
+    status: "done"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
+    done_evidence: "Batch31：真实roster card与detail profile均只消费统一SHA-256确定性Avatar；无abstract-avatar/boring-avatars/remote image，UI tests/WASM/Chromium四卡头像AX通过。"
     notes: "§6.2 组 `agents`（该组上游文件数 8）。§6.2 点名的 7 处替代之一。上游 25 行，配合 `boring-avatars`（(d) 组 T-UI-0124）生成抽象头像；本项目收敛为 §6.6 的确定性 Avatar（SHA-256(principal_id) 前 8 位 → 8 个预设中性低饱和底色）。替代而非 parity 的判据：视觉形态换了、生成算法换了、能力收敛（不再是任意抽象图形）。"
 
   - id: "biz-agents-agent-card"
@@ -491,8 +528,9 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0030"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
+    done_evidence: "Batch31：AgentCard保留name+三行role、144×180/4:5形态、URL-owned同源profile链接，统一Avatar与stagger；UI host/WASM/Chromium 1440/1024/900/600绿。"
     notes: "§6.2 组 `agents`（该组上游文件数 8）。同名保留。"
 
   - id: "biz-agents-agent-fields"
@@ -546,7 +584,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0035"
     migration_rule: "remove: 437 行 canvas/shader orb 收敛为 20px 状态环"
-    status: "todo"
+    status: "done"
+    done_evidence: "AgentPresence 以 reactive Signal<AgentPresenceState> 闭集投影 idle/thinking/speaking/error，固定20px；完整环/单弧/双弧/danger环分形，本地化 role=img name。thinking=ob-agent-presence-spin 1.2s infinite，speaking双弧=1.2s alternate/alternate-reverse，error=160ms×1；时长只消费tokens.toml生成值。全局reduce闸门构造性animation:none。Chromium四态均20×20、AX名各1，DOM/overflow/remote/console=0；UI57/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `agents`（该组上游文件数 8）。§6.2 + §6.7 点名的替代。上游实测 437 行（wc -l app/src/components/agents/orb/agent-orb.tsx = 437），canvas/shader + 音频反应；本项目按原则 7 收为 20px 状态环：idle 静止灰环 / thinking 慢速旋转弧（loader-circle，1.2s 每圈）/ speaking 两段弧交替 / error 变 danger 色静止环 + 单次 160ms 横向位移。reduced-motion 下全部静止，只靠颜色与 aria-label 表达状态。上游 orb 与 ai-core 两个文件合并成这一个 Rust 组件，故两条 entry 指向同一 target。"
 
@@ -557,7 +596,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0036"
     migration_rule: "remove: 395 行 shader 内核并入同一状态环"
-    status: "todo"
+    status: "done"
+    done_evidence: "上游395行 shader/audio 内核与437行 orb 外壳按第一真源合并到同一 AgentPresence，不在Rust重建canvas/shader。共享机器证据：四态Signal、20px、形状+本地化AX、1.2s thinking/双弧speaking、160ms单次error、全局reduce静止；Chromium role=img四名各1且0缺陷；UI57/0/0、WASM/Clippy/gates绿。motion运行时总项仍todo。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `agents`（该组上游文件数 8）。同上条的另一半：wc -l app/src/components/agents/orb/ai-core.tsx = 395。两个文件在上游是 orb 的外壳与内核，本项目合并为一个组件——**这是 45 → Leptos 组件数不是 1:1 的两处之一**（另一处是 app-sidebar → shell），台账里仍各记一条，因为台账的单位是上游文件不是目标组件。"
 
@@ -570,7 +610,7 @@ entries:
     migration_rule: "remove: 组件下沉为 shell 的一部分"
     status: "todo"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `app-sidebar`（该组上游文件数 2）。§6.2 点名的替代（原文\"`app-sidebar` → `Sidebar` 内容\"）。上游 387 行是一个业务组件；本项目里它是 App shell 的一部分（§5.1 / §13 的 `shell/`），内容填进 `openbot_ui::primitives::sidebar::Sidebar`（T-UI-0017）。判据：落点从 features/ 换到 shell/，不再是可独立复用的业务组件 ⇒ 替代。"
+    notes: "§6.2 组 `app-sidebar`（该组上游文件数 2）。§6.2 点名的替代（原文\"`app-sidebar` → `Sidebar` 内容\"）。Batch30已落真实shell content：PG分页/search、socket reconnect-refetch、current row、account/session/sign-out与三断点同一children；Batch31接Agents、Batch32接真实new-channel；skills/settings/admin destinations仍未迁移，故本总项仍todo。"
 
   - id: "biz-app-sidebar-channel"
     upstream: "app/src/components/app-sidebar/channel.tsx"
@@ -579,7 +619,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0038"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch30 production ChannelRow uses a bounded percent-encoded same-origin /channel/:id link, deterministic decorative avatar, visible name/last-message/localized relative time and exact aria-current. Pure UI tests cover closed nonnegative relative units; real Chromium proves 50→52 keyset pagination, name/visible-preview-only search/no-match, socket generation 1→4 refetch, single current row, nested detail navigation/hard reload, zero duplicate accessible avatar name and zero console errors. Host UI 63/0/0, WASM/Clippy/gates green. Evidence: docs/2026-08-26-G3-G6-ChannelDetail与ChannelRow-batch30.md"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `app-sidebar`（该组上游文件数 2）。同名保留（侧栏里的单个 channel 行）。"
 
@@ -652,11 +693,12 @@ entries:
   - id: "biz-channels-recipient-field"
     upstream: "app/src/components/channels/recipient-field.tsx"
     label: "parity"
-    target: "openbot_ui::features::channels::recipient_field"
+    target: "openbot_ui::features::channels::recipient_field::RecipientField"
     owner: "openbot-ui"
     test_id: "T-UI-0045"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch32: RecipientField directly reuses the shared editable Combobox/listbox engine, accepts only Server AgentProfile projections, stores one ID in URL state, hashes option DOM IDs, and locks changes during create/begin replay. UI68/0/0 + WASM/Clippy. Browser proves keyboard filter/ArrowDown/Enter selects Knowledge Desk and writes ?agent=fixture-system-public; hidden-but-visible direct Agent loads by URL/hard reload; AX named combobox/options and duplicate IDs0."
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `channels`（该组上游文件数 8）。同名保留；基于 Combobox（T-UI-0002）。"
 
@@ -733,7 +775,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0052"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "ComputerPlaceholder 不复制上游162行SVG，只复用 settings::ComputerPlaceholderArt；固定3:2 frame、装饰aria-hidden，不制造假status/live region。源码反向单测实得唯一1个<svg>、wrapper 0个<svg>，无gradient/radial/filter/defs/url/id/字面fill/stroke。Chromium两实例同为1200×800/3:2/currentColor，AX img/focusable=0，DOM/overflow/remote/console=0；UI59/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `computer`（该组上游文件数 5）。同名保留。等待态的装饰 SVG 不在本条，在 settings/background（T-UI-0065）。"
 
@@ -777,7 +820,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0056"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch48新增同一HumanDecisionCard的Approval/Choice pending+complete双态；Approval保留title/summary/details/custom labels/optional note，Choice保留ordered options/id/label/description。等待/批准/拒绝/已回答/错误全部reactive i18n；本项目视觉真源下只用中性chrome、唯一primary实心按钮和文字+状态点语义色，selected option以文字+Check表达。conversation只渲染当前active run的actor-scoped pending；answer防双击，checkpoint后从durable recorded result重建complete，坏result/错label走共享RefusedCard；Settings两preview均无enabled control。UI128/0/0；i18n529/design86+74/CSS281；bundle1322323/96050/740216/1/0。最终release浏览器中英即时切换、4视口overflow0、Approval 4097-byte note禁交互、Choice Enter、两者answer+hard reload、Gallery14 tile/2 Decisions、duplicate/nested/alerts/console均0。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `gallery`（该组上游文件数 8）。同上。"
 
@@ -832,7 +876,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0061"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "DetailPanelLayout/Main/Panel 以 URL-owned MaybeProp 驱动 opening/open/closing/closed；360px、160/240ms、easing 均直读生成 Rust token。支持 WAAPI width/flex-basis/opacity 尺寸联动，API 不可用时同 token CSS transition fallback，reduce=0ms；动画完成后才卸载 detail 子树。关闭 Enter/Space/click 本机计数0→1→2→3，每次返焦 opener；Chromium 实得 WAAPI path、exit/enter=160/240、named complementary=1、panel=360px。UI56/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `layout`（该组上游文件数 4）。同名保留。"
 
@@ -843,7 +888,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0062"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "PageWidth 闭集只允许 content/table/chat=960/1200/768 token；PageTopbar=44px，PageBackLink 构造性拒绝非同源，PageHeader/PageSection stable ID+单一h1/h2，PageRows/PageEmpty 闭合配置页解剖。真实 ApprovalPage 已接 PageShell；1024×640 实得 h1/main/nav=1/1/1、content max=960px、topbar=44px、横向溢出0、重复ID0、远程资产0。UI56/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `layout`（该组上游文件数 4）。同名保留；§5.1 App shell 的 parity 面在此，尺寸契约是新增（§5.1 标题原文\"尺寸新增\"），尺寸不在本 ledger 逐条登记。上游用 IconChevronLeft。"
 
@@ -854,7 +900,8 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0063"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "RowMark 只作第三方/vendor 中性 tile，子图标仍 currentColor，不使用语义色 surface。compile-only 真实 connector Item 接线；1024×640 实得 36×36、connector named link=1、嵌套交互0、横向溢出0。UI56/0/0、design/css/bundle gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `layout`（该组上游文件数 4）。同名保留。"
 
@@ -865,9 +912,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0064"
     migration_rule: "remove: JS 交错动画 → CSS 级联工具类"
-    status: "todo"
+    status: "done"
+    done_evidence: "StaggerItem 以静态 ob-stagger-item class + data-stagger 0..8 闭集实现 CSS mount-only entrance；超过8项统一cap=8，delay只消费 --motion-stagger-step=30ms，@keyframes=ob-list-stagger。全局 prefers-reduced-motion 强制 animation:none，不引入 JS/动画crate。单测覆盖0/7/8/200→0/7/8/8；Chromium 实得 data-stagger=0 + animationName=ob-list-stagger。motion 总替代项仍todo。UI56/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `layout`（该组上游文件数 4）。§6.2 + §4.5 ③ 点名的替代。上游 68 行、依赖 `motion` 库做逐项延迟入场；本项目换成纯 CSS 工具类（`--stagger-index` + `animation-delay` 级联）。target 是 CSS 落点不是 Rust 模块——这是全 ledger 唯一一条 target 落在 CSS 文件上的 entry，因为替代物本身就不是 Rust 代码。reduced-motion 下必须整体静止（§4.5），否则 golden 在两种 media 下不确定。"
+    notes: "§6.2 组 `layout`（该组上游文件数 4）。§6.2 + §4.5 ③ 点名的替代。上游 68 行、依赖 `motion` 库做逐项延迟入场；本项目换成纯 CSS（`data-stagger=0..8` + `--motion-stagger-step` + `animation-delay`）。target 是 CSS 落点不是 Rust 模块——这是全 ledger 唯一一条 target 落在 CSS 文件上的 entry，因为替代物本身就不是 Rust 代码。reduced-motion 下必须整体静止（§4.5），否则 golden 在两种 media 下不确定。"
 
   - id: "biz-settings-background"
     upstream: "app/src/components/settings/background.tsx"
@@ -876,20 +924,22 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0065"
     migration_rule: "rename: background → ComputerPlaceholderArt（同时重绘为中性线稿）"
-    status: "todo"
+    status: "done"
+    done_evidence: "ComputerPlaceholderArt 把上游彩色渐变+噪声/filter SVG重绘为一份中性线稿；viewBox=0 0 1200 800、preserve=xMidYMid meet，只用fill=none/stroke=currentColor与token surface，无shadow/defs/ID/remote。Chromium两实例均aria-hidden=true/focusable=false，defs/gradient/filter/style/id/remote/literal-color=0，computed stroke精确继承fg-muted；UI59/0/0、WASM/Clippy/gates绿。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
     notes: "§6.2 组 `settings`（该组上游文件数 2）。§6.2 点名的替代。上游 162 行，是 computer frame 的等待态装饰 SVG，文件名 `background` 说不清它是什么；本项目改名为 ComputerPlaceholderArt 并按 GUI 裁决重绘为中性线稿（不用彩色、不上阴影）。改名 + 重绘 ⇒ 替代而非 parity。"
 
   - id: "biz-settings-settings-sidebar"
     upstream: "app/src/components/settings/settings-sidebar.tsx"
     label: "parity"
-    target: "openbot_ui::features::settings::settings_sidebar"
+    target: "openbot_ui::features::settings::SettingsShell"
     owner: "openbot-ui"
     test_id: "T-UI-0066"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
+    done_evidence: "Batch38建立200px SettingsShell，Batch39/40在对应真实route完成后依次加入Connected accounts与Gallery；当前上游顺序Back、General exact、Connected prefix、Gallery prefix完整保留，并新增Memory exact。aside+named nav不嵌第二main，四destination全为bounded同源真实链接；index/detail hard reload均current恰1。release 1280实得subnav200、nav2/main1/h1 1、overflow/duplicate/alerts/console0；既有Batch38四视口堆叠证据保持。"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `settings`（该组上游文件数 2）。同名保留；内容填进 primitives::sidebar::Sidebar。上游用 IconPlug 等。"
+    notes: "§6.2 组 `settings`（该组上游文件数 2）。职责保留在SettingsShell的secondary aside+named nav；上游General/Connected accounts/Components gallery顺序与IconPlug/IconLayoutGrid保持，Memory是v3新增destination。全局App shell仍是唯一main/SidebarProvider。"
 
   - id: "biz-skills-edit-skill"
     upstream: "app/src/components/skills/edit-skill.tsx"
@@ -968,9 +1018,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0073"
     migration_rule: "rename: IconAlertTriangle → Lucide `triangle-alert`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconAlertTriangle\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconAlertTriangle` → Lucide `triangle-alert`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/triangle-alert.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconAlertTriangle` → Lucide `triangle-alert`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/triangle-alert.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconArrowDown"
     upstream: "app/src/components/ui/message-scroller.tsx::IconArrowDown"
@@ -979,9 +1030,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0074"
     migration_rule: "rename: IconArrowDown → Lucide `arrow-down`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconArrowDown\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/ui/message-scroller.tsx）"
-    notes: "Tabler `IconArrowDown` → Lucide `arrow-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconArrowDown` → Lucide `arrow-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconArrowLeft"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconArrowLeft"
@@ -990,9 +1042,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0075"
     migration_rule: "rename: IconArrowLeft → Lucide `arrow-left`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconArrowLeft\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconArrowLeft` → Lucide `arrow-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconArrowLeft` → Lucide `arrow-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconArrowUp"
     upstream: "app/src/components/channels/composer/composer.tsx::IconArrowUp"
@@ -1001,9 +1054,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0076"
     migration_rule: "rename: IconArrowUp → Lucide `arrow-up`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconArrowUp\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/channels/composer/composer.tsx）"
-    notes: "Tabler `IconArrowUp` → Lucide `arrow-up`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-up.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconArrowUp` → Lucide `arrow-up`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-up.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconArrowUpRight"
     upstream: "app/src/routes/_authed/admin/plugins/$key.tsx::IconArrowUpRight"
@@ -1012,9 +1066,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0077"
     migration_rule: "rename: IconArrowUpRight → Lucide `arrow-up-right`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconArrowUpRight\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/routes/_authed/admin/plugins/$key.tsx）"
-    notes: "Tabler `IconArrowUpRight` → Lucide `arrow-up-right`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-up-right.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconArrowUpRight` → Lucide `arrow-up-right`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/arrow-up-right.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconBolt"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconBolt"
@@ -1023,9 +1078,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0078"
     migration_rule: "rename: IconBolt → Lucide `zap`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconBolt\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconBolt` → Lucide `zap`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/zap.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconBolt` → Lucide `zap`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/zap.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconBox"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconBox"
@@ -1034,9 +1090,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0079"
     migration_rule: "rename: IconBox → Lucide `box`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconBox\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconBox` → Lucide `box`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/box.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconBox` → Lucide `box`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/box.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconBrandGoogleDrive"
     upstream: "app/src/routes/_authed/admin/plugins/index.tsx::IconBrandGoogleDrive"
@@ -1056,9 +1113,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0081"
     migration_rule: "rename: IconBuildingBank → Lucide `landmark`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconBuildingBank\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconBuildingBank` → Lucide `landmark`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/landmark.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconBuildingBank` → Lucide `landmark`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/landmark.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconCheck"
     upstream: "app/src/components/ui/combobox.tsx::IconCheck"
@@ -1067,9 +1125,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0082"
     migration_rule: "rename: IconCheck → Lucide `check`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconCheck\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/ui/combobox.tsx）"
-    notes: "Tabler `IconCheck` → Lucide `check`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/check.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconCheck` → Lucide `check`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/check.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconChevronDown"
     upstream: "app/src/components/ui/combobox.tsx::IconChevronDown"
@@ -1078,9 +1137,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0083"
     migration_rule: "rename: IconChevronDown → Lucide `chevron-down`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconChevronDown\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/ui/combobox.tsx）"
-    notes: "Tabler `IconChevronDown` → Lucide `chevron-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconChevronDown` → Lucide `chevron-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconChevronLeft"
     upstream: "app/src/components/layout/page-shell.tsx::IconChevronLeft"
@@ -1089,9 +1149,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0084"
     migration_rule: "rename: IconChevronLeft → Lucide `chevron-left`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconChevronLeft\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/layout/page-shell.tsx）"
-    notes: "Tabler `IconChevronLeft` → Lucide `chevron-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconChevronLeft` → Lucide `chevron-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconChevronRight"
     upstream: "app/src/components/ui/dropdown-menu.tsx::IconChevronRight"
@@ -1100,9 +1161,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0085"
     migration_rule: "rename: IconChevronRight → Lucide `chevron-right`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconChevronRight\\b' --include=*.tsx --include=*.ts app/src | wc -l = 6（首个 = app/src/components/ui/dropdown-menu.tsx）"
-    notes: "Tabler `IconChevronRight` → Lucide `chevron-right`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 6 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-right.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconChevronRight` → Lucide `chevron-right`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 6 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-right.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconChevronUp"
     upstream: "app/src/components/ui/select.tsx::IconChevronUp"
@@ -1111,9 +1173,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0086"
     migration_rule: "rename: IconChevronUp → Lucide `chevron-up`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconChevronUp\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/ui/select.tsx）"
-    notes: "Tabler `IconChevronUp` → Lucide `chevron-up`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-up.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconChevronUp` → Lucide `chevron-up`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevron-up.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconClock"
     upstream: "app/src/routes/_authed/admin/components/$name.tsx::IconClock"
@@ -1122,9 +1185,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0087"
     migration_rule: "rename: IconClock → Lucide `clock`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconClock\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconClock` → Lucide `clock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/clock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconClock` → Lucide `clock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/clock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconCode"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconCode"
@@ -1133,9 +1197,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0088"
     migration_rule: "rename: IconCode → Lucide `code`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconCode\\b' --include=*.tsx --include=*.ts app/src | wc -l = 4（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconCode` → Lucide `code`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 4 个文件引用它。随包落点 crates/openbot-ui/design/icons/code.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconCode` → Lucide `code`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 4 个文件引用它。随包落点 crates/openbot-ui/design/icons/code.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconDatabase"
     upstream: "app/src/routes/_authed/admin/components/$name.tsx::IconDatabase"
@@ -1144,9 +1209,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0089"
     migration_rule: "rename: IconDatabase → Lucide `database`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconDatabase\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconDatabase` → Lucide `database`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/database.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconDatabase` → Lucide `database`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/database.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconDeviceDesktop"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconDeviceDesktop"
@@ -1155,9 +1221,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0090"
     migration_rule: "rename: IconDeviceDesktop → Lucide `monitor`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconDeviceDesktop\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconDeviceDesktop` → Lucide `monitor`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/monitor.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconDeviceDesktop` → Lucide `monitor`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/monitor.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconDots"
     upstream: "app/src/routes/_authed/_app/skills.tsx::IconDots"
@@ -1166,9 +1233,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0091"
     migration_rule: "rename: IconDots → Lucide `ellipsis`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconDots\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/_app/skills.tsx）"
-    notes: "Tabler `IconDots` → Lucide `ellipsis`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/ellipsis.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconDots` → Lucide `ellipsis`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/ellipsis.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconExternalLink"
     upstream: "app/src/routes/_authed/admin/plugins/$key.tsx::IconExternalLink"
@@ -1177,9 +1245,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0092"
     migration_rule: "rename: IconExternalLink → Lucide `external-link`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconExternalLink\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/plugins/$key.tsx）"
-    notes: "Tabler `IconExternalLink` → Lucide `external-link`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/external-link.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconExternalLink` → Lucide `external-link`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/external-link.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconFile"
     upstream: "app/src/components/computer/activity-log.tsx::IconFile"
@@ -1188,9 +1257,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0093"
     migration_rule: "rename: IconFile → Lucide `file`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconFile\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/computer/activity-log.tsx）"
-    notes: "Tabler `IconFile` → Lucide `file`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/file.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconFile` → Lucide `file`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/file.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconFileText"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconFileText"
@@ -1199,9 +1269,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0094"
     migration_rule: "rename: IconFileText → Lucide `file-text`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconFileText\\b' --include=*.tsx --include=*.ts app/src | wc -l = 5（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconFileText` → Lucide `file-text`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 5 个文件引用它。随包落点 crates/openbot-ui/design/icons/file-text.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconFileText` → Lucide `file-text`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 5 个文件引用它。随包落点 crates/openbot-ui/design/icons/file-text.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconFolder"
     upstream: "app/src/components/computer/activity-log.tsx::IconFolder"
@@ -1210,9 +1281,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0095"
     migration_rule: "rename: IconFolder → Lucide `folder`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconFolder\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/computer/activity-log.tsx）"
-    notes: "Tabler `IconFolder` → Lucide `folder`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/folder.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconFolder` → Lucide `folder`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/folder.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconKey"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconKey"
@@ -1221,9 +1293,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0096"
     migration_rule: "rename: IconKey → Lucide `key`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconKey\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconKey` → Lucide `key`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/key.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconKey` → Lucide `key`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/key.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconLayoutGrid"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconLayoutGrid"
@@ -1232,9 +1305,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0097"
     migration_rule: "rename: IconLayoutGrid → Lucide `layout-grid`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconLayoutGrid\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconLayoutGrid` → Lucide `layout-grid`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/layout-grid.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconLayoutGrid` → Lucide `layout-grid`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/layout-grid.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconLayoutSidebar"
     upstream: "app/src/components/ui/sidebar.tsx::IconLayoutSidebar"
@@ -1243,9 +1317,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0098"
     migration_rule: "rename: IconLayoutSidebar → Lucide `panel-left`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconLayoutSidebar\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/ui/sidebar.tsx）"
-    notes: "Tabler `IconLayoutSidebar` → Lucide `panel-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/panel-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconLayoutSidebar` → Lucide `panel-left`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/panel-left.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconListDetails"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconListDetails"
@@ -1254,9 +1329,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0099"
     migration_rule: "rename: IconListDetails → Lucide `list-checks`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconListDetails\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconListDetails` → Lucide `list-checks`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/list-checks.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconListDetails` → Lucide `list-checks`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/list-checks.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconLock"
     upstream: "app/src/routes/_authed/admin/people.tsx::IconLock"
@@ -1265,9 +1341,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0100"
     migration_rule: "rename: IconLock → Lucide `lock`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconLock\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/people.tsx）"
-    notes: "Tabler `IconLock` → Lucide `lock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/lock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconLock` → Lucide `lock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/lock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconLogout"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconLogout"
@@ -1276,9 +1353,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0101"
     migration_rule: "rename: IconLogout → Lucide `log-out`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconLogout\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconLogout` → Lucide `log-out`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/log-out.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconLogout` → Lucide `log-out`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/log-out.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPlayerStopFilled"
     upstream: "app/src/components/channels/composer/composer.tsx::IconPlayerStopFilled"
@@ -1287,9 +1365,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0102"
     migration_rule: "rename: IconPlayerStopFilled → Lucide `circle-stop`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPlayerStopFilled\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/channels/composer/composer.tsx）"
-    notes: "Tabler `IconPlayerStopFilled` → Lucide `circle-stop`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/circle-stop.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPlayerStopFilled` → Lucide `circle-stop`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/circle-stop.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPlug"
     upstream: "app/src/components/settings/settings-sidebar.tsx::IconPlug"
@@ -1298,9 +1377,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0103"
     migration_rule: "rename: IconPlug → Lucide `plug`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPlug\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/settings/settings-sidebar.tsx）"
-    notes: "Tabler `IconPlug` → Lucide `plug`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/plug.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPlug` → Lucide `plug`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/plug.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPlus"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconPlus"
@@ -1309,9 +1389,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0104"
     migration_rule: "rename: IconPlus → Lucide `plus`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPlus\\b' --include=*.tsx --include=*.ts app/src | wc -l = 7（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconPlus` → Lucide `plus`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 7 个文件引用它。随包落点 crates/openbot-ui/design/icons/plus.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPlus` → Lucide `plus`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 7 个文件引用它。随包落点 crates/openbot-ui/design/icons/plus.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPresentation"
     upstream: "app/src/lib/markdown.tsx::IconPresentation"
@@ -1320,9 +1401,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0105"
     migration_rule: "rename: IconPresentation → Lucide `presentation`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPresentation\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/lib/markdown.tsx）"
-    notes: "Tabler `IconPresentation` → Lucide `presentation`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/presentation.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPresentation` → Lucide `presentation`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/presentation.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconPuzzle"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconPuzzle"
@@ -1331,9 +1413,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0106"
     migration_rule: "rename: IconPuzzle → Lucide `puzzle`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconPuzzle\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconPuzzle` → Lucide `puzzle`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/puzzle.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconPuzzle` → Lucide `puzzle`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/puzzle.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconRefresh"
     upstream: "app/src/routes/_authed/admin/audit.tsx::IconRefresh"
@@ -1342,9 +1425,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0107"
     migration_rule: "rename: IconRefresh → Lucide `refresh-cw`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconRefresh\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/audit.tsx）"
-    notes: "Tabler `IconRefresh` → Lucide `refresh-cw`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/refresh-cw.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconRefresh` → Lucide `refresh-cw`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/refresh-cw.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconSearch"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconSearch"
@@ -1353,9 +1437,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0108"
     migration_rule: "rename: IconSearch → Lucide `search`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconSearch\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconSearch` → Lucide `search`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/search.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconSearch` → Lucide `search`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/search.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconSelector"
     upstream: "app/src/components/ui/select.tsx::IconSelector"
@@ -1364,9 +1449,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0109"
     migration_rule: "rename: IconSelector → Lucide `chevrons-up-down`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconSelector\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/ui/select.tsx）"
-    notes: "Tabler `IconSelector` → Lucide `chevrons-up-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevrons-up-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconSelector` → Lucide `chevrons-up-down`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/chevrons-up-down.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconSettings"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconSettings"
@@ -1375,9 +1461,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0110"
     migration_rule: "rename: IconSettings → Lucide `settings`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconSettings\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconSettings` → Lucide `settings`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/settings.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconSettings` → Lucide `settings`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/settings.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconShieldCheck"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconShieldCheck"
@@ -1386,9 +1473,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0111"
     migration_rule: "rename: IconShieldCheck → Lucide `shield-check`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconShieldCheck\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconShieldCheck` → Lucide `shield-check`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/shield-check.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconShieldCheck` → Lucide `shield-check`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/shield-check.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconShieldLock"
     upstream: "app/src/components/app-sidebar/app-sidebar.tsx::IconShieldLock"
@@ -1397,9 +1485,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0112"
     migration_rule: "rename: IconShieldLock → Lucide `shield-lock`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconShieldLock\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/app-sidebar/app-sidebar.tsx）"
-    notes: "Tabler `IconShieldLock` → Lucide `shield-lock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/shield-lock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconShieldLock` → Lucide `shield-lock`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/shield-lock.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconTable"
     upstream: "app/src/lib/markdown.tsx::IconTable"
@@ -1408,9 +1497,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0113"
     migration_rule: "rename: IconTable → Lucide `table`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconTable\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/lib/markdown.tsx）"
-    notes: "Tabler `IconTable` → Lucide `table`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/table.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconTable` → Lucide `table`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/table.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconTag"
     upstream: "app/src/routes/_authed/admin/components/$name.tsx::IconTag"
@@ -1419,9 +1509,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0114"
     migration_rule: "rename: IconTag → Lucide `tag`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconTag\\b' --include=*.tsx --include=*.ts app/src | wc -l = 2（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconTag` → Lucide `tag`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/tag.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconTag` → Lucide `tag`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 2 个文件引用它。随包落点 crates/openbot-ui/design/icons/tag.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconTerminal2"
     upstream: "app/src/components/computer/activity-log.tsx::IconTerminal2"
@@ -1430,9 +1521,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0115"
     migration_rule: "rename: IconTerminal2 → Lucide `square-terminal`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconTerminal2\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/components/computer/activity-log.tsx）"
-    notes: "Tabler `IconTerminal2` → Lucide `square-terminal`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/square-terminal.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconTerminal2` → Lucide `square-terminal`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/square-terminal.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconTrash"
     upstream: "app/src/routes/_authed/admin/identity-providers.tsx::IconTrash"
@@ -1441,9 +1533,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0116"
     migration_rule: "rename: IconTrash → Lucide `trash-2`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconTrash\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/identity-providers.tsx）"
-    notes: "Tabler `IconTrash` → Lucide `trash-2`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/trash-2.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconTrash` → Lucide `trash-2`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/trash-2.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconUser"
     upstream: "app/src/routes/_authed/admin/people.tsx::IconUser"
@@ -1452,9 +1545,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0117"
     migration_rule: "rename: IconUser → Lucide `user`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconUser\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/people.tsx）"
-    notes: "Tabler `IconUser` → Lucide `user`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/user.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconUser` → Lucide `user`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/user.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconUsers"
     upstream: "app/src/components/admin/admin-sidebar.tsx::IconUsers"
@@ -1463,9 +1557,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0118"
     migration_rule: "rename: IconUsers → Lucide `users`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconUsers\\b' --include=*.tsx --include=*.ts app/src | wc -l = 3（首个 = app/src/components/admin/admin-sidebar.tsx）"
-    notes: "Tabler `IconUsers` → Lucide `users`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/users.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconUsers` → Lucide `users`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 3 个文件引用它。随包落点 crates/openbot-ui/design/icons/users.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   - id: "icon-IconWorld"
     upstream: "app/src/routes/_authed/admin/components/$name.tsx::IconWorld"
@@ -1474,9 +1569,10 @@ entries:
     owner: "openbot-ui"
     test_id: "T-UI-0119"
     migration_rule: "rename: IconWorld → Lucide `globe`"
-    status: "todo"
+    status: "done"
+    done_evidence: "icon-mapping-join=46/46：GUI第一真源§4.6.2、icons.toml upstream_tabler/name、UI ledger Rust enum target 三向逐条相等；manifest/SVG 74/74安全与Lucide 1.33.0 declared source zip SHA由design-lint同批锁定。Google Drive品牌标另条保持todo。"
     evidence: "grep -rlE '\\bIconWorld\\b' --include=*.tsx --include=*.ts app/src | wc -l = 1（首个 = app/src/routes/_authed/admin/components/$name.tsx）"
-    notes: "Tabler `IconWorld` → Lucide `globe`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/globe.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**未验证（头部 U1）**：Lucide 1.33.0 侧确实有这个名字，本轮无法核实 —— 缺 lucide-icons-1.33.0.zip（设计系统文档 §4.6.1 记 sha256 53831c8def…260a98），本机无该文件且本任务禁网。本条 evidence 只证明\"上游确实用了这个 Tabler 图标\"。"
+    notes: "Tabler `IconWorld` → Lucide `globe`（尺寸 16 行内 / 20 导航按钮，stroke-width 生成时由 Lucide 默认 2 改写为 1.75，颜色 currentColor）。上游共 1 个文件引用它。随包落点 crates/openbot-ui/design/icons/globe.svg，allowlist crates/openbot-ui/design/icons.toml，build.rs 生成 Icon 枚举；闸门双向零漂移（源码里每个 Icon::X 必在 allowlist，目录里每个 SVG 必被引用）。**本批已验证**：design-lint 将第一真源映射表、icons.toml、SVG 文件与 UI ledger target 逐条 join；Lucide 1.33.0 declared source zip SHA 跨两真源一致。"
 
   # =======================================================================
   # (d) 6 个运行时 JavaScript 库 → Rust/CSS 替代（设计系统文档 §6.3）
@@ -1490,7 +1586,7 @@ entries:
     test_id: "T-UI-0120"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 13 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 13 个文件）"
     notes: "替代物：—（自研，不引入替代库）。无头原语。上游 13 个文件引用（Button / Combobox / Dialog / Input / Menu / Select / Separator / Switch / Tooltip / merge-props / use-render 等）。替代 = §6.1 自研 21 个 Leptos 原语（本 ledger (a) 组），键盘 / ARIA 模式按 WAI-ARIA APG 逐条兑现。**不引入任何 Rust 无头组件库**：现成库会把它自己的 DOM 结构与 class 约定带进来，与 §12.5 的 class 字面量规则和 §10 的 golden 冲突。"
 
   - id: "lib-motion"
@@ -1501,7 +1597,7 @@ entries:
     test_id: "T-UI-0121"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 8 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 8 个文件）"
     notes: "替代物：—（CSS transition/animation + Web Animations API）。动效。上游 8 个文件引用；`app/src/lib/motion.ts` 定义 EASE_OUT = [0.23, 1, 0.32, 1]、ENTRANCE_SECONDS = 0.2。替代 = CSS transition/animation + 必要时 Web Animations API（§4.5），自写 @keyframes 清单。`styles.css` 有 1 个 prefers-reduced-motion 块（grep -c = 1，本轮实跑），本项目必须把 reduced-motion 做成**全局静止**而不是单块特例，否则 §10.2 的 golden 确定性条件（CDP 模拟 reduce）拍不到稳定画面。target 落在 CSS 不是 Rust 模块。"
 
   - id: "lib-streamdown"
@@ -1512,7 +1608,7 @@ entries:
     test_id: "T-UI-0122"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 1 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 1 个文件）"
     notes: "替代物：pulldown-cmark 0.13.4 + syntect 5.3.0（default-fancy，纯 Rust，WASM 可用）。Bot 正文流式 markdown 与代码高亮。上游 1 个文件引用 streamdown，高亮经 @shikijs/core 3.23.0（grep -cE '\"@shikijs/core@' bun.lock = 1，本轮实跑）。替代规则见 §6.4：**不开 raw HTML**（Event::Html 一律按文本渲染，模型输出是不可信输入）；增量按 (message_id, block_index) memo 尾块重解析，单测 streaming_render_equals_batch_render 断言与一次性完整渲染逐节点相等；代码块固定 24 种语言，scope → 6 个 token 色，不用 syntect 自带主题。**差异登记**：远程 `![]()` 只渲染成带域名的链接芯片、不发起请求，这是本项目裁决（§6.4 自标新增），上游 streamdown 的远程图片行为本轮**未核**（缺该库源码）。"
 
   - id: "lib-prompt-area"
@@ -1523,7 +1619,7 @@ entries:
     test_id: "T-UI-0123"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 4 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 4 个文件）"
     notes: "替代物：—（自研 Composer，§6.5）。composer 输入区。上游 4 个文件引用。替代 = §6.5 的 Composer（(b) 组 T-UI-0043 记的是上游那个 composer.tsx 业务组件，本条记的是它依赖的库）。两条不重复：一条的单位是上游文件，一条的单位是上游 npm 依赖。"
 
   - id: "lib-boring-avatars"
@@ -1534,7 +1630,7 @@ entries:
     test_id: "T-UI-0124"
     migration_rule: "remove: 运行时 JavaScript 依赖不进 Rust 发行物"
     status: "todo"
-    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do printf '%s ' \"$(grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l)\"; done → 13 8 4 3 1 32（本库 = 3 个文件）"
+    evidence: "cd app/src && for p in '@base-ui/react' motion prompt-area boring-avatars streamdown '@tabler/icons-react'; do grep -rlE \"from [\\\"']$p\" --include=*.tsx --include=*.ts . | wc -l | awk '{printf \"%d \", $1}'; done → 13 8 4 3 1 32（本库 = 3 个文件）"
     notes: "替代物：—（自研 Avatar，§6.6）。生成式头像。上游 3 个文件引用。替代 = §6.6 的确定性 Avatar：SHA-256(principal_id) 前 8 位映射到 8 个预设中性低饱和底色（亮暗各一组，与 fg 对比 ≥ 4.5:1）。\"同一 id 在任何平台任何时间得到同一头像\"是 golden 的前置条件（§10.2），不是锦上添花——上游库的随机性会让每次截图都不同。"
 
   - id: "lib-tw-animate-css"
@@ -1588,13 +1684,13 @@ entries:
   - id: "page-app-channel-new"
     upstream: "app/src/routes/_authed/_app/channel/new.tsx"
     label: "parity"
-    target: "openbot_ui::shell::routes::app_channel_new"
+    target: "openbot_ui::features::channels::new::ChannelNewPage"
     owner: "openbot-ui"
     test_id: "T-UI-0129"
     migration_rule: "preserve"
     status: "todo"
     evidence: "find app/src/routes -name '*.tsx' | grep -vE '(__root|_authed|_app|route)\\.tsx$' | wc -l = 26（正向对照：不加 grep -v 时 = 31，即 26 页 + 5 layout，本轮均实跑）"
-    notes: "golden 落点 fixtures/ui/golden/web/app_channel_new.<theme>.<w>x<h>.png，theme ∈ {light, dark}，视口 ∈ {1440x900, 1024x640}，DPR 1 ⇒ Web 每页 4 张；Desktop（macos-arm64 / windows-x64）每页 2 张（1440x900 单视口）。全矩阵 Web 27×2×2 + 画廊 1×2 = 110 张，Desktop 27×2 = 54 张/平台。**本轮 0 张 golden 已生成**（fixtures/ui/ 目录尚不存在），status 因此是 todo。新建 channel 页。"
+    notes: "golden 落点 fixtures/ui/golden/web/app_channel_new.<theme>.<w>x<h>.png，theme ∈ {light, dark}，视口 ∈ {1440x900, 1024x640}，DPR 1 ⇒ Web 每页 4 张；Desktop（macos-arm64 / windows-x64）每页 2 张（1440x900 单视口）。Batch32已完成真实route/AX/键盘/四视口/首发journey，但**正式 golden 仍为0张**，因此本golden条目继续todo，不能拿浏览器功能证据替代视觉oracle。"
 
   - id: "page-app-index"
     upstream: "app/src/routes/_authed/_app/index.tsx"

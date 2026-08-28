@@ -51,6 +51,8 @@
 
 use core::time::Duration;
 
+pub use openbot_contracts::ids::CatalogGeneration;
+
 use crate::audit::hash::Sha256Digest;
 
 /// 工具的 effect 分类。**封闭五档，没有 `Unknown`。**
@@ -362,32 +364,6 @@ impl ToolName {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-/// catalog 代际（§8.2 / §8.5）。
-///
-/// # 为什么是本模块的本地类型而不是 `openbot_contracts::ids` 的成员
-///
-/// contracts 的 §5.3 十五个 ID 里**没有** catalog generation（本轮实读
-/// `crates/openbot-contracts/src/ids.rs`：`define_u64_ids!` 只有 `ComputerGeneration` 与
-/// `DocumentGeneration`）。把它加进 contracts 是改跨 crate 契约的动作，不能由本模块顺手做，
-/// 已写进交付报告的遗留项。形状照抄 `ComputerGeneration` 的裁决 D7：`u64` 而不是字符串，
-/// 因为"catalog refresh 使旧 approval 失效"依赖**数值序**，字典序会判 `"10" < "9"`。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CatalogGeneration(u64);
-
-impl CatalogGeneration {
-    /// 由计数值构造。
-    #[must_use]
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    /// 取出计数值。
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
     }
 }
 

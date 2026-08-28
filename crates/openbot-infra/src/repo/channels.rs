@@ -31,10 +31,20 @@
 
 use async_trait::async_trait;
 use deadpool_postgres::Pool;
-use openbot_application::{ChannelCursor, ChannelReader, PortError};
-use openbot_contracts::command::ChannelSummary;
+use openbot_application::{
+    ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelCursor,
+    ChannelReadScope, ChannelReader, PortError,
+};
+use openbot_contracts::agent::AgentVisibility;
+use openbot_contracts::command::{ChannelDetail, ChannelSummary};
 use openbot_contracts::ids::{ActorId, BotId, ChannelId};
+use openbot_contracts::text::trim_ecmascript;
+use openbot_domain::agent::profile_policy::{AgentActor, AgentProfileFacts, can_access_agent};
+use openbot_domain::channel::{PRIVATE_AGENT_CHANNEL_DESCRIPTION, derive_channel_name};
 use time::OffsetDateTime;
+use uuid::Uuid;
+
+use crate::thread_id::mint_thread_id;
 
 /// `PortError` 里的依赖名。与 `AppError::DependencyUnavailable::dependency` 同域。
 const DEPENDENCY: &str = "database";
@@ -96,7 +106,8 @@ SELECT p.id,
        p.last_message_agent_id,
        p.created_at,
        coalesce(a.agent_ids, '{}'::text[]) AS agent_ids,
-       coalesce(a.active, true)            AS active
+       coalesce(a.active, true)            AS active,
+       NULL::text                          AS thread_id
 FROM page p
 LEFT JOIN LATERAL (
     SELECT array_agg(ca.agent_id ORDER BY ca.agent_id) AS agent_ids,
@@ -106,6 +117,89 @@ LEFT JOIN LATERAL (
     WHERE ca.channel_id = p.id
 ) a ON true
 ORDER BY coalesce(p.last_message_at, p.created_at) DESC, p.id DESC";
+
+/// Production list: same roster semantics plus a deployment/tenant/member-scoped native thread.
+const LIST_VISIBLE_CHANNELS_SCOPED_SQL: &str = "\
+WITH page AS (
+    SELECT c.id,
+           c.name,
+           c.last_message,
+           c.last_message_at,
+           c.last_message_agent_id,
+           c.created_at
+    FROM public.channels c
+    JOIN public.channel_memberships m
+      ON m.channel_id = c.id
+     AND m.user_id = $1
+    WHERE $4::timestamptz IS NULL
+       OR (coalesce(c.last_message_at, c.created_at), c.id) < ($4::timestamptz, $5::text)
+    ORDER BY coalesce(c.last_message_at, c.created_at) DESC, c.id DESC
+    LIMIT $6
+)
+SELECT p.id,
+       p.name,
+       p.last_message,
+       p.last_message_at,
+       p.last_message_agent_id,
+       p.created_at,
+       coalesce(a.agent_ids, '{}'::text[]) AS agent_ids,
+       coalesce(a.active, true)            AS active,
+       t.thread_id
+FROM page p
+LEFT JOIN LATERAL (
+    SELECT array_agg(ca.agent_id ORDER BY ca.agent_id) AS agent_ids,
+           bool_and(pr.deleted_at IS NULL)             AS active
+    FROM public.channel_agents ca
+    LEFT JOIN public.agent_profiles pr ON pr.agent_id = ca.agent_id
+    WHERE ca.channel_id = p.id
+) a ON true
+LEFT JOIN LATERAL (
+    SELECT th.thread_id
+    FROM public.threads th
+    WHERE th.deployment_id = $2
+      AND th.tenant_id = $3
+      AND th.anchor_kind = 'channel'
+      AND th.anchor_id = p.id
+      AND th.status <> 'deleted'
+    ORDER BY th.updated_at DESC, th.thread_id DESC
+    LIMIT 1
+) t ON true
+ORDER BY coalesce(p.last_message_at, p.created_at) DESC, p.id DESC";
+
+/// One membership-visible channel with the same scoped native-thread projection as the list.
+const GET_VISIBLE_CHANNEL_SQL: &str = "\
+SELECT c.id,
+       c.name,
+       c.last_message,
+       c.last_message_at,
+       c.last_message_agent_id,
+       c.created_at,
+       coalesce(a.agent_ids, '{}'::text[]) AS agent_ids,
+       coalesce(a.active, true)            AS active,
+       t.thread_id
+FROM public.channels c
+JOIN public.channel_memberships m
+  ON m.channel_id = c.id
+ AND m.user_id = $1
+LEFT JOIN LATERAL (
+    SELECT array_agg(ca.agent_id ORDER BY ca.agent_id) AS agent_ids,
+           bool_and(pr.deleted_at IS NULL)             AS active
+    FROM public.channel_agents ca
+    LEFT JOIN public.agent_profiles pr ON pr.agent_id = ca.agent_id
+    WHERE ca.channel_id = c.id
+) a ON true
+LEFT JOIN LATERAL (
+    SELECT th.thread_id
+    FROM public.threads th
+    WHERE th.deployment_id = $2
+      AND th.tenant_id = $3
+      AND th.anchor_kind = 'channel'
+      AND th.anchor_id = c.id
+      AND th.status <> 'deleted'
+    ORDER BY th.updated_at DESC, th.thread_id DESC
+    LIMIT 1
+) t ON true
+WHERE c.id = $4";
 
 /// channel 的读取实现。
 ///
@@ -130,6 +224,184 @@ impl std::fmt::Debug for ChannelRepo {
         // 不打印池内部状态：`deadpool` 的 Debug 会带上连接配置。
         f.debug_struct("ChannelRepo").finish_non_exhaustive()
     }
+}
+
+#[async_trait]
+impl ChannelAdministration for ChannelRepo {
+    async fn create_channel(
+        &self,
+        request: ChannelCreateRequest,
+    ) -> Result<ChannelDetail, ChannelAdministrationError> {
+        if request.agent_ids.is_empty()
+            || request.agent_ids.windows(2).any(|pair| pair[0] >= pair[1])
+            || request.agent_ids.iter().any(|agent_id| {
+                let value = agent_id.as_str();
+                value.is_empty()
+                    || value.len() > 512
+                    || value.chars().any(char::is_control)
+                    || trim_ecmascript(value) != value
+            })
+        {
+            return Err(ChannelAdministrationError::Corrupt { field: "agent_ids" });
+        }
+        let channel_id = ChannelId::new(format!("channel_{}", Uuid::now_v7()));
+        let thread_id = mint_thread_id(&request.scope.deployment)
+            .map_err(|_| ChannelAdministrationError::Unavailable)?;
+        let mut client = self.pool.get().await.map_err(|error| {
+            tracing::error!(error = %error, "channel create pool unavailable");
+            ChannelAdministrationError::Unavailable
+        })?;
+        let transaction = client.transaction().await.map_err(|error| {
+            tracing::error!(error = %error, "begin channel create transaction failed");
+            ChannelAdministrationError::Unavailable
+        })?;
+        let result = async {
+            let actor = AgentActor {
+                id: request.scope.actor.as_str(),
+                admin: request.scope.admin,
+            };
+            let mut names = Vec::with_capacity(request.agent_ids.len());
+            for agent_id in &request.agent_ids {
+                let row = transaction
+                    .query_opt(
+                        "SELECT a.name,p.owner_user_id,p.visibility::text, \
+                                (a.package_id IS NOT NULL) AS system_owned, \
+                                (p.deleted_at IS NOT NULL) AS deleted, \
+                                (a.package_id IS NULL OR dp.tenant_id=$2) AS tenant_visible \
+                         FROM public.agents a \
+                         JOIN public.agent_profiles p ON p.agent_id=a.id \
+                         LEFT JOIN public.deployment_packages dp ON dp.id=a.package_id \
+                         WHERE a.id=$1 FOR UPDATE OF a,p",
+                        &[&agent_id.as_str(), &request.scope.tenant.as_str()],
+                    )
+                    .await
+                    .map_err(|error| channel_admin_query("lock Agent profile", error))?;
+                let Some(row) = row else {
+                    return Err(ChannelAdministrationError::NotVisible);
+                };
+                let visibility = match admin_decode::<String>(&row, "visibility")?.as_str() {
+                    "public" => AgentVisibility::Public,
+                    "private" => AgentVisibility::Private,
+                    _ => {
+                        return Err(ChannelAdministrationError::Corrupt {
+                            field: "visibility",
+                        });
+                    }
+                };
+                let owner: Option<String> = admin_decode(&row, "owner_user_id")?;
+                let facts = AgentProfileFacts {
+                    owner_user_id: owner.as_deref(),
+                    visibility,
+                    system_owned: admin_decode(&row, "system_owned")?,
+                    deleted: admin_decode(&row, "deleted")?,
+                };
+                let tenant_visible: bool = admin_decode(&row, "tenant_visible")?;
+                if !tenant_visible || !can_access_agent(&actor, &facts) {
+                    return Err(ChannelAdministrationError::NotVisible);
+                }
+                names.push(admin_decode(&row, "name")?);
+            }
+            let name = derive_channel_name(&names).map_err(|_| {
+                ChannelAdministrationError::Corrupt {
+                    field: "agent_ids",
+                }
+            })?;
+            let now: OffsetDateTime = transaction
+                .query_one("SELECT clock_timestamp()", &[])
+                .await
+                .map_err(|error| channel_admin_query("read database clock", error))?
+                .try_get(0)
+                .map_err(|_| ChannelAdministrationError::Corrupt {
+                    field: "database_clock",
+                })?;
+            transaction
+                .execute(
+                    "INSERT INTO public.channels( \
+                       id,name,description,created_at,updated_at \
+                     ) VALUES($1,$2,$3,$4,$4)",
+                    &[
+                        &channel_id.as_str(),
+                        &name,
+                        &PRIVATE_AGENT_CHANNEL_DESCRIPTION,
+                        &now,
+                    ],
+                )
+                .await
+                .map_err(|error| channel_admin_query("insert channel", error))?;
+            transaction
+                .execute(
+                    "INSERT INTO public.channel_memberships(channel_id,user_id,created_at) \
+                     VALUES($1,$2,$3)",
+                    &[&channel_id.as_str(), &request.scope.actor.as_str(), &now],
+                )
+                .await
+                .map_err(|error| channel_admin_query("insert channel membership", error))?;
+            for agent_id in &request.agent_ids {
+                transaction
+                    .execute(
+                        "INSERT INTO public.channel_agents(channel_id,agent_id,created_at) \
+                         VALUES($1,$2,$3)",
+                        &[&channel_id.as_str(), &agent_id.as_str(), &now],
+                    )
+                    .await
+                    .map_err(|error| channel_admin_query("insert channel Agent", error))?;
+            }
+            transaction
+                .execute(
+                    "INSERT INTO public.threads( \
+                       thread_id,tenant_id,deployment_id,created_by,anchor_kind,anchor_id, \
+                       title,status,next_message_seq,next_event_seq,created_at,updated_at,deleted_at \
+                     ) VALUES($1,$2,$3,$4,'channel',$5,NULL,'active',0,0,$6,$6,NULL)",
+                    &[
+                        &thread_id.as_str(),
+                        &request.scope.tenant.as_str(),
+                        &request.scope.deployment.as_str(),
+                        &request.scope.actor.as_str(),
+                        &channel_id.as_str(),
+                        &now,
+                    ],
+                )
+                .await
+                .map_err(|error| channel_admin_query("insert channel thread", error))?;
+            Ok(ChannelDetail {
+                id: channel_id,
+                name,
+                agent_ids: request.agent_ids,
+                thread_id: Some(thread_id),
+                active: true,
+            })
+        }
+        .await;
+        match result {
+            Ok(channel) => {
+                transaction.commit().await.map_err(|error| {
+                    tracing::error!(error = %error, "commit channel create transaction failed");
+                    ChannelAdministrationError::Unavailable
+                })?;
+                Ok(channel)
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn channel_admin_query(
+    context: &'static str,
+    error: tokio_postgres::Error,
+) -> ChannelAdministrationError {
+    tracing::error!(context, error = %error, "channel create query failed");
+    ChannelAdministrationError::Unavailable
+}
+
+fn admin_decode<'a, T>(
+    row: &'a tokio_postgres::Row,
+    field: &'static str,
+) -> Result<T, ChannelAdministrationError>
+where
+    T: tokio_postgres::types::FromSql<'a>,
+{
+    row.try_get(field)
+        .map_err(|_| ChannelAdministrationError::Corrupt { field })
 }
 
 #[async_trait]
@@ -179,6 +451,84 @@ impl ChannelReader for ChannelRepo {
 
         rows.iter().map(summary_from_row).collect()
     }
+
+    async fn list_visible_channels_scoped(
+        &self,
+        scope: &ChannelReadScope,
+        limit: u32,
+        cursor: Option<ChannelCursor>,
+    ) -> Result<Vec<ChannelSummary>, PortError> {
+        let client = self.pool.get().await.map_err(|error| {
+            tracing::error!(dependency = DEPENDENCY, error = %error, "取数据库连接失败");
+            PortError::Unavailable {
+                dependency: DEPENDENCY,
+            }
+        })?;
+        let (cursor_recency, cursor_id): (Option<OffsetDateTime>, Option<&str>) = match &cursor {
+            Some(cursor) => (Some(cursor.recency), Some(cursor.id.as_str())),
+            None => (None, None),
+        };
+        let limit = i64::from(limit);
+        let rows = client
+            .query(
+                LIST_VISIBLE_CHANNELS_SCOPED_SQL,
+                &[
+                    &scope.actor.as_str(),
+                    &scope.deployment.as_str(),
+                    &scope.tenant.as_str(),
+                    &cursor_recency,
+                    &cursor_id,
+                    &limit,
+                ],
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(
+                    dependency = DEPENDENCY,
+                    error = %crate::db::PostgresErrorSummary::from_error(&error),
+                    "查询 scoped 可见 channel 失败"
+                );
+                PortError::Unavailable {
+                    dependency: DEPENDENCY,
+                }
+            })?;
+        rows.iter().map(summary_from_row).collect()
+    }
+
+    async fn get_visible_channel(
+        &self,
+        scope: &ChannelReadScope,
+        channel_id: &ChannelId,
+    ) -> Result<Option<ChannelSummary>, PortError> {
+        let client = self.pool.get().await.map_err(|error| {
+            tracing::error!(dependency = DEPENDENCY, error = %error, "取数据库连接失败");
+            PortError::Unavailable {
+                dependency: DEPENDENCY,
+            }
+        })?;
+        let row = client
+            .query_opt(
+                GET_VISIBLE_CHANNEL_SQL,
+                &[
+                    &scope.actor.as_str(),
+                    &scope.deployment.as_str(),
+                    &scope.tenant.as_str(),
+                    &channel_id.as_str(),
+                ],
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(
+                    dependency = DEPENDENCY,
+                    error = %crate::db::PostgresErrorSummary::from_error(&error),
+                    "查询 channel detail 失败"
+                );
+                PortError::Unavailable {
+                    dependency: DEPENDENCY,
+                }
+            })?;
+        row.as_ref().map(summary_from_row).transpose()
+    }
 }
 
 /// 把一行翻成 [`ChannelSummary`]。
@@ -193,6 +543,7 @@ fn summary_from_row(row: &tokio_postgres::Row) -> Result<ChannelSummary, PortErr
     let last_message_agent_id: Option<String> = get(row, "last_message_agent_id")?;
     let created_at: OffsetDateTime = get(row, "created_at")?;
     let active: bool = get(row, "active")?;
+    let thread_id: Option<String> = get(row, "thread_id")?;
 
     // `channel_agents.agent_id` 是 NOT NULL，所以 `array_agg` 不该产出 NULL 元素。
     // 但 PostgreSQL 的数组**元素**天然可空，类型系统不替我们保证这一点：解成
@@ -223,10 +574,7 @@ fn summary_from_row(row: &tokio_postgres::Row) -> Result<ChannelSummary, PortErr
         last_message_at,
         last_message_agent_id: last_message_agent_id.map(BotId::new),
         created_at,
-        // G1 没有 native `threads` 表（v3 §4.3 是 G3 的工作），而
-        // `intelligence_channel_mappings` 只读且不进可见性判据 —— 所以这里恒 `None`，
-        // 不是"暂时没查"，是"此刻不存在真源"。
-        thread_id: None,
+        thread_id: thread_id.map(openbot_contracts::ids::ThreadId::new),
         active,
     })
 }
@@ -250,6 +598,73 @@ where
             field: column,
         }
     })
+}
+
+use crate::repo::common::define_table_repo;
+
+define_table_repo!(
+    /// `channel_memberships` repository；可见性业务查询仍由 [`ChannelRepo`] 承担。
+    ChannelMembershipRepo,
+    table = channel_memberships,
+    order_by = "\"channel_id\", \"user_id\"",
+    find = find_by_key(channel_id: &str, user_id: &str) where "\"channel_id\" = $1 AND \"user_id\" = $2"
+);
+
+define_table_repo!(
+    /// `channel_agents` repository。
+    ChannelAgentRepo,
+    table = channel_agents,
+    order_by = "\"channel_id\", \"agent_id\"",
+    find = find_by_key(channel_id: &str, agent_id: &str) where "\"channel_id\" = $1 AND \"agent_id\" = $2"
+);
+
+/// `intelligence_channel_mappings` 的只读 legacy provenance repository。
+///
+/// 刻意没有 insert/delete：v3 §14.2 已把它降成历史来源，native 请求路径不得再制造或消费
+/// live mapping。导入器只读它，最终过保留期后的删除属于独立 destructive migration。
+#[derive(Clone)]
+pub struct LegacyIntelligenceMappingRepo {
+    core: crate::repo::common::RepoCore<crate::db::tables::intelligence_channel_mappings::Row>,
+}
+
+impl LegacyIntelligenceMappingRepo {
+    /// 用调用方提供的连接池构造。
+    #[must_use]
+    pub fn new(pool: Pool) -> Self {
+        Self {
+            core: crate::repo::common::RepoCore::new(pool),
+        }
+    }
+
+    /// 按旧复合主键读取。
+    pub async fn find_by_key(
+        &self,
+        user_id: &str,
+        channel_id: &str,
+    ) -> Result<Option<crate::db::tables::intelligence_channel_mappings::Row>, crate::db::InfraError>
+    {
+        self.core
+            .find(
+                "\"user_id\" = $1 AND \"channel_id\" = $2",
+                &[&user_id, &channel_id],
+            )
+            .await
+    }
+
+    /// 稳定列出全部 legacy provenance。
+    pub async fn list_all(
+        &self,
+    ) -> Result<Vec<crate::db::tables::intelligence_channel_mappings::Row>, crate::db::InfraError>
+    {
+        self.core.list("\"user_id\", \"channel_id\"").await
+    }
+}
+
+impl core::fmt::Debug for LegacyIntelligenceMappingRepo {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LegacyIntelligenceMappingRepo")
+            .finish_non_exhaustive()
+    }
 }
 
 #[cfg(test)]
@@ -285,6 +700,19 @@ mod tests {
         );
         // 正向对照：它确实 join 了 membership，所以上一条不是在一条空 SQL 上成立的。
         assert!(LIST_VISIBLE_CHANNELS_SQL.contains("public.channel_memberships"));
+    }
+
+    #[test]
+    fn scoped_list_and_detail_share_membership_and_native_thread_scope() {
+        for sql in [LIST_VISIBLE_CHANNELS_SCOPED_SQL, GET_VISIBLE_CHANNEL_SQL] {
+            assert!(sql.contains("public.channel_memberships"));
+            assert!(sql.contains("public.threads"));
+            assert!(sql.contains("th.deployment_id = $2"));
+            assert!(sql.contains("th.tenant_id = $3"));
+            assert!(sql.contains("th.anchor_kind = 'channel'"));
+            assert!(!sql.contains("intelligence_channel_mappings"));
+            assert!(!sql.contains("JOIN public.thread_memberships"));
+        }
     }
 
     /// 限流必须落在 channel 上：`LIMIT` 在 `page` CTE 内，而 agent 在 CTE 之外聚合。

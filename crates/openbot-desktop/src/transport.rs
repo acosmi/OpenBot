@@ -20,10 +20,10 @@
 //!
 //! # 「不复制 JSON-RPC」是构造性的
 //!
-//! §13.2 的标题就是「typed in-process，不复制 JSON-RPC」。本 crate 的依赖图里
-//! **没有任何序列化器**（`Cargo.toml` 里既无 `serde` 也无 `serde_json`），所以"这条路径
-//! 不会把 DTO 抄成 JSON 再抄回来"不是一句承诺，是编译期事实。由
-//! `the_in_process_lane_has_no_json_codec` 读 `Cargo.toml` 钉住。
+//! §13.2 的标题就是「typed in-process，不复制 JSON-RPC」。[`InProcessTransport`] 本身不
+//! 引用任何 codec，命令逐类型直接进入 service。G6 的 opt-in `tauri-host` custom protocol
+//! 必须为 WebView HTTP framing 使用 serde_json，但它在本模块之外且依赖全为 optional；由
+//! `the_in_process_lane_has_no_json_codec` 同时扫源码与 feature 边界。
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -761,40 +761,29 @@ mod tests {
     // 「不复制 JSON-RPC」的构造性证据
     // -----------------------------------------------------------------------
 
-    /// 本 crate 的依赖图里没有任何序列化器 —— 于是 in-process 这条路径**不可能**把 DTO
-    /// 抄成 JSON 再抄回来（§13.2 标题逐字：「typed in-process，不复制 JSON-RPC」）。
-    ///
-    /// 读 `Cargo.toml` 而不是"相信自己没写"：这是一条会在有人顺手加依赖时判红的闸门，
-    /// 那正是它存在的理由。判据只看**依赖声明段**，注释里提到这些名字不算。
+    /// In-process 模块没有任何序列化调用；Tauri WebView framing 的 codec 只在显式 host
+    /// feature 内，默认 typed lane 不会把 DTO 抄成 JSON 再抄回来。
     #[test]
     fn the_in_process_lane_has_no_json_codec() {
-        let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
-            .expect("读得到本 crate 的 Cargo.toml");
-
-        let declarations: Vec<&str> = manifest
+        let source = include_str!("transport.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        let code = production
             .lines()
             .map(str::trim)
-            .filter(|line| !line.starts_with('#') && !line.is_empty())
-            .collect();
-
-        for forbidden in ["serde", "serde_json", "rmp-serde", "bincode", "prost"] {
+            .filter(|line| !line.starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for forbidden in ["serde::", "serde_json::", "bincode::", "prost::"] {
             assert!(
-                !declarations.iter().any(|line| line.starts_with(forbidden)
-                    || line.starts_with(&format!("\"{forbidden}\""))),
-                "in-process 通道不得引入序列化器：{forbidden}"
+                !code.contains(forbidden),
+                "typed lane contains codec {forbidden}"
             );
         }
 
-        // 正向对照：这个解析确实看得见依赖声明（否则上面的循环在"什么都没读到"时恒过）。
-        assert!(
-            declarations.iter().any(|line| line.starts_with("tokio")),
-            "解析必须真的看见依赖声明"
-        );
-        assert!(
-            declarations
-                .iter()
-                .any(|line| line.starts_with("openbot-application")),
-            "解析必须真的看见依赖声明"
-        );
+        let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+            .expect("读得到本 crate 的 Cargo.toml");
+        assert!(manifest.contains("tauri-host = ["));
+        assert!(manifest.contains("serde_json = { workspace = true, optional = true }"));
+        assert!(!manifest.contains("serde_json.workspace = true"));
     }
 }

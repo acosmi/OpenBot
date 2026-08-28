@@ -38,9 +38,9 @@
 //!
 //! # 已知的重复与偏差，交付时请一并看
 //!
-//! - [`Secret`] 与 `openbot_server::config::Secret` 同名同形。两个 crate 是**兄弟**
-//!   （谁也不依赖谁），此刻没有共同落点；正确归宿是 `openbot-contracts` 或
-//!   `openbot-domain`，合并是集成层的动作。
+//! - [`Secret`] 与 `openbot_server::config::Secret` 同名但不再同形：本类型已以内层
+//!   [`SecretBytes`] 获得 zeroize/no-Clone 边界；server 配置 secret 的统一属于它自己的消费者
+//!   批次，不能靠复制本实现制造第二份秘密原语。
 //! - `KEY_ENCRYPTION_KEY` 的台账 `target` 写的是 `openbot-infra::vault::KeyEncryptionKey`，
 //!   而 `vault` 模块尚不存在。[`KeyEncryptionKey`] 暂落在本模块，**因此那条台账项没有被
 //!   它自己的 `target` 字符串闭合** —— 要么 vault 落地时搬过去，要么台账改字段。
@@ -49,7 +49,7 @@
 //! - session 的三个时间窗口是**新增裁决**，不是上游行为。见
 //!   [`DEFAULT_SESSION_IDLE`] 一组常量的文档。
 //!
-//! # 规范化与集合类型一律复用 `openbot-domain`，本模块不再自造
+//! # TrimString、规范化与集合类型一律复用 `openbot-domain`，本模块不再自造
 //!
 //! `INITIAL_ADMIN_EMAILS` 落成 [`AdminFloor`]（内含 [`NormalizedEmail`](openbot_domain::identity::email::NormalizedEmail)），
 //! `TRUSTED_ORIGINS` 落成 [`TrustedOrigins`]。**不在这里再写一份规范化**，理由是
@@ -60,14 +60,16 @@
 //! 那一条 floor 条目永远匹配不上任何人，**而且没有任何报错**。
 //!
 //! 这正是"同一判据两份实现"的标准结局：两份都自认为正确，差异只在一个看不见的码点上。
-//! 本模块只负责逗号切分（那是配置层的事），切完的条目交给领域类型。
+//! 本模块只负责逗号切分（那是配置层的事），trim 复用同一份 ECMAScript 封闭表，切完的
+//! 条目交给领域类型。
 
 use core::fmt;
 use std::collections::BTreeMap;
 
 use openbot_domain::identity::roles::AdminFloor;
 use openbot_domain::identity::session::{OriginMalformed, SessionLifetimePolicy, TrustedOrigins};
-use openbot_domain::vault::WrappingKey;
+use openbot_domain::text::trim_ecmascript;
+use openbot_domain::vault::{SecretBytes, WrappingKey};
 use time::Duration;
 
 /// 一次启动看见的全部环境变量。
@@ -180,7 +182,7 @@ pub fn default_session_lifetime() -> SessionLifetimePolicy {
 
 /// 读一个可选变量：两侧 `trim`，空串**等同未设**（上游 `config.ts::optional`）。
 fn optional<'a>(env: &'a EnvMap, name: &str) -> Option<&'a str> {
-    let value = env.get(name)?.trim();
+    let value = trim_ecmascript(env.get(name)?);
     if value.is_empty() { None } else { Some(value) }
 }
 
@@ -189,7 +191,7 @@ fn comma_separated(env: &EnvMap, name: &str) -> Vec<String> {
     optional(env, name)
         .unwrap_or_default()
         .split(',')
-        .map(str::trim)
+        .map(trim_ecmascript)
         .filter(|part| !part.is_empty())
         .map(str::to_owned)
         .collect()
@@ -201,24 +203,32 @@ fn comma_separated(env: &EnvMap, name: &str) -> Vec<String> {
 
 /// 一个不进日志的配置值。
 ///
-/// `Debug` 恒印 `Secret(***)`，且**刻意不实现 `Display`**。v3 §6.4 末段点名了一串
+/// 内层固定为 [`SecretBytes`]，所以 drop 擦除当前 allocation，且本类型不实现
+/// Clone/Serialize/Display/PartialEq；`Debug` 恒印 `Secret(***)`。v3 §6.4 末段点名了一串
 /// "永不进入普通日志、trace、metric、crash dump"的值，session secret 与 OAuth client secret
 /// 都在其中；而 [`AuthConfig`] 是个会被人顺手 `{:?}` 出来的启动产物。用类型兑现这条禁令，
 /// 于是"忘了"不再可能发生 —— 新增机密字段时也不必记得去改 `Debug` 实现。
-#[derive(Clone, PartialEq, Eq)]
-pub struct Secret(String);
+///
+/// ```compile_fail
+/// use openbot_infra::auth::config::Secret;
+/// let secret = Secret::new("one owned secret");
+/// let copied = secret.clone();
+/// # drop(copied);
+/// ```
+pub struct Secret(SecretBytes);
 
 impl Secret {
     /// 由已经 `trim` 过的非空值构造。
     #[must_use]
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(SecretBytes::new(value.into().into_bytes()))
     }
 
     /// 取出真值。**调用点即泄漏面**，只在真正要把它交给对端时使用。
     #[must_use]
     pub fn expose(&self) -> &str {
-        &self.0
+        core::str::from_utf8(self.0.expose())
+            .expect("Secret 只从有效 Rust String 接管字节，UTF-8 不变量不会失效")
     }
 
     /// 字符数。存在的唯一理由是长度校验不必先 [`Secret::expose`]。
@@ -228,7 +238,7 @@ impl Secret {
     /// 字符数比字节数更接近"他数了几个字符"。
     #[must_use]
     pub fn character_count(&self) -> usize {
-        self.0.chars().count()
+        self.expose().chars().count()
     }
 
     /// 是否为空。构造路径已排除空值，这里只是让 [`Secret::character_count`] 不孤零零地存在。
@@ -562,7 +572,7 @@ impl AuthProviderId {
 }
 
 /// 一副 OAuth 客户端凭据。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct OAuthClient {
     /// client id。**不是机密**（它会出现在浏览器地址栏里）。
     pub client_id: String,
@@ -571,7 +581,7 @@ pub struct OAuthClient {
 }
 
 /// Microsoft Entra ID，以及它放行哪个目录。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct MicrosoftAuth {
     /// 客户端凭据。
     pub client: OAuthClient,
@@ -580,7 +590,7 @@ pub struct MicrosoftAuth {
 }
 
 /// Okta。它是 OIDC provider 而不是具名 provider，所以由 issuer 标识。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct OktaAuth {
     /// 客户端凭据。
     pub client: OAuthClient,
@@ -591,7 +601,7 @@ pub struct OktaAuth {
 }
 
 /// 这个部署的认证配置。[`auth_config`] 返回 `None` 表示没有任何 IdP。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct AuthConfig {
     /// 本部署对外的公共地址，OAuth 回调回到这里。
     ///
@@ -916,6 +926,18 @@ pub fn auth_config(
     public_url: Option<&str>,
     session_lifetime: SessionLifetimePolicy,
 ) -> Result<Option<AuthConfig>, AuthConfigError> {
+    auth_config_with_dynamic_provider(env, public_url, session_lifetime, false)
+}
+
+/// 与 [`auth_config`] 相同，但把数据库里已存在的 deployment-owned IdP 纳入“有 provider”。
+///
+/// 该布尔值只能来自启动层对 `sso_providers` 的数据库查询，不能来自请求或环境自报。
+pub fn auth_config_with_dynamic_provider(
+    env: &EnvMap,
+    public_url: Option<&str>,
+    session_lifetime: SessionLifetimePolicy,
+    has_dynamic_provider: bool,
+) -> Result<Option<AuthConfig>, AuthConfigError> {
     let mut provider_problems = Vec::new();
 
     let google = oauth_client(env, AuthProviderId::Google, &mut provider_problems);
@@ -935,7 +957,8 @@ pub fn auth_config(
     }
 
     let session_secret = optional(env, "OPENBOT_SESSION_SECRET").map(Secret::new);
-    let has_provider = google.is_some() || microsoft.is_some() || okta.is_some();
+    let has_provider =
+        google.is_some() || microsoft.is_some() || okta.is_some() || has_dynamic_provider;
 
     if !has_provider {
         if session_secret.is_some() {
@@ -1062,7 +1085,7 @@ pub fn single_user_enabled(env: &EnvMap, has_provider: bool) -> Result<bool, Aut
     }
     if env
         .get("OPENBOT_SINGLE_USER")
-        .is_some_and(|value| value.trim() == "true")
+        .is_some_and(|value| trim_ecmascript(value) == "true")
     {
         return Ok(true);
     }
@@ -1210,11 +1233,32 @@ mod tests {
     #[test]
     fn no_provider_at_all_is_a_valid_deployment() {
         let bare = env(&[("OPENBOT_SINGLE_USER", "true")]);
-        assert_eq!(
-            auth_config(&bare, None, default_session_lifetime()).expect("合法"),
-            None
+        assert!(
+            auth_config(&bare, None, default_session_lifetime())
+                .expect("合法")
+                .is_none()
         );
         assert!(single_user_enabled(&bare, false).expect("显式要了"));
+    }
+
+    #[test]
+    fn a_database_owned_provider_makes_session_configuration_live_without_an_environment_idp() {
+        let dynamic_only = without_google(&signed_in_env());
+        let config = auth_config_with_dynamic_provider(
+            &dynamic_only,
+            PUBLIC,
+            default_session_lifetime(),
+            true,
+        )
+        .expect("数据库 provider 是权威启动事实")
+        .expect("动态 provider 需要 multi-user auth 配置");
+        assert!(config.configured_providers().is_empty());
+        assert_eq!(
+            config.session_secret.character_count(),
+            "a-long-enough-local-development-auth-secret"
+                .chars()
+                .count()
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1449,14 +1493,14 @@ mod tests {
     #[test]
     fn a_public_url_alone_is_not_a_reason_to_refuse() {
         let single_user = env(&[("OPENBOT_SINGLE_USER", "true")]);
-        assert_eq!(
+        assert!(
             auth_config(
                 &single_user,
                 Some("https://openbot.example.com"),
                 default_session_lifetime()
             )
-            .expect("应当放行"),
-            None
+            .expect("应当放行")
+            .is_none()
         );
     }
 

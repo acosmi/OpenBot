@@ -47,3 +47,6 @@
 //! `-desktop` 四个业务 crate，全部只在 `[dev-dependencies]` 里。所以依赖箭头是
 //! **testkit → 业务 crate**，且只在 `cargo test` 时存在；`cargo build --workspace` 的
 //! 依赖图里，本 crate 与它们零关系。
+
+#[cfg(test)]
+mod fixtures;

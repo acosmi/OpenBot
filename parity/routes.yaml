@@ -11,8 +11,7 @@
 #   Leptos 路径用 leptos_router 的 `:param` 写法；TanStack 的 pathless 段（`_authed` / `_app`）
 #   不进 URL，所以 layout 条目的路径写 `(pathless)`。
 # - notes 依次记：页面模板（设计系统文档 §5.2）、核心 journey（v3 §21.1 条 2）、权限可见性。
-# - status 全为 todo：本仓当前零实现代码（`find crates -name '*.rs'` 只有 10 个 `lib.rs`
-#   加 1 个 `bin/xtask.rs`），任何 done 都会是假 done。
+# - status 只随可复算实现与旅程证据推进；尚无完整实现/权限/交互证据的条目保持 todo。
 
 schema: routes
 schema_version: 1
@@ -88,13 +87,14 @@ entries:
   - id: settings-shell-layout
     upstream: app/src/routes/_authed/settings/route.tsx
     label: parity
-    target: "openbot_ui::shell::layout::settings -> /settings（layout 段）"
+    target: "openbot_ui::features::settings::SettingsShell -> /settings（layout 段）"
     owner: openbot-ui
     test_id: T-ROUTE-0005
     migration_rule: "preserve: settings 二级侧栏保留；宽度改为设计系统 §5.1 的 200px（尺寸是新增契约）"
-    status: todo
+    status: done
+    done_evidence: "Batch38建立SettingsShell；Batch39在真实Connected Accounts index/detail落地后把该destination加入。secondary nav按--size-subnav实得200px，named Settings nav当前只含Back to app/General/Connected accounts/Memory四条有真实route的同源链接，gallery断链为0。General仍exact，Connected accounts对index/detail前缀current，Memory exact，任一路径aria-current始终恰1；既有1440/1024/900双列与600单列证据保持，Batch39 release 1280复验subnav=200、X overflow0、main1/nav2/h1 1、duplicate IDs/visible alerts/console 0。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/settings/route.tsx 得 createFileRoute(\"/_authed/settings\")；同文件渲染 SidebarProvider + SettingsSidebar + main"
-    notes: "模板 n/a（layout，非页面）。journey：进入个人设置区，左侧换成 SettingsSidebar。权限：无额外守卫，已登录即可见（上游 beforeLoad 在本文件 0 命中）。"
+    notes: "模板n/a（layout，非页面）。journey：进入个人设置区后在200px二级nav切General/Connected accounts/Memory并可返回app；权限无额外守卫，已登录即可见。固定上游Components gallery尚无production route，当前shell构造性不画断链；gallery route与settings-sidebar业务/golden条目继续todo。"
 
   # ---------------------------------------------------------------------------
   # 26 个页面
@@ -138,15 +138,16 @@ entries:
     migration_rule: "preserve"
     status: todo
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/channel/$channelId.tsx 得 createFileRoute(\"/_authed/_app/channel/$channelId\")；同文件 useQuery(channelQueryOptions(channelId)) + ChannelChat + DetailPanel + ComputerView"
-    notes: "模板 Chat。journey：读 transcript、写 composer 草稿与队列、@coworker、stop/steer、失败恢复，并可把 Bot 的实时屏幕开进右侧 detail 面板（v3 §3.1 条 4）。权限：非 membership 一律 404 —— 上游 server/src/channels/routes.ts 已返回 `{\"error\":\"Channel not found.\"}` 404，与 v3 §3.2 同向，重写必须保持。"
+    notes: "模板 Chat。journey：读 transcript、写 composer 草稿与队列、@coworker、stop/steer、失败恢复，并可把 Bot 的实时屏幕开进右侧 detail 面板（v3 §3.1 条 4）。权限：非 membership 一律404。Batch30已落真实`/channel/:channel_id` data-backed destination、current-row与nested hard reload，并明确不渲染假composer/control；上述完整Chat/Screen journey仍未落，故本route继续todo。"
   - id: channel-new
     upstream: app/src/routes/_authed/_app/channel/new.tsx
     label: parity
-    target: "openbot_ui::shell::routes::channel_new -> /channel/new"
+    target: "openbot_ui::features::channels::new::ChannelNewPage -> /channel/new"
     owner: openbot-ui
     test_id: T-ROUTE-0010
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch32 real release WASM/browser journey: static route wins before /channel/:id; no recipient leaves send disabled; URL recipient and hidden-but-accessible direct Agent survive hard reload; refresh keeps channel count 52→52; keyboard Combobox selection owns ?agent=; click first message performs create→native begin→navigate and count 52→53. Four viewports overflow0, AX 1 main/nav/h1, duplicate IDs0, console error/warn0. Full channel detail Composer/queue/stop/steer remains T-ROUTE-0009 todo."
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/channel/new.tsx 得 createFileRoute(\"/_authed/_app/channel/new\")；同文件 useStartChannel + recipients + canSend"
     notes: "模板 Chat。journey：先选收件人（可由 URL 预填，隐藏的 coworker 仍是合法收件人）再写第一条消息 -> start() 创建 channel；刷新不会创建空 channel。权限：已登录即可见；路由匹配上 /channel/new 必须先于 /channel/:channel_id。"
   - id: skills-personal
@@ -302,51 +303,56 @@ entries:
   - id: settings-preferences
     upstream: app/src/routes/_authed/settings/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_index -> /settings"
+    target: "openbot_ui::features::settings::SettingsPage -> /settings"
     owner: openbot-ui
     test_id: T-ROUTE-0026
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch37 release WASM/browser：Sidebar Settings link从/settings/memory真实导航到/settings且aria-current=page；页面复用同一ThemeToggle/LocaleSwitch与native0021/API，Sidebar+页面双实例为2 radiogroup/2 locale switch且duplicate IDs=0。主题与语言即时同步两处，键盘End/ArrowDown/Enter与返焦通过；快速连续theme+locale更新时当前页面唯一role=status，稳定AppShell owner使serialized/coalesced队列完成后status消失，hard reload保留两项，alerts/console=0。1440/1024/900/600 overflow0、main/nav/h1各1。"
     evidence: "cat app/src/routes/_authed/settings/index.tsx 得 PageShell title=\"Preferences\" + PageSection title=\"General\" + 单个 Item「Dark theme」Switch（useTheme 的 dark/setDark）"
-    notes: "模板 List（Item 行 + 右侧控件）。journey：改自己的偏好；上游只有 Dark theme 一个开关（两态）。权限：已登录即可见，只影响本人。**新增登记**：主题的 system 第三态与 UI 双语（locale 切换）是新增，不得冒充 parity —— v3 §3.1 末段与设计系统文档 §7/§8 已裁决，本页会因此多出控件，具体项登记在 parity/ui.yaml。"
+    notes: "模板 List（静态row + 右侧控件）。journey：改自己的偏好；上游只有Dark theme两态，本页按第一真源增加system第三态与locale切换，并经既有deployment/tenant/actor scoped typed persistence跨设备保存。权限：已登录可见，只影响当前deployment内本人。settings二级Sidebar/layout仍是T-ROUTE-0005 todo；正式golden T-UI-0150也未因本轮目视截图而关闭。"
   - id: settings-components-gallery-index
     upstream: app/src/routes/_authed/settings/components-gallery/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_components_gallery_index -> /settings/components-gallery"
+    target: "openbot_ui::features::settings::ComponentsGalleryPage -> /settings/components-gallery"
     owner: openbot-ui
     test_id: T-ROUTE-0027
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch40 release route先PUT逐字build manifest再GET权威ComponentRecords；announcement失败不掩盖既有治理读面。fixture起始published stale+unpublished，页面最终恰Legacy fallback+真实Quotation preview两tile，unpublished构造性不出现；tile preview aria-hidden且nested interactive0。中英、Settings current1、main1/nav2/h1 1、subnav200、overflow/duplicate/alerts/console0；Axum与Desktop custom protocol同一typed command均已接。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/settings/components-gallery/index.tsx 得 title=\"Components gallery\" + description=\"The pieces a Bot can draw in a conversation instead of describing something in prose...\""
     notes: "模板 List。journey：任何用户浏览 Bot 可以画出来的组件清单（只读画廊，能不能用由管理员决定）。权限：已登录即可见。"
   - id: settings-components-gallery-detail
     upstream: app/src/routes/_authed/settings/components-gallery/$name.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_components_gallery_detail -> /settings/components-gallery/:name"
+    target: "openbot_ui::features::settings::ComponentGalleryDetailPage -> /settings/components-gallery/:name"
     owner: openbot-ui
     test_id: T-ROUTE-0028
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch40 detail只从权威list找published exact name；showQuote显示真实Rust Quote renderer、published description、localized Kind=Card与Called as=showQuote，hard reload保持；stale published row显示诚实renderer unavailable fallback仍保留identity facts；unpublished showNotice/unknown统一No such component、preview/facts0且返回gallery。current1、overflow0、visible alerts/console0。"
     evidence: "grep -c useMutation app/src/routes/_authed/settings/components-gallery/$name.tsx 得 0（纯只读）；同文件 PageSection title=\"Details\" 下两行 FactRow（Kind / Called as）+ ComponentPreview，未知 name 走 title=\"No such component\""
     notes: "模板 List（只读详情：预览图 + FactRow 行；本页零 mutation，所以不按 Form 归类，这是按实测结构做的归类而非 §5.2 表里的点名项）。journey：从画廊点进一个组件，看它的预览、kind 与调用名。权限：已登录即可见。"
   - id: settings-connected-accounts-index
     upstream: app/src/routes/_authed/settings/connected-accounts/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_connected_accounts_index -> /settings/connected-accounts"
+    target: "openbot_ui::features::settings::ConnectedAccountsPage -> /settings/connected-accounts"
     owner: openbot-ui
     test_id: T-ROUTE-0029
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch39 contract/PG/Server/UI/release-browser：McpConnections新增stable availableServerIds，PG只在管理员已add且google-drive的url/vendor/provenance/transport与编译期reviewed identity逐字段相等时投影；connection仍只取AuthContext actor。GET 200 no-store，UI只join reviewed id，unknown/custom即使存在connection也不显示。release浏览器实得Google Drive Not connected→fixture full-page callback→Connected，hard reload保持；failed query只显示统一本地化错误且vendor canary=0；中英切换、current恰1、main1/nav2/h1 1、duplicate/overflow/visible alert/console均0。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/settings/connected-accounts/index.tsx 得 title=\"Connected accounts\" + description=\"Services a Bot reads as you, so it only ever sees what you can see. Connecting is yours to grant, and nobody can grant it for you.\""
     notes: "模板 List。journey：本人查看自己已连接 / 可连接的服务（v3 §3.1 条 7、§9.4）。权限：只列本人的连接；授权只能本人给，管理员不能代授。"
   - id: settings-connected-account-detail
     upstream: app/src/routes/_authed/settings/connected-accounts/$key.tsx
     label: parity
-    target: "openbot_ui::shell::routes::settings_connected_account_detail -> /settings/connected-accounts/:key"
+    target: "openbot_ui::features::settings::ConnectedAccountDetailPage -> /settings/connected-accounts/:server_id"
     owner: openbot-ui
     test_id: T-ROUTE-0030
-    migration_rule: "preserve"
-    status: todo
+    migration_rule: "preserve: 上游connect journey保留；按v3 §9.4额外harden为local-first disconnect与truthful vendor reconciliation状态"
+    status: done
+    done_evidence: "Batch39 typed UI API只接受bounded server id；authorization receipt只允许同源根路径或HTTPS绝对URL且拒userinfo/fragment/control/backslash，Server receipt后才full-page navigation。detail只认reviewed Google Drive，unknown id页内Not found且零action；已连接页逐字显示vendor scope与RFC3339 connectedAt。POST connect/DELETE disconnect均trusted Origin+no-store；APG Menu ArrowDown聚焦唯一menuitem、Escape返trigger。fixture断开中trigger disabled；pending receipt后权威GET使scope消失，文案明确本地已断开/供应商撤销待协调，稳定page owner在重渲染后把焦点送到Connect。真实OAuth/PKCE/token/revoke仍由既有PG协议用例证明，不拿fixture冒充。"
     evidence: "grep -A2 -n 'createFileRoute($' app/src/routes/_authed/settings/connected-accounts/$key.tsx 得路由串 \"/_authed/settings/connected-accounts/$key\"；同文件 useMutation(connect) 与 title=\"Account\" / \"Access\" + description=\"What you agreed to, as the vendor recorded it — not what was asked for.\""
     notes: "模板 Form。journey：本人对单个服务做连接 / 断开，并看到厂商实际记录下来的授权范围（与请求范围可能不同）。权限：只本人；不是「为自己连接」的服务走「This is not a service you connect for yourself.」空态。"
   - id: sign-in
@@ -366,10 +372,11 @@ entries:
   - id: memory-controls
     upstream: "-"
     label: 新增
-    target: "openbot_ui::shell::routes::settings_memory -> /settings/memory"
+    target: "openbot_ui::features::memory::MemoryPage -> /settings/memory"
     owner: openbot-ui
     test_id: T-ROUTE-0032
     migration_rule: "n/a: 无上游对应物，不参与 31 的 parity 计数"
-    status: todo
+    status: done
+    done_evidence: "Batch36 release WASM/browser：owner-only首屏50条、keyset 50→52且ID零重复；writesEnabled关闭跨reload保持并只禁remember/correct，forbid/delete继续可用；correct生成replacement并supersede旧行，forbid/delete均显示content erased；取消返原按钮、成功权威refetch后聚焦replacement行；中英双语、1440/1024/900/600 overflow0、duplicate IDs/visible alerts/console error-warn均0。PG17.11 SCRAM同时证明跨tenant/actor隔离与GUI/tool写拒绝。"
     evidence: "正向对照已跑：`grep -rniE 'memory' app/src/routes | wc -l` 与 `git ls-files 'app/src/**' | grep -i memory | wc -l` 均为 0，而同一条 grep 在 v3 文档里能命中 §3.1 条 7 与 §4.3 的 native memory 段落 —— 即命令本身有效，只是上游确实没有这个面"
-    notes: "模板 List（记忆条目列表 + 每条删除 + 全局禁用开关）。journey：用户查看 native memory 里关于自己的条目、删除单条、整体禁用记忆写入（v3 §3.1 条 7、§4.3）。权限：只本人可见自己的条目。**这是 31 之外的第 32 条，label 必须是新增**：上游 memory 只存在于 Intelligence 托管侧，v3 §4.1 退出 Intelligence 后本页是其替代面；golden 截图对象因此是 26 页 + 本页 = 27 页（设计系统文档 §10.1）。"
+    notes: "模板 List（记忆条目列表 + correct/forbid/delete + 全局禁用开关）。journey：用户查看 native memory 的status/kind/sensitivity/scope/source/origin/tags，keyset加载更多，纠正生成replacement，禁止/删除擦除content，并整体禁用后续GUI/tool写入；关闭写入不妨碍查看与擦除（v3 §3.1 条 7、§4.3）。权限：只本人可见自己的条目。**这是 31 之外的第 32 条，label 必须是新增**：上游 memory 只存在于 Intelligence 托管侧，v3 §4.1 退出 Intelligence 后本页是其替代面；golden截图对象仍为26页+本页=27页，T-UI-0152正式golden矩阵尚todo。"

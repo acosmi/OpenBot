@@ -19,7 +19,8 @@
 //!
 //! # 规范化到底做什么，以及**刻意不做**什么
 //!
-//! 做两件事，与上游逐字相同：**去首尾空白**，然后 **Unicode 小写**。
+//! 做两件事，与上游逐字相同：按 ECMAScript `TrimString` **去首尾空白**，然后
+//! **Unicode 小写**。
 //!
 //! 不做的每一件都必须写下理由，因为规范化规则就是「谁能登录」的定义，多做一步就是在没有
 //! 产品裁决的情况下悄悄改变部署的准入名单：
@@ -63,11 +64,13 @@ use core::fmt;
 
 use serde::Serialize;
 
+use crate::text::trim_ecmascript;
+
 /// 规范化后的 email 地址。
 ///
 /// # 不变量
 ///
-/// 任何一个 `NormalizedEmail` 的值都满足：非空、无首尾空白（含 U+FEFF）、已 Unicode 小写。
+/// 任何一个 `NormalizedEmail` 的值都满足：非空、无 ECMAScript 首尾空白、已 Unicode 小写。
 /// 这条不变量由「只有 [`NormalizedEmail::normalize`] 一个构造入口」承载 —— 元组字段是
 /// 私有的，没有 `Default`，也没有 `From<String>`。
 ///
@@ -113,14 +116,14 @@ impl EmailBlank {
 }
 
 impl NormalizedEmail {
-    /// 唯一构造入口：去首尾空白（含 U+FEFF）+ Unicode 小写。
+    /// 唯一构造入口：按 ECMAScript `TrimString` 去首尾空白 + Unicode 小写。
     ///
     /// # Errors
     ///
     /// 规范化后为空时返回 [`EmailBlank`]，理由见该类型文档。除此之外**不拒绝任何输入**
     /// —— 不校验 `@`、不限长度、不做 NFC/NFKC，理由见模块文档。
     pub fn normalize(raw: &str) -> Result<Self, EmailBlank> {
-        let trimmed = raw.trim_matches(is_trimmable);
+        let trimmed = trim_ecmascript(raw);
         if trimmed.is_empty() {
             return Err(EmailBlank);
         }
@@ -138,14 +141,6 @@ impl NormalizedEmail {
     pub fn into_inner(self) -> String {
         self.0
     }
-}
-
-/// 该字符是否算「首尾空白」。
-///
-/// = Unicode `White_Space` **并上** U+FEFF。多出来的那一个码点是为了与 JS `trim()` 对齐，
-/// 理由与实测证据见模块文档。
-fn is_trimmable(character: char) -> bool {
-    character.is_whitespace() || character == '\u{FEFF}'
 }
 
 impl fmt::Display for NormalizedEmail {
@@ -196,12 +191,19 @@ mod tests {
         // 一个从 IdP 来的普通地址。
         let from_idp = NormalizedEmail::normalize("A@B.com").unwrap();
         assert_eq!(email, from_idp);
+
+        let next_line = NormalizedEmail::normalize("\u{0085}A@B.COM\u{0085}").unwrap();
+        assert_eq!(
+            next_line.as_str(),
+            "\u{0085}a@b.com\u{0085}",
+            "ECMAScript trim 不认 U+0085，不能借 Rust White_Space 擅自扩大身份等价类"
+        );
     }
 
     /// 负向对照：Rust 标准库的 `trim()` **不**去掉 U+FEFF。
     ///
     /// 没有这一条，上一条测试在「`trim()` 本来就会去掉 BOM」的世界里同样通过 ——
-    /// 那样的话 [`is_trimmable`] 就是一段没有作用的代码，而测试照绿。
+    /// 那样的话 [`trim_ecmascript`] 就是一段没有作用的代码，而测试照绿。
     #[test]
     fn rust_trim_alone_does_not_remove_the_bom() {
         assert_eq!(

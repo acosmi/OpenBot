@@ -62,10 +62,9 @@
 //! 不注册任何探针时 `/readiness` 返回 503，由
 //! `readiness_with_no_probes_is_not_ready` 配正向对照钉住。
 //!
-//! # G1 里它是**注入口**，不是实现
+//! # 判据 port 与二进制接线
 //!
-//! `ChannelReader` 的 PostgreSQL 实现与迁移边界检查都在 `openbot-infra`，本 crate 不依赖
-//! 它（transport 不碰数据库）。所以这里只定义 port；接线层把
+//! library 只定义 port；W-4 `main.rs` 把
 //! `openbot_infra::db::compat` 的 `DataMigrationVerdict` **逐态**映射过来：
 //!
 //! ```text

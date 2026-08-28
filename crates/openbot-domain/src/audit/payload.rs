@@ -98,6 +98,34 @@ impl fmt::Display for AuditIdentifier {
     }
 }
 
+/// Bounded ordered identifier list used for routing candidates, never content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuditIdentifierList(Vec<AuditIdentifier>);
+
+impl AuditIdentifierList {
+    /// A routing decision never needs an unbounded model-facing roster in one audit row.
+    pub const MAX_ITEMS: usize = 256;
+
+    /// Validate a non-empty bounded list.
+    pub fn new(values: Vec<AuditIdentifier>) -> Result<Self, AuditFieldError> {
+        if values.is_empty() {
+            return Err(AuditFieldError::EmptyList);
+        }
+        if values.len() > Self::MAX_ITEMS {
+            return Err(AuditFieldError::TooManyItems {
+                found: values.len(),
+            });
+        }
+        Ok(Self(values))
+    }
+
+    /// Borrow the ordered identifiers.
+    #[must_use]
+    pub fn as_slice(&self) -> &[AuditIdentifier] {
+        &self.0
+    }
+}
+
 /// 封闭词汇型字段值 —— 只能是**编译期字面量**。
 ///
 /// `&'static str` 在这里不是省一次分配，是一条准入判据：运行期得到的字符串（HTTP 体、
@@ -144,6 +172,15 @@ pub enum AuditFieldError {
     /// 含控制字符（换行 / 制表 / NUL 等）。
     #[error("audit_field_control_character")]
     ControlCharacter,
+    /// An identifier list required at least one element.
+    #[error("audit_field_list_empty")]
+    EmptyList,
+    /// An identifier list exceeded its fixed item bound.
+    #[error("audit_field_list_too_long found={found}")]
+    TooManyItems {
+        /// Actual item count; values themselves are never echoed.
+        found: usize,
+    },
 }
 
 /// 人工接管的三个阶段。
@@ -183,6 +220,16 @@ impl TakeoverPhase {
 pub enum AuditFact {
     /// 被调用工具在 catalog 中的稳定名。
     ToolName(AuditIdentifier),
+    /// Compiled component声明并被服务端复核的data-function稳定名。
+    ComponentFunction(AuditIdentifier),
+    /// Build-owned description of the data source read by a component function.
+    ComponentReads(AuditLabel),
+    /// Closed component implementation kind, such as `sandboxed`.
+    ComponentKind(AuditLabel),
+    /// Monotonic published source revision for a sandboxed component.
+    ComponentRevision(u64),
+    /// 该次工具调用的权威 Bot；绝不取自模型或 callback body。
+    Bot(AuditIdentifier),
     /// 该次调用的 effect 分类结果。
     EffectClass(AuditLabel),
     /// 该分类是否由"无法识别的 effect 字符串"降级而来（§8.2）。
@@ -199,6 +246,16 @@ pub enum AuditFact {
     TargetKind(AuditLabel),
     /// 目标对象的标识。
     TargetId(AuditIdentifier),
+    /// Authoritative recipient duplicated in the upstream routing payload for compatibility.
+    RoutingChosen(AuditIdentifier),
+    /// Stable reason classification; raw model prose and the user message are excluded.
+    RoutingReason(AuditLabel),
+    /// Whether uncertainty selected the deterministic default.
+    RoutingFallback(bool),
+    /// Whether the person explicitly selected the recipient.
+    RoutingViaMention(bool),
+    /// Ordered authoritative roster identities considered by this decision.
+    RoutingCandidates(AuditIdentifierList),
     /// 本次 acting 之前写下的 durable decision 的 id（§17.2 条 2 的锚点）。
     DecisionId(AuditIdentifier),
     /// 做出该 decision 时生效的 policy 版本（§8.3：多副本下用旧版本做出的 decision 必须可辨认）。
@@ -209,6 +266,18 @@ pub enum AuditFact {
     ErrorCode(AuditLabel),
     /// 执行结果的 commit 状态（`crate::tool::commit`）。
     CommitState(AuditLabel),
+    /// people 角色变更前的角色。
+    PreviousRole(AuditLabel),
+    /// people 角色变更后的角色。
+    NewRole(AuditLabel),
+    /// people 访问状态变更后的 revoked 值。
+    AccessRevoked(bool),
+    /// 被退役 credential 的权威 owner 标识；只记 owner id，不记 token/密文。
+    CredentialOwner(AuditIdentifier),
+    /// credential 撤销原因的封闭分类。
+    RevocationReason(AuditLabel),
+    /// vendor 侧授权是否已经确认撤销；本地退役不能把 `false` 说成 `true`。
+    VendorRevoked(bool),
     /// 判定所依据的 computer 代际（§17.2 条 6）。
     ComputerGeneration(u64),
     /// 判定所依据的 catalog 代际（§8.5）。
@@ -219,6 +288,8 @@ pub enum AuditFact {
     Idempotency(AuditLabel),
     /// 工具声明的 approval 档位。
     ApprovalClass(AuditLabel),
+    /// Durable human proof-of-intent row used by this decision.
+    ApprovalId(AuditIdentifier),
     /// 工具声明的沙箱要求。
     SandboxRequirement(AuditLabel),
     /// 工具是否声明可并行。
@@ -260,22 +331,39 @@ impl AuditFact {
     pub const fn field(&self) -> &'static str {
         match self {
             Self::ToolName(_) => "tool_name",
+            Self::ComponentFunction(_) => "function",
+            Self::ComponentReads(_) => "reads",
+            Self::ComponentKind(_) => "component_kind",
+            Self::ComponentRevision(_) => "component_revision",
+            Self::Bot(_) => "bot",
             Self::EffectClass(_) => "effect_class",
             Self::EffectDowngraded(_) => "effect_downgraded",
             Self::CanonicalArgsHash(_) => "canonical_args_hash",
             Self::SchemaHash(_) => "schema_hash",
             Self::TargetKind(_) => "target_kind",
             Self::TargetId(_) => "target_id",
+            Self::RoutingChosen(_) => "chosen",
+            Self::RoutingReason(_) => "reason",
+            Self::RoutingFallback(_) => "fallback",
+            Self::RoutingViaMention(_) => "via_mention",
+            Self::RoutingCandidates(_) => "candidates",
             Self::DecisionId(_) => "decision_id",
             Self::PolicyVersion(_) => "policy_version",
             Self::RefusedByRule(_) => "refused_by_rule",
             Self::ErrorCode(_) => "error_code",
             Self::CommitState(_) => "commit_state",
+            Self::PreviousRole(_) => "previous_role",
+            Self::NewRole(_) => "new_role",
+            Self::AccessRevoked(_) => "access_revoked",
+            Self::CredentialOwner(_) => "credential_owner",
+            Self::RevocationReason(_) => "revocation_reason",
+            Self::VendorRevoked(_) => "vendor_revoked",
             Self::ComputerGeneration(_) => "computer_generation",
             Self::CatalogGeneration(_) => "catalog_generation",
             Self::DocumentGeneration(_) => "document_generation",
             Self::Idempotency(_) => "idempotency",
             Self::ApprovalClass(_) => "approval_class",
+            Self::ApprovalId(_) => "approval_id",
             Self::SandboxRequirement(_) => "sandbox_requirement",
             Self::ParallelSafe(_) => "parallel_safe",
             Self::AttemptNumber(_) => "attempt_number",
@@ -292,14 +380,25 @@ impl AuditFact {
     fn to_json(&self) -> Value {
         match self {
             Self::ToolName(value)
+            | Self::ComponentFunction(value)
+            | Self::Bot(value)
             | Self::TargetId(value)
+            | Self::RoutingChosen(value)
             | Self::DecisionId(value)
+            | Self::ApprovalId(value)
             | Self::PolicyVersion(value)
-            | Self::RefusedByRule(value) => Value::String(value.as_str().to_owned()),
+            | Self::RefusedByRule(value)
+            | Self::CredentialOwner(value) => Value::String(value.as_str().to_owned()),
             Self::EffectClass(label)
+            | Self::ComponentReads(label)
+            | Self::ComponentKind(label)
             | Self::TargetKind(label)
+            | Self::RoutingReason(label)
             | Self::ErrorCode(label)
             | Self::CommitState(label)
+            | Self::PreviousRole(label)
+            | Self::NewRole(label)
+            | Self::RevocationReason(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
             | Self::SandboxRequirement(label) => Value::String(label.as_str().to_owned()),
@@ -308,15 +407,27 @@ impl AuditFact {
             }
             Self::EffectDowngraded(value)
             | Self::ParallelSafe(value)
+            | Self::AccessRevoked(value)
+            | Self::VendorRevoked(value)
+            | Self::RoutingFallback(value)
+            | Self::RoutingViaMention(value)
             | Self::OutputTruncated(value) => Value::Bool(*value),
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
             | Self::DocumentGeneration(value)
+            | Self::ComponentRevision(value)
             | Self::DurationMs(value)
             | Self::InputBytes(value)
             | Self::OutputBytes(value) => Value::Number((*value).into()),
             Self::AttemptNumber(value) => Value::Number((*value).into()),
             Self::HumanTakeover(phase) => Value::String(phase.as_str().to_owned()),
+            Self::RoutingCandidates(values) => Value::Array(
+                values
+                    .as_slice()
+                    .iter()
+                    .map(|value| Value::String(value.as_str().to_owned()))
+                    .collect(),
+            ),
             Self::SecretInput {
                 secret_id,
                 purpose,
@@ -351,29 +462,51 @@ impl AuditFact {
         writer.str(self.field());
         match self {
             Self::ToolName(value)
+            | Self::ComponentFunction(value)
+            | Self::Bot(value)
             | Self::TargetId(value)
+            | Self::RoutingChosen(value)
             | Self::DecisionId(value)
+            | Self::ApprovalId(value)
             | Self::PolicyVersion(value)
-            | Self::RefusedByRule(value) => writer.str(value.as_str()),
+            | Self::RefusedByRule(value)
+            | Self::CredentialOwner(value) => writer.str(value.as_str()),
             Self::EffectClass(label)
+            | Self::ComponentReads(label)
+            | Self::ComponentKind(label)
             | Self::TargetKind(label)
+            | Self::RoutingReason(label)
             | Self::ErrorCode(label)
             | Self::CommitState(label)
+            | Self::PreviousRole(label)
+            | Self::NewRole(label)
+            | Self::RevocationReason(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
             | Self::SandboxRequirement(label) => writer.str(label.as_str()),
             Self::CanonicalArgsHash(digest) | Self::SchemaHash(digest) => writer.digest(digest),
             Self::EffectDowngraded(value)
             | Self::ParallelSafe(value)
+            | Self::AccessRevoked(value)
+            | Self::VendorRevoked(value)
+            | Self::RoutingFallback(value)
+            | Self::RoutingViaMention(value)
             | Self::OutputTruncated(value) => writer.bool(*value),
             Self::ComputerGeneration(value)
             | Self::CatalogGeneration(value)
             | Self::DocumentGeneration(value)
+            | Self::ComponentRevision(value)
             | Self::DurationMs(value)
             | Self::InputBytes(value)
             | Self::OutputBytes(value) => writer.u64(*value),
             Self::AttemptNumber(value) => writer.u32(*value),
             Self::HumanTakeover(phase) => writer.str(phase.as_str()),
+            Self::RoutingCandidates(values) => {
+                writer.u64(values.as_slice().len() as u64);
+                for value in values.as_slice() {
+                    writer.str(value.as_str());
+                }
+            }
             Self::SecretInput {
                 secret_id,
                 purpose,
@@ -398,22 +531,39 @@ impl AuditFact {
 /// `field_ledger_is_disjoint_from_upstream_sensitive_keys`（台账 → 上游敏感键黑名单）。
 pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "tool_name",
+    "function",
+    "reads",
+    "component_kind",
+    "component_revision",
+    "bot",
     "effect_class",
     "effect_downgraded",
     "canonical_args_hash",
     "schema_hash",
     "target_kind",
     "target_id",
+    "chosen",
+    "reason",
+    "fallback",
+    "via_mention",
+    "candidates",
     "decision_id",
     "policy_version",
     "refused_by_rule",
     "error_code",
     "commit_state",
+    "previous_role",
+    "new_role",
+    "access_revoked",
+    "credential_owner",
+    "revocation_reason",
+    "vendor_revoked",
     "computer_generation",
     "catalog_generation",
     "document_generation",
     "idempotency",
     "approval_class",
+    "approval_id",
     "sandbox_requirement",
     "parallel_safe",
     "attempt_number",
@@ -535,22 +685,42 @@ mod tests {
     fn every_variant() -> Vec<AuditFact> {
         vec![
             AuditFact::ToolName(identifier("browser.click")),
+            AuditFact::ComponentFunction(identifier("recentRefusals")),
+            AuditFact::ComponentReads(AuditLabel::new("audit_trail")),
+            AuditFact::ComponentKind(AuditLabel::new("sandboxed")),
+            AuditFact::ComponentRevision(7),
+            AuditFact::Bot(identifier("bot-1")),
             AuditFact::EffectClass(AuditLabel::new("execute")),
             AuditFact::EffectDowngraded(true),
             AuditFact::CanonicalArgsHash(Sha256Digest::of(b"args")),
             AuditFact::SchemaHash(Sha256Digest::of(b"schema")),
             AuditFact::TargetKind(AuditLabel::new("browser_tab")),
             AuditFact::TargetId(identifier("tab-1")),
+            AuditFact::RoutingChosen(identifier("agent-1")),
+            AuditFact::RoutingReason(AuditLabel::new("model_match")),
+            AuditFact::RoutingFallback(false),
+            AuditFact::RoutingViaMention(false),
+            AuditFact::RoutingCandidates(
+                AuditIdentifierList::new(vec![identifier("agent-1"), identifier("agent-2")])
+                    .unwrap(),
+            ),
             AuditFact::DecisionId(identifier("pd-1")),
             AuditFact::PolicyVersion(identifier("pv-7")),
             AuditFact::RefusedByRule(identifier("deny.private_hosts")),
             AuditFact::ErrorCode(AuditLabel::new("policy_refused")),
             AuditFact::CommitState(AuditLabel::new("unknown")),
+            AuditFact::PreviousRole(AuditLabel::new("user")),
+            AuditFact::NewRole(AuditLabel::new("admin")),
+            AuditFact::AccessRevoked(true),
+            AuditFact::CredentialOwner(identifier("person-1")),
+            AuditFact::RevocationReason(AuditLabel::new("person_removed")),
+            AuditFact::VendorRevoked(false),
             AuditFact::ComputerGeneration(3),
             AuditFact::CatalogGeneration(4),
             AuditFact::DocumentGeneration(5),
             AuditFact::Idempotency(AuditLabel::new("non_idempotent")),
             AuditFact::ApprovalClass(AuditLabel::new("every_call")),
+            AuditFact::ApprovalId(identifier("approval-1")),
             AuditFact::SandboxRequirement(AuditLabel::new("required")),
             AuditFact::ParallelSafe(false),
             AuditFact::AttemptNumber(2),
@@ -746,6 +916,31 @@ mod tests {
         // 正向对照：真实形态的标识符照常通过，边界值恰好通过。
         assert!(AuditIdentifier::new("0199a4d1-6f2b-7c3e-8a11-0242ac120002").is_ok());
         assert!(AuditIdentifier::new("x".repeat(AuditIdentifier::MAX_BYTES)).is_ok());
+    }
+
+    #[test]
+    fn routing_candidate_list_is_nonempty_and_bounded() {
+        assert_eq!(
+            AuditIdentifierList::new(Vec::new()),
+            Err(AuditFieldError::EmptyList)
+        );
+        assert_eq!(
+            AuditIdentifierList::new(
+                (0..=AuditIdentifierList::MAX_ITEMS)
+                    .map(|index| identifier(&format!("agent-{index}")))
+                    .collect()
+            ),
+            Err(AuditFieldError::TooManyItems {
+                found: AuditIdentifierList::MAX_ITEMS + 1
+            })
+        );
+        let boundary = AuditIdentifierList::new(
+            (0..AuditIdentifierList::MAX_ITEMS)
+                .map(|index| identifier(&format!("agent-{index}")))
+                .collect(),
+        )
+        .unwrap();
+        assert_eq!(boundary.as_slice().len(), AuditIdentifierList::MAX_ITEMS);
     }
 
     #[test]

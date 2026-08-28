@@ -25,8 +25,43 @@ openbot-domain.workspace = true
 openidconnect.workspace = true
 url.workspace = true
 
+# W-7 唯一出网实现。协议模块只持有窄 port；socket/DNS/TLS/HTTP 全部收口在
+# `net::safe_http`，并由 `tools/check-safe-dialer-dependencies.sh` 锁死依赖图与调用面。
+bytes.workspace = true
+http.workspace = true
+httpdate.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+ipnet.workspace = true
+rustls.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
+samael.workspace = true
+chrono.workspace = true
+quick-xml.workspace = true
+openssl.workspace = true
+hmac.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+aes-gcm.workspace = true
+ed25519-dalek.workspace = true
+zeroize.workspace = true
+getrandom.workspace = true
+
 # `ChannelReader` 是 `#[async_trait]` trait，实现侧必须同样标注。
 async-trait.workspace = true
+# R65 的 LISTEN/replay receiver 直接实现 application 的 `Stream` 边界；只需 core trait，
+# 不为一个 `StreamExt` 拉入 futures-util。package 已在既有锁图内，新 package=0。
+futures-core.workspace = true
+futures-util.workspace = true
+
+# Pinned MCP 2026-07-28 client DTO/handshake/worker；no reqwest，HTTP 由 `SafeRmcpHttpClient`
+# 适配现有唯一 SafeDialer。sse-stream 只解析该 bounded SafeDialer body。
+rmcp.workspace = true
+sse-stream.workspace = true
+jsonschema.workspace = true
 
 # `PortError` 只带静态字段（端口文档：数据库原值是不可信数据，不进错误）。
 # 真正的故障细节由实现侧自己 trace 出去 —— 只依赖 facade，不依赖 subscriber。
@@ -40,6 +75,7 @@ tokio-postgres.workspace = true
 # schema facts 的规范 JSON 形态（与 psql 侧 jsonb_build_object 逐字段一致）。
 serde.workspace = true
 serde_json.workspace = true
+base64.workspace = true
 
 # `timestamp with time zone` 的行类型；tokio-postgres 已开 `with-time-0_3`。
 time.workspace = true
@@ -52,4 +88,8 @@ uuid.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+ring.workspace = true
+openbot-agent.workspace = true
+# Real pinned RMCP Streamable HTTP server used only by local protocol E2E.
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
+axum.workspace = true

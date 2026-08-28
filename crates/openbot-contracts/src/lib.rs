@@ -9,6 +9,8 @@
 //!   `ComputerId` / `ComputerGeneration` / `TabId` / `DocumentGeneration` / `PolicyDecisionId` /
 //!   `AuditEventId`）。ID 一律不擅自限定为 UUID；创建端可以用 UUIDv7/ULID，兼容端必须接受
 //!   上游既有字符串。
+//! - 已经真实跨 crate 的内部 contract：`AttemptId` / `CapabilityId` /
+//!   `CatalogGeneration` 与 [`auth::AuthGeneration`]。它们刻意不 serde，不扩张上述公开 ID 清单。
 //! - 跨边界 DTO、event 族、错误码与 schema。错误以 **code** 穿越边界（CLAUDE.md §4a），
 //!   状态码与 audit 类型固定（v3 §15.3），文案不在这里。
 //! - 唯一一个既编 native 又编 wasm 的 crate：`openbot-ui` 只依赖它（设计系统文档 §13）。
@@ -23,29 +25,37 @@
 //!   同名字段一律是普通不可信输入。
 //! - 用户可见文案与本地化（CLAUDE.md §4a：文案不进 domain / application）。
 //!
-//! # G1 状态（Rust Foundation，W5–10）
+//! # 当前状态（G1 + people/tool/audit + G3 thread contracts）
 //!
 //! Phase 0（Evidence Freeze）本 crate 刻意为空；G1 起它承载五个模块：
 //!
 //! | 模块 | 内容 | 方案出处 |
 //! | --- | --- | --- |
-//! | [`ids`] | 十五个核心 ID（十三个 string newtype + 两个 generation 计数器） | §5.3 |
-//! | [`auth`] | [`auth::AuthContext`]、[`auth::Role`]、受限构造入口 | §5.3 / §5.2 |
+//! | [`ids`] | 十五个核心 ID + 三个不 serde 的跨层内部 ID/generation | §5.3 / R47 |
+//! | [`auth`] | [`auth::AuthContext`]、[`auth::AuthGeneration`]、[`auth::Role`]、受限构造入口 | §5.3 / §5.2 / R47 |
 //! | [`error`] | [`error::AppError`]、稳定 code、HTTP status、audit 类型 | §15.3 |
-//! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent` | §5.2 |
+//! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent`，含 R64 thread mint/status | §5.2 / §4.1 |
+//! | [`people`] | current user / admin status / people page 与 person 公开 DTO | §6.2 / R40 |
+//! | [`audit`] | 管理员 audit event/page DTO 与 JavaScript 毫秒时间 wire | §8.6 / R56 |
+//! | [`tool`] | Agent tool invocation 与脱敏结果；没有 actor/policy/target 自报字段 | §8.1 |
+//! | [`memory`] | explicit memory scope/provenance/lifecycle/recall DTO；wire 无 owner/origin 自报 | §4.3 / R66 |
+//! | [`components`] | compiled component治理record、build manifest/catalogue与Quote+Cards+Charts参数schema | §3.3 / R103–R105 |
+//! | [`sandboxed`] | sandboxed draft/published source、sample与发布响应的closed wire | §3.3 / R112 |
 //! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
 //!
-//! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：G1 只落了垂直切片
-//! 需要的两个用例（列出可见 channel + 探活），thread 订阅、工具管线、browser 协议分别是
-//! G3 及之后的工作，届时随各自 ledger 条目一起加。本 crate 里凡是与上游行为对齐的取值
+//! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：W-3a 只在 G1 的
+//! channel/health 之外追加 fixed-upstream people slice；R64 已加 thread request/reply，thread live
+//! 订阅与 browser 协议仍是后续工作，届时随各自 ledger 条目一起加。本 crate 里凡是与上游行为对齐的取值
 //! （如 [`command::MAX_CHANNEL_PAGE`]）都在注释里标了 parity 出处，新增项同理 —— 把新增
 //! 写成"当前行为"是 v2 审计里最重的一类错误（§28.1 R1）。
 //!
 //! # 依赖面为什么这么窄
 //!
 //! 本 crate 必须编到 `wasm32-unknown-unknown`（`openbot-ui` 是 Leptos CSR/WASM 且只依赖它）。
-//! 所以依赖只有 `serde` / `thiserror` / `time`，`serde_json` 只在 dev-dependencies 里供测试
-//! 断言线上形状。**禁止**引入 `tokio` / `axum` / `tokio-postgres` 或任何做 I/O 的 crate ——
+//! 所以依赖只有 `serde` / `serde_json` / `thiserror` / `time` / 纯 Rust `sha2`；`sha2` 只做
+//! ThreadIdentity fingerprint，随机源仍在 infra。`serde_json::Value` 只出现在封闭
+//! `InvokeTool` 的 arguments 字段，actor/policy/target 仍无自报入口。**禁止**引入 `tokio` /
+//! `axum` / `tokio-postgres` 或任何做 I/O 的 crate ——
 //! 那会让整个 GUI 编译失败，或者更糟：编过了但在浏览器里运行期炸。闸门是
 //! `cargo check -p openbot-contracts --target wasm32-unknown-unknown`，它必须与
 //! `cargo test` 同批次跑：只跑 native 那一半，wasm 破裂要到 G6 打包时才会被发现。
@@ -60,8 +70,20 @@
 // 的输出里会被淹没，只有 clippy 的 `-D warnings` 拦得住，那是半道闸门。
 #![deny(missing_docs)]
 
+pub mod agent;
+pub mod audit;
 pub mod auth;
 pub mod command;
+pub mod components;
 pub mod error;
 pub mod ids;
+pub mod intelligence;
+pub mod mcp;
+pub mod memory;
+pub mod people;
+pub mod policy;
+pub mod sandboxed;
 pub mod telemetry;
+pub mod text;
+pub mod tool;
+pub mod ui;

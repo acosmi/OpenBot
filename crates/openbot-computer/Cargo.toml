@@ -11,3 +11,14 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+# Authority-owned IDs/AuthContext and the one canonical ECMAScript TrimString implementation.
+openbot-contracts.workspace = true
+# SecretInsert reuses the repository's non-Clone, zeroizing, redacted secret container instead of
+# inventing a second plaintext holder inside the engine boundary.
+openbot-domain.workspace = true
+thiserror.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+# `AuthContext::for_test` is deliberately absent from production builds.
+openbot-contracts = { workspace = true, features = ["testkit"] }

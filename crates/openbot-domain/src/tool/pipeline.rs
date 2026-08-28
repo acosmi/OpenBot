@@ -56,6 +56,7 @@
 use core::time::Duration;
 
 use openbot_contracts::ids::{ActorId, BotId, PolicyDecisionId, RunId, ToolCallId};
+pub use openbot_contracts::ids::{AttemptId, CapabilityId};
 
 use super::approval::{
     ApprovalBinding, ApprovalInvalidation, ApprovalObservation, ApprovalTarget, ApprovalValidity,
@@ -66,50 +67,6 @@ use super::commit::CommitState;
 use super::metadata::{Effect, ToolMetadata, ToolMetadataError, ToolName};
 use crate::audit::hash::Sha256Digest;
 use crate::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
-
-/// 一次尝试的标识（`attempt` 行的主键）。
-///
-/// §17.2 条 2 说的是「durable decision **+ attempt**」——两者是两行，decision 说"允许"，
-/// attempt 说"开始做了"。分开是因为一次 decision 可能对应多次 attempt（重放），而把它们
-/// 压成一行就再也回答不了"这次放行到底动手了几次"。
-///
-/// 本模块的本地 newtype：`openbot_contracts::ids` 的 §5.3 十五个 ID 里没有它（本轮实读
-/// `crates/openbot-contracts/src/ids.rs`）。加进 contracts 是改跨 crate 契约的动作，
-/// 已写进交付报告的遗留项。
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AttemptId(String);
-
-impl AttemptId {
-    /// 由标识构造。与 §5.3 一致：**不做格式校验**。
-    #[must_use]
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// 借出底层字符串。
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// 单次能力券的标识。同样是本模块的本地 newtype，理由见 [`AttemptId`]。
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CapabilityId(String);
-
-impl CapabilityId {
-    /// 由标识构造。
-    #[must_use]
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// 借出底层字符串。
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 /// policy 规则 ID。拒绝时必须带上（§15.3「policy refusal 403 + stable error code/rule ID」）。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -226,6 +183,8 @@ pub enum PolicyVerdict {
 /// 一份过期批准被拿去执行的入口。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalEvidence {
+    /// Durable approval row identity used by the decision/audit link.
+    pub approval_id: String,
     /// 当初批准时绑定的那些字段。
     pub binding: ApprovalBinding,
     /// 此刻世界的样子。
@@ -649,6 +608,14 @@ pub struct ApprovalSettled {
 }
 
 impl ApprovalSettled {
+    /// Durable human-approval identity, absent only for tools whose catalog says not required.
+    #[must_use]
+    pub fn approval_id(&self) -> Option<&str> {
+        self.approval
+            .as_ref()
+            .map(|evidence| evidence.approval_id.as_str())
+    }
+
     /// 第 6 → 7 段：把 decision + attempt 落成 durable。
     ///
     /// 入参是**写库的结果**，不是"打算去写"。写失败的那一支返回 [`ToolCallTerminal`]，
@@ -928,6 +895,16 @@ impl Executing {
         }
 
         match written {
+            Ok(outcome) if outcome.commit_state.requires_reconciliation() => {
+                ToolCallTerminal::ReconciliationRequired(ReconciliationRequired {
+                    call_id: self.context.call_id,
+                    run: self.context.run,
+                    tool: self.context.metadata.name,
+                    decision: self.receipt.decision,
+                    attempt: self.receipt.attempt,
+                    dependency: "commit_state",
+                })
+            }
             Ok(outcome) => ToolCallTerminal::Completed(Box::new(CompletedToolCall {
                 call_id: self.context.call_id,
                 run: self.context.run,
@@ -1290,6 +1267,7 @@ pub enum AuditProjectionError {
 
 #[cfg(test)]
 mod tests {
+    use openbot_contracts::auth::AuthGeneration;
     use openbot_contracts::ids::{ComputerGeneration, DocumentGeneration};
     use serde_json::json;
     use time::OffsetDateTime;
@@ -1478,6 +1456,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_durably_recorded_unknown_commit_still_enters_reconciliation() {
+        let (executing, capability) =
+            ready(ApprovalClass::NotRequired, ApprovalOutcome::NotRequired).start();
+        let terminal =
+            executing.record_outcome(capability.redeem(), Ok(outcome(CommitState::Unknown)));
+        let ToolCallTerminal::ReconciliationRequired(state) = &terminal else {
+            panic!("已落库的 unknown 也不能伪装 Completed：{terminal:?}");
+        };
+        assert_eq!(state.dependency(), "commit_state");
+        assert_eq!(state.commit_state(), CommitState::Unknown);
+        assert_eq!(
+            terminal.loop_directive(),
+            ToolLoopDirective::Halt {
+                reason: HaltReason::UnknownCommit
+            }
+        );
+    }
+
     /// 四个终态的 `loop_directive` 全覆盖，含正向对照（两个 Continue）。
     #[test]
     fn every_terminal_has_a_declared_loop_directive() {
@@ -1621,6 +1618,7 @@ mod tests {
         // 3. 批准已失效（这里用过期）。
         let binding = ApprovalBinding {
             actor: ActorId::new("actor-1"),
+            auth_generation: AuthGeneration::new(3),
             bot: BotId::new("bot-1"),
             run: RunId::new("run-1"),
             tool: ToolName::new("browser.click").unwrap(),
@@ -1634,6 +1632,7 @@ mod tests {
         };
         let expired = ApprovalObservation {
             actor: binding.actor.clone(),
+            auth_generation: binding.auth_generation,
             bot: binding.bot.clone(),
             run: binding.run.clone(),
             tool: binding.tool.clone(),
@@ -1649,6 +1648,7 @@ mod tests {
         assert_eq!(
             passed()
                 .settle_approval(ApprovalOutcome::Granted(Box::new(ApprovalEvidence {
+                    approval_id: "approval-expired".to_owned(),
                     binding: binding.clone(),
                     observed: expired,
                 })))
@@ -1660,6 +1660,7 @@ mod tests {
         // 正向对照：一份仍然有效的批准能过。
         let fresh = ApprovalObservation {
             actor: binding.actor.clone(),
+            auth_generation: binding.auth_generation,
             bot: binding.bot.clone(),
             run: binding.run.clone(),
             tool: binding.tool.clone(),
@@ -1675,6 +1676,7 @@ mod tests {
         assert!(
             passed()
                 .settle_approval(ApprovalOutcome::Granted(Box::new(ApprovalEvidence {
+                    approval_id: "approval-valid".to_owned(),
                     binding,
                     observed: fresh,
                 })))

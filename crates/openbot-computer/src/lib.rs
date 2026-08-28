@@ -23,7 +23,17 @@
 //! - 把 computer token 交给浏览器（v3 §12.4 逐字禁止）。
 //! - 相信 browser engine 回传的 scope / actor / generation 字段（v3 §5.3）。
 //!
-//! # Phase 0 状态
+//! # 当前实施边界
 //!
-//! 刻意为空。Computer/Isolation 是 G5 的产物；Phase 0 只产出
-//! `parity/browser-operations.yaml` 与 `fixtures/browser/*.json`（v3 §19.3）。
+//! Batch51 starts the G5 implementation with the closed browser/input protocol and the
+//! authority-owned HumanLease state machine. The Electron/Chromium process, authenticated engine
+//! framing, screen hub, file/shell executors and supervisor remain separate unfinished boundaries;
+//! protocol types alone are not evidence that an operation executed.
+
+pub mod browser;
+pub mod control;
+
+pub use control::{
+    ControlError, ControlHolder, ControlService, ControlSnapshot, HumanInputTicket,
+    HumanLeaseEpoch, PendingSecretTarget,
+};

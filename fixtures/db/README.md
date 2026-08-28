@@ -18,7 +18,8 @@ CI 里没有上游克隆（本仓与上游是两个仓库，且 §16.3 的供应
 | --- | ---: |
 | 表 | 28 |
 | 列 | 204 |
-| 约束 | 212 |
+| NOT NULL 列 | 153 |
+| 约束（不重复计 NOT NULL） | 59 |
 | 索引 | 44 |
 | 触发器 | 2 |
 | enum 类型 | 4 |
@@ -50,22 +51,295 @@ CI 里没有上游克隆（本仓与上游是两个仓库，且 §16.3 的供应
 
 另外 `0000` 头部注释点名"必须存活"的 append-only 触发器实测存活两个：`audit_events_append_only` 与 `audit_events_no_truncate`。
 
-## 已知差异：PostgreSQL 版本
+## PostgreSQL 17 重验与跨版本归一化（2026-08-23）
 
-v3 §14.1 把数据库钉在 **PostgreSQL 17**；本文件是在本机 **PostgreSQL 18.1** 上生成的（`x86_64-windows, compiled by msvc`）。
+v3 §14.1 把数据库钉在 **PostgreSQL 17**。本轮在 PostgreSQL **17.11** 上重跑 baseline 与
+`schema_facts.sql`，原先由 PostgreSQL 18.1 生成的 fixture 在 28 张表上都只差约束集合：
 
-这条差异**未消除**，如实登记：本文件里的 `format_type()` 输出、`pg_get_constraintdef()` / `pg_get_indexdef()` 的文本形态理论上可能随服务端版本变化。解除条件 = 在 PostgreSQL 17 上重跑一次生成过程并 diff；差异为空则把本节改成"已在 17 与 18.1 上各生成一次，结果相同"。在那之前，任何"本文件等价于 17 上的结果"的说法都是未验证的。
+- 18.1 fixture：`f=27 / n=153 / p=28 / u=4`，合计 212；
+- 17.11 活库：`f=27 / p=28 / u=4`，合计 59；
+- 18.1 多出的 153 条 `contype='n'` 全部是 `NOT NULL <列名>`，数量与
+  `columns[].notnull=true` 的 153 列逐项相等。
+
+这不是 DDL 语义差异，而是 PostgreSQL 18 把已经存在于列事实里的 NOT NULL 又暴露为
+`pg_constraint` 对象。提取器现显式排除 `contype='n'`，NOT NULL 仍由 `columns[].notnull`
+逐列验证。把旧 fixture 的 153 条 `n` 对象移除后，与 17.11 活库提取结果整棵 JSON
+结构化比较为 `True`（59 / 59）；本文件据此由 PostgreSQL 17.11 重生成。这样既以目标版本为准，
+也避免同一事实重复计数。
+
+## `schema-0013.json`：Rust-owned expand 终态
+
+`schema-0013.json` 是在同一 PostgreSQL **17.11** 一次性事实库上按
+`baseline_0012.sql → native_0013.sql → schema_facts.sql` 顺序实跑生成的 post-migration
+fixture。它不改写 `schema-0012.json`：前者回答“当前 Rust schema 是什么”，后者继续回答
+“固定上游 13 条 migration 的终态是什么”。
+
+| 项 | 0013 数量 | 相对 0012 |
+| --- | ---: | ---: |
+| public 表 | 31 | +3 |
+| 列 | 248 | +44（含 `audit_events` 两个 nullable hash 列） |
+| 约束（不重复计 NOT NULL） | 93 | +34 |
+| 索引 | 53 | +9 |
+| 触发器 | 4 | +2 |
+| enum 类型 | 4 | 0 |
+| public 函数 | 1 | 0 |
+| extension | 0 | 0 |
+
+三张新增 public 表恰好是 `audit_checkpoints` / `tool_attempts` / `tool_calls`。
+`openbot_internal.schema_migrations` 与 `openbot_internal.prevent_append_only_mutation()` 位于
+internal schema，按定义不进只扫描 `public` 的 schema fixture；它们由
+`tests/native_0013.rs` 的账本、并发与回滚用例独立核对。
+
+expand-only 不是靠读 SQL 猜：真库测试
+`post_0013_fixture_is_exact_and_every_0012_object_survives` 先提取 0012 事实，再逐表断言原列、
+约束、索引、触发器以及 enum/function/extension 全是 0013 的结构化子集，最后才与本 fixture
+整棵相等。`object_collision_rolls_back_every_0013_change_and_does_not_forge_ledger` 再制造同名异形
+表，实证失败事务不会留下 hash 列、checkpoint 表或伪账本。
+
+## `schema-0014.json`：user auth generation
+
+W-3 开工前的调用链审计发现：`AuthContext` 与领域 `AccessChangeRequest` 都要求权威
+`auth_generation`，撤权还要求在同一事务把 subject 的 generation 递增；但 0013 之前没有任何
+持久化列。只放内存会在重启/多副本后回到旧值，拿 actor 自己的 generation 又会错绑到被管理者。
+
+0014 因此只做一次 expand：`users` 末尾追加 nullable `auth_generation bigint` 与非负 CHECK。
+旧行 NULL 在读侧等价于 generation 0，第一次角色/撤权写入用
+`coalesce(auth_generation,0)+1` 变成 1；兼容窗口内不 `SET NOT NULL`。
+
+| 项 | 0014 数量 | 相对 0013 |
+| --- | ---: | ---: |
+| public 表 | 31 | 0 |
+| 列 | 249 | +1 |
+| 约束 | 94 | +1 |
+| 索引 | 53 | 0 |
+| 触发器 | 4 | 0 |
+
+真库测试 `post_0014_is_exact_expand_only_and_null_legacy_generation_is_zero_floor` 先与 0013
+fixture 相等，再施加 0014，逐旧列证明无改写，并实测 6 个 seed user 均为 NULL、`NULL→1`、
+负数命中 `users_auth_generation_nonnegative`。`two_replicas_apply_0013_and_0014_exactly_once`
+实得恰好 `Applied + AlreadyApplied`。
+
+## `schema-0015.json`：Rust session 签发代际
+
+上游 `sessions.token` 是可直接使用的明文 token，且 session 行没有“签发时 auth generation”。
+第一真源 §6.3 要求旧 Better Auth session 在切换时统一失效，并要求 role/access generation 更新
+立即让旧 session/ticket/capability 失效。0015 因此只在 `sessions` 末尾追加 nullable
+`auth_generation bigint` 与非负 CHECK：新 Rust session 写当前 generation；旧行保持 NULL，
+token 也没有 Rust keyed-hash 前缀，resolver fail-closed 要求重新登录。兼容窗口不回填、不
+`SET NOT NULL`。
+
+| 项 | 0015 数量 | 相对 0014 |
+| --- | ---: | ---: |
+| public 表 | 31 | 0 |
+| 列 | 250 | +1 |
+| 约束 | 95 | +1 |
+| 索引 | 53 | 0 |
+| 触发器 | 4 | 0 |
+
+PG17 测试 `post_0015_is_exact_expand_only_and_legacy_sessions_remain_unclaimed` 逐对象证明只有
+sessions 多一列/一约束，6 条旧 seed session 全为 NULL，typed 新值 0 可读回，负数命中具名
+CHECK；`two_replicas_apply_0013_through_0015_exactly_once` 实得恰好
+`Applied + AlreadyApplied`。
+
+## `schema-0016.json`：native thread/realtime/memory base
+
+`schema-0016.json` 在同一 PostgreSQL **17.11** 隔离 SCRAM 实例上按
+`baseline_0012.sql → native_0013.sql → native_0014.sql → native_0015.sql → native_0016.sql →
+schema_facts.sql` 机械生成，SHA-256
+`3a9ca0e2292e25171785c526047c279291c1671a357195b603efa2b998616877`。
+
+| 项 | 0016 数量 | 相对 0015 |
+| --- | ---: | ---: |
+| public 表 | 41 | +10 |
+| 列 | 351 | +101 |
+| NOT NULL 列 | 268 | +83 |
+| 约束 | 181 | +86 |
+| 索引 | 80 | +27 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+十张新表集合恰为 `threads` / `thread_memberships` / `messages` / `runs` / `run_events` /
+`thread_leases` / `outbox` / `memories` / `memory_events` / `intelligence_import_cursors`。
+`tool_calls` 只增加一个 `NOT VALID` 的 `run_id → runs` FK：它约束迁移后的新写，但不扫描并
+伪造历史 run；导入/backfill 完成后再由独立 migration `VALIDATE CONSTRAINT`。
+
+真库测试 `post_0016_is_exact_expand_only_and_tool_fk_is_staged_not_validated` 先固定 0015 事实，
+再逐旧列证明未改写并与本 fixture 整棵相等；行为测试覆盖 foreground partial unique、terminal
+event exactly-once、fencing takeover、replay、outbox replay-safe/claim/delivery、memory scope/source/
+删除清空与新 tool FK；双 replica 仍实得 `Applied + AlreadyApplied`。40 个具名 repository 由
+`all_forty_current_repositories_touch_their_real_tables` 逐个触表，不以空 struct 占名。
+
+## schema-0017.json：RMCP catalog identity 与 durable tool sequence
+
+schema-0017.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0017.sql → schema_facts.sql
+由 native_0017 的显式 regeneration guard 机械生成，SHA-256
+c2e85542c72a623ad7b0b3f8dc165317dfbcb91119b19a7d836ac7b711607000。
+
+| 项 | 0017 数量 | 相对 0016 |
+| --- | ---: | ---: |
+| public 表 | 41 | 0 |
+| 列 | 366 | +15 |
+| NOT NULL 列 | 268 | 0 |
+| 约束 | 197 | +16 |
+| 索引 | 80 | 0 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增列全部 nullable，兼容期不回填：runs.next_tool_call_seq 只由 PostgreSQL 原子 allocator
+推进；MCP server/tool/grant 的 generation、schema/effect、可用态及
+endpoint+vendor+provenance transport fingerprint 只有真实 RMCP refresh 才成组写入。
+complete-projection CHECK 拒绝半套状态，transport/provenance 改变会立即使旧 grant 不可读，并在
+refresh 时转为 suspended_missing；重新出现也不自动启用。
+
+## schema-0018.json：MCP credential generation
+
+schema-0018.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0018.sql → schema_facts.sql
+由 native_0018 的显式 regeneration guard 机械生成，SHA-256
+3226eefb20d536c206b5d75522a77f6f82981f820fd5a414086871c21be75ebe。
+
+| 项 | 0018 数量 | 相对 0017 |
+| --- | ---: | ---: |
+| public 表 | 41 | 0 |
+| 列 | 368 | +2 |
+| NOT NULL 列 | 268 | 0 |
+| 约束 | 199 | +2 |
+| 索引 | 80 | 0 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+两列均 nullable、无回填：legacy `NULL` 在读取时等价 generation 0。管理员登记/轮换 OAuth
+client 时，事务先把所有既有 MCP grant 固定到旧 generation，再推进 server generation；因此旧
+grant 当场不可见，下一次真实 catalog refresh 只能把它写成 `suspended_missing`，不得自动复活。
+
+## schema-0019.json：封闭 vendor transport identity
+
+schema-0019.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0019.sql → schema_facts.sql
+由 native_0019 的显式 regeneration guard 机械生成，SHA-256
+8e0170ca5893c86d7131c01f62a93ea84caf371bfae2fe6d2e4f4edd8060d4d1。
+
+| 项 | 0019 数量 | 相对 0018 |
+| --- | ---: | ---: |
+| public 表 | 41 | 0 |
+| 列 | 369 | +1 |
+| NOT NULL 列 | 268 | 0 |
+| 约束 | 200 | +1 |
+| 索引 | 80 | 0 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增 `mcp_servers.transport` nullable 且无回填；legacy `NULL` 在读取时等价 `mcp`。具名
+CHECK 只接受 `mcp` / `google_drive_rest`，使 Google Drive GA REST 与 remote MCP 的协议选择
+进入 durable catalog/grant identity，未审查字符串不能成为生产执行器。
+
+## schema-0020.json：durable human tool approval
+
+schema-0020.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0020.sql → schema_facts.sql
+由 native_0020 的显式 regeneration guard 机械生成，SHA-256
+2ccf7193c936d140837dcc9d271e1520fd6924e902920ed97549b81f1a6f3ffe。
+
+| 项 | 0020 数量 | 相对 0019 |
+| --- | ---: | ---: |
+| public 表 | 42 | +1 |
+| 列 | 398 | +29 |
+| NOT NULL 列 | 291 | +23 |
+| 约束 | 217 | +17 |
+| 索引 | 85 | +5 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增 `tool_approvals` 保存完整 authority binding 与 pending presentation；presentation 只在 pending
+期间存在，grant/deny/expire/cancel 同事务清空。`tool_calls` 只追加 nullable `approval_id` 与 partial
+index；历史 call 不回填，生产 requiring-human decision 必须把仍 granted/未过期的 exact binding
+写入该列，approval id 同时进入 allowlisted audit。
+
+## schema-0021.json：actor UI preference
+
+schema-0021.json 在同一 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0021.sql → schema_facts.sql
+由 native_0021 的显式 regeneration guard 机械生成，SHA-256
+fab4e148cb4f847e2f7079eae95b158ff7d4d0ed740ca2007fbb2de8ab7e3531。
+
+| 项 | 0021 数量 | 相对 0020 |
+| --- | ---: | ---: |
+| public 表 | 43 | +1 |
+| 列 | 404 | +6 |
+| NOT NULL 列 | 295 | +4 |
+| 约束 | 222 | +5 |
+| 索引 | 86 | +1 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增 `user_ui_preferences`，以 deployment / tenant / actor 为复合 PK；theme 与 locale 独立 optional，
+但不允许同时为空，且各自只接受 closed 值。Server 用 PostgreSQL 原子合并跨设备偏好；Desktop
+Local 消费同一 contract 的 closed file，不建立第二套数据库语义。
+
+## schema-0022.json：runtime memory write control
+
+schema-0022.json 在 PostgreSQL **17.11 SCRAM** 隔离实例上按
+baseline_0012.sql → native_0013.sql → … → native_0022.sql → schema_facts.sql
+由 native_0022 的显式 regeneration guard 机械生成，SHA-256
+f7dfda29296bb67f08bfa1c514b376a14dd403eb2f87ced26569d19614c5ee25。
+
+| 项 | 0022 数量 | 相对 0021 |
+| --- | ---: | ---: |
+| public 表 | 44 | +1 |
+| 列 | 408 | +4 |
+| NOT NULL 列 | 299 | +4 |
+| 约束 | 225 | +3 |
+| 索引 | 87 | +1 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增 `user_memory_controls(tenant_id, actor_user_id, writes_enabled, updated_at)`；缺行解释为
+enabled，保持升级兼容。它不是 memory 记录，不进入 list/recall。disabled 只拒绝 GUI remember、
+correct 与 built-in `remember` tool 这些会保留新 content 的入口；list/recall/forbid/delete 始终可用，
+因此关闭未来写入不能反过来阻止用户查看或擦除既有数据。
 
 ## 复算命令
 
 ```bash
-# 摘要表里的七个数
+# 0012 摘要表里的八个数
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('tables',len(d['tables']))"                                    # 28
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('columns',sum(len(t['columns']) for t in d['tables']))"       # 204
-python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('constraints',sum(len(t['constraints']) for t in d['tables']))" # 212
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('notnull',sum(c['notnull'] for t in d['tables'] for c in t['columns']))" # 153
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('constraints',sum(len(t['constraints']) for t in d['tables']))" # 59
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('indexes',sum(len(t['indexes']) for t in d['tables']))"       # 44
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('triggers',sum(len(t['triggers']) for t in d['tables']))"     # 2
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0012.json',encoding='utf-8'));print('enums',len(d['enums']),'functions',len(d['functions']),'ext',d['extensions'])"  # 4 1 []
+
+# post-0013 八个数
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0013.json',encoding='utf-8'));print('tables',len(d['tables']),'columns',sum(len(t['columns']) for t in d['tables']),'constraints',sum(len(t['constraints']) for t in d['tables']),'indexes',sum(len(t['indexes']) for t in d['tables']),'triggers',sum(len(t['triggers']) for t in d['tables']),'enums',len(d['enums']),'functions',len(d['functions']),'ext',len(d['extensions']))"  # 31 248 93 53 4 4 1 0
+
+# post-0014
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0014.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 31 249 94 53 4
+
+# post-0015
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0015.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 31 250 95 53 4
+
+# post-0016
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0016.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 351 268 181 80 4
+
+# post-0017
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0017.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 366 268 197 80 4
+
+# post-0018
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0018.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 368 268 199 80 4
+
+# post-0019
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0019.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 41 369 268 200 80 4
+
+# post-0020
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0020.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 42 398 291 217 85 4
+
+# post-0021
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0021.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 43 404 295 222 86 4
+
+# post-0022
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0022.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 44 408 299 225 87 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

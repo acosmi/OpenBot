@@ -28,3 +28,49 @@ crate::db::tables::define_table! {
     created_at: time::OffsetDateTime = ("created_at", "timestamp with time zone", true),
     updated_at: time::OffsetDateTime = ("updated_at", "timestamp with time zone", true),
 }
+
+/// 0015 追加后的完整列清单；签发代际只可位于 0012 八列之后。
+pub const CURRENT_COLUMNS: &[&str] = &[
+    "id",
+    "user_id",
+    "token",
+    "expires_at",
+    "ip_address",
+    "user_agent",
+    "created_at",
+    "updated_at",
+    "auth_generation",
+];
+
+/// 当前 session 行；旧 Better Auth 行的 generation 为 `None`，生产 resolver 必须拒绝。
+#[derive(Clone, Debug, PartialEq)]
+pub struct CurrentRow {
+    /// 上游 0012 八列。
+    pub session: Row,
+    /// Rust session 签发时的 auth generation。
+    pub auth_generation: Option<i64>,
+}
+
+impl TryFrom<&tokio_postgres::Row> for CurrentRow {
+    type Error = crate::db::RowDecodeError;
+
+    fn try_from(row: &tokio_postgres::Row) -> Result<Self, Self::Error> {
+        Ok(Self {
+            session: Row::try_from(row)?,
+            auth_generation: row.try_get("auth_generation").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "auth_generation", source)
+            })?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod native_0015_tests {
+    use super::*;
+
+    #[test]
+    fn auth_generation_is_one_nullable_append_only_suffix() {
+        assert_eq!(&CURRENT_COLUMNS[..COLUMNS.len()], COLUMNS);
+        assert_eq!(&CURRENT_COLUMNS[COLUMNS.len()..], &["auth_generation"]);
+    }
+}

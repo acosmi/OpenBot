@@ -26,6 +26,7 @@
 //! 不合格就当没有，铸造一个新的 UUIDv7 —— **不截断、不清洗后使用**，因为"把攻击者的
 //! 字符串洗一洗再用"仍然是在用攻击者的字符串。
 
+use axum::extract::MatchedPath;
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Response;
@@ -52,6 +53,9 @@ pub const REQUEST_SPAN_NAME: &str = "http.request";
 /// span 上 actor 身份字段的名字。[`crate::auth::Authenticated`] 往这里写。
 pub const ACTOR_ID_FIELD: &str = "actor_id";
 
+/// 静态路由 pattern span 字段。
+pub const HTTP_ROUTE_FIELD: &str = "http.route";
+
 /// [`trace_request`] 在请求 span 上记录的字段名全集。
 ///
 /// 与 `openbot_application::service::APPLICATION_SPAN_FIELDS` 同样是**台账**：
@@ -67,11 +71,12 @@ pub const ACTOR_ID_FIELD: &str = "actor_id";
 /// - `http.status_code`：值域是状态码，有界。
 /// - `actor_id`：§16.4 点名的高基数字段，只进 trace/log。
 ///
-/// 四项**没有一项**进 metrics label —— 本 crate 此刻也没有 metrics（见 crate 文档）。
+/// route 只来自 `MatchedPath`；request/actor 仍只进 trace，不进 metrics。
 pub const REQUEST_SPAN_FIELDS: &[&str] = &[
     "request_id",
     "http.method",
     "http.status_code",
+    HTTP_ROUTE_FIELD,
     ACTOR_ID_FIELD,
 ];
 
@@ -113,21 +118,21 @@ pub fn resolve_request_id(headers: &HeaderMap) -> String {
 /// - `openbot-application` 的 `application.execute` span 是它的子 span，`request_id`
 ///   经 span 父子关系自然继承，不必逐层手传。
 ///
-/// # 为什么 span 里没有路径
+/// # 为什么 span 里只有 route pattern
 ///
-/// 记 `uri().path()` 会把**对端完全控制的字符串**放进日志（未匹配路由时它可以是任何
-/// 东西），那是与 request id 同一类的注入面。记 `MatchedPath` 才安全（它是路由表里的
-/// 字面量），但 `MatchedPath` 扩展只在路由**之后**才存在，而本中间件刻意装在路由之前
-/// 好覆盖 404/413。两者只能取一个，G1 取"覆盖全部请求 + 不记不可信字符串"。
-/// 需要按路由聚合时，正确做法是在 handler 侧另开一个带静态路由名的子 span，
-/// 那随第一条需要它的 ledger 条目一起做。
+/// 不记 `uri().path()`；只读 Axum `MatchedPath` 静态 pattern，未匹配写 `unmatched`。
 pub async fn trace_request(request: Request, next: Next) -> Response {
     let request_id = resolve_request_id(request.headers());
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or(crate::metrics::ROUTE_UNMATCHED, MatchedPath::as_str);
     let span = tracing::info_span!(
         "http.request",
         request_id = %request_id,
         http.method = %request.method(),
         http.status_code = tracing::field::Empty,
+        http.route = %route,
         actor_id = tracing::field::Empty,
     );
 
@@ -180,6 +185,17 @@ where
 {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER_DIRECTIVE));
+    subscriber_with_filter(format, make_writer, filter)
+}
+
+fn subscriber_with_filter<W>(
+    format: LogFormat,
+    make_writer: W,
+    filter: EnvFilter,
+) -> Box<dyn Subscriber + Send + Sync>
+where
+    W: for<'a> MakeWriter<'a> + Send + Sync + 'static,
+{
     let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(make_writer);
@@ -332,9 +348,16 @@ mod tests {
     #[test]
     fn text_and_json_formats_differ_and_json_parses() {
         let text_sink = BufferWriter::default();
-        tracing::subscriber::with_default(subscriber(LogFormat::Text, text_sink.clone()), || {
-            tracing::info!(marker = "openbot-format-probe", "hello");
-        });
+        tracing::subscriber::with_default(
+            subscriber_with_filter(
+                LogFormat::Text,
+                text_sink.clone(),
+                EnvFilter::new(DEFAULT_FILTER_DIRECTIVE),
+            ),
+            || {
+                tracing::info!(marker = "openbot-format-probe", "hello");
+            },
+        );
         let text = text_sink.contents();
         assert!(text.contains("openbot-format-probe"), "{text}");
         assert!(
@@ -343,9 +366,16 @@ mod tests {
         );
 
         let json_sink = BufferWriter::default();
-        tracing::subscriber::with_default(subscriber(LogFormat::Json, json_sink.clone()), || {
-            tracing::info!(marker = "openbot-format-probe", "hello");
-        });
+        tracing::subscriber::with_default(
+            subscriber_with_filter(
+                LogFormat::Json,
+                json_sink.clone(),
+                EnvFilter::new(DEFAULT_FILTER_DIRECTIVE),
+            ),
+            || {
+                tracing::info!(marker = "openbot-format-probe", "hello");
+            },
+        );
         let json = json_sink.contents();
         let parsed: serde_json::Value =
             serde_json::from_str(json.trim()).unwrap_or_else(|e| panic!("{json} 不是 JSON：{e}"));

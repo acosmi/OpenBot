@@ -16,12 +16,14 @@
 //! # 传输是注入的，不是自带的
 //!
 //! v3 §6.2 逐字：「OIDC discovery/JWKS 与任何 IdP metadata fetch 使用和 remote Agent/MCP
-//! 相同的 safe dialer、redirect/IP 校验、大小/时间上限」。所以本模块**不**依赖任何 HTTP 客户端
-//! 实现：`openidconnect` 以 `default-features = false` 引入（关掉它自带的 `reqwest` +
-//! `rustls-tls`），出网由调用方注入的 `oauth2::AsyncHttpClient` 承担。
+//! 相同的 safe dialer、redirect/IP 校验、大小/时间上限」。OIDC 协议子树因此不拥有 socket；
+//! `openidconnect` 仍以 `default-features = false` 引入。W-7 的唯一真实网络实现位于
+//! `crate::net::safe_http`，metadata 窄 GET 与 token 窄 POST adapter 都只能注入它。
 //!
 //! 这样做的直接后果是：一个绕过 safe dialer 的出网路径**不可能**从这个模块里长出来 ——
 //! 它压根没有能力自己发请求。
 
 pub mod config;
 pub mod oidc;
+pub mod single_user;
+pub mod sso;

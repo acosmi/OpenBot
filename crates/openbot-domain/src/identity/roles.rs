@@ -276,6 +276,19 @@ pub fn plan_set_role(subject: &ActorId, target: Role) -> RoleAssignmentPlan {
     }
 }
 
+/// 新身份第一次落库时的角色：在配置管理员 floor 上即 admin，否则 user。
+///
+/// 这同时承载固定上游 `roleForEmail` 与 `seedRole` 的纯判定；数据库写仍必须通过
+/// [`plan_set_role`]，不能把“判角色”和“如何原子替换角色集合”揉成两份真源。
+#[must_use]
+pub fn seed_role(floor: &AdminFloor, email: &NormalizedEmail) -> Role {
+    if floor.contains(email) {
+        Role::Admin
+    } else {
+        Role::User
+    }
+}
+
 /// 每次登录重新施加 admin floor 的结果。
 ///
 /// # 为什么是枚举，而不是「一个计划 + 一个 `granted: bool`」
@@ -588,6 +601,14 @@ mod tests {
         let floor = floor_of(&["a@x.com"]);
         assert!(!floor.is_empty());
         assert_eq!(floor.iter().count(), 1);
+    }
+
+    /// 固定上游 `roleForEmail` / `seedRole` 四条用例的共同纯判定。
+    #[test]
+    fn seed_role_uses_the_normalized_admin_floor_and_defaults_to_user() {
+        let floor = floor_of(&[" admin@openbot.test "]);
+        assert_eq!(seed_role(&floor, &email("Admin@OpenBot.test")), Role::Admin);
+        assert_eq!(seed_role(&floor, &email("member@openbot.test")), Role::User);
     }
 
     /// floor 每次登录重新施加：名单里新加的人，下次登录就被提上来。

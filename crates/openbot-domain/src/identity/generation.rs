@@ -20,66 +20,15 @@
 //!
 //! 「旧 generation 全失效」依赖**数值序**。字符串的字典序会给出错误答案：`"10" < "9"`。
 //! `openbot_contracts::ids` 里的 `ComputerGeneration` / `DocumentGeneration` 已经按同一条
-//! 裁决（D7）落成 `u64` newtype，本类型是同族的第三个 —— 它没有落进 contracts，是因为
-//! §5.3 那张表把十五个 ID 名字钉死了，加一个是 contracts 的变更；交付报告里记了这条。
+//! 裁决（D7）落成 `u64` newtype。D-2 已将本类型收口到 contracts：`AuthContext`、
+//! domain、server 和 infra 从此只有一个代际类型，不再在边界退化成裸 `u64`。
 //!
 //! # 判据是「恰好相等」，不是「大于等于」
 //!
 //! 见 [`GenerationMismatch`] 的类型文档：把「来自未来的代际」放行会让一次伪造永久有效，
 //! 而把它与「陈旧」压成同一个答案会让运维分不清「副本落后」与「有人在造票据」。
 
-use core::fmt;
-
-use openbot_contracts::auth::AuthContext;
-
-/// 一次部署里某个 actor 的 auth generation。
-///
-/// 单调递增、只增不减。递增的时机由 §6.2 条 10 固定：role 变更、membership 变更、
-/// 撤权。它**不是**上游提供的标识符，是本系统自己铸造的计数器，所以不受 §5.3
-/// 「ID 一律 string newtype」那条规则约束（同 §28.1 R23 的裁决 D7）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AuthGeneration(u64);
-
-impl AuthGeneration {
-    /// 从原始计数值构造。
-    #[must_use]
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    /// 取出原始计数值。
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-
-    /// 读取一个已验证上下文携带的代际。
-    ///
-    /// `AuthContext` 是权威身份的唯一载体（`openbot_contracts::auth` 的类型文档：它既不
-    /// `Serialize` 也不 `Deserialize`，外部字节造不出来）。从它读代际，而不是让调用方
-    /// 自己传一个 `u64`，是为了让「这个代际是谁的」这个问题在类型上有答案。
-    #[must_use]
-    pub fn from_context(context: &AuthContext) -> Self {
-        Self(context.auth_generation())
-    }
-
-    /// 铸造下一个代际。
-    ///
-    /// 用 `saturating_add(1)`，理由与 `openbot_contracts::ids` 的 `u64` newtype 相同：
-    /// `+` 在 release 下**回绕到 0**，而回绕会让一张早已陈旧的票据重新成为「当前」，
-    /// 直接击穿本模块存在的理由。饱和的最坏结果是停在 `u64::MAX` 不再前进，此时任何
-    /// 陈旧判定仍为真（fail-closed）。
-    #[must_use]
-    pub const fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
-    }
-}
-
-impl fmt::Display for AuthGeneration {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
+pub use openbot_contracts::auth::AuthGeneration;
 
 /// 一张短期声明与当前代际对不上。
 ///
@@ -171,9 +120,9 @@ pub const fn check(
     bound: AuthGeneration,
     current: AuthGeneration,
 ) -> Result<(), GenerationMismatch> {
-    if bound.0 == current.0 {
+    if bound.get() == current.get() {
         Ok(())
-    } else if bound.0 < current.0 {
+    } else if bound.get() < current.get() {
         Err(GenerationMismatch::Stale)
     } else {
         Err(GenerationMismatch::FromTheFuture)
@@ -183,7 +132,7 @@ pub const fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openbot_contracts::auth::Role;
+    use openbot_contracts::auth::{AuthContext, Role};
     use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 
     #[test]
@@ -276,7 +225,7 @@ mod tests {
             TenantId::new("tenant-1"),
             ActorId::new("actor-1"),
             [Role::Admin],
-            12,
+            AuthGeneration::new(12),
             false,
         );
         assert_eq!(
