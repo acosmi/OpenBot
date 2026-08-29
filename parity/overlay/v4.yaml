@@ -381,6 +381,13 @@ entries:
   - id: T-TEST-0172
     disposition: revalidate
     notes: "Batch64 reruns the single Boundary-owned current-session probe and checked retry state."
+  # Added mechanically because Batch65 closes the two pathless application layouts.
+  - id: T-ROUTE-0001
+    disposition: revalidate
+    notes: "Batch65 reruns the root wrapper outside auth at sign and authenticated routes."
+  - id: T-ROUTE-0003
+    disposition: revalidate
+    notes: "Batch65 reruns the one-viewport authenticated Sidebar/topbar/main shell at 1280x800 and 1024x640."
   - id: T-CMP-0015
     disposition: split
     scope: web

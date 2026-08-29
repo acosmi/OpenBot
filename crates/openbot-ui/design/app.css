@@ -117,6 +117,11 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+.ob-root-layout {
+  width: 100%;
+  min-height: 100dvh;
+}
+
 button,
 input,
 textarea,

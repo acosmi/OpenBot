@@ -17,10 +17,8 @@ use crate::features::settings::{
     ComponentGalleryDetailPage, ComponentsGalleryPage, ConnectedAccountDetailPage,
     ConnectedAccountsPage, SettingsPage, SettingsShell,
 };
-use crate::i18n::{I18nContextProvider, t, t_string, use_i18n};
-use crate::preferences::provide_ui_preferences;
-use crate::primitives::{Sidebar, SidebarProvider, SidebarTrigger};
-use crate::shell::{AppSidebar, AuthenticatedBoundary, HomePage};
+use crate::i18n::{I18nContextProvider, t, use_i18n};
+use crate::shell::{AppLayout, AuthenticatedBoundary, HomePage, RootLayout};
 
 /// Single CSR application root used by both supported hosts.
 #[component]
@@ -30,52 +28,15 @@ pub fn App() -> impl IntoView {
         <I18nContextProvider set_lang_attr_on_html=true enable_cookie=false>
             <Title text="OpenBot" />
             <Router>
-                <AppShell />
+                <RootLayout>
+                    <AuthenticatedBoundary>
+                        <AppLayout>
+                            <AppRoutes />
+                        </AppLayout>
+                    </AuthenticatedBoundary>
+                </RootLayout>
             </Router>
         </I18nContextProvider>
-    }
-}
-
-#[component]
-fn AppShell() -> impl IntoView {
-    view! {
-        <AuthenticatedBoundary>
-            <AuthenticatedShell />
-        </AuthenticatedBoundary>
-    }
-}
-
-#[component]
-fn AuthenticatedShell() -> impl IntoView {
-    let i18n = use_i18n();
-    provide_ui_preferences(i18n);
-    let collapsed = RwSignal::new(false);
-    view! {
-        <a class="ob-skip-link" href="#main-content">
-            {move || t!(i18n, shell.skip_to_content)}
-        </a>
-        <SidebarProvider
-            id="app-sidebar".to_owned()
-            collapsed
-            aria_label=move || t_string!(i18n, shell.nav_channels).to_owned()
-            mobile_title=move || t_string!(i18n, shell.sidebar_mobile_title).to_owned()
-            mobile_description=move || t_string!(i18n, shell.sidebar_mobile_description).to_owned()
-        >
-            <div class="ob-app-shell">
-                <Sidebar>
-                    <AppSidebar />
-                </Sidebar>
-                <div class="ob-app-stage">
-                    <header class="ob-shell-topbar">
-                        <SidebarTrigger aria_label=move || t_string!(i18n, shell.sidebar_toggle).to_owned() />
-                        <span>{move || t!(i18n, common.app_name)}</span>
-                    </header>
-                    <main id="main-content" class="ob-main" tabindex="-1">
-                        <AppRoutes />
-                    </main>
-                </div>
-            </div>
-        </SidebarProvider>
     }
 }
 

@@ -65,6 +65,39 @@ fn app_css_handwritten_theme_values_match_tokens_toml() {
 }
 
 #[test]
+fn root_and_app_layout_css_keep_one_viewport_with_inner_scroll_ownership() {
+    let css = include_str!("../design/app.css");
+    let root = css
+        .split_once(".ob-root-layout {")
+        .expect("root layout CSS")
+        .1
+        .split_once('}')
+        .expect("root layout rule")
+        .0;
+    assert!(root.contains("width: 100%"));
+    assert!(root.contains("min-height: 100dvh"));
+
+    let app = css
+        .split_once(".ob-app-shell {")
+        .expect("app shell CSS")
+        .1
+        .split_once('}')
+        .expect("app shell rule")
+        .0;
+    assert!(app.contains("height: 100dvh"));
+    assert!(app.contains("overflow: hidden"));
+    let main = css
+        .split_once(".ob-main {")
+        .expect("main pane CSS")
+        .1
+        .split_once('}')
+        .expect("main pane rule")
+        .0;
+    assert!(main.contains("min-height: 0"));
+    assert!(main.contains("overflow: auto"));
+}
+
+#[test]
 fn generated_icons_and_array_table_tokens_are_complete() {
     assert_eq!(Icon::ALL.len(), 74);
     for icon in Icon::ALL {
