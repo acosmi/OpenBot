@@ -10,6 +10,17 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[[example]]
+name = "engine-runsc-probe"
+path = "examples/engine-runsc-probe.rs"
+required-features = ["runsc-spike"]
+
+[features]
+# P1-only diagnostic example executed as PID 1 inside an authority-created runsc OCI bundle. An
+# example is structurally absent from default/product bins and cannot launch on host Linux without
+# RunscAttestation.
+runsc-spike = []
+
 [dependencies]
 # Authority-owned IDs/AuthContext and the one canonical ECMAScript TrimString implementation.
 openbot-contracts.workspace = true

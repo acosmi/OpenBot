@@ -291,7 +291,8 @@ async function startSession(command) {
     await sendFrame(image, command.tab_id, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
     const rendererPid = contents.getOSProcessId();
     const metric = app.getAppMetrics().find((entry) => entry.pid === rendererPid);
-    if (metric?.sandboxed !== true || !(metric.creationTime > 0)) {
+    const electronSandboxSignal = metric?.sandboxed === true;
+    if (!(metric?.creationTime > 0) || (process.platform !== "linux" && !electronSandboxSignal)) {
       throw new EngineFailure("renderer_not_sandboxed");
     }
     sendControl(control, {
@@ -300,7 +301,7 @@ async function startSession(command) {
       tab_id: command.tab_id,
       renderer_pid: rendererPid,
       renderer_creation_time: metric.creationTime,
-      renderer_sandboxed: true,
+      renderer_sandboxed: electronSandboxSignal,
       node_exposed: false,
       origin: value.origin,
     });

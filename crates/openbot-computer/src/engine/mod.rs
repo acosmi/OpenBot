@@ -10,6 +10,8 @@ mod protocol;
 mod scope;
 
 pub use frame::{EngineFrame, EngineFrameError, EngineFrameReader, ImageFormat};
+#[cfg(target_os = "linux")]
+pub use process::RunscAttestation;
 pub use process::{
     EngineBundle, EngineBundleDigest, EngineLaunchConfig, EngineProcess, EngineProcessError,
     EngineSandboxFidelity, StartedSession,

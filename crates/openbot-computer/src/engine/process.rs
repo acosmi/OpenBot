@@ -66,6 +66,43 @@ const WINDOWS_JOB_MAX_PROCESSES: u32 = 32;
 #[cfg(windows)]
 const WINDOWS_JOB_MAX_MEMORY_BYTES: usize = 4 * 1024 * 1024 * 1024;
 
+#[derive(Clone, Copy)]
+enum EngineLaunchBoundary {
+    PlatformDefault,
+    #[cfg(target_os = "linux")]
+    Runsc,
+}
+
+/// Positive in-container proof that the P1 probe is running under the authority-created runsc
+/// bundle, not silently launching an unconfined Linux Engine on the host.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+pub struct RunscAttestation {
+    _private: (),
+}
+
+#[cfg(target_os = "linux")]
+impl RunscAttestation {
+    /// Require the exact P1 host/rootfs and runsc marker before direct Engine spawn is enabled.
+    pub fn detect() -> Result<Self, EngineProcessError> {
+        if std::env::consts::ARCH != "x86_64"
+            || !Path::new("/proc/gvisor/kernel_is_gvisor").is_file()
+        {
+            return Err(EngineProcessError::SandboxUnavailable);
+        }
+        let os_release = fs::read_to_string("/etc/os-release")?;
+        let fields = os_release
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .map(|(key, value)| (key, value.trim_matches('"')))
+            .collect::<BTreeMap<_, _>>();
+        if fields.get("ID") != Some(&"ubuntu") || fields.get("VERSION_ID") != Some(&"24.04") {
+            return Err(EngineProcessError::SandboxUnavailable);
+        }
+        Ok(Self { _private: () })
+    }
+}
+
 /// Expected SHA-256 of the release-owned sidecar manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EngineBundleDigest([u8; 32]);
@@ -218,6 +255,8 @@ pub struct EngineLaunchConfig {
     generation: ComputerGeneration,
     profile_dir: PathBuf,
     temp_dir: PathBuf,
+    #[cfg(target_os = "linux")]
+    runsc_virtual_display: bool,
 }
 
 impl EngineLaunchConfig {
@@ -238,7 +277,18 @@ impl EngineLaunchConfig {
             generation,
             profile_dir: profile_dir.into(),
             temp_dir: temp_dir.into(),
+            #[cfg(target_os = "linux")]
+            runsc_virtual_display: false,
         }
+    }
+
+    /// Bind the P1 runsc probe to its fixed in-container Xvfb display without accepting a free
+    /// DISPLAY string or inheriting host environment.
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn with_runsc_probe_display(mut self) -> Self {
+        self.runsc_virtual_display = true;
+        self
     }
 }
 
@@ -282,6 +332,25 @@ pub struct EngineProcess;
 impl EngineProcess {
     /// Spawn, authenticate both UDS connections, and complete hello/ready.
     pub async fn launch(config: EngineLaunchConfig) -> Result<Self, EngineProcessError> {
+        Self::launch_with(config, EngineLaunchBoundary::PlatformDefault).await
+    }
+
+    /// P1 probe-only Linux launch after the surrounding runsc bundle has been positively attested.
+    #[cfg(target_os = "linux")]
+    pub async fn launch_inside_runsc(
+        config: EngineLaunchConfig,
+        _attestation: RunscAttestation,
+    ) -> Result<Self, EngineProcessError> {
+        if !config.runsc_virtual_display {
+            return Err(EngineProcessError::SandboxUnavailable);
+        }
+        Self::launch_with(config, EngineLaunchBoundary::Runsc).await
+    }
+
+    async fn launch_with(
+        config: EngineLaunchConfig,
+        boundary: EngineLaunchBoundary,
+    ) -> Result<Self, EngineProcessError> {
         fs::create_dir_all(&config.profile_dir).map_err(EngineProcessError::Io)?;
         fs::create_dir_all(&config.temp_dir).map_err(EngineProcessError::Io)?;
         let profile_dir = config
@@ -317,6 +386,9 @@ impl EngineProcess {
             &profile_dir,
             &temp_dir,
             &runtime,
+            boundary,
+            #[cfg(target_os = "linux")]
+            config.runsc_virtual_display,
         )?;
         let child_pid = child_pid(&child)?;
         write_boot(&mut child, &boot.line()?).await?;
@@ -465,7 +537,7 @@ impl EngineProcess {
                 && echoed_tab == tab_id.as_str()
                 && renderer_pid != 0
                 && renderer_identity_matches(&self.child, renderer_pid, renderer_creation_time)
-                && renderer_sandboxed
+                && renderer_sandbox_signal_matches(renderer_sandboxed)
                 && !node_exposed
                 && internal_origin_matches(self.role.kind(), &origin) =>
             {
@@ -657,9 +729,19 @@ fn spawn_engine(
     profile_dir: &Path,
     temp_dir: &Path,
     runtime: &RuntimeDirectory,
+    boundary: EngineLaunchBoundary,
+    #[cfg(target_os = "linux")] runsc_virtual_display: bool,
 ) -> Result<(EngineChild, EngineSandboxFidelity), EngineProcessError> {
-    let (mut command, fidelity) =
-        launch_command(executable, bundle_root, profile_dir, temp_dir, runtime)?;
+    let (mut command, fidelity) = launch_command(
+        executable,
+        bundle_root,
+        profile_dir,
+        temp_dir,
+        runtime,
+        boundary,
+        #[cfg(target_os = "linux")]
+        runsc_virtual_display,
+    )?;
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -678,7 +760,11 @@ fn spawn_engine(
     profile_dir: &Path,
     temp_dir: &Path,
     _runtime: &RuntimeDirectory,
+    boundary: EngineLaunchBoundary,
 ) -> Result<(EngineChild, EngineSandboxFidelity), EngineProcessError> {
+    if !matches!(boundary, EngineLaunchBoundary::PlatformDefault) {
+        return Err(EngineProcessError::SandboxUnavailable);
+    }
     let policy = SpawnPolicy::new(
         executable,
         engine_args(profile_dir, temp_dir),
@@ -757,6 +843,18 @@ fn renderer_identity_matches(child: &EngineChild, pid: u32, creation_time: f64) 
     child.verify_job_member(pid, creation_time).is_ok()
 }
 
+#[cfg(target_os = "linux")]
+fn renderer_sandbox_signal_matches(reported: bool) -> bool {
+    // Electron intentionally does not expose ProcessMetric.sandboxed on Linux. The P1 runsc probe
+    // must keep this false and independently prove namespaces + Seccomp/NoNewPrivs from /proc.
+    !reported
+}
+
+#[cfg(not(target_os = "linux"))]
+fn renderer_sandbox_signal_matches(reported: bool) -> bool {
+    reported
+}
+
 #[cfg(unix)]
 async fn wait_child(
     child: &mut EngineChild,
@@ -798,9 +896,14 @@ fn launch_command(
     profile_dir: &Path,
     temp_dir: &Path,
     runtime: &RuntimeDirectory,
+    boundary: EngineLaunchBoundary,
+    #[cfg(target_os = "linux")] runsc_virtual_display: bool,
 ) -> Result<(Command, EngineSandboxFidelity), EngineProcessError> {
     #[cfg(target_os = "macos")]
     {
+        if !matches!(boundary, EngineLaunchBoundary::PlatformDefault) {
+            return Err(EngineProcessError::SandboxUnavailable);
+        }
         let profile = sandbox_profile(
             executable,
             bundle_root,
@@ -817,9 +920,27 @@ fn launch_command(
         append_engine_args(&mut command, profile_dir, temp_dir);
         Ok((command, EngineSandboxFidelity::Enforced))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
-        let _ = (executable, bundle_root, profile_dir, temp_dir, runtime);
+        if !matches!(boundary, EngineLaunchBoundary::Runsc) || !runsc_virtual_display {
+            return Err(EngineProcessError::SandboxUnavailable);
+        }
+        let _ = (bundle_root, runtime);
+        let mut command = Command::new(executable);
+        append_engine_args(&mut command, profile_dir, temp_dir);
+        command.env("DISPLAY", ":99").env_remove("XAUTHORITY");
+        Ok((command, EngineSandboxFidelity::Enforced))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (
+            executable,
+            bundle_root,
+            profile_dir,
+            temp_dir,
+            runtime,
+            boundary,
+        );
         Err(EngineProcessError::SandboxUnavailable)
     }
 }
@@ -918,6 +1039,7 @@ struct RuntimeDirectory {
     root: PathBuf,
     control_pipe: PathBuf,
     frame_pipe: PathBuf,
+    #[cfg(target_os = "macos")]
     sandbox_profile: PathBuf,
 }
 
@@ -935,6 +1057,7 @@ impl RuntimeDirectory {
         Ok(Self {
             control_pipe: root.join("control.sock"),
             frame_pipe: root.join("frame.sock"),
+            #[cfg(target_os = "macos")]
             sandbox_profile: root.join("engine.sb"),
             root,
         })
