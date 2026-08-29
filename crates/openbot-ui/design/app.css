@@ -373,6 +373,73 @@ textarea:focus-visible,
   margin: calc(var(--spacing) * 4) 0 0;
 }
 
+.ob-audit-list {
+  display: grid;
+  gap: calc(var(--spacing) * 3);
+  margin: calc(var(--spacing) * 4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-audit-row {
+  display: grid;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-popover);
+}
+
+.ob-audit-row-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 3);
+}
+
+.ob-audit-row-header time,
+.ob-audit-facts dt {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+
+.ob-audit-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--size-control-lg), 1fr));
+  gap: calc(var(--spacing) * 3);
+  margin: 0;
+}
+
+.ob-audit-facts > div {
+  min-width: 0;
+}
+
+.ob-audit-facts dt,
+.ob-audit-facts dd {
+  margin: 0;
+}
+
+.ob-audit-facts dd {
+  overflow-wrap: anywhere;
+}
+
+.ob-audit-row details summary {
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+
+.ob-audit-row pre {
+  max-height: calc(var(--size-control-lg) * 8);
+  margin: calc(var(--spacing) * 2) 0 0;
+  padding: calc(var(--spacing) * 3);
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+
 .ob-settings-shell {
   display: grid;
   grid-template-columns: var(--size-subnav) minmax(0, 1fr);

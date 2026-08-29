@@ -284,6 +284,16 @@ entries:
   - id: T-TEST-0998
     disposition: revalidate
     notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  # Added mechanically because the Batch59 Admin/Audit diff closes these targets.
+  - id: T-ROUTE-0004
+    disposition: revalidate
+    notes: "Batch59 reruns the admin gate and secondary-shell browser matrix."
+  - id: T-ROUTE-0012
+    disposition: revalidate
+    notes: "Batch59 reruns the implemented-only Admin Home destination matrix."
+  - id: T-ROUTE-0013
+    disposition: revalidate
+    notes: "Batch59 reruns typed audit pagination, reload and non-admin refusal."
   - id: T-CMP-0015
     disposition: split
     scope: web

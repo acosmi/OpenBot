@@ -142,7 +142,7 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch48累计完成前述地基、SettingsSidebar与Decisions；其余todo
+  # Batch48累计完成前述地基、SettingsSidebar与Decisions；AdminSidebar仍缺未实现destination
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
     expect: 65
@@ -501,13 +501,13 @@ entries:
   - id: "biz-admin-admin-sidebar"
     upstream: "app/src/components/admin/admin-sidebar.tsx"
     label: "parity"
-    target: "openbot_ui::features::admin::admin_sidebar"
+    target: "openbot_ui::features::admin::shell::{AdminShell,AdminNavItem}"
     owner: "openbot-ui"
     test_id: "T-UI-0028"
     migration_rule: "preserve"
     status: "todo"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `admin`（该组上游文件数 1）。组 admin 唯一一个。内容填进 `openbot_ui::primitives::sidebar::Sidebar`（T-UI-0017）。上游用 IconArrowLeft / IconBuildingBank / IconCode / IconDeviceDesktop / IconFileText / IconKey / IconLayoutGrid / IconListDetails / IconPuzzle / IconShieldCheck / IconUsers，全部经 (c) 组映射。"
+    notes: "§6.2 组 `admin`（该组上游文件数 1）。Batch59已落global conditional Admin destination、AdminShell gate与Overview/Audit/Playground三个真实secondary destination，但People/IdP/Credentials/Skills/Plugins/Components/Computers等route尚未实现，故本完整业务组件条目继续todo。内容填进 `openbot_ui::primitives::sidebar::Sidebar`（T-UI-0017）。上游用 IconArrowLeft / IconBuildingBank / IconCode / IconDeviceDesktop / IconFileText / IconKey / IconLayoutGrid / IconListDetails / IconPuzzle / IconShieldCheck / IconUsers，全部经 (c) 组映射。"
 
   - id: "biz-agents-abstract-avatar"
     upstream: "app/src/components/agents/abstract-avatar.tsx"

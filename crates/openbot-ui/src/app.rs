@@ -6,7 +6,7 @@ use leptos_router::components::{Route, Router, Routes};
 use leptos_router::hooks::use_location;
 use leptos_router::path;
 
-use crate::features::admin::SandboxPlaygroundPage;
+use crate::features::admin::{AdminAuditPage, AdminHomePage, AdminShell, SandboxPlaygroundPage};
 use crate::features::agents::AgentsPage;
 use crate::features::approvals::ApprovalPage;
 use crate::features::channels::{ChannelDetailPage, ChannelNewPage};
@@ -107,7 +107,9 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/") view=ApprovalPage />
                 <Route path=path!("/approvals") view=ApprovalPage />
                 <Route path=path!("/agents") view=AgentsPage />
-                <Route path=path!("/admin/playground") view=SandboxPlaygroundPage />
+                <Route path=path!("/admin") view=AdminHomeRoute />
+                <Route path=path!("/admin/audit") view=AdminAuditRoute />
+                <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
                 <Route path=path!("/channel/new") view=ChannelNewPage />
                 <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
                 <Route path=path!("/settings/connected-accounts/:server_id") view=SettingsConnectedAccountDetailRoute />
@@ -126,7 +128,9 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/") view=ApprovalPage />
                 <Route path=path!("/approvals") view=ApprovalPage />
                 <Route path=path!("/agents") view=AgentsPage />
-                <Route path=path!("/admin/playground") view=SandboxPlaygroundPage />
+                <Route path=path!("/admin") view=AdminHomeRoute />
+                <Route path=path!("/admin/audit") view=AdminAuditRoute />
+                <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
                 <Route path=path!("/channel/new") view=ChannelNewPage />
                 <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
                 <Route path=path!("/settings/connected-accounts/:server_id") view=SettingsConnectedAccountDetailRoute />
@@ -138,6 +142,21 @@ fn AppRoutes() -> impl IntoView {
             </Routes>
         }
     }
+}
+
+#[component]
+fn AdminHomeRoute() -> impl IntoView {
+    view! { <AdminShell><AdminHomePage /></AdminShell> }
+}
+
+#[component]
+fn AdminAuditRoute() -> impl IntoView {
+    view! { <AdminShell><AdminAuditPage /></AdminShell> }
+}
+
+#[component]
+fn AdminPlaygroundRoute() -> impl IntoView {
+    view! { <AdminShell><SandboxPlaygroundPage /></AdminShell> }
 }
 
 #[component]

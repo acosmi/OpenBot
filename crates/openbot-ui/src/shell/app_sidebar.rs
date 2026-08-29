@@ -12,7 +12,10 @@ use openbot_contracts::people::CurrentUser;
 
 use crate::api::channel_route_href;
 #[cfg(target_arch = "wasm32")]
-use crate::api::{list_channels, load_current_user, load_session_status, sign_out_current_session};
+use crate::api::{
+    list_channels, load_current_user, load_session_status, require_admin_status,
+    sign_out_current_session,
+};
 use crate::features::app_sidebar::ChannelRow;
 use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
@@ -43,6 +46,7 @@ pub fn AppSidebar() -> impl IntoView {
     let current_user = RwSignal::new(None::<CurrentUser>);
     let revocable = RwSignal::new(false);
     let account_error = RwSignal::new(false);
+    let admin_visible = RwSignal::new(false);
     let sign_out_pending = RwSignal::new(false);
     let sign_out_error = RwSignal::new(false);
 
@@ -55,6 +59,7 @@ pub fn AppSidebar() -> impl IntoView {
     );
     install_channel_socket(reload_generation);
     load_identity(current_user, revocable, account_error);
+    load_admin_visibility(admin_visible);
 
     let visible_channels = Memo::new(move |_| filter_channels(&channels.get(), &search.get()));
     let retry =
@@ -126,6 +131,7 @@ pub fn AppSidebar() -> impl IntoView {
     let approvals_location = location.clone();
     let memory_location = location.clone();
     let settings_location = location.clone();
+    let admin_location = location.clone();
     let preference_status_location = location;
     view! {
         <span
@@ -252,6 +258,16 @@ pub fn AppSidebar() -> impl IntoView {
                         settings_location.pathname.get() == "/settings"
                     })
                 />
+                <Show when=move || admin_visible.get()>
+                    <SidebarNavLink
+                        href="/admin".to_owned()
+                        icon=Icon::ShieldLock
+                        label=move || t_string!(i18n, shell.nav_admin).to_owned()
+                        current=Signal::derive(move || {
+                            is_admin_path(&admin_location.pathname.get())
+                        })
+                    />
+                </Show>
             </SidebarNavList>
             <Show when=move || current_user.get().is_some()>
                 {move || current_user.get().map(|user| {
@@ -298,6 +314,22 @@ pub fn AppSidebar() -> impl IntoView {
             </div>
         </SidebarFooter>
     }
+}
+
+fn load_admin_visibility(admin_visible: RwSignal<bool>) {
+    #[cfg(target_arch = "wasm32")]
+    leptos::task::spawn_local_scoped_with_cancellation(async move {
+        admin_visible.set(require_admin_status().await.is_ok());
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    admin_visible.set(false);
+}
+
+fn is_admin_path(pathname: &str) -> bool {
+    pathname == "/admin"
+        || pathname
+            .strip_prefix("/admin/")
+            .is_some_and(|suffix| !suffix.is_empty())
 }
 
 fn filter_channels(channels: &[ChannelSummary], query: &str) -> Vec<ChannelSummary> {
@@ -545,5 +577,9 @@ mod tests {
         assert_eq!(next_retry(500), 1_000);
         assert_eq!(next_retry(20_000), MAX_RETRY_MS);
         assert_eq!(next_retry(MAX_RETRY_MS), MAX_RETRY_MS);
+        assert!(is_admin_path("/admin"));
+        assert!(is_admin_path("/admin/audit"));
+        assert!(!is_admin_path("/admin-old"));
+        assert!(!is_admin_path("/settings"));
     }
 }
