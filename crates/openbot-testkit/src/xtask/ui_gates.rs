@@ -12,7 +12,11 @@ use walkdir::WalkDir;
 
 const UI_DIR: &str = "crates/openbot-ui";
 const WASM_GZIP_LIMIT: usize = 3_670_016;
-const CSS_LIMIT: usize = 96 * 1024;
+/// GUI first source §10.5 / v3 R123 (2026-08-28): 96 KiB was exhausted at Batch 50 (97,848 B, 456 B
+/// left) with 24 route journeys still open, so the limit is 128 KiB with a 120 KiB warning line. The
+/// warning exists so the next delta audit is scheduled before the gate turns red, not after.
+const CSS_LIMIT: usize = 128 * 1024;
+const CSS_WARN: usize = 120 * 1024;
 const FONT_LIMIT: usize = 800 * 1024;
 
 pub(crate) fn i18n_check(root: &Path) -> Result<()> {
@@ -201,6 +205,11 @@ pub(crate) fn bundle_budget(root: &Path, args: &[String]) -> Result<()> {
     }
     if !failures.is_empty() {
         bail!("bundle budget exceeded:\n{}", failures.join("\n"));
+    }
+    if css_bytes > CSS_WARN {
+        println!(
+            "bundle-budget: warning css {css_bytes} > {CSS_WARN} bytes (limit {CSS_LIMIT}); schedule the CSS delta audit before the limit turns red"
+        );
     }
     println!(
         "bundle-budget: ok (wasm gzip={wasm_gzip}/{WASM_GZIP_LIMIT}; css={css_bytes}/{CSS_LIMIT}; fonts={font_bytes}/{FONT_LIMIT}; external scripts={external_scripts}, inline=0)"

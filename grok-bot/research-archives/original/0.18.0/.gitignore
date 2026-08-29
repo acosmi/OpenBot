@@ -1,0 +1,4 @@
+# R116 (2026-08-28): the original installers are identity-only here (artifacts.json / SHA256SUMS).
+# Never re-add the binaries, with or without LFS.
+*.dmg
+*.exe

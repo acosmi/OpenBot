@@ -1,8 +1,8 @@
 # OpenBot 全量 Rust 重写：终版研究、前置审计与实施方案
 
-> 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22
+> 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v3（v2 + 第二轮只读前置审计修订，修订清单见 §28）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -18,19 +18,20 @@
 
 本项目对“全量 Rust”的最终定义固定为：
 
-> GUI、业务、内置 Agent、策略、数据库访问、线程与记忆、实时事件、认证、凭据、审计、Supervisor 和全部高权限控制面由 Rust 实现；Chromium/Electron 仅作为受监管、可替换的浏览器执行引擎。
+> GUI、业务、内置 Agent、策略、数据库访问、线程与记忆、实时事件、认证、凭据、审计、Supervisor、Desktop authority / window ACL / coordinator、Browser/Computer scope、engine 生命周期、ScreenHub、HumanLease、file/shell 执行域、平台 sandbox helper、egress、进程树和全部高权限控制面由 Rust 实现；Chromium/Electron 仅作为受监管、可替换、被 Rust 拥有的 OS 约束包住的浏览器执行引擎，承担两种 role（Browser Computer 与 Desktop sandboxed component 渲染，§11.1）。零 JavaScript 业务控制面、零 JavaScript authority、零 Node coordinator / host / Agent / local-exec。（R115 / R117 / R118 精确化）
 
 下列内容不违反该定义：
 
 1. Leptos 编译成 WASM，并由 Tauri 的系统 WebView 渲染 HTML/CSS。
 2. PostgreSQL、Chromium、Electron、操作系统 Keychain/KMS 作为外部引擎或系统设施存在。
-3. 用户自己发布的 HTML/CSS/JavaScript 组件作为不可信数据，在零 Tauri 权限的独立沙箱中执行。
+3. 用户自己发布的 HTML/CSS/JavaScript 组件作为不可信数据，在零 Tauri 权限的独立沙箱中执行：Server Web 是 opaque-origin iframe，Desktop 是同一 Electron engine 的 component role（§3.3）。
 4. 用户接入的远程 AG-UI Agent 可以由任何语言实现；它属于外部不可信扩展，不属于第一方内置 Agent 或控制面。
 5. 模型、MCP、Google Drive、OIDC/SAML IdP 是外部服务；所有调用、身份、凭据、授权和审计仍由 Rust 侧控制。
+6. Electron 主进程自带的 Node runtime 是引擎事实，不是第一方控制面：它被 §10.3 的 OS 约束包住，shim 不得使用 `child_process` / `fs` / `http` 等能力（§11.3，R119）。
 
-最终生产发行物中允许存在的第一方非 Rust 源码只有最小 Electron browser-engine shim。该 shim 不拥有产品身份、策略、审批、审计、模型/MCP/OIDC 凭据、任意文件或任意命令能力；其职责限定为 Chromium 生命周期、CDP、画面帧和封闭输入指令。除此之外，不保留 React、Hono、Bun、TypeScript Agent、TypeScript MCP runtime 或 JavaScript 业务控制面。
+最终生产发行物中允许存在的第一方非 Rust 源码只有最小 Electron engine shim（clean-room，§11.3：文件 allowlist、非空 LOC ≤ 600、Electron/Node API allowlist）。该 shim 不拥有产品身份、策略、审批、审计、模型/MCP/OIDC 凭据、任意文件或任意命令能力；其职责限定为 Chromium 生命周期、CDP、画面帧、封闭输入指令，以及 component role 下渲染会话的一次性注入。除此之外，不保留 React、Hono、Bun、TypeScript Agent、TypeScript MCP runtime 或 JavaScript 业务控制面。
 
-构建期工具链（Tailwind CSS standalone CLI、trunk、wasm-bindgen CLI、wasm-opt）是钉 sha256 的二进制，只在构建机运行、不进发行物、不引入 Node/npm；它们按 §16.3 的供应链条目登记，版本与校验和见 `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md` §12.1（2026-08-22 裁决：零 Node）。
+构建期工具链（Tailwind CSS standalone CLI、trunk、wasm-bindgen CLI、wasm-opt）是钉 sha256 的二进制，只在构建机运行、不进发行物、不引入 Node/npm；它们按 §16.3 的供应链条目登记，版本与校验和见 `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md` §12.1（2026-08-22 裁决：零 Node）。Electron 本身以官方 release zip + sha256 获取（`tools/engine-pins.toml`，§1.2），不经 npm；工作区内唯一允许的 `package.json` 是 shim 的 app manifest（零 dependencies / scripts / lockfile），`grok-bot/` 参考树内的 `package.json` 不参与任何构建（R117）。
 
 ### 0.2 最终产品形态
 
@@ -64,9 +65,7 @@ Electron/Chromium browser engine（无业务裁决权）
 
 ### 0.4 交付基线
 
-推荐资源基线固定为 **12 人、52 周**：1 名技术负责人，2 名数据/线程工程师，1 名认证/凭据工程师，2 名 Agent/协议工程师，2 名 browser/runtime/隔离工程师，2 名 Leptos/Tauri 工程师，1 名 SDET，1 名 SRE/发布工程师；第 20 周和第 40 周各安排一次不参与编码的独立安全审计。
-
-52 周是本文件范围与人员假设下的计划基线，不是对未知代码的保证。任何新增数据库、额外 MCP 协议面、第二浏览器 driver、移动端、Firecracker、ACP 或新模型专用集成都不得挤入本次重写范围。
+（R125，2026-08-28）**12 人 / 52 周的日历基线作废**：§19 改为只用入口条件、产物与退出证据控制的阶段门（P0-code → P1 → … 与既有 G3 / G4 / G6 余项并行），不再给没有实证的周数。两次不参与编码的独立安全审计保留：第一次仍按 §24 G2，第二次在 G8 之前、P3 之后。范围约束不变：任何新增数据库、额外 MCP 协议面、第二浏览器 driver、移动端、Firecracker、ACP、新模型专用集成，或**来自参考源的产品能力**（R115），都不得挤入本次重写范围。
 
 ## 1. 第一真源与证据冻结
 
@@ -99,7 +98,9 @@ Electron/Chromium browser engine（无业务裁决权）
 | GUI 资产与视觉真源 | Inter Variable `4.1`（OFL-1.1，两份 woff2 sha256 见设计系统文档 §4.3）；Lucide `1.33.0`（ISC AND MIT，Feather 衍生子集另受 MIT，zip sha256 见其 §4.6.1）；视觉 / token / 布局 / 主题 / i18n / a11y 的唯一真源 = `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md` |
 | CEL 引擎 | crate **`cel`** `0.14.3`，**`default-features = false`**（关掉 `regex` + `chrono`；理由与实测见 §28.1 R28）（仓库 `cel-rust/cel-rust`；旧名 `cel-interpreter` 0.10.0 已停更，不用）；golden oracle = 上游锁定的 `cel-js@0.8.2` |
 | OIDC / SAML | `openidconnect` `4.0.1`，**`default-features = false`**（关掉自带的 `reqwest` + `rustls-tls`，出网由注入的 safe dialer 承担，见 §28.1 R29）；`samael` `0.0.22`（`njaremko/samael`，0.0.x 版号即"未稳定"信号，§6.2 的独立外审因此不可免） |
-| CrabCode browser kernel | Electron `43.3.0` / Chromium `150.0.7871.212` |
+| Browser engine | Electron `43.3.0`（2026-08-04 发布；Chromium `150.0.7871.212`，Node `24.18.1`）。官方 release zip 五平台（darwin-arm64 / darwin-x64 / linux-x64 / linux-arm64 / win32-x64）的 sha256 钉在 `tools/engine-pins.toml`，来源是上游 `SHASUMS256.txt` 的仓内副本 `tools/electron-v43.3.0.SHASUMS256.txt`；不经 npm（R117）。CrabCode `kernel-pin.json` 只是本 pin 的历史来源，不再是获取渠道 |
+| `grok-bot/` 参考树 | tree `86f5a85f560f721677fa7e587a67ac0ffc036cb5`（R116 移除两个原始安装包 LFS 指针后；之前为 `b68f2497…`）。Anysphere（Cursor）Grok Bot 0.18.0 的反编译重建，**不是** xAI Grok Build；只作架构 / 执行 / 状态机参考，方法见 §11.5；改动它 = 新 hash + R 行 |
+| runsc | 版本在 P1 spike（§19.1）实测后钉入本表与 `tools/engine-pins.toml`；判据见 §24 G5 / R121。在此之前 Server 生产 readiness 判据（§10.4）不变 |
 | Rust 工具链 | `1.98.0`（2026-08-18 发布的当时最新稳定版），edition 2024。2026-08-22 由 `1.94.1` 升级，delta audit 见 `docs/2026-08-22-Rust工具链1.94.1升1.98.0-delta审计.md` |
 | PostgreSQL | 17（上游 compose 用 `pgvector/pgvector:pg17`；Rust 版不需要 pgvector，平装 `postgres:17` 即可，§14.1） |
 | PostgreSQL 驱动 | `tokio-postgres` `0.7.18` + `deadpool-postgres` `0.14.1` + `postgres-types` `0.2`（derive）。**刻意不用 `sqlx`**：它的 `query!` 宏要么在构建期连活库、要么把 `.sqlx` 离线元数据入库并保持同步，两条路都让 `cargo build --locked` 的答案取决于跑在哪台机器上；SQL 显式手写，由对真库的集成测试验证，构建期与数据库彻底解耦（G1 裁决 D3） |
@@ -187,6 +188,12 @@ Electron/Chromium browser engine（无业务裁决权）
 10. Electron 和 chromiumoxide 两套正式 browser driver；首版只维护一套受监管 Electron/Chromium engine。
 11. 将任意用户 JavaScript 放入主 Tauri WebView。
 12. 长期持久化原始 provider stream、完整 HTTP body、screen frame、文件内容或秘密。
+13. （R120，2026-08-28）Docker Desktop 或任何本地容器 / VM 作为 Desktop 的隔离层（`grok-bot` 的 "local Docker box"）；Desktop 只有 `HostLocal` 执行域，隔离执行由 Server 的 `ScopedContainer` 提供（§10.6）。
+14. （R118）VNC 或 `<webview>` 作为 Screen UI（`grok-bot` 的 computer shell）；画面只走 §12 的帧流。
+15. （R117 / R119）npm / Node 构建链、Electron `autoUpdater`、`--no-sandbox` / `sandbox:false` / `webviewTag:true`。
+16. （R115）依赖 Grok Bot 云后端的能力（cloud agents、forever-box、box-store-sync、managed-setup、webauthn-proxy、host-upgrade、cross-user-sharing、teach-recording）与 Statsig / analytics / telemetry 家族；以及**任何来自参考源的新产品能力**——v4 不新增 Grok Bot 产品能力，候选只登记在 §11.5 的表里且无承诺。
+
+本节对来自任何参考源（`grok-bot` / Codex / Grok Build / CrabCode）的条目同样生效：inventory、吸收或"参考源里有"都不构成重新立项。
 
 ### 2.4 当前上游缺陷：不得照译
 
@@ -251,21 +258,23 @@ Electron/Chromium browser engine（无业务裁决权）
 1. **Compiled gallery**：现有 React gallery 全部重写为 Leptos component；保留参数 schema、published 状态、per-Bot withholding、data-function grant 和 tool-call-time 再授权。
 2. **Sandboxed component**：保留用户 authored HTML/CSS/JavaScript、draft/publish/revision/sample arguments；它属于不可信用户数据，不属于第一方 GUI 控制面。
 
-Sandboxed component 固定运行位置：Server Web 在浏览器 opaque-origin sandbox iframe；Desktop 不在主 Tauri WebView 创建用户脚本 iframe，而是在独立、零 Tauri capability 的 component Chromium renderer 中运行，通过 typed MessageChannel/broker 返回渲染帧并只转发指针/滚轮/键盘/文本输入。
+Sandboxed component 固定运行位置：Server Web 在浏览器 opaque-origin sandbox iframe（Batch 50 已落，R113）；Desktop 不在主 Tauri WebView 创建用户脚本 iframe，而是在 §11.1 单一 Electron engine 的 **component role** 里运行（R118）：每个 Desktop 应用实例恰一个 role=SandboxedComponent 的 engine 进程，按需启动、零会话 30 秒后退出（**新增**）；每次渲染是该 engine 的一个 render session = 一个 `TabId`，独立 in-memory partition、独立 opaque origin（`component://<render-id>`，render-id 由 Rust 铸造、一次性），Chromium site isolation 保证 renderer 进程互不共享；帧经 §12.2 同一条 ScreenIngress → ScreenHub → viewer ticket 路径回主 GUI，输入只有 §12.5 的 closed `BrowserInput`（指针 / 滚轮 / 键盘 / insertText），epoch fencing 与 ControlService 与 browser computer 共用（Batch 51，R114）。Desktop Remote 的取源路径与 Web 相同（同一 ApplicationService 投影给出 published source 与 args），不新增 API 面。
 
 用户脚本可见的**运行时契约固定为上游现状**（`app/src/lib/copilot/sandboxed-tools.tsx` 与 `admin/playground.tsx`）：wrapper 先注入 `window.__args = <本次调用参数 JSON>`，再执行作者的 `jsFunctions`；作者拿到的只有 `window.__args` 与自己那份 DOM。沙箱脚本**没有** data function、没有网络、没有向宿主回调的通道（上游 `component_functions` 只服务 compiled component），R1 不新增任何一种。迁移后已发布的 `sandboxed_components` 行必须在新沙箱里逐行渲染通过（Phase 0 把每行的 published html/css/jsFunctions/sampleArguments 录成 fixture）。
 
-Desktop 独立 renderer 的两条必然后果在此写死，不留给实现期发现：① renderer 是同一个 Electron/Chromium engine 进程类（§11.1 单 engine），不引入第三种渲染器；② 画面以帧流回主 GUI，文本不可选中、屏幕阅读器不可达——Desktop 的 sandboxed component **不承诺** a11y parity，§18 / G6 的 a11y 要求对 Desktop sandboxed component 明确豁免并在产品文档写明；Web 路径（iframe）保持 a11y 要求。
+Desktop 独立 renderer 的两条必然后果在此写死，不留给实现期发现：① renderer 是同一个 Electron/Chromium engine 进程类（§11.1 单 engine），不引入第三种渲染器；② 画面以帧流回主 GUI，文本不可选中、屏幕阅读器不可达——Desktop 的 sandboxed component **不承诺** a11y parity，§18 / G6 的 a11y 要求对 Desktop sandboxed component 明确豁免并在产品文档写明；Web 路径（iframe）保持 a11y 要求。豁免的具名 fallback（R118，**新增**）：画布旁由 Rust/Leptos 以只读 `<dl>` 渲染该次 tool call 已经 schema 校验过的 `arguments`（键 → 值），不含作者 HTML/CSS/JS 文本、不含模型自由文本；细则在 GUI 真源 §9.1。
 
 固定运行规则：
 
 - 独立 opaque-origin iframe/Chromium renderer，不在主 Tauri WebView 执行；
 - `sandbox="allow-scripts"`，不得使用 `allow-same-origin`、top navigation、popup、download 或 storage；
-- CSP 固定为 `default-src 'none'; connect-src 'none'; script-src 'nonce-<per-render-random>'; style-src 'unsafe-inline'; img-src data: blob:`；Rust wrapper 只给本次封装后的用户脚本设置 nonce，默认无网络；
+- CSP 固定为 `default-src 'none'; connect-src 'none'; script-src 'nonce-<per-render-random>'; style-src 'unsafe-inline'; img-src data: blob:`；Rust wrapper 只给本次封装后的用户脚本设置 nonce，默认无网络；两宿主逐字相同；
 - 不加载 Node、preload、Electron API 或 Tauri API；
-- 使用一次性 MessageChannel capability 与 Rust typed broker 通信；
-- data function 每次调用重新检查 component revision、Bot grant、actor ACL、policy 和 audit；
-- 组件崩溃、超时或 schema 错误只终止该 iframe，不影响 transcript 或主 GUI。
+- Web：使用一次性 MessageChannel capability 与 Rust typed broker 通信；Desktop：没有 MessageChannel，作者脚本只看到 DOM 与 `window.__args`，宿主通信只有 engine pipe 上的 render session 协议（§11.2），T-CMP-0018 按宿主拆分（R124）；
+- Desktop component role 的零 egress 是三层（R118）：session 级 proxy 指向黑洞地址（`127.0.0.1:1`）+ `webRequest` 在 `component://` 与 `data:` / `blob:` 之外全部 cancel + 上述 CSP；任一层失效都不能靠另两层"兜底"当作合规，三层缺一即 engine conformance 判红；
+- Desktop component role 的硬预算（R118，**新增**，默认值；管理员 policy 只能收紧不能放宽）：同时活跃 render session ≤ 8（viewport 驱动：离开视口 2 秒后停会话，回到视口重新渲染）；每 session renderer RSS ≤ 256 MiB；bootstrap 到首帧 ≤ 5 秒；帧 ≤ 1280×800、≤ 5 fps；console error ≤ 100 条。超限只终止该 session 并显示与 compiled refusal 共用的 RefusedCard；
+- data function 每次调用重新检查 component revision、Bot grant、actor ACL、policy 和 audit（仅 compiled component；沙箱结构上无 data function）；
+- 组件崩溃、超时或 schema 错误只终止该 iframe / render session，不影响 transcript 或主 GUI。
 
 ### 3.4 外部扩展兼容面
 
@@ -897,6 +906,7 @@ Browser Engine 必然能读取其 ProfileScope 内的网站 cookie/session，这
 | --- | --- | --- |
 | Desktop | 防止正常产品路径串 profile/workspace、限制 renderer/sidecar 权限、可靠清理进程 | 不抵抗同 UID 恶意程序、管理员/root、内核漏洞或敌对租户 |
 | Server + runsc | 不可信用户/任务之间的租户隔离、独立网络/文件/进程/配额 | sandbox 不是漏洞为零；仍需 egress、凭据、审计和补丁 |
+| Desktop engine 进程（R119，2026-08-28） | 由 Rust sandbox helper 启动并约束：只允许 profile / temp 目录读写、只允许经本机 loopback 代理出站、只允许执行自身 bundle 内的 helper。fidelity 分级：macOS `Enforced`（sandbox profile）/ Windows `Degraded`（Job Object kill-on-close + 进程数与内存上限 + restricted token + profile 目录 ACL + Chromium `--proxy-server` 指向本机代理且 `--proxy-bypass-list="<-loopback>"`）/ Linux Desktop tier-2（namespaces + seccomp，若可用）；fidelity 进入 readiness / diagnostics 与 UI | `Degraded` 不阻断 browser computer 与组件渲染（与下一段的 shell 高风险模式不同），但 UI 明示；`Unavailable`（helper 无法施加任何约束）= engine 不启动，走 RefusedCard / `engine_unavailable`。同样不抵抗同 UID 恶意程序 |
 
 Desktop shell 只有平台 sandbox fidelity 为 `Enforced` 时才可启用高风险模式：Linux 使用 user/mount/pid/network namespace + seccomp；Windows 使用 AppContainer/restricted token + Job Object + scoped ACL；macOS 使用已验证的 sandbox profile/entitlement。fidelity 为 `Degraded/Unavailable` 时，任意 shell 默认关闭，只允许 Rust 内置文件操作与逐次用户批准的有限命令。
 
@@ -921,11 +931,31 @@ Desktop shell 只有平台 sandbox fidelity 为 `Enforced` 时才可启用高风
 5. 所有 iframe、script、image、font、XHR/fetch、worker、service worker 和 popup 都经过同一出口；
 6. Desktop 做同样的应用级代理与 URL policy，但文档明确它不是 kernel-level tenant boundary。
 
+### 10.6 EngineScope 与 ExecutionRealm（R118 / R120，2026-08-28）
+
+```text
+EngineRole
+  = BrowserComputer(ComputerSecurityScope)      # §10.1；每 scope 一个 engine 进程实例
+  | SandboxedComponent(ComponentRenderScope)    # §3.3；每 Desktop 应用实例一个 engine 进程实例
+
+ComponentRenderScope
+  = tenant_id + actor_id + desktop_window_session_id   # 无 ProfileScope：会话临时、无持久 profile
+
+ExecutionRealm
+  = HostLocal          # Desktop Local 的 file/shell；受 §10.3 fidelity 门控
+  | ScopedContainer    # Server 与 Desktop Remote 的 file/shell；Supervisor + runsc（§10.4）
+```
+
+- role 由 Rust 在 boot handshake 里铸造（§11.2），不从 renderer、argv 自由字符串或页面 URL 得出；
+- `ExecutionRealm` 两者之间**没有隐式 fallback**（G5C）：Desktop Local 没有 `ScopedContainer`，不引入 Docker Desktop 或任何本地容器 / VM（§2.3 条 13）；Server 没有 `HostLocal`；Desktop Remote 的 shell/file 是 Server 的 `ScopedContainer`；
+- 组件 engine 的 `ComputerId` / `ComputerGeneration` 与 browser computer 同一套铸造与失效规则（§17.2 条 6）；render session 就是它的 `TabId`；
+- Grok Bot 的 "local" / "box" 双执行域（`grok-bot/source/host/box/*`、`electron-main/box/*`）只映射到本节的两域，其远程云 box 与本地 Docker box 都不引入。
+
 ## 11. Browser Engine 与 OpenBot/CrabCode 复用
 
 ### 11.1 单一 engine
 
-Desktop 与 Server 使用同一个最小 Electron/Chromium engine 和同一 conformance suite；Server 将其置于 runsc container。首版不维护 Playwright engine 与 CrabCode engine 两套生产实现。当前 OpenBot 的 Playwright 代码是行为 oracle 与 fixture 来源。
+Desktop 与 Server 使用同一个最小 Electron/Chromium engine package、同一 shim、同一协议和同一 conformance suite；Server 将其置于 runsc container。engine 按 Rust 铸造的 role 工作（§10.6）：`BrowserComputer` 每 `ComputerSecurityScope` 一个进程实例（scope-bound persistent profile）；`SandboxedComponent` 每 Desktop 应用实例一个进程实例（临时、非持久 partition，§3.3）。两种 role 必须是不同的进程实例、不同的 profile / partition、不同的 egress 与资源预算，但共用进程类、shim、协议与 conformance（R118）。首版不维护 Playwright engine 与 CrabCode engine 两套生产实现，也不采用 standalone Chromium + 直连 CDP（用户裁决 D2；理由与被否决的备选见 §11.6）。当前 OpenBot 的 Playwright 代码是行为 oracle 与 fixture 来源。
 
 ### 11.2 Engine 协议
 
@@ -943,17 +973,34 @@ pub struct EngineCommand {
 
 它不接收 `actor_id`、role、policy、intent 或 `policy_decision_id`；这些留在 Rust。`BrowserOperation` 是封闭 enum，R1 成员**与固定 commit 的 agent-computer 浏览器面一一对应**：navigate、snapshot、read、click、type、key、scroll、screenshot、screencast（start/stop/ack）、human input（§12.5 的输入 union）、secret insert、profile lifecycle（ensure/stop/reset）。**没有 download、没有 upload**：上游 29 条手写路径里没有下载/上传/文件选择/对话框处理（`page.on`、`setInputFiles`、`filechooser` 全仓零命中）；Chromium 自发的下载事件由 engine 默认取消并上报一条规范化 `download_refused` 事件，弹出的 JS dialog 默认 dismiss 并上报。把下载落盘或上传文件做成工具是独立产品变更，届时才适用 §11.3 的 quarantine / artifact handle 规则。文件与 shell 不走 `BrowserOperation`，它们是 computer 的另一组封闭操作（§18 "File/shell" 行：files/list、files/read、files/write、exec）。禁止自由 CDP method、自由 HTTP passthrough、自由本机路径、任意 shell 或任意环境变量。
 
+component role 的会话协议是第二个封闭 enum（R118，**新增**；不是 `BrowserOperation` 的成员）：
+
+```rust
+pub enum RenderSessionOperation {
+    Start { render_id: TabId, html: String, css: String, js: String, args_json: String },
+    Input(BrowserInput),   // §12.5 同一 union
+    Stop,
+}
+```
+
+`Start` 的四段内容由 Rust 从 published 列与已校验的 args 一次性注入（`window.__args` 语义与上游逐字相同，§3.3）；engine 不得读取任何文件、URL 或第二来源。
+
+boot handshake（R119，三平台统一）：Rust 先创建 pipe endpoint（macOS/Linux 为随机路径、`0600` 的 UDS；Windows 为随机名、仅当前用户 SID 可访问的 Named Pipe），再 spawn engine，并向其 stdin 恰写入一行 ≤ 4 KiB 的 boot capability（pipe 名、`EngineRole`、protocol version、release epoch、一次性 128-bit token），随后关闭 stdin；engine 连接 pipe 后发送 `hello{token}`，Rust 校验 token **与 peer credential**（UDS：`SO_PEERCRED` / `getpeereid`；Named Pipe：`GetNamedPipeClientProcessId` 等于 spawn 得到的 PID 且进程创建时间一致），二者任一不符即 kill 并推进 `ComputerGeneration`。engine 二进制、shim ASAR 与协议 hash 的 digest 由 Rust 在 spawn **之前**校验（§16.2），engine 不自报。
+
 ### 11.3 Browser 安全配置
 
-- remote page：`nodeIntegration=false`、`contextIsolation=true`、`sandbox=true`、`webSecurity=true`；
+- 全部不可信 renderer（remote page 与 component render session）：`nodeIntegration=false`、`contextIsolation=true`、`sandbox=true`、`webSecurity=true`、`webviewTag=false`、无 preload、production 无 devtools；shim 在 `app.ready` 之前调用全局 sandbox（`app.enableSandbox()`），`--no-sandbox` / `sandbox:false` / `webviewTag:true` 在任何配置禁止（R119；参考源 `grok-bot/source/electron-main/main.ts` 三者俱全，见 §11.5，不得照搬）；
+- Browser/Component 正向测试必须证明 renderer 进程**实际** sandboxed（macOS：helper 进程 `sandbox_check` 为真；Windows：renderer token 为 AppContainer / 低完整性；Linux：`/proc/<pid>/status` `Seccomp: 2` 且 `NoNewPrivs: 1`），而不是只检查配置文本；
 - remote page 无 preload、无 Electron/Tauri API；
 - permission request/check handler 默认拒绝 camera、microphone、screen capture、geolocation、USB、HID、serial、Bluetooth、notification 和 clipboard；
 - popup/new-window 默认拒绝；外部打开只接受 Rust 重新验证的 URL；
-- 不开放 remote debugging port，只通过 `webContents.debugger` 使用 CDP；
-- 启用 ASAR integrity，关闭未用 Electron fuses，禁止 `ELECTRON_RUN_AS_NODE`；
+- 不开放 remote debugging port，只通过 `webContents.debugger` 使用 CDP；正式帧源固定为 `Page.startScreencast`（§12.2），Electron offscreen `paint` 只作诊断 fixture（§12.6）；
+- 启用 ASAR integrity，关闭未用 Electron fuses（`RunAsNode` / `EnableNodeCliInspectArguments` / `EnableNodeOptionsEnvironmentVariable` 关，`OnlyLoadAppFromAsar` / `EnableEmbeddedAsarIntegrityValidation` 开），禁止 `ELECTRON_RUN_AS_NODE`；fuses、ASAR、rebrand 与 ASAR integrity 值全部由 Rust `cargo xtask engine bundle` 写入，不用 npm 工具（R117）；
 - R1 没有下载落盘与上传操作（§11.2）；若未来作为产品变更加入，download 进入 quarantine、校验名称/MIME/大小、不自动打开，file upload 只接受 Rust 铸造、scope 绑定的 artifact handle——两条规则此时即已写死，不随实现期再议；
 - Electron/Chromium critical/high 修复在 72 小时内升级；无法及时升级时关闭受影响能力或停止发行；
-- browser sidecar 不自更新，必须与 Rust/Tauri 原子版本、原子签名。
+- browser sidecar 不自更新，必须与 Rust/Tauri 原子版本、原子签名；engine 禁止 `autoUpdater`（§2.3 条 15）；
+- component role 另加（R118）：session 级 proxy 指向 `127.0.0.1:1` + `webRequest` 对 `component://` 与 `data:` / `blob:` 之外全部 cancel + §3.3 CSP，三层缺一即红；permission request/check 全部拒绝；navigation 与 popup 全部拒绝；无 clipboard、download、file chooser；
+- shim 约束（R117，`cargo xtask electron-shim-check` 判红）：来源 clean-room（只依据 Electron 公开 API 文档，不复制 CrabCode `browser-shell` 或 `grok-bot/source/electron-main` 的任何文本）；文件 allowlist 恰为 `crates/openbot-desktop/engine-shim/{package.json,main.mjs,generated/protocol.mjs}`；`package.json` 键集合恰为 `name` / `version` / `main` / `private` / `type`，零 `dependencies` / `devDependencies` / `scripts`，无 lockfile；非空 LOC ≤ 600（**新增**预算，超过即需在 PR 里逐行解释为何不能放进 Rust）；允许的 Electron API = `app` / `BrowserWindow` / `session` / `webContents` / `webContents.debugger` / `protocol` / 固定的 permission、navigation、crash handler；允许的 Node 内置模块只有 `net`（连 pipe）、`buffer`、`process`（读 stdin、退出）；禁止 `child_process`、`fs`、`http` / `https`、`dns`、`eval`、`executeJavaScript`、`sendSync`、`<webview>`、自由 method dispatcher、自由 CDP、自由 URL passthrough、renderer 自报 role / scope / generation；生成的 `protocol.mjs` 的 hash 必须等于 Rust 侧 `openbot-contracts` 生成物的 hash。
 
 ### 11.4 CrabCode 复用清单
 
@@ -962,12 +1009,46 @@ pub struct EngineCommand {
 | `acosmi-supervisor` / daemon launcher / heartbeat | 进程 registry、PID identity、watchdog、shutdown、socket lock | 整 crate 无审计复制 |
 | permission / shell parser / sandbox / exec | 平台 sandbox、command plan、process tree、fidelity | 把 CrabCode 单用户路径语义当 OpenBot ACL |
 | `acosmi-cmd-browser` | Rust browser request adapter、explicit target、timeouts | 暴露自由 method/path |
-| `components/browser-shell` | Electron/Chromium lifecycle、tab、snapshot、input、download、framing | 复制完整 desktop host、Design/账号/Office 能力 |
+| `components/browser-shell` | （R117 降级）只作可选的行为 fixture 来源：tab / snapshot / input / framing 的**可观察行为**记录；shim 本身 clean-room，不复制其任何文本 | 复制完整 desktop host、Design/账号/Office 能力；把它当 shim 的源码 |
 | app-server protocol/transport | framing、origin、auth、thread/turn fixture | 复制 200+ method 的产品专属 dispatcher |
 | 历史 Tauri host | path/artifact/log/menu/deep-link/single-instance/cleanup 模式 | 回滚整个已删除提交 |
 | TS Agent/MCP | 行为 fixture、错误语义 | 进入最终生产控制面 |
 
 所有行目前都是“权属清理后可用”，不是自动授权。每个复制文件须有 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原/目标 hash、许可证、修改声明、书面授权编号。
+
+### 11.5 `grok-bot/` 参考树：定位、方法与 census（R115 / R116，2026-08-28）
+
+**它是什么**：`grok-bot/`（tree `86f5a85f560f721677fa7e587a67ac0ffc036cb5`，§1.2）是 Anysphere（Cursor）公开发行的 Grok Bot 0.18.0 macOS 应用的**反编译重建**（其 `README.md` / `PROVENANCE.md` / `NOTICE.md` 自述：bundle ID `com.anysphere.sand`、"Names and module boundaries inferred from a compiled application"、"No upstream source-code license is asserted or granted"）。它**不是** §1.2 / §23.1 条 3 的 xAI Grok Build，Apache-2.0 不覆盖它。本机复算：`source/` 1,722 个 `.ts`、全树 543,212 行、TS/TSX 493,338 行、`source/packages/{proto,redacted-protos}` 263,713 行；`source/` 与 `frontend/` 下 `*.test.ts(x)` = 0，`packages/agent/state.ts` 自注 "Intentionally partial recovery"，`frontend/` 是 partial reconstruction、shipped renderer 只有 minified bundle（命令见 §28.4）。
+
+**它能做什么**（真源第 4 层，§28.5）：只提供架构 / 执行 / 状态机 / 协议语义的参考——coordinator 与 supervisor 的进程 identity、generation、backoff、resync、退役；runner 的 turn / stream attempt / retry / stall / checkpoint；`always/ask/never` 权限偏好状态机；local-exec / shell 的 cancel、deadline、output 上限；extension DAG 的启动、失败回滚与逆序 teardown。**它不提供产品行为**：产品 / API / schema / 旅程的 oracle 仍是固定上游 OpenBot（第 3 层）。
+
+**唯一允许的方法 = 规格先行吸收**（类别 `A`）：读参考 → 在本文件对应章节写出状态机 / 不变量 / 错误与并发语义（新增即标 **新增**）→ 登记 `source_lineage`（`GRB-<family>-<n>`：`grok-bot/<path>::<symbol>` 作为证据锚点）→ Rust 实现 + 本项目自己的 fixture 与测试。**禁止**逐文件 / 逐函数翻译，禁止复制任何文本（含注释、字符串、标识符序列）；`T`（近机械翻译）与 `C`（产品能力候选）两类不存在。理由是技术的也是法律的：重建代码零测试、部分恢复、与原应用的等价性未被验证（其 `PROVENANCE.md` 说 "The immutable release is the product specification"），逐函数翻译会把未验证的行为与不可审计的来源一起带进 Rust；§23.3 的反编译规则与 §11.4 的 clean-room 规则对它同样成立。其余类别：`S`（engine shim 边缘，§11.3）、`R`（明确拒绝的实现，§2.3 条 13–16 与 §11.3）、`P`（partial / placeholder，evidence-only，不进任何范围）。
+
+**census 只有 tier-1**：`cargo xtask grok-inventory` 生成 `inventory/grok/files.yaml`（每文件：path、family、非空 LOC、maturity 标记 `production | partial | generated | artifact-only`），机械生成、不做人工分类、不进任何分母；`--check` 模式与树同步是 G0 判据之一（§24）。`GRB-` lineage 行只在某个批次真正吸收一个模式时追加，不预先铺表。
+
+**v5 候选（无承诺，仅登记；每项都依赖 OpenBot 没有的后端或属于新产品面）**：
+
+| 家族 | 依赖 / 性质 | 若立项须先解决 |
+| --- | --- | --- |
+| `automations`（定时 / 重复 run） | 新 scheduler、新表、新 UI | §7.2 后台 durable run 之上的调度语义与配额 |
+| subagent / background work 面板 | §7.2 已有 durable run，缺 UI 与治理 | 与 §8 管线的 acting 归属 |
+| `permissions` 的 `always/ask/never` 用户偏好 | 位于 CEL policy 之下的用户偏好层 | 不得绕过 §8.1 审批与 §17.2 条 3 的 fail-closed |
+| `terminal` / local-exec UI | §18 File/shell 只有封闭操作，无终端 | §10.3 fidelity 与 §10.6 realm |
+| cloud agents / forever-box / box-store-sync / cross-user-sharing / teach-recording / managed-setup / webauthn-proxy / host-upgrade | 依赖 Cursor 云后端 | §2.3 条 16 已拒绝，除非本项目自建对应 Server 面 |
+
+**原始安装包**：`research-archives/original/0.18.0/` 只保留 identity（`artifacts.json` / `SHA256SUMS`）；两个 LFS 指针于 R116 移除（对象从未上传，默认 `git clone` 恒红），目录内 `.gitignore` 禁止再加入。
+
+### 11.6 D2 的备选与否决理由（ADR，R118）
+
+用户裁决 D2：Browser Computer 与 Desktop sandboxed component 固定使用 Electron 内置 Chromium。被否决的备选逐一记录，避免实施期重议：
+
+| 备选 | 否决理由 |
+| --- | --- |
+| Servo | 布局 / 样式是 Rust，但 JS 引擎是 SpiderMonkey（C++）；没有 CDP / screencast / partition 的稳定嵌入面，也没有 Chromium 那样经年对抗敌意内容的多层沙箱；用它反而要自建一层沙箱 |
+| wry / 系统 WebView 独立进程 | WebView2 / WKWebView / WebKitGTK 三套引擎三套隔离语义；帧 / 输入 / egress 无统一控制；Server runsc 内不可用（§2.1 条 2、§2.3 条 11） |
+| wasmtime / WASI | 要求把组件契约改成 WASM，破坏 §3.3 钉死的上游 HTML/CSS/JS 契约 |
+| standalone Chromium headless-shell + Rust 直连 CDP（`--remote-debugging-pipe`） | 是唯一能让第一方 JavaScript 归零的方案；被否决的理由是工程而非原则：Electron 的 `session` / `webContents` / permission handler 与三平台签名发行结构是现成且 CrabCode 已验证的，headless-shell 的 macOS 公证、Windows 签名与自建发行结构需要独立 delta；本裁决不排除将来以 delta audit 重议 |
+| **Rust 拥有的 OS 沙箱 helper 包住 Electron engine 进程** | **采纳**（R119，§10.3）：它不替代渲染引擎，但把"engine 主进程 = Node"的最大损害域限制在 profile 目录 + loopback 代理内 |
 
 ## 12. 实时 Screencast、Input 与 Human Lease
 
@@ -987,7 +1068,7 @@ Chromium Page.startScreencast
   → Leptos canvas + createImageBitmap
 ```
 
-CDP `startScreencast` 当前只选择 JPEG（生产）与 PNG（诊断），不把 WebP 写成已支持格式。ACK 在帧成功进入 size-1 latest buffer 后发送；慢消费者只能丢旧帧，不能形成无界队列。
+CDP `startScreencast` 当前只选择 JPEG（生产）与 PNG（诊断），不把 WebP 写成已支持格式。ACK 在帧成功进入 size-1 latest buffer 后发送；慢消费者只能丢旧帧，不能形成无界队列。component role 的帧走完全相同的路径（computer_id = 组件 engine 的 ComputerId，tab_id = render session），不设第二条帧路径（R118）。
 
 ### 12.3 Frame contract
 
@@ -1038,7 +1119,7 @@ paste 使用 `Input.insertText`，不读取系统 clipboard；secret 使用独�
 
 ### 12.6 性能目标与降级
 
-- 目标：1280×800、JPEG quality 70（与上游 `screencast.ts` 的 `maxWidth 1280 / maxHeight 800 / quality 70` 逐值相同；上游不限 fps、每次变化一帧）；fps 上限是新增背压：10 fps passive / 15 fps driving；
+- 目标：1280×800、JPEG quality 70（与上游 `screencast.ts` 的 `maxWidth 1280 / maxHeight 800 / quality 70` 逐值相同；上游不限 fps、每次变化一帧）；fps 上限是新增背压：10 fps passive / 15 fps driving；component render session 另限 ≤ 5 fps（R118，新增；组件多为静态，`Page.startScreencast` 只在重绘时出帧，静态组件零流量）；
 - loopback capture-to-paint p95 ≤ 200 ms，p99 ≤ 400 ms；
 - 每 viewer 最多 1 个待发 frame，ScreenHub 每 tab 最多 2 个 frame buffer；
 - 最后 viewer 断开后 2 秒内停止 screencast；
@@ -1239,10 +1320,11 @@ all-in-one image 只允许 `OPENBOT_SINGLE_USER=true` 的 local/dev profile；mu
 
 ### 16.2 Desktop 发行物
 
-- macOS arm64/x64 signed + notarized；
-- Windows 11 x64 Authenticode installer；
-- Linux x64 AppImage/deb 为 supported desktop；
-- Electron/Chromium、PostgreSQL、helper 与 Rust/Tauri 作为一个 release epoch 原子交付；
+- macOS arm64/x64 signed + notarized（签名顺序：内层 Electron Framework / helpers → engine sidecar → Rust helper → 外层 Tauri app，最后 notarize）；
+- Windows 11 x64 Authenticode installer（engine exe / dll、Rust sidecar 与 installer 全部签名）；
+- Linux x64 AppImage/deb 为 **tier-2**（R122，2026-08-28）：三平台编译在 CI 必绿，但 golden / AX / 签名 / sandbox fidelity 证据不作为 G6 / G8 判据，不是 supported release target；升为 supported 需要独立 delta 补齐 GUI、sandbox、packaging 三套证据。Server（Linux）不受影响；
+- Electron/Chromium、PostgreSQL、helper 与 Rust/Tauri 作为一个 release epoch 原子交付；PostgreSQL major 与 Electron major 不进入同一个 release；
+- Electron 由 `cargo xtask engine fetch|verify|bundle` 按 `tools/engine-pins.toml` 组装：下载官方 zip → 校 sha256 → rebrand（bundle ID / Info.plist / 资源名不含 §23.4 禁用词）→ 打包 shim 为 ASAR → 写 fuses 与 ASAR integrity → 生成 sidecar manifest；全程 Rust，零 npm（R117）；
 - 首次运行不下载 browser/database binary；
 - sidecar manifest 记录 platform、arch、sha256、signing identity、version、minimum compatible core；
 - 启动发现任何 sidecar digest、release epoch 或协议 version 不一致即拒绝。
@@ -1261,6 +1343,10 @@ cargo deny
 cargo audit / RustSec
 cargo vet
 OSV scan（Electron shim/packaged assets）
+cargo xtask engine verify（engine-pins sha256 / --version / fuses / ASAR integrity / release epoch）
+cargo xtask electron-shim-check（文件 allowlist / LOC ≤ 600 / API allowlist / forbidden import / 协议 hash）
+cargo xtask grok-inventory --check（inventory/grok/files.yaml 与参考树同步）
+仓内 package.json 恰一个且零 dependencies/scripts 的反向 grep
 secret scan
 license/NOTICE/provenance verification
 CycloneDX/SPDX SBOM
@@ -1268,7 +1354,7 @@ reproducibility check
 artifact signature/provenance verification
 ```
 
-`Cargo.lock` 和 engine lockfile 提交；git dependency 必须固定 commit。build.rs、proc macro、FFI 和 `unsafe` crate 单列审计；核心 crate `unsafe_code = "deny"`，确需 unsafe 的窄 crate 有 owner、测试和安全说明。
+`Cargo.lock`、`tools/pins.toml` 与 `tools/engine-pins.toml` 提交（R117：engine 的 lockfile 就是 `engine-pins.toml`，不存在 npm lock）；git dependency 必须固定 commit。build.rs、proc macro、FFI 和 `unsafe` crate 单列审计；核心 crate `unsafe_code = "deny"`，确需 unsafe 的窄 crate 有 owner、测试和安全说明。
 
 RUSTSEC-2023-0071 的 `rsa 0.9.10` 由钉版 `openidconnect 4.0.1` 非可选引入，advisory
 无 patched 版本；本仓 RP 仅用 RSA 公钥验证 IdP RS256，不执行该通告前提中的
@@ -1293,7 +1379,7 @@ Cargo.lock 新增/升级未覆盖版本会直接判红，CI 不自动 regenerate
 
 ### 16.4 Observability
 
-Rust 全链使用 `tracing` + OpenTelemetry；Server 暴露 Prometheus metrics；Desktop 默认只保留 7 天 redacted local ring buffer，不自动外传。**零 phone-home**：上游 `@copilotkit/runtime` 依赖 `@segment/analytics-node` 与 `@scarf/scarf`，默认向 CopilotKit/Segment 上报使用分析（`OPENBOT_ACCESSIBILITY_DISABLED` 关闭它）；Rust 版删掉 runtime 后没有任何第一方外发遥测端点，OTel exporter 只在管理员显式配置 collector 地址时才建连，supply-chain 闸门（§16.3）把"二进制内出现非配置来源的外部分析域名"判为失败。该变化写进 §22 的合规披露。
+Rust 全链使用 `tracing` + OpenTelemetry；Server 暴露 Prometheus metrics；Desktop 默认只保留 7 天 redacted local ring buffer，不自动外传。**零 phone-home**：上游 `@copilotkit/runtime` 依赖 `@segment/analytics-node` 与 `@scarf/scarf`，默认向 CopilotKit/Segment 上报使用分析（`OPENBOT_ACCESSIBILITY_DISABLED` 关闭它）；Rust 版删掉 runtime 后没有任何第一方外发遥测端点，OTel exporter 只在管理员显式配置 collector 地址时才建连，supply-chain 闸门（§16.3）把"**第一方**二进制内出现非配置来源的外部分析域名"判为失败（R125 限定范围：Electron/Chromium 二进制内固有的 Google 域名字符串不在此闸门内，它的运行时出网由 §10.3 的 engine 约束与 §10.5 的代理兜底；`grok-bot` 的 `telemetry` / `codebase-telemetry` / `analytics-client` / `experiments` 家族一律 `R`，§2.3 条 16）。该变化写进 §22 的合规披露。
 
 统一关联字段：
 
@@ -1325,7 +1411,7 @@ mcp_server_id / transport / release_sha
 
 ### 17.1 威胁主体
 
-必须同时假设：恶意网页、prompt injection、恶意 remote Agent、恶意 MCP server、被攻陷 browser engine、被攻陷 Tauri renderer、普通用户越权、管理员误配、同主机其他进程、供应链包、数据库故障、网络中断和 provider 返回畸形流。
+必须同时假设：恶意网页、prompt injection、恶意 remote Agent、恶意 MCP server、被攻陷 browser engine、被攻陷 Tauri renderer、普通用户越权、管理员误配、同主机其他进程、供应链包、数据库故障、网络中断和 provider 返回畸形流。"被攻陷 browser engine" 明确包括其**主进程**（Electron 主进程即 Node runtime）：Desktop 上它的最大损害域由 §10.3 的 engine 约束定义（profile / temp 目录 + loopback 代理），Server 上由 runsc 定义；G5E 的判据对主进程与 renderer 同时成立（R119）。
 
 ### 17.2 十二条发布级不变量
 
@@ -1368,6 +1454,7 @@ mcp_server_id / transport / release_sha
 | Components | ui/application | compiled Leptos、sandboxed HTML/CSS/JS、publish/withhold/data function/HITL | render/schema/golden 截图（设计系统文档 §10）/a11y；sandbox escape 0 |
 | ComputerManager | computer | security scope、generation、driver、lease、quota、reconcile | 多用户同 Bot + 多 Bot 隔离；crash/reset/upgrade |
 | Supervisor | computer | server runsc containers；desktop process tree | socket 不在 API；digest/namespace/resource/cleanup |
+| Engine（两 role，R117–R119） | computer/desktop | 单一 engine package、clean-room shim、stdin boot capability + peer credential、role 铸造、component render session、OS 约束 fidelity、engine bundle | `electron-shim-check` / `engine verify` 绿；renderer 实际 sandboxed 正向证据；G5A–G5F 矩阵；conformance suite 两 role 各一份 |
 | Browser actions | computer | navigate/read/snapshot/click/type/key/scroll/screenshot（R1 无 download/upload，§11.2） | OpenBot + CrabCode fixture；旧 ref 100% 拒绝；Chromium 自发下载被取消并上报 `download_refused` |
 | Screen/input | computer/server/desktop | CDP、binary hub、ticket、coordinates、insertText（含 IME 合成文本）、human lease | latency/fps/backpressure/replay/race/跨 scope 注入 |
 | File/shell | computer | canonical handle、symlink/hardlink、env、timeout/cancel | path corpus；cancel 5 秒内进程树归零 |
@@ -1377,35 +1464,26 @@ mcp_server_id / transport / release_sha
 | Observability | 全部 | OTel/metrics/log/redaction/support bundle | run→decision→tool→computer 全链可追踪；无 secret |
 | Release/legal | testkit/CI | SBOM/provenance/NOTICE/signature/brand separation | 未知 license/未登记复制/unsigned binary 构建失败 |
 
-## 19. 52 周实施顺序
+## 19. 实施顺序（阶段门；原 52 周日历已于 R125 作废）
 
-### 19.1 团队
+### 19.1 阶段门（R125，2026-08-28；取代原 12 人 / 52 周日历）
 
-| 角色 | 人数 | 唯一主责 |
-| --- | ---: | --- |
-| 技术负责人 | 1 | architecture decisions、contracts、delta audit、闸门 |
-| Rust data/thread 工程师 | 2 | PostgreSQL、native thread/realtime/memory、migration |
-| Rust auth/vault 工程师 | 1 | OIDC/SAML/session/group/vault/policy/audit |
-| Agent/protocol 工程师 | 2 | provider、Agent loop、AG-UI、MCP、Drive |
-| Browser/runtime/security 工程师 | 2 | CrabCode 抽取、engine、Supervisor、isolation、screen/file/shell |
-| Leptos/Tauri 工程师 | 2 | 31 routes、components、in-process、desktop packaging |
-| SDET | 1 | parity ledger、golden、E2E、fault/perf/security regression |
-| SRE/release | 1 | OTel、CI、OCI、signing、backup、migration、rollout |
+不再给没有实证的周数。每个阶段只用入口条件、产物与退出证据控制；Engine 线是新插入的并行线，既有 G3 / G4 / G6 余项（§24.1 未勾项）按各自闸门继续推进，不被 Engine 线阻塞，反之亦然。
 
-### 19.2 Calendar
-
-| 周 | 阶段 | 交付物 | 退出闸门 |
+| 阶段 | 入口 | 产物 | 退出证据 |
 | --- | --- | --- | --- |
-| W1–4 | Evidence Freeze | 全部 commit、SBOM/NOTICE/provenance；API/page/table/env/event/test ledger；旧系统 trace | 未归类能力/route/table/test 为 0；上游测试原始结果归档 |
-| W5–10 | Rust Foundation | 10 crate、contracts、ApplicationService、Axum/Tauri adapter、Postgres read、OTel | 三平台编译；HTTP/in-process 同 use case 结果一致；DB read checksum 100% |
-| W11–20 | Data/Auth/Governance | repository、native thread base、Auth/Vault、CEL、audit、tenant package | 28 表映射；身份矩阵；v1 decrypt；audit-before-action 0 违规；第 20 周外审 |
-| W11–24 | Computer 并行线 | provenance-approved CrabCode substrate、scope、Supervisor、engine、file/shell | 同 Bot 不同用户 + 多 Bot 负向隔离；crash/reset/update；orphan 0 |
-| W11–28 | GUI 并行线 | Leptos shell、31 routes、compiled/sandboxed components、设计系统 token / 原语 / i18n | route journey 100%；web/Tauri parity（同 bundle 摘要 + 各平台 golden）；sandbox/a11y/golden/i18n gate |
-| W21–32 | Agent/Protocol | native realtime/memory、3 providers、built-in Agent、remote AG-UI、MCP/Drive | trace/conformance；callback/stall/cancel/recovery；无 Intelligence 运行 |
-| W25–34 | Screen/Full Chain | binary screen、ticket、human/secret、tool/audit/computer/UI E2E | screen SLO；跨 scope frame 0；全主路径 E2E |
-| W33–40 | Parity Closure | 全部 AST 级 test inventory mapping、perf/soak/fault/security、signed packages | ledger coverage 100%；0 P0/P1；第 40 周外审通过 |
-| W41–45 | Migration Rehearsal | Postgres + Intelligence export/import；3 次 production-scale drill | 三次 checksum 0 差异；RPO/RTO 达标；cutover runbook 签字 |
-| W46–52 | Pilot/GA | 7 天 internal、3 天 5%、3 天 25%、3 天 50%、7 天 100%、buffer | 全 SLO 连续 7 天；旧系统只读归档；GA evidence bundle |
+| **P0-code** | 本轮 R115–R125 落档（docs PR） | ① `parity/overlay/v4.yaml` + `parity-check` 校验（R124 三行初值）；② `HumanLeaseEpoch` checked 递增 + poisoned 状态与测试（R124）；③ `cargo xtask grok-inventory` 与 `inventory/grok/files.yaml`（R116）；④ `cargo xtask engine fetch / verify`（消费 `tools/engine-pins.toml`，R117）；⑤ `cargo xtask electron-shim-check` 与 `crates/openbot-desktop/engine-shim/` 的 allowlist 规则（只锁规则，shim 代码属 P1）；⑥ 台账新增 T-ID：engine boot / role / render session / confinement / conformance（进 `browser-operations.yaml` 与 `components.yaml`，recount 同步） | 五个 xtask 子命令在干净 checkout 上绿；overlay 报告能机械打印 carry / revalidate / split / superseded 计数；`cargo test -p openbot-computer` 含 epoch poisoned 用例 |
+| **P1 Engine 最小闭环** | P0-code 绿 | clean-room shim（≤ 600 LOC）；Rust spawn / stdin boot capability / peer credential / hello / ready / shutdown；`app.enableSandbox()` 与 §11.3 固定配置；Browser role 与 Component role 各完成一次 start → frame → stop；engine bundle（rebrand / ASAR / fuses / integrity）；两个 spike：runsc 内 Chromium 沙箱层（R121，钉 runsc 版本）与 Windows Named Pipe peer credential | 无 listening debug port；renderer 实际 sandboxed 的正向证据（三判据，§11.3）；malformed / stale frame 全拒绝；进程清理 0 orphan；`electron-shim-check` / `engine verify` 绿 |
+| **P2 Browser / Screen / HumanLease** | P1 绿 | 全部 closed `BrowserOperation` → CDP 映射（T-BROP-0036–0044）；profile / tab / snapshot / ref / generation；ScreenIngress / ScreenHub / viewer ticket；坐标 / insertText / 拖拽序列 / HumanLease 接 engine；download / dialog / file chooser / popup / permission 的确定性拒绝 | G5A / G5B / G5E 与 G7 的协议 / 性能 / 跨 scope 矩阵（§12.6、§21.4、§21.5） |
+| **P3 Desktop component** | P2 绿 | Component role render session；`DesktopSandboxCanvas` + 结构化参数 fallback；三层零 egress 与硬预算；T-CMP-0021 / 0022 与 R124 拆出的 Desktop T-ID | G5F：临时 process / partition、零 egress / callback 正向实测、预算与清理；component crash / DoS 不影响 GUI |
+| **P4 Realm** | P1 绿（与 P2 并行） | `ExecutionRealm` 两域、file handle / shell helper / 进程树 / 资源 / cancel；Desktop engine 进程 OS 约束的 fidelity 实现（R119） | G5C / G5D；cancel 后 5 秒进程树 0；fidelity 进入 readiness |
+| **既有余项** | 各自闸门 | G2 外审 / KMS / Windows 原生构建；G3 / G4 余项；G6 剩余 24 route journey、AppSidebar、完整 Composer、golden / AX；G8 发行 | §24 各闸门原判据 |
+
+两次独立安全审计：第一次仍按 §24 G2；第二次在 G8 之前、P3 之后。
+
+### 19.2 已作废的日历（历史）
+
+原 v3 §19.1（12 人团队）与 §19.2（W1–W52 日历）于 R125 作废，不再作为承诺或估算依据；其内容可在 git 历史（`2a0c542` 及之前）查阅。范围的相对规模由台账机械给出：v3 剩余 todo 由 `cargo xtask recount` 复算，Engine 线新增 T-ID 在 P0-code 进入台账后同样由 recount 复算，不在本文件手填。
 
 ### 19.3 Phase 0 必做产物
 
@@ -1431,6 +1509,10 @@ fixtures/ui/seed.json
 fixtures/ui/golden/MANIFEST.toml
 fixtures/ui/golden/{web,macos-arm64,windows-x64}/*.png
 tools/pins.toml
+tools/engine-pins.toml                       # R117（2026-08-28，已落）
+tools/electron-v43.3.0.SHASUMS256.txt         # R117：上游 SHASUMS256.txt 副本（已落）
+parity/overlay/v4.yaml                        # R124（P0-code 建立）
+inventory/grok/files.yaml                     # R116（P0-code 由 xtask 生成）
 ```
 
 `parity/ui.yaml`（21 原语 + 45 业务组件 + 47 图标 + 6 运行时库 + 27 页，每项标 parity / 新增 / 替代）、`fixtures/ui/**` 与 `tools/pins.toml` 的 schema 与内容见设计系统文档 §11 / §12.1。
@@ -1589,6 +1671,13 @@ native thread final cutover 是明确的 writer switch。之后不回到 Intelli
 | 合规 / 隐私（遥测） | CopilotKit runtime 自带的 Segment/Scarf 使用分析随 runtime 一并删除；Rust 版零第一方外发 | subprocessor 清单删去 CopilotKit/Segment/Scarf；新增项只剩管理员自配的 OTel collector |
 | 依赖 `pgvector` 镜像或 `vector` extension 的运维 | Rust 版不需要 pgvector；Server 镜像改平装 `postgres:17` | 既有库里残留的 `vector` extension 零操作（§14.1）；runbook 写明可由运维自行决定是否清理 |
 | plain HTTP（非 loopback）部署 | 仍可登录（§6.3），但 cookie 无 `Secure`、readiness 标 `insecure_transport` | 部署文档保持"把 TLS 放在前面"的建议，不新增拒绝开关 |
+| Anysphere / Cursor（`grok-bot/` 反编译重建的权利人，R116） | 本仓 public 且保留重建源码树；用户裁决权利状态不作为技术计划的阻断项 | 只做规格先行吸收、不翻译不复制、每次吸收记 `source_lineage`；原始安装包不入仓；风险登记在 §23.1 条 8，不从本表消失 |
+| Desktop 用户（R118 / R119） | Tauri GUI 保持轻量；Electron engine 只在 browser computer 或 sandboxed component 需要时启动：每 scope 一个 browser role + 每应用实例一个 component role | 状态与 fidelity 在 UI 明示；按需启动、零会话退出；无孤儿；原子更新；预算可见 |
+| 组件作者（R118） | HTML/CSS/JS 契约（`window.__args`、零 callback、零网络）两宿主相同；Desktop 由 Electron 渲染成帧 | 预算与错误在文档写明；超限只终止本组件并显示 RefusedCard |
+| 无障碍用户（R118） | Desktop sandboxed component 仍是帧画布 | 结构化参数 fallback、`Escape` 退出画布、具名说明（GUI 真源 §9.1） |
+| Linux Desktop 用户（R122） | tier-2：编译必绿，但无 golden / 签名 / sandbox 证据，不是 supported release | 发布说明明写 tier-2；升级为 supported 走独立 delta |
+| 最终客户 / 采购（出网清单，R125） | Electron/Chromium 进发行物后其二进制内固有的 Google 域名字符串不是第一方外发；运行时出网由 engine 约束 + 代理兜底；Grok telemetry / Statsig 家族全部 `R` | subprocessor / 出网清单只列管理员自配的 OTel collector 与用户自己浏览的站点 |
+| SRE / 发布（R117 / R125） | 两个宿主 + Electron / PostgreSQL / helper sidecar 同一 release epoch；Chromium critical/high 72 小时升级（§11.3） | digest / signing / orphan recovery / rollback runbook；engine bundle 由 xtask 组装，零 npm |
 
 ## 23. 许可证、来源与品牌
 
@@ -1596,11 +1685,12 @@ native thread final cutover 是明确的 writer switch。之后不回到 Intelli
 
 1. OpenBot 固定源码为 MIT。逐语言翻译仍按衍生实现治理，发行包保留 `Copyright (c) 2026 CopilotKit` 和 MIT 文本。
 2. OpenAI Codex 是 Apache-2.0；复制/改造文件保留 SPDX、copyright、来源 commit、显著修改声明和适用 NOTICE。
-3. Grok Build 第一方代码为 Apache-2.0，但部分工具来自 Codex/OpenCode；必须回溯原始来源和第三方声明，不能只记 xAI。
+3. Grok Build（xAI，§1.2 `19d42e35…`）第一方代码为 Apache-2.0，但部分工具来自 Codex/OpenCode；必须回溯原始来源和第三方声明，不能只记 xAI。**它与本仓 `grok-bot/` 是两个不同的东西**（条 8）。
 4. AG-UI 为 MIT；RMCP/规范在许可证迁移过程中，按固定 commit 的实际文件 license 处理，不能给整个仓库套一个猜测。
 5. Electron 自身 MIT，Chromium、Node、FFmpeg 等随其发行包的第三方 notices 必须原样交付。
 6. Steel Browser/CDP 参考代码分别按其 Apache/BSD 等固定来源处理。
 7. CrabCode 根 `THIRD_PARTY_NOTICES.md` 明示其为 closed-source proprietary；workspace `license = MIT` 只是一条 metadata，不能覆盖根声明或单文件来源。
+8. `grok-bot/`（§11.5）是 Anysphere（Cursor）Grok Bot 0.18.0 的反编译重建，其 `NOTICE.md` 自述无上游源码许可、要求独立权利审查。用户于 2026-08-28 裁决：权利状态与独立权利审查**不作为本技术计划的阻断项**；本文件据此把它登记为**长期风险**而不是闸门，并固定使用方法（R116）：只做规格先行吸收，不逐文件 / 逐函数翻译，不复制任何文本，每次吸收登记 `source_lineage`，原始安装包不入仓。§23.3 的反编译句与 §11.4 的 clean-room 规则对它同样成立。
 
 所有复用生成机器可读 provenance：source repo、commit、original path、destination、license、copyright、modified flag、source/target hash、authorization。
 
@@ -1614,7 +1704,7 @@ native thread final cutover 是明确的 writer switch。之后不回到 Intelli
 
 CopilotKit Intelligence、OpenAI API、xAI API、Google Drive 和 IdP 都有独立服务条款、数据处理与费用边界；Rust 代码许可证不能替代服务合同。
 
-CopilotKit 当前服务条款把 managed services 与 open-source components 分开，并限制使用服务构建相似/竞争服务及逆向服务源码。因此 native thread/memory/realtime 只能依据 OpenBot MIT 源码、开放协议、自有需求与黑盒可观察用户契约做 clean-room 实现；不得把 managed Intelligence 私有响应、反编译结果或未授权内部资料当源码。旧数据导出必须使用客户账户依法可用的 export/API，并在迁移前取得合同/法务确认。
+CopilotKit 当前服务条款把 managed services 与 open-source components 分开，并限制使用服务构建相似/竞争服务及逆向服务源码。因此 native thread/memory/realtime 只能依据 OpenBot MIT 源码、开放协议、自有需求与黑盒可观察用户契约做 clean-room 实现；不得把 managed Intelligence 私有响应、反编译结果或未授权内部资料当源码。旧数据导出必须使用客户账户依法可用的 export/API，并在迁移前取得合同/法务确认。同一条规则适用于 `grok-bot/`：它是反编译结果，只能作为行为 / 架构证据，不能作为源码（§11.5 / §23.1 条 8）。
 
 ### 23.4 品牌
 
@@ -1627,7 +1717,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - 固定 source/provenance/SBOM/NOTICE；
 - API/page/table/env/event/test parity ledger 未分类项=0；
 - CrabCode 每个拟复制文件有授权或明确转 clean-room；
-- 上游基线测试原始结果归档。
+- 上游基线测试原始结果归档；
+- `grok-bot/` 参考树可完整检出（LFS 指针 = 0，R116）且 `cargo xtask grok-inventory --check` 与树同步；
+- `tools/engine-pins.toml` 的五个 sha256 与上游 `SHASUMS256.txt` 副本逐字相等（R117，§28.4 命令）。
 
 ### G1：Rust Core 与 PostgreSQL
 
@@ -1663,7 +1755,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - 同 Bot 不同用户、多 Bot、多 thread/channel、旧/新 generation 交叉=0；
 - Server runsc mandatory，API 无 runtime socket；
 - file/shell/path/process/network fault injection；
-- engine compromise fixture 无法扩大 scope。
+- engine compromise fixture 无法扩大 scope；
+- 子闸门（R125）：**G5A ElectronEngine** —— 单一 shim（`electron-shim-check` 绿）、§11.3 固定配置、boot handshake / peer credential、CDP 映射与两 role 各一份 conformance、renderer 实际 sandboxed 正向证据；**G5B Scope** —— user / Bot / thread / generation / profile / partition 交叉 0；**G5C ExecutionRealm** —— `HostLocal` / `ScopedContainer` 无隐式 fallback；**G5D FileShell** —— 三平台 OS sandbox fidelity、TOCTOU / 进程树 / 资源 / cancel；**G5E EngineCompromise** —— malicious renderer **或主进程** / frame / outcome 不能扩大 scope，Desktop engine 进程约束 fidelity 进入 readiness（R119）；**G5F ComponentRuntime** —— 临时 process / partition、三层零 egress 与零 callback 正向实测、硬预算与清理（R118）；
+- runsc 内 Chromium 沙箱判据（R121）：Server engine 的 renderer `/proc/<pid>/status` 必须 `Seccomp: 2` 且 `NoNewPrivs: 1`，且 layer-1（namespace 或 setuid helper）存在；`--no-sandbox` / `--disable-seccomp-filter-sandbox` 在任何配置禁止；若 runsc 不满足前提，修复只能在 runsc 版本 / 配置侧，永不在 Chromium flag 侧；P1 spike 在 Ubuntu 24.04 x86_64 + 钉版 runsc 上产出证据并把版本写入 §1.2。
 
 ### G6：GUI/Components/Tauri
 
@@ -1673,14 +1767,16 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - 视觉：设计系统文档 §10.1 矩阵的 golden 全部通过（Web 110 张、Desktop 每平台 54 张；判据 = 差异像素 ≤ 0.1% 且无 8×8 全差异块），三平台 bundle 摘要相等；**不做跨引擎逐像素比对**（这是 "web/desktop visual parity" 的可判定定义）；
 - a11y：设计系统文档 §9.2 四项机械判据全绿（唯一豁免：Desktop sandboxed component，§3.3 已写死）；
 - i18n：`xtask i18n-check` 绿（`en` / `zh-CN` 键集合逐字相等），`zh-CN` 27 页 golden 另录一套；
-- `xtask design-lint` / `css-check` / `bundle-budget` 绿。
+- `xtask design-lint` / `css-check` / `bundle-budget` 绿（`app.css` 上限 128 KiB、警戒 120 KiB，R123）；
+- Linux Desktop 为 tier-2（R122）：其 golden / AX 不作为本闸门判据。
 
 ### G7：Screen/Handover
 
 - 目标 fps/latency/backpressure；
 - ticket/replay/origin/generation；
 - coordinates / insertText（含 IME 合成文本）/ 拖拽序列；
-- human lease 时 Agent acting 100% 拒绝；secret canary 0 泄漏。
+- human lease 时 Agent acting 100% 拒绝；secret canary 0 泄漏；
+- component render session 的帧走同一 ScreenHub 路径、≤ 5 fps、viewport 驱动启停（R118）。
 
 ### G8：Migration/Release
 
@@ -1689,13 +1785,14 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - signed OCI/installer/atomic sidecar update；
 - Phase 0 AST 级 test inventory mapping 100%；
 - 第二次外部安全审计无 P0/P1；
-- 供应链、NOTICE、brand、runbook 全通过。
+- 供应链、NOTICE、brand、runbook 全通过；
+- engine bundle：`cargo xtask engine verify` 绿（sha256 / fuses / ASAR integrity / rebrand / release epoch），Electron `autoUpdater` 禁用，零 npm（R117）；Linux Desktop tier-2 不进入签名 / 更新判据（R122）。
 
 任何闸门失败都只能修复后重跑，不能以“后续补齐”进入下一发布阶段。
 
-### 24.1 实施状态勾选（2026-08-27；进度证据以机器台账为准）
+### 24.1 实施状态勾选（2026-08-28；进度证据以机器台账为准）
 
-- [ ] **G0**：Phase 0 证据产物已落；仍缺 §1.1 两份输入文档原件，故整关不勾。
+- [ ] **G0**：Phase 0 证据产物已落；仍缺 §1.1 两份输入文档原件，故整关不勾。2026-08-28 R116 后 `grok-bot/` LFS 指针 = 0、可完整检出；`grok-inventory --check` 与 engine-pins 交叉校验待 P0-code。
 - [x] **G1**：10 crate/locked build、Axum/in-process、28 表/13 migration/read checksum、tracing/metrics 四判据均已通过。
 - [ ] **G2**：整关未通过；以下子项已经有本机机械证据：
   - [x] CEL 69 条 corpus 与固定 6 条差异台账；
@@ -1861,7 +1958,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 
 1. 固定 OpenBot commit 的正式页面、API、数据、协议、治理、部署和用户旅程全部在 Rust-owned 路径有可重复证据。
 2. 第一方 React/Hono/Bun/TypeScript Agent/MCP/Auth/DB 生产链清零。
-3. 非 Rust 例外仅为最小 browser-engine shim、外部引擎/服务和受隔离的用户脚本数据。
+3. 非 Rust 例外仅为最小 engine shim（两 role，clean-room，§11.3）、外部引擎/服务和受隔离的用户脚本数据；工作区零 npm（R117）。
 4. Rust/PostgreSQL 是 thread、memory、realtime、run lock、policy、audit 和产品数据真源；无 CopilotKit Intelligence 许可/key 仍完整运行。
 5. remote AG-UI、Google Drive REST、MCP tools、Generative UI、SSO、people、tenant package、computer 与 screen 没有因“重写”被删减。
 6. 当前已知缺陷按本文件修正，未被机械照译。
@@ -1911,6 +2008,15 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [CDP Page.startScreencast](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast)
 - [CDP Input](https://chromedevtools.github.io/devtools-protocol/tot/Input/)
 - [gVisor Security Model](https://gvisor.dev/docs/architecture_guide/security/)
+- [Electron release v43.3.0（2026-08-04；Chromium 150.0.7871.212 / Node 24.18.1；SHASUMS256.txt）](https://github.com/electron/electron/releases/tag/v43.3.0)
+- [Electron process sandboxing](https://www.electronjs.org/docs/latest/tutorial/sandbox)
+- [Electron webContents.debugger](https://www.electronjs.org/docs/latest/api/debugger)
+- [Electron session（setProxy / webRequest / permission handlers）](https://www.electronjs.org/docs/latest/api/session)
+- [Chromium Linux sandboxing（layer-1 / layer-2）](https://chromium.googlesource.com/chromium/src/+/main/docs/linux/sandboxing.md)
+
+### 参考源（真源第 4 层，§28.5）
+
+- [`grok-bot/README.md`、`PROVENANCE.md`、`NOTICE.md`（本仓，R116：Anysphere Grok Bot 0.18.0 反编译重建的自述）](../grok-bot/README.md)
 - [Tailwind CSS standalone CLI v4.3.3](https://github.com/tailwindlabs/tailwindcss/releases/tag/v4.3.3)
 - [trunk v0.21.14](https://github.com/trunk-rs/trunk/tree/v0.21.14)
 - [leptos_i18n](https://github.com/Baptistemontan/leptos_i18n)
@@ -1940,7 +2046,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 
 该路线既保留 OpenBot 的完整产品契约，也消除了长期依赖 TypeScript 控制面、CopilotKit Intelligence 真源、跨用户 profile、MCP 过度实现、双数据库和多 driver 的结构性风险。按第 24 节逐闸门验收后，可以达到本项目约定的真正“全量 Rust”。
 
-## 28. 第二轮前置审计修订记录（2026-08-22）
+## 28. 前置审计修订记录（第二轮 2026-08-22；第三轮 2026-08-28 见 §28.5）
 
 审计方式：本机独立克隆 `CopilotKit/openbot`（`git rev-parse main` = `891df72f…`，与 §1.2 钉死的 commit 逐字符相同，钉死之后上游零提交）、`acosmi/OpenBot`（只有 README 与本文件）、本机 CrabCode（`98f971bcf…` 存在）；每条断言亲自 `grep` / `read` / `gh api` 复核，未跑过的命令不写进本节。v2 → v3 只改本文件，不触碰任何输入文档。
 
@@ -2107,6 +2213,17 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R112 | §3.3 / §5.2–§5.3 / §8.6 / §13.1–§13.3 / §14.1 / §15.3 / §17.2 / §21.1条5 / §24 G6（2026-08-28 Sandboxed Component Governance batch49） | 固定上游有draft/published/revision/sample生命周期，但`save`、`publish`、`remove`把source、共享governance与audit分成多次独立数据库调用；任何中途失败都会留下半发布或orphan。其路由还把email写成作者，published读对部分NULL以空串降级。若Rust照译，就会让audit失败后的业务写存活、compiled名字被沙箱面接管，或让draft/残缺published进入renderer。另一方面，擅自把`hasUnpublishedChanges`扩成比较描述/schema又会偏离固定上游明确的HTML/CSS/JS三列语义。 | 新增closed sandbox contracts与独立无data-function port；exact 2–40字节slug统一服务端加`custom_`，schema/sample结构上只能是object。save/publish/delete各用一个SERIALIZABLE事务同时写source、`components`与allowlisted hash-chain audit；publish双行锁、单DB时间、复制描述+四类源并checked revision+1；delete双重校验namespace与`kind=sandboxed`，可清治理orphan而拒绝compiled。published以FULL JOIN检查双bit、双行和四个非NULL列，任何漂移503且零draft fallback。作者改用AuthContext actor id；Axum parts-only fresh-admin/Origin在body前，Tauri用host window authority；五接口穿同一Arc对拍。`hasUnpublishedChanges`仍只比较HTML/CSS/JS。 | implementation `9e46e128c572ee76c0585da1075e3195b0fdcbdf`。contracts/application/domain/Server/Desktop=`86/148/369/209/79`且0失败；既有transport8+新增sandbox同Arc1均绿。PG17.11 SCRAM lifecycle/collision/orphan/三类audit故障回滚=`1/0/0`，实得revision0→1→2、双表published/空source负例fail-closed、published audit revision `[1,2]`、失败时source/governance/revision/delete全回滚。九crate Clippy、contracts/UI WASM、fmt/diff绿；API=`66/103/169`、components=`8/14/22`、parity=`681/1005/1686`、fixtures=`17/22/39`、strict=`158/0/0`。只关闭T-API-0049–0053/0103与T-CMP-0019；T-CMP-0020因playground/production wrapper未落仍todo，其余sandbox renderer/CSP/nonce/channel/Desktop/a11y同样todo。无UI变化，不冒充browser/golden/bundle。未运行CI/Actions、未push；详见Batch49文档。 |
 | R113 | §3.1条10 / §3.3 / §5.2 / §7.2–§7.5 / §8.5–§8.6 / §13.1–§13.3 / §15.3 / §18 / §21.1条5 / §24 G4、G6（2026-08-28 Web Sandboxed Component Runtime batch50） | R112后沙箱只有治理面：published定义未进入provider，Agent把`custom_*`当generic acting tool，会话无production renderer，Playground也未迁移。若只在sampling时检查grant，旧schema/撤权可继续调用；若给沙箱复用compiled data-function会新增上游没有的能力。Web若用`srcdoc`会继承父CSP；只写`sandbox=allow-scripts`又不足以给作者JS一个受控启动序。Desktop若在主Tauri WebView直接创建iframe则违背独立renderer边界。 | dynamic sandbox定义与call-time authorize共用权威PG adapter：每次复核Agent、published、withholding、当前JSON Schema/args，外部`$ref`拒绝；任何`component_functions`行以corruption fail-closed。provider/gateway/durable history接exact `custom_`与上游confirmation。Web用同源普通导航`/sandbox/runner?render=<random>#<local payload>`，iframe policy恰`allow-scripts`；32-byte per-response nonce与exact CSP由Server生成，bootstrap先closed decode/清fragment/写`window.__args`再挂作者script。production与Playground复用同一frame；custom/Tauri scheme零iframe并复用RefusedCard。一次性MessageChannel设计为第二次load转移、2秒无ready即销毁并拒绝。 | implementation `c3e59a8663ba13d9644b3cad4e2599c64151bee0`。contracts/application/Agent/UI/Server/Desktop=`87/149/34/133/210/79`，transport=`8+1/0/0`；PG17.11 SCRAM lifecycle/runtime=`1+1/0/0`；九crateClippy、contracts/UI WASM、fmt/diff、tools绿。i18n/design/CSS=`560/89+74/292`；bundle=`1400622/97848/740216/1/0`，CSS余456B。release IAB实得Playground invalid sample→iframe0、恢复→1，conversation shared Refused2、sandbox exact、srcdoc0、query nonce跨reload不同、两页DOM/overflow/console审计绿；但该IAB不提供可用postMessage/addEventListener/MessageChannel且Chrome不可用，故只证明2秒fail-closed，绝不冒充args注入、作者JS、无网络/回调或channel正向执行。只关闭T-CMP-0008/0011/0015–0017；0009/0010/0012–0014/0018/0020–0022与admin route/UI formal golden保持todo。components=`13/9/22`、parity=`686/1000/1686`、strict=`158/0/0`。未运行CI/Actions、未push；详见Batch50正式文档。 |
 | R114 | §5.3 / §10.1–§10.2 / §11.1–§11.3 / §12.4–§12.6 / §13.3–§13.4 / §17.2条4–12 / §18 / §24 G5、G6（2026-08-28 HumanLease与Browser Input Protocol batch51） | R113后若直接实现Desktop component-only renderer，会在尚无`openbot-computer` engine的仓内造出第三种生产渲染器，违背§11.1单一engine。固定上游`control.ts`只有holder/request/secret状态，没有actor/computer/tab/auth generation/epoch/expiry；旧input在take/navigation/restart后仍可能从socket buffer落地。另一方面，§12.5虽写`expires_at`却没有给默认HumanLease TTL，擅自选常量会把猜测写成产品契约。 | 先实现所有browser/component renderer共用的control/HumanLease与closed input protocol。help request逐字保留严格`age>10min`的读取时过期；HumanLease有效期必须由authority caller显式传入，不设猜测默认。take只接不可由外部deserialize的AuthContext，绑定actor/auth generation/computer/tab/computer generation/epoch/expiry；take/transfer/release/inclusive expiry/navigation/restart均推进epoch，fresh authorize逐字段拒绝旧ticket。secret state只存label/ref/权威DocumentGeneration，value复用zeroizing、non-Clone、redacted SecretBytes并走独立typed command。BrowserInput恰八变体，无IME composition/drag；BrowserOperation无自由CDP/upload/file chooser。实际CDP映射/engine reject仍待真实Electron conformance。 | implementation `9d027b22712982546be9cf18d957c730b10c4f67`。`openbot-computer` tests=`8/0/0`，all-target/all-feature Clippy `-D warnings`与fmt绿；Cargo.lock新package0，只新增既有contracts/domain/thiserror/time直接边。parity-check 0 violation/warning，browser-operations=`7/39/46`、components=`13/9/22`、总parity=`693/993/1686`、fixtures=`17/22/39`；strict recount=`158/0/0`。只关闭T-BROP-0005–0009/0045/0046；0036–0044、Electron进程/authenticated framing/CDP/ScreenHub/viewer ticket/Desktop sandbox renderer/a11y豁免全部保持todo。本批无UI/bundle/browser/golden，不运行CI/Actions、不push；详见Batch51正式文档。 |
+| R115 | §0.4 / §1.2 / §2.3 条 16 / §3 / §11.5 / §24 G0 / §28.5（2026-08-28 第三轮：范围与真源优先级） | 旧 v4 用户裁决版把 `grok-bot` 置于固定上游 OpenBot 之上（第 3 层高于第 4 层），"GUI interaction/journey：Grok 为主要交互参考"，35 个 extension family 与 21 个 GUI family 全部进入 census，`C` 类"候选"无上限 | 产品的 parity oracle 是固定上游 OpenBot（1686 条台账与 §25 DoD 全部对它定义）；Grok Bot 的产品依赖 Cursor 账号 + 云端 box + `aiserver`（`grok-bot/README.md`），其 GUI 真源是 minified renderer；把它放在 OpenBot 之上会静默改写 32 route 的可观察旅程，且没有任何 oracle 能判 done；在 993 条 todo 未清时扩范围是重写的最大风险 | 五层权威改为：用户裁决 → 本文件 + GUI 真源 → **固定上游 OpenBot** → 参考源（只在点名吸收点上、只提供架构 / 执行语义）→ 实现证据；v4 产品范围 = v3 范围，Grok 产品能力 0 项进入，候选只登记 §11.5 无承诺表；§2.3 追加条 13–16 并声明对参考源派生项同样生效 | 本轮复算 grok-bot 家族计数 185 / 16 / 24 / 471 / 165 / 852 / 6 / 251（与旧 v4 §1.3 相等）、`frontend/src/recovered/features` 目录 21 个（旧 v4 写 20，其 §4.10 表自己列了 21 个名）；`grok-bot/README.md` "Inference Router / remote box / Cursor session"；台账 693 / 993 / 1686 全部定义在上游 `891df72f` |
+| R116 | §1.2 / §11.5 / §23.1 条 3、8 / §23.3 / §28.4（2026-08-28 第三轮：`grok-bot` 定位与方法） | 旧 v4：D3 "主要架构、执行与交互参考"，D4 "大面积 TypeScript → Rust 语义翻译"，`T` 类 "近机械翻译 + differential fixture"，census 7 份 inventory 每项 15 字段作为 P0 退出条件；§23.1 条 3 与 `CLAUDE.md` §9 只写 "Grok Build 为 Apache-2.0" | `grok-bot/` 是 Anysphere Grok Bot 0.18.0 的反编译重建（README / PROVENANCE / NOTICE 自述，bundle `com.anysphere.sand`，"No upstream source-code license is asserted"），不是 Apache-2.0 的 xAI Grok Build；§23.3 "不得把反编译结果当源码" 与 §11.4 clean-room 规则被 D4 直接违反而未 supersede；重建代码 `source/`、`frontend/` 零测试，`state.ts:111` 自注 partial recovery，`T` 类的 differential oracle 根本不存在；2,111 文件 / 49 万行的人工分类挡在不依赖它的 Engine 线之前；两个原始安装包只有 LFS 指针、对象 404，默认 clone 恒红 | 定位为第 4 层参考、只提供架构 / 执行 / 状态机语义；唯一方法 = 规格先行吸收（读 → 写规格 → 记 lineage → Rust + 自有 fixture），禁止逐函数翻译与文本复制，`T` / `C` 类取消；census 只有 tier-1 文件级 inventory（xtask 生成，不进分母）；两个 LFS 指针移除、`grok-bot/.gitattributes` 去 LFS 行、目录 `.gitignore` 禁再加入、`research-archives/README.md` 改为 identity-only，tree hash `b68f2497…` → `86f5a85f560f721677fa7e587a67ac0ffc036cb5`；§23.1 条 8 登记为长期风险（用户裁决：不阻断），§23.3 补句；权利人进 §22 | `git lfs logs last` 404 两次（merge 与 archive 各一次）；`find grok-bot/source grok-bot/frontend -name '*.test.ts*' \| wc -l` = 0；`grok-bot/package.json` scripts 只有工具链测试 `node --test tests/*.test.mjs`（8 个文件）；`git rev-parse <staged-tree>:grok-bot` = `86f5a85f560f721677fa7e587a67ac0ffc036cb5`；§28.4 新增命令 |
+| R117 | §0.1 / §1.2 / §11.3 / §11.4 / §16.2 / §16.3 / §19.3 / §25 条 3（2026-08-28 第三轮：Electron 获取、shim 谱系、零 npm） | 旧 v4 §3.5 "engine-shim/package.json + package-lock.json 只钉 Electron 与打包闭包"；v3 §1.2 只写 "CrabCode browser kernel Electron 43.3.0"，`tools/pins.toml` 无 Electron 条目，43.3.0 无处获取；§11.4 表把 CrabCode `browser-shell` 列为 shim 复用来源；仓内已因 `grok-bot/` 出现 2 个 `package.json` | npm lock = `npm install electron` = postinstall 从 GitHub 下载二进制，违反 §1.2 "缺工具即红不下载"、可复现构建与 2026-08-22 零 Node 裁决，并引入无闸门的 npm 供应链面；shim 谱系未定（CrabCode 需书面授权，`grok-bot` 是反编译） | Electron 43.3.0（2026-08-04 发布，Chromium 150.0.7871.212、Node 24.18.1）官方 release zip 五平台 sha256 钉入新建 `tools/engine-pins.toml`，上游 `SHASUMS256.txt` 副本入库 `tools/electron-v43.3.0.SHASUMS256.txt`；`cargo xtask engine fetch / verify / bundle`（P0-code）负责下载 / 校验 / rebrand / ASAR / fuses / integrity，零 npm；工作区唯一允许的 `package.json` = shim app manifest（五个键、零 dependencies / scripts / lockfile）；shim clean-room、文件 allowlist、非空 LOC ≤ 600、Electron/Node API allowlist、零 `child_process`，由 `electron-shim-check` 判红；§11.4 `browser-shell` 行降为可选 fixture 来源；`grok-bot/` 内 `package.json` 显式不参与构建 | `curl` GitHub API `releases/tags/v43.3.0`：`published_at` 2026-08-04T18:52:37Z、`prerelease` false、body "Updated Chromium to 150.0.7871.212"；`SHASUMS256.txt` http 200、74 行，五 zip 摘要逐字入 pins；五 zip URL HEAD 最终 200；`raw…/v43.3.0/LICENSE` 首行 "Copyright (c) Electron contributors"（MIT）；本机真下载 win32-x64 zip 144,396,349 B，sha256 与上游逐字相等，解压后 `electron.exe --version` 实跑结果记在 `engine-pins.toml`；`tools.rs` 硬编码四个 tool id，故另建 engine-pins 不影响 `tools verify`；`git ls-files \| grep -c '/package\.json$'` = 2 |
+| R118 | §0.1 / §3.3 / §10.6 / §11.1 / §11.2 / §11.3 / §11.6 / §12.2 / §12.6 / §24 G5F、G7 / GUI 真源 §9.1（2026-08-28 第三轮：双 role engine、组件渲染模型、ADR） | v3 §3.3 已写死 Desktop 组件用同一 Electron engine 帧流回 GUI，但没有 role 模型、进程基数、预算、egress 层数、a11y fallback；旧 v4 §3.3 "与 Browser Computer 使用不同 Electron process instance" 未说 N 个组件是 N 个进程还是一个；D2 没有记录被否决的备选 | 没有基数，"CPU/RSS/DOM 硬预算" 无从定义，一条 transcript 5 个组件 = 5 个 Electron 应用进程不可接受；旧 v4 §12.4 把 a11y fallback 留作待明确；D2 与 §10 "shim 每多一行都要解释" 原则之间的张力（standalone Chromium + 直连 CDP 本可零 JS）没有 ADR | `EngineRole::{BrowserComputer, SandboxedComponent}`、`ComponentRenderScope`；组件 engine 每 Desktop 应用实例一个，render session = TabId，独立 in-memory partition 与 `component://<render-id>` opaque origin；预算（≤ 8 活跃 / 256 MiB / 5 s / 5 fps / 100 console error，新增默认值，policy 只能收紧）；三层零 egress（黑洞 proxy + webRequest cancel + CSP）缺一即红；帧 / 输入 / HumanLease 复用同一路径；`RenderSessionOperation` 封闭 enum；a11y fallback = 结构化参数 `<dl>`；§11.6 ADR 记录 Servo / wry / wasmtime / standalone Chromium 的否决理由与 "OS 沙箱包 engine" 的采纳 | v3 §3.3 末段与 T-CMP-0021 `migration_rule` 原文（"§3.3 末段写死的必然后果"，即 v3 从未有过 Tauri renderer 目标，旧 v4 §7.4 的说法不准确）；`crates/openbot-computer/src/browser/protocol.rs` 的 `BrowserOperation` 无 render session 成员；Batch 51 文档 "所有 browser/component renderer 共用 HumanLease/closed input"；`crates/openbot-ui/src/features/gallery/sandboxed.rs` 是唯一 Web frame |
+| R119 | §0.1 条 6 / §10.3 / §11.2 / §11.3 / §17.1 / §24 G5A、G5E（2026-08-28 第三轮：engine 进程 OS 约束与 boot handshake） | v3 §10.3 只对 **shell** 高风险模式要求平台 sandbox fidelity；§11.3 只约束 renderer；旧 v4 §3.1 "通过继承的私有 pipe/handle 完成 boot handshake" 且允许 shim "启动 Rust 明确指定的 child/helper" | Electron 主进程即 Node，renderer 逃逸 = 当前用户全部权限，Desktop 上 G5E 只有 renderer 一层；Windows 上向 Node 传继承句柄要走 CRT fd 继承块，三平台不统一；shim 没有任何需要 spawn 子进程的职责 | Desktop engine 进程由 Rust sandbox helper 启动并约束（只允许 profile / temp 读写、loopback 代理出站、自身 helper 执行），fidelity 分级 macOS Enforced / Windows Degraded / Linux tier-2 进入 readiness，Degraded 不阻断但明示，Unavailable 不启动；boot capability 统一经 stdin 一行 + pipe，Rust 校 token 与 peer credential（`SO_PEERCRED` / `getpeereid` / `GetNamedPipeClientProcessId` + 进程创建时间），二进制 digest 在 spawn 前校验；shim 零 `child_process`；正向 sandboxed 判据三平台各一条 | Electron 官方 sandbox 文档（主进程不在沙箱内）；v3 §10.3 fidelity 表原文；`grok-bot/source/electron-main/main.ts:245/308/309` 的 `no-sandbox` / `sandbox:false` / `webviewTag:true` 作为 "不得照搬" 的正向对照 |
+| R120 | §2.3 条 13 / §10.6 / §24 G5C（2026-08-28 第三轮：ExecutionRealm） | 旧 v4 G5C "HostLocal/IsolatedComputer 无隐式 fallback"、§4.8 "box → runsc/fixed digest"，未定义 Desktop 的 IsolatedComputer | Grok 的 box 默认是 Cursor 云端沙箱，重建版加了本地 Docker 替代（`grok-bot/README.md` "Local Docker sandbox"；`electron-main/box/local-docker-host-connector.ts`）；macOS/Windows Desktop 没有 runsc；Docker Desktop 是 §0.1 允许列表之外的新外部引擎 | `ExecutionRealm::{HostLocal, ScopedContainer}`；Desktop Local 只有 HostLocal（§10.3 门控）；Server 与 Desktop Remote 的 shell/file = Server 的 ScopedContainer；不引入 Docker Desktop / 本地容器 / VM；两域无隐式 fallback | `git ls-tree` 列出 `grok-bot/source/host/box/*`、`electron-main/box/{remote-connector-egress,local-docker-host-connector,egress-tunnel-wiring}.ts`；v3 §0.2 表 Desktop 列 "每 scope 一个受监管 Electron/Chromium 进程"，无容器 |
+| R121 | §1.2 / §10.4 / §11.3 / §24 G5（2026-08-28 第三轮：runsc 内 Chromium 沙箱判据） | v3 §10.4 "runsc production mandatory"，§11.3 "sandbox=true"，旧 v4 §3.4 "禁止 --no-sandbox 且正向证明 renderer sandboxed"；runsc 未钉版 | Chromium layer-1（namespace / setuid）在无 userns 的容器与 gVisor 内常不可用，这正是容器镜像普遍加 `--no-sandbox` 的原因；两条规则会在实施期互相判红；本轮无法在本机验证 gVisor 行为 | 判据固定为 renderer `Seccomp: 2` + `NoNewPrivs: 1` 且 layer-1 存在；`--no-sandbox` / `--disable-seccomp-filter-sandbox` 任何配置禁止；不满足时只改 runsc 版本 / 配置，永不改 flag；P1 spike 在 Ubuntu 24.04 x86_64 + 钉版 runsc 上产证据并把版本写入 §1.2 与 `engine-pins.toml` | Chromium `docs/linux/sandboxing.md`（layer-1 / layer-2 定义）；v3 §28.2 记录上游 Supervisor 已有可选 `Runtime: runsc`；本轮无 Linux 实测，故只定判据不定结论 |
+| R122 | §16.2 / §22 / §24 G6、G8（2026-08-28 第三轮：Linux Desktop tier-2） | v3 §16.2 "Linux x64 AppImage/deb 为 supported desktop"；旧 v4 §12.2 "待明确" | golden 矩阵与 Cargo 历史只覆盖 macOS/Windows（GUI 真源 §10.1）；R63 后 Actions manual-only，没有 Linux desktop 机器在环；"待明确" = 静默回退 | tier-2：编译必绿，golden / AX / 签名 / sandbox fidelity 不作 G6 / G8 判据，不是 supported release；升级走独立 delta；Server Linux 不受影响 | GUI 真源 §10.1 平台行；`CLAUDE.md` §10 R63 段；`fixtures/ui/golden/{web,macos-arm64,windows-x64}` 无 linux 目录 |
+| R123 | GUI 真源 §10.5 / §15 / v3 §24 G6 / `crates/openbot-testkit/src/xtask/ui_gates.rs`（2026-08-28 第三轮：CSS 预算） | GUI 真源 §10.5 `app.css` ≤ 96 KiB（2026-08-22 设计期契约） | Batch 50 实测 97,848 B，余 456 B；R103 → R111 → Batch 50 三点 93,646 → 96,050 → 97,848（7 批 +4,202 B ≈ 600 B/批）；剩余 24 route + Composer / AppSidebar 估 +18 KiB；固定成本已在内，`css-check` 的字面量规则也不允许动态拼类名来压缩 | 上限 128 KiB，120 KiB 警戒只 warning；`ui_gates.rs` 的 `CSS_LIMIT` / `CSS_WARN` 同批落地；再放宽只能 delta audit 且先证明复用已做尽 | `grep -n CSS_ crates/openbot-testkit/src/xtask/ui_gates.rs`；`CLAUDE.md` §1 "CSS余456B"；R103 / R111 行内数字；本机验证方式记在 §28.5（Windows 原生构建受 samael/xmlsec 与 openssl-sys 阻塞，是 §24.1 G2 已登记的未闭合项） |
+| R124 | §19.1 P0-code / §19.3 / `parity/components.yaml` / `parity/browser-operations.yaml`（2026-08-28 第三轮：台账 overlay 与两条 target 修正） | 旧 v4 §6.12 为 693 项各写 disposition + lineage + affected_symbols + affected_test_ids + revalidation（7 种 disposition × 4 种状态），三处台账目录；T-CMP-0021 target 在 `openbot_ui`；T-BROP-0046 target `openbot_computer::screen::lease::HumanLease` 不存在，`HumanLeaseEpoch::next` 用 `saturating_add` | v4 尚未改动任何符号，此刻 693 项除 4 条外全是 carry，全量分派是空转；schema v1 顶层键固定，新 schema 文件放 `parity/` 顶层会被 `parity-check` 判红；饱和后 epoch 不再推进、栅栏失效且被断言固定 | exception-only 的 `parity/overlay/v4.yaml`（P0-code 建立 + xtask 校验；disposition 收敛为 carry（隐含）/ revalidate（可带 `defect`）/ split / superseded）；初值三行：T-BROP-0046 revalidate + defect、T-CMP-0015 split web、T-CMP-0018 split web；批次按 `git diff` 命中的 `target` 前缀自动追加 revalidate 行并要求重跑；本 PR 改 T-CMP-0021 target/owner → `openbot_computer::component::runtime` / openbot-computer，T-BROP-0046 target → `openbot_computer::control::ControlService`；`HumanLeaseEpoch` 改 checked + poisoned 为 P0-code 项 | `parity/README.md` 规则 1 / 4 / 5；`control.rs:50` 与断言 `HumanLeaseEpoch::new(u64::MAX).next().get() == u64::MAX`；`grep -n "pub struct" control.rs` 无 `HumanLease` 类型；`parity-check` 本机运行方式见 §28.5 |
+| R125 | §0.4 / §16.4 / §18 / §19 / §22 / §24 / §28.5 / 旧 v4 文档 / GUI 真源 §2（2026-08-28 第三轮：闸门、阶段与其它） | v3 §0.4 / §19 12 人 52 周；旧 v4 §8 重写 G0–G8、§9 P0–P8、§13 "下一批先完成 P0 census"；§16.4 零 phone-home 闸门 "二进制内出现外部分析域名" 未限定第一方；旧 v4 提交 `eb68406` 顺带带入 4 个无引用品牌文件 | census 挡路（见 R115 / R116）；Electron 二进制含 Google 域名字符串会让闸门恒红；两个自称权威的文档并存（`CLAUDE.md` 只认 v3）；品牌资产违反 GUI 真源 §2 "待商标清查后另立文档" | 日历作废改阶段门（§19.1，Engine 线与既有余项并行）；G0 / G5 子闸门 / G6 / G7 / G8 增补；§16.4 限定第一方并把 Grok telemetry 家族判 `R`；§18 加 Engine 行；§22 加八行；旧 v4 文档加 superseded banner，`CLAUDE.md` / README 指针；品牌概念稿在 GUI 真源 §2 登记为候选稿、不进 bundle；§28.5 记录本轮修订方法与五层权威 | `git show --stat eb68406`（4 个 brand 文件）；`grep -rln brand-concept docs CLAUDE.md README.md` = 0；v3 §24.1 1 勾 / 8 未勾 |
 
 ### 28.2 复核通过、原样保留的断言
 
@@ -2115,7 +2232,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 ### 28.3 审计后仍然成立的裁决（不改）
 
 - Desktop sandboxed component 用独立 renderer（§0.1 条 3 / §2.3 条 11）：本轮只补代价披露，不推翻——推翻需要三平台 WebView 子帧脚本注入行为的实测证据，本轮没有。
-- 12 人 / 52 周：无法用源码证伪，保留为计划基线。
+- 12 人 / 52 周：第二轮时无法用源码证伪而保留；2026-08-28 R125 作废，改为 §19.1 阶段门。
 - 新增的限额、egress gateway、Vault v2、approval 绑定等加固项：均有上游缺陷或威胁模型支撑，且都已标注"parity / 新增"。
 
 ### 28.4 计数复算命令（在固定 commit 的干净克隆根目录执行）
@@ -2154,4 +2271,43 @@ grep -c 'legacyToken && sameToken' server/src/agents/callback-token.ts        # 
 grep -cE '"@shikijs/core@' bun.lock                                                                   # 1（streamdown 的高亮器）
 ```
 
+R116 / R117（2026-08-28）参考树与 Electron pin 的复算命令（在本仓根执行）：
+
+```bash
+git rev-parse HEAD:grok-bot                                                                                # 86f5a85f560f721677fa7e587a67ac0ffc036cb5
+for d in source/electron-main source/electron-preload source/node-agent-coordinator source/host source/shared source/packages frontend/src/recovered/features; do printf '%6d %s\n' "$(find grok-bot/$d -type f | wc -l)" "$d"; done   # 185 16 24 471 165 852 251
+find grok-bot/source/local-exec-daemon grok-bot/source/box-exec-daemon -type f | wc -l                    # 6
+find grok-bot/source/packages/proto grok-bot/source/packages/redacted-protos -type f -print0 | xargs -0 cat | wc -l   # 263713
+find grok-bot -type f \( -name '*.ts' -o -name '*.tsx' \) -print0 | xargs -0 cat | wc -l                    # 493338
+find grok-bot/source grok-bot/frontend -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) | wc -l         # 0（重建代码零测试）
+ls grok-bot/frontend/src/recovered/features | grep -vc '\.ts$'                                              # 21（GUI feature 目录）
+grep -rl '^version https://git-lfs' grok-bot | wc -l                                                        # 0（R116 后无 LFS 指针）
+git ls-files | grep -c '/package\.json$'                                                                    # 2（均在 grok-bot/，不参与构建；P1 落 shim manifest 后为 3）
+for p in darwin-arm64 darwin-x64 linux-x64 linux-arm64 win32-x64; do a=$(grep "electron-v43.3.0-$p.zip" tools/electron-v43.3.0.SHASUMS256.txt | cut -c1-64); b=$(grep -A3 "asset = \"electron-v43.3.0-$p.zip\"" tools/engine-pins.toml | grep -oE '[0-9a-f]{64}'); [ "$a" = "$b" ] && echo "$p MATCH" || echo "$p DIFFERS"; done   # 五行 MATCH
+```
+
 对不上 = 上游 commit 变了或本文件漂了 → 先核 `git rev-parse HEAD`，再按 §1.2 走 delta audit。
+
+### 28.5 第三轮就地修订（2026-08-28，v3 → v4）：方法与真源优先级
+
+审计方式：在 `origin/main`（`2a0c542`）的干净 worktree 上读本文件相关章节、GUI 真源、`CLAUDE.md`、九份台账、Batch 49–51 文档、移交指南与 `grok-bot/` 元数据；旧 v4 用户裁决版的每个计数亲自复算（§28.4 新增命令），每条 "参考源里有 X" 的断言 `git grep` 到符号；Electron pin 经 GitHub release API 与 `SHASUMS256.txt` 实取，并真下载 win32-x64 zip 校 sha256。R115–R125 只改本文件、GUI 真源、`CLAUDE.md`、README、移交指南、两份台账的 target / notes、`ui_gates.rs` 两个常量、`grok-bot/` 的三个元数据文件与两个 LFS 指针、`tools/` 的两个新文件；不动任何业务代码。
+
+本机验证边界（如实）：本轮在 Windows 11 上进行，工作区完整 `cargo test` 因 `openbot-infra` 的 `openssl-sys` / `samael`（xmlsec FFI）在 MSVC 上无法原生构建（§24.1 G2 已登记的 "Windows 原生构建" 未闭合项），因此只能：① 编译 `openbot-testkit` 的 `xtask` bin（不含 dev-dependencies，覆盖 `ui_gates.rs` 改动）；② 用该 bin 运行 `cargo xtask parity-check`（覆盖两份台账的 target / notes 改动）。结果记在本节末尾与本 PR 描述；`cargo test -p openbot-testkit`、`recount`、`bundle-budget` 的完整实跑留给拥有 macOS / Linux 环境的 P0-code 批次，不冒充已跑。
+
+真源优先级（五层，冲突时高层胜出）：
+
+1. 用户裁决（本表的 R 行与 §0）；
+2. 本文件（后端）与 GUI 真源（视觉 / 主题 / i18n / a11y）；
+3. 固定上游 `CopilotKit/openbot@891df72f…`：产品 / API / schema / 旅程 / 迁移兼容的 oracle；
+4. 参考源（`grok-bot/`、Codex、Grok Build、CrabCode）：只在本文件点名的吸收点上有效，只提供架构 / 执行 / 状态机 / 协议语义，不提供产品行为（§11.5）；
+5. 实现与机械证据（Rust 代码、台账、fixture、测试、签名产物）。
+
+旧 `docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被本轮吸收并加 superseded banner；与本表不一致处以本表为准。同日的只读前置审计原文归档为 `docs/2026-08-28-v4修订计划-前置审计.md`（证据记录，不是规范）。
+
+本轮实跑结果（2026-08-28，Windows 11，worktree 基于 `2a0c542`）：
+
+- `cargo build -p openbot-testkit --features xtask --bin xtask --locked`（`CARGO_TARGET_DIR=target-xtask`）：`Finished dev profile … in 19.84s`，覆盖 `ui_gates.rs` 的 `CSS_LIMIT` / `CSS_WARN` 改动；
+- `xtask parity-check`（同一二进制，在本 worktree 根运行）：`parity-check: 通过（0 违反）`，合计 entries=1686、done=693、todo=993，fixtures 39/17/22——两份台账的 target / notes 改动不改变任何计数；
+- §28.4 R116 / R117 段的每条命令逐一实跑：家族计数 185 / 16 / 24 / 471 / 165 / 852 / 251 与 daemon 6、proto 263,713、TS/TSX 493,338、测试 0、feature 目录 21、LFS 指针 0、`package.json` 2、Electron 五平台 `MATCH`；`tools/engine-pins.toml` 经 Python `tomllib` 解析通过，其四条 `[[recount]]` 分别得 5 / 5 / 74 / `MATCH`；
+- Electron win32-x64 zip 本机真下载 144,396,349 B，`sha256sum` 与上游逐字相等；解压后 `./electron.exe --version > ver.txt 2>&1` 得 `v43.3.0`；
+- **未跑**（如实）：`cargo test`（含 `openbot-testkit` 单测）、`cargo xtask recount`、`bundle-budget`、`clippy`、`fmt`——全部因 Windows 原生构建被 `openssl-sys` / `samael` 阻塞（`cargo tree -i openssl-sys` 显示经 `openbot-infra` 的直接依赖与 `samael 0.0.22` 两条路径进入 testkit 的 dev-dependencies）；`cargo fetch --locked` 经 GitHub 作用域代理成功，说明缺的不是 crate 而是 C 工具链。P0-code 批次在 macOS / Linux 上补齐这些实跑，不冒充已跑。

@@ -586,11 +586,11 @@ entries:
   - id: human-lease-epoch-fencing
     upstream: "-"
     label: 新增
-    target: "openbot_computer::screen::lease::HumanLease"
+    target: "openbot_computer::control::ControlService"
     owner: openbot-computer
     test_id: T-BROP-0046
     migration_rule: "n/a: 上游控制状态无 epoch/generation 概念，R1 新增"
     status: done
     done_evidence: "Batch51 HumanLease绑定Rust AuthContext actor/auth generation、computer/tab/computer generation、epoch与显式expires-at；take/transfer/release/inclusive expiry/navigation/restart各推进epoch，旧ticket在队列后到达仍拒绝。computer generation不前进拒绝，u64::MAX饱和不回绕；竞态单测绿。"
     evidence: "grep -nE 'epoch|generation' agent-computer/src/control.ts | wc -l 得 0；同文件 ControlState 的全部字段是 holder / since / reason / requested / requestedAt / secretWanted / secretRef / secretSnapshotId，其中 secretSnapshotId 是 snapshot 代次而不是 lease 代次；对照 v3 §12.5 的 HumanLease(owner, computer, tab, epoch, expires_at)"
-    notes: "登记在本表是因为它是每一条输入操作的前置栅栏：v3 §12.5 要求 lease transfer / release / expiry / navigation / computer restart 都递增 epoch，且「旧 input 即使已经躺在 socket buffer 里也会被拒绝」。上游没有这层——它只有一个布尔式的「谁握着方向盘」，所以一条在 take 之前就发出、在 take 之后才被处理的输入会被当成合法输入执行。**这是新增，不得写进任何 parity 条目的 migration_rule 里冒充当前行为**：T-BROP-0006 / 0009 / 0021 / 0003 四条的 notes 都只承诺上游可观察行为，epoch 部分统一指回本条。"
+    notes: "登记在本表是因为它是每一条输入操作的前置栅栏：v3 §12.5 要求 lease transfer / release / expiry / navigation / computer restart 都递增 epoch，且「旧 input 即使已经躺在 socket buffer 里也会被拒绝」。上游没有这层——它只有一个布尔式的「谁握着方向盘」，所以一条在 take 之前就发出、在 take 之后才被处理的输入会被当成合法输入执行。**这是新增，不得写进任何 parity 条目的 migration_rule 里冒充当前行为**：T-BROP-0006 / 0009 / 0021 / 0003 四条的 notes 都只承诺上游可观察行为，epoch 部分统一指回本条。2026-08-28 v3 R124：target 按 Batch51 实际落点改为 openbot_computer::control::ControlService（原写的 screen::lease 模块不存在）；同批发现 HumanLeaseEpoch::next 用 saturating_add——到 u64::MAX 后 epoch 不再推进、栅栏失效，现有断言 `HumanLeaseEpoch::new(u64::MAX).next().get() == u64::MAX` 恰好把这个行为固定了下来。v4 overlay 记 revalidate + defect：P0-code 改为 checked 递增，溢出进入 poisoned 状态（清 lease、拒绝输入与 acting，直到 ComputerGeneration 推进），修复后本条在新符号上重跑；历史 status 不回写。"
