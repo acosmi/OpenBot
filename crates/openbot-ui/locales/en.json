@@ -87,6 +87,15 @@
     "session_expired_body": "Sign in again to continue where you left off.",
     "sign_in_again": "Sign in again"
   },
+  "home": {
+    "title": "Start a new channel",
+    "routing_hint": "Sent to the coworker it is for. Type @ to choose one yourself.",
+    "explore_agents": "Explore coworkers",
+    "explore_empty": "No public coworkers are available to explore.",
+    "agents_load_error": "Could not load coworkers.",
+    "mention_results": "Coworkers matching this mention",
+    "mention_empty": "No coworkers match this mention."
+  },
   "channels": {
     "title": "Channels",
     "channel": "Channel",

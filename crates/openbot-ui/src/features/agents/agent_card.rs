@@ -14,8 +14,14 @@ use crate::primitives::{Avatar, AvatarSize};
 pub fn AgentCard(
     /// Server-authorized, secret-free projection.
     agent: AgentProfile,
+    /// Optional same-origin destination for contexts that launch rather than inspect an Agent.
+    #[prop(optional, into)]
+    href: Option<String>,
 ) -> impl IntoView {
-    let href = agent_profile_href(agent.id.as_str()).expect("server Agent id must be route-safe");
+    let href = href.unwrap_or_else(|| {
+        agent_profile_href(agent.id.as_str()).expect("server Agent id must be route-safe")
+    });
+    assert_internal_card_href(&href);
     let dom_id = card_dom_id(agent.id.as_str());
     let avatar_seed = agent.avatar_seed.clone();
     let avatar_name = agent.name.clone();
@@ -36,6 +42,18 @@ pub fn AgentCard(
             </span>
         </a>
     }
+}
+
+fn assert_internal_card_href(href: &str) {
+    assert!(
+        href.starts_with('/')
+            && !href.starts_with("//")
+            && href.len() <= 2048
+            && !href
+                .bytes()
+                .any(|byte| byte.is_ascii_control() || byte == b'\\'),
+        "AgentCard href must be one bounded same-origin path"
+    );
 }
 
 fn card_dom_id(agent_id: &str) -> String {
@@ -61,5 +79,12 @@ mod tests {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         );
+        assert_internal_card_href("/channel/new?agent=agent-one");
+    }
+
+    #[test]
+    #[should_panic(expected = "same-origin")]
+    fn card_refuses_an_external_launch_destination() {
+        assert_internal_card_href("https://attacker.example/channel/new");
     }
 }

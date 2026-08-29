@@ -76,6 +76,8 @@ pub const MAX_CHANNEL_PAGE: u32 = 200;
 /// 所以 application 必须自己守住同一资源边界。JSON framing 会让 HTTP 实际可用文本略小，
 /// 但绝不能让 Desktop 绕过全局数量级。
 pub const MAX_THREAD_MESSAGE_BYTES: usize = 1024 * 1024;
+/// Maximum Unicode scalar count in one public create-time routing explanation.
+pub const MAX_CHANNEL_ROUTING_REASON_CODE_POINTS: usize = 500;
 /// Memory 管理页上限。
 pub const MAX_MEMORY_PAGE: u32 = 100;
 

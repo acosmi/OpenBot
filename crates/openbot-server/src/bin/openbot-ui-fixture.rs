@@ -12,20 +12,20 @@ use axum::response::IntoResponse as _;
 use futures_core::Stream;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
-    AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, AuditPageRequest,
-    AuditReadError, AuditReader, BeginThreadRunRequest, CancelThreadRunRequest,
+    AgentDirectory, AgentReachability, AgentReadScope, AppEventStream, ApplicationService,
+    AuditPageRequest, AuditReadError, AuditReader, BeginThreadRunRequest, CancelThreadRunRequest,
     ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
-    ChannelReader, ComponentAdministration, ComponentAdministrationError,
-    ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentRuntimeScope,
-    CorrectMemoryRequest, McpConnectionAdministration, McpConnectionError, MemoryAdministration,
-    MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest, MutateMemoryRequest,
-    OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
-    RecallMemoriesRequest, RememberMemoryRequest, SandboxedComponentAdministration,
-    SandboxedComponentAdministrationError, SandboxedComponentDraft, ThreadConversationRequest,
-    ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
-    ToolApprovalAdministration, ToolApprovalAdministrationError, ToolApprovalPresentation,
-    ToolApprovalRequest, UiPreferenceAdministration, UiPreferenceAdministrationError,
-    UpdateMemoryControlRequest,
+    ChannelReader, ChannelRoutingBackend, ChannelRoutingBackendError, ComponentAdministration,
+    ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
+    ComponentRuntimeScope, CorrectMemoryRequest, McpConnectionAdministration, McpConnectionError,
+    MemoryAdministration, MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest,
+    MutateMemoryRequest, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
+    PeoplePortError, PortError, RecallMemoriesRequest, RememberMemoryRequest, RoutingAuditRecord,
+    SandboxedComponentAdministration, SandboxedComponentAdministrationError,
+    SandboxedComponentDraft, ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError,
+    ThreadEventSubscription, ThreadHistoryRequest, ToolApprovalAdministration,
+    ToolApprovalAdministrationError, ToolApprovalPresentation, ToolApprovalRequest,
+    UiPreferenceAdministration, UiPreferenceAdministrationError, UpdateMemoryControlRequest,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::audit::{AuditEventView, AuditPage};
@@ -100,6 +100,7 @@ const FIXTURE_GOOGLE_DRIVE_SERVER: &str = "google-drive";
 const FIXTURE_GOOGLE_DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 const FIXTURE_ACTIVITY_FOLLOW_UP: &str =
     "What has bot-busiest actually been doing? Look at the audit trail and summarise it.";
+const FIXTURE_ROUTING_FALLBACK_CANARY: &str = "fixture routing fallback";
 const FIXTURE_DEPLOYMENT: &str = "fixture-deployment";
 const FIXTURE_TENANT: &str = "fixture-tenant";
 const FIXTURE_ACTOR: &str = "fixture-actor";
@@ -399,6 +400,170 @@ impl AgentDirectory for FixtureAgents {
             .find(|profile| &profile.id == agent_id)
             .cloned())
     }
+}
+
+#[derive(Clone)]
+struct FixtureRouting {
+    inner: Arc<FixtureRoutingInner>,
+}
+
+struct FixtureRoutingInner {
+    complete_calls: AtomicU64,
+    reach_calls: AtomicU64,
+    record_attempts: AtomicU64,
+    recorded: AtomicU64,
+    explicit: AtomicU64,
+    inferred: AtomicU64,
+    fallback: AtomicU64,
+    failed_records: AtomicU64,
+    fail_next_record: AtomicBool,
+    last_chosen: Mutex<Option<String>>,
+}
+
+#[derive(Clone)]
+struct FixtureRoutingProbe {
+    inner: Arc<FixtureRoutingInner>,
+}
+
+impl FixtureRouting {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(FixtureRoutingInner {
+                complete_calls: AtomicU64::new(0),
+                reach_calls: AtomicU64::new(0),
+                record_attempts: AtomicU64::new(0),
+                recorded: AtomicU64::new(0),
+                explicit: AtomicU64::new(0),
+                inferred: AtomicU64::new(0),
+                fallback: AtomicU64::new(0),
+                failed_records: AtomicU64::new(0),
+                fail_next_record: AtomicBool::new(false),
+                last_chosen: Mutex::new(None),
+            }),
+        }
+    }
+
+    fn probe(&self) -> FixtureRoutingProbe {
+        FixtureRoutingProbe {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+#[async_trait]
+impl ChannelRoutingBackend for FixtureRouting {
+    async fn complete(&self, prompt: &str) -> Result<String, ChannelRoutingBackendError> {
+        self.inner.complete_calls.fetch_add(1, Ordering::SeqCst);
+        if prompt.contains(FIXTURE_ROUTING_FALLBACK_CANARY) {
+            self.inner.fail_next_record.store(true, Ordering::SeqCst);
+            return Err(ChannelRoutingBackendError::Unavailable);
+        }
+        Ok(serde_json::json!({
+            "agentId":"fixture-explore-public",
+            "reason":"fixture specialist match",
+            "confidence":0.9,
+        })
+        .to_string())
+    }
+
+    async fn reachable_systems(
+        &self,
+        agents: &[BotId],
+    ) -> Result<Vec<AgentReachability>, ChannelRoutingBackendError> {
+        self.inner.reach_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(agents
+            .iter()
+            .cloned()
+            .map(|agent_id| AgentReachability {
+                agent_id,
+                systems: Vec::new(),
+            })
+            .collect())
+    }
+
+    async fn record_routing(
+        &self,
+        record: RoutingAuditRecord,
+    ) -> Result<(), ChannelRoutingBackendError> {
+        self.inner.record_attempts.fetch_add(1, Ordering::SeqCst);
+        if self.inner.fail_next_record.swap(false, Ordering::SeqCst) {
+            self.inner.failed_records.fetch_add(1, Ordering::SeqCst);
+            return Err(ChannelRoutingBackendError::Unavailable);
+        }
+        self.inner.recorded.fetch_add(1, Ordering::SeqCst);
+        if record.via_mention {
+            self.inner.explicit.fetch_add(1, Ordering::SeqCst);
+        } else {
+            self.inner.inferred.fetch_add(1, Ordering::SeqCst);
+        }
+        if record.fallback {
+            self.inner.fallback.fetch_add(1, Ordering::SeqCst);
+        }
+        *self
+            .inner
+            .last_chosen
+            .lock()
+            .map_err(|_| ChannelRoutingBackendError::Unavailable)? =
+            Some(record.chosen.as_str().to_owned());
+        Ok(())
+    }
+}
+
+async fn fixture_routing_probe(probe: FixtureRoutingProbe) -> axum::Json<serde_json::Value> {
+    let last_chosen = probe
+        .inner
+        .last_chosen
+        .lock()
+        .ok()
+        .and_then(|chosen| chosen.clone());
+    axum::Json(serde_json::json!({
+        "completeCalls": probe.inner.complete_calls.load(Ordering::SeqCst),
+        "reachCalls": probe.inner.reach_calls.load(Ordering::SeqCst),
+        "recordAttempts": probe.inner.record_attempts.load(Ordering::SeqCst),
+        "recorded": probe.inner.recorded.load(Ordering::SeqCst),
+        "explicit": probe.inner.explicit.load(Ordering::SeqCst),
+        "inferred": probe.inner.inferred.load(Ordering::SeqCst),
+        "fallback": probe.inner.fallback.load(Ordering::SeqCst),
+        "failedRecords": probe.inner.failed_records.load(Ordering::SeqCst),
+        "lastChosen": last_chosen,
+    }))
+}
+
+async fn fixture_fail_next_routing_record(
+    probe: FixtureRoutingProbe,
+) -> axum::Json<serde_json::Value> {
+    probe.inner.fail_next_record.store(true, Ordering::SeqCst);
+    axum::Json(serde_json::json!({"armed":true}))
+}
+
+async fn fixture_home_probe(
+    channels: FixtureChannels,
+    routing: FixtureRoutingProbe,
+) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+    let (channel_count, created) = {
+        let rows = channels
+            .rows
+            .lock()
+            .map_err(|_| axum::http::StatusCode::SERVICE_UNAVAILABLE)?;
+        let created = rows
+            .iter()
+            .filter(|channel| channel.id.as_str().starts_with("channel-created-"))
+            .map(|channel| {
+                serde_json::json!({
+                    "id":channel.id,
+                    "agentIds":channel.agent_ids,
+                    "threadId":channel.thread_id,
+                })
+            })
+            .collect::<Vec<_>>();
+        (rows.len(), created)
+    };
+    let routing = fixture_routing_probe(routing).await.0;
+    Ok(axum::Json(serde_json::json!({
+        "channelCount": channel_count,
+        "created": created,
+        "routing": routing,
+    })))
 }
 
 #[derive(Clone)]
@@ -2969,16 +3134,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
     let channels = FixtureChannels::new(now);
+    let home_channel_probe = channels.clone();
     let threads = FixtureThreads::new(channels.clone());
     let memory = FixtureMemory::new(tenant, actor.clone(), now);
     let connections = FixtureConnections::new(actor, port, now);
     let components = FixtureComponents::new(now, threads.clone());
     let sandboxed = FixtureSandboxed::new(now);
+    let routing = FixtureRouting::new();
+    let routing_probe = routing.probe();
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
             .with_audit(FixtureAudit::new(now))
             .with_agent_directory(Arc::new(FixtureAgents::new()))
+            .with_channel_routing(Arc::new(routing))
             .with_component_administration(Arc::new(components))
             .with_sandboxed_component_administration(Arc::new(sandboxed))
             .with_people(people)
@@ -3037,6 +3206,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
             axum::routing::get(fixture_session_start),
         );
     }
+    let routing_probe_route = routing_probe.clone();
+    let routing_failure_probe = routing_probe.clone();
+    router = router.route(
+        "/api/__fixture/home-routing-proof",
+        axum::routing::get(move || {
+            let probe = routing_probe_route.clone();
+            async move { fixture_routing_probe(probe).await }
+        }),
+    );
+    router = router.route(
+        "/api/__fixture/home-routing/fail-next-record",
+        axum::routing::post(move || {
+            let probe = routing_failure_probe.clone();
+            async move { fixture_fail_next_routing_record(probe).await }
+        }),
+    );
+    router = router.route(
+        "/api/__fixture/home-proof",
+        axum::routing::get(move || {
+            let channels = home_channel_probe.clone();
+            let routing = routing_probe.clone();
+            async move { fixture_home_probe(channels, routing).await }
+        }),
+    );
     let identity_provider_http = IdentityProviderHttpProbe::default();
     let identity_provider_http_route = identity_provider_http.clone();
     router = router.route(
@@ -3079,6 +3272,81 @@ fn arguments() -> Result<(String, u16), Box<dyn Error>> {
 mod approval_pg_tests {
     use super::*;
     use openbot_domain::policy::{ActionPolicy, PolicyMode};
+    use openbot_domain::routing::RoutingReasonCode;
+
+    #[tokio::test]
+    async fn home_routing_fixture_records_closed_facts_and_can_force_one_audit_failure() {
+        let routing = FixtureRouting::new();
+        let probe = routing.probe();
+        let completion = routing.complete("ordinary routing prompt").await.unwrap();
+        assert!(completion.contains("fixture-explore-public"));
+        assert_eq!(
+            routing
+                .reachable_systems(&[BotId::new("fixture-system-public")])
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        let inferred = RoutingAuditRecord {
+            tenant: TenantId::new(FIXTURE_TENANT),
+            actor: ActorId::new(FIXTURE_ACTOR),
+            admin: true,
+            roster: vec![BotId::new("fixture-system-public")],
+            chosen: BotId::new("fixture-explore-public"),
+            reason: RoutingReasonCode::ModelMatch,
+            fallback: false,
+            via_mention: false,
+            candidates: vec![BotId::new("fixture-explore-public")],
+        };
+        routing.record_routing(inferred).await.unwrap();
+
+        let explicit = RoutingAuditRecord {
+            tenant: TenantId::new(FIXTURE_TENANT),
+            actor: ActorId::new(FIXTURE_ACTOR),
+            admin: true,
+            roster: vec![BotId::new("fixture-system-public")],
+            chosen: BotId::new("fixture-system-public"),
+            reason: RoutingReasonCode::ExplicitChoice,
+            fallback: false,
+            via_mention: true,
+            candidates: vec![BotId::new("fixture-system-public")],
+        };
+        routing.record_routing(explicit).await.unwrap();
+
+        assert_eq!(
+            routing
+                .complete(&format!("prompt {FIXTURE_ROUTING_FALLBACK_CANARY}"))
+                .await,
+            Err(ChannelRoutingBackendError::Unavailable)
+        );
+        let failed = RoutingAuditRecord {
+            tenant: TenantId::new(FIXTURE_TENANT),
+            actor: ActorId::new(FIXTURE_ACTOR),
+            admin: true,
+            roster: vec![BotId::new("fixture-system-public")],
+            chosen: BotId::new("fixture-system-public"),
+            reason: RoutingReasonCode::RouterUnavailable,
+            fallback: true,
+            via_mention: false,
+            candidates: vec![BotId::new("fixture-system-public")],
+        };
+        assert_eq!(
+            routing.record_routing(failed).await,
+            Err(ChannelRoutingBackendError::Unavailable)
+        );
+
+        let proof = fixture_routing_probe(probe).await.0;
+        assert_eq!(proof["completeCalls"], 2);
+        assert_eq!(proof["reachCalls"], 1);
+        assert_eq!(proof["recordAttempts"], 3);
+        assert_eq!(proof["recorded"], 2);
+        assert_eq!(proof["explicit"], 1);
+        assert_eq!(proof["inferred"], 1);
+        assert_eq!(proof["failedRecords"], 1);
+        assert_eq!(proof["lastChosen"], "fixture-system-public");
+        assert!(!proof.to_string().contains(FIXTURE_ROUTING_FALLBACK_CANARY));
+    }
 
     #[test]
     fn identity_provider_http_probe_counts_only_the_three_product_surfaces() {

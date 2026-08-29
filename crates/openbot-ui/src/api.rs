@@ -9,6 +9,8 @@ use openbot_contracts::agent::{AgentProfileResponse, AgentProfilesResponse};
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::audit::AuditEventView;
 use openbot_contracts::audit::AuditPage;
+#[cfg(any(target_arch = "wasm32", test))]
+use openbot_contracts::command::MAX_CHANNEL_ROUTING_REASON_CODE_POINTS;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::command::ThreadRunCancellationState;
 #[cfg(target_arch = "wasm32")]
@@ -16,8 +18,8 @@ use openbot_contracts::command::{
     BeginThreadRunBody, CreateChannelRequest, RouteChannelRequest, ThreadMinted, ThreadRunAnchor,
 };
 use openbot_contracts::command::{
-    ChannelDetail, ChannelPage, ChannelRoutingDecision, ThreadConversationSnapshot,
-    ThreadRunCancellation, ThreadRunStarted,
+    ChannelDetail, ChannelPage, ChannelRoutingDecision, MAX_THREAD_MESSAGE_BYTES,
+    ThreadConversationSnapshot, ThreadRunCancellation, ThreadRunStarted,
 };
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::components::{
@@ -723,6 +725,10 @@ pub async fn route_channel_message(
     text: &str,
     agent_id: Option<&BotId>,
 ) -> Result<ChannelRoutingDecision, ApiError> {
+    let text = openbot_contracts::text::trim_ecmascript(text);
+    if text.is_empty() || text.len() > MAX_THREAD_MESSAGE_BYTES || text.as_bytes().contains(&0) {
+        return Err(ApiError::InvalidResponse);
+    }
     if let Some(agent_id) = agent_id {
         validate_agent_id(agent_id.as_str())?;
     }
@@ -748,17 +754,39 @@ pub async fn route_channel_message(
             .json::<ChannelRoutingDecision>()
             .await
             .map_err(|_| ApiError::InvalidResponse)?;
-        if let Some(explicit) = agent_id
-            && (decision.agent_id != *explicit || !decision.via_mention)
-        {
-            return Err(ApiError::InvalidResponse);
-        }
+        validate_routing_decision(agent_id, &decision)?;
         Ok(decision)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = (text, agent_id);
         Err(ApiError::Unavailable)
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_routing_decision(
+    explicit: Option<&BotId>,
+    decision: &ChannelRoutingDecision,
+) -> Result<(), ApiError> {
+    validate_agent_id(decision.agent_id.as_str())?;
+    if decision.name.is_empty()
+        || decision.name.len() > 512
+        || decision.name.chars().any(char::is_control)
+        || decision.reason.is_empty()
+        || decision.reason.chars().count() > MAX_CHANNEL_ROUTING_REASON_CODE_POINTS
+        || decision.reason.chars().any(char::is_control)
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    match explicit {
+        Some(explicit)
+            if decision.agent_id == *explicit && decision.via_mention && !decision.fallback =>
+        {
+            Ok(())
+        }
+        None if !decision.via_mention => Ok(()),
+        _ => Err(ApiError::InvalidResponse),
     }
 }
 
@@ -3242,6 +3270,30 @@ mod tests {
         );
         assert_eq!(
             channel_list_path(Some("bad\ncursor")).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let explicit_id = BotId::new("knowledge");
+        let explicit = ChannelRoutingDecision {
+            agent_id: explicit_id.clone(),
+            name: "Knowledge Desk".to_owned(),
+            reason: "named by the person asking".to_owned(),
+            fallback: false,
+            via_mention: true,
+        };
+        assert!(validate_routing_decision(Some(&explicit_id), &explicit).is_ok());
+        assert_eq!(
+            validate_routing_decision(None, &explicit).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let mut inferred = explicit;
+        inferred.via_mention = false;
+        inferred.fallback = true;
+        assert!(validate_routing_decision(None, &inferred).is_ok());
+        inferred.reason = "界".repeat(MAX_CHANNEL_ROUTING_REASON_CODE_POINTS + 1);
+        assert_eq!(
+            validate_routing_decision(None, &inferred).unwrap_err(),
             ApiError::InvalidResponse
         );
     }

@@ -2729,6 +2729,147 @@ textarea:focus-visible,
   background: var(--border);
 }
 
+.ob-home {
+  display: flex;
+  min-height: calc(100dvh - var(--size-topbar) - calc(var(--spacing) * 10));
+  flex-direction: column;
+  justify-content: center;
+  padding-block: calc(var(--spacing) * 8);
+}
+
+.ob-home-header {
+  text-align: center;
+}
+
+.ob-home-header p,
+.ob-home-header h1 {
+  margin: 0;
+}
+
+.ob-home-header p {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.ob-home-header h1 {
+  margin-block-start: calc(var(--spacing) * 1.5);
+  color: var(--fg);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: var(--text-2xl--line-height);
+}
+
+.ob-home-composer {
+  display: grid;
+  gap: calc(var(--spacing) * 3);
+  margin-block-start: calc(var(--spacing) * 8);
+  padding: calc(var(--spacing) * 4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg-popover);
+}
+
+.ob-home-composer .ob-textarea {
+  min-height: calc(var(--size-control-lg) * 2);
+  border: 0;
+  background: transparent;
+}
+
+.ob-home-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ob-home-mention-results {
+  display: grid;
+  max-height: calc(var(--size-control-lg) * 6);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+}
+
+.ob-home-mention-results > p {
+  margin: 0;
+  padding: calc(var(--spacing) * 3);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.ob-home-mention-results > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  min-width: 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  border: 0;
+  color: var(--fg);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.ob-home-mention-results > button + button {
+  border-block-start: 1px solid var(--border);
+}
+
+.ob-home-mention-results > button:is(:hover, :focus-visible),
+.ob-home-mention-results > button[aria-selected="true"] {
+  background: var(--bg-chip);
+}
+
+.ob-home-mention-results > button > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: var(--spacing);
+}
+
+.ob-home-mention-results :is(strong, small) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-home-mention-results strong {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.ob-home-mention-results small {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.ob-home-routing-hint {
+  margin: calc(var(--spacing) * 2) 0 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.ob-home-explore {
+  margin-block-start: calc(var(--spacing) * 10);
+}
+
+.ob-home-explore h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: var(--text-lg--line-height);
+}
+
+.ob-home-explore-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, calc(var(--size-sidebar-rail) * 3));
+  gap: calc(var(--spacing) * 4);
+  margin-block-start: calc(var(--spacing) * 4);
+}
+
 .ob-channel-new {
   display: flex;
   min-height: calc(100dvh - var(--size-topbar) - var(--size-topbar) - calc(var(--spacing) * 10));

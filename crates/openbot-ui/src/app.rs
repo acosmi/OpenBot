@@ -21,7 +21,7 @@ use crate::features::settings::{
 use crate::i18n::{I18nContextProvider, t, t_string, use_i18n};
 use crate::preferences::provide_ui_preferences;
 use crate::primitives::{Sidebar, SidebarProvider, SidebarTrigger};
-use crate::shell::AppSidebar;
+use crate::shell::{AppSidebar, HomePage};
 
 /// Single CSR application root used by both supported hosts.
 #[component]
@@ -107,7 +107,7 @@ fn AppRoutes() -> impl IntoView {
         view! {
             <Routes fallback=NotFound>
                 <Route path=path!("/_design") view=crate::design_gallery::DesignGallery />
-                <Route path=path!("/") view=ApprovalPage />
+                <Route path=path!("/") view=HomePage />
                 <Route path=path!("/approvals") view=ApprovalPage />
                 <Route path=path!("/agents") view=AgentsPage />
                 <Route path=path!("/admin") view=AdminHomeRoute />
@@ -131,7 +131,7 @@ fn AppRoutes() -> impl IntoView {
     {
         view! {
             <Routes fallback=NotFound>
-                <Route path=path!("/") view=ApprovalPage />
+                <Route path=path!("/") view=HomePage />
                 <Route path=path!("/approvals") view=ApprovalPage />
                 <Route path=path!("/agents") view=AgentsPage />
                 <Route path=path!("/admin") view=AdminHomeRoute />

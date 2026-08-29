@@ -103,11 +103,12 @@ entries:
   - id: home-composer
     upstream: app/src/routes/_authed/_app/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::home -> /"
+    target: "openbot_ui::shell::home::HomePage -> /"
     owner: openbot-ui
     test_id: T-ROUTE-0006
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch63：根路由从临时ApprovalPage切为真实HomePage；共享StartAttempt唯一执行create→native BeginRun，create response未知禁止重发，begin/navigation失败复用同channel/run，/channel/new同批回归。Home roster严格按固定上游取explore=!mine&&public，fallback=explore[0]否则agents[0]；Explore卡精确预填/channel/new?agent=。Textarea只在显式opt-in时成为aria-controls/expanded/autocomplete完整combobox；@后候选按name/id过滤，Enter/click写结构化agent id并移除旧mention，free text不重解析成authority。显式mention route audit成功实得complete0/explicit1，audit失败又实得complete0/failedRecord1/recorded0但仍按用户选择create；无mention实得complete1/inferred1→Risk Analyst；completion+audit失败实得failedRecord1且UI fallback→Knowledge Desk。四条均真实create thread+BeginRun+navigate并显示首条消息；root reload/Explore click channel count不变。PG17.11 SCRAM既有create/native begin 2/0/0、routing/audit 1/0/0本轮亲跑。中英、1280/600 overflow0、main1/nav1/h1 1、Explore2、duplicate/nested/alert/runtime error0。formal golden T-UI-0130与完整Composer T-UI-0043仍todo。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/index.tsx 得 createFileRoute(\"/_authed/_app/\")；同文件 useQuery(agentListQueryOptions()) + Composer + useStartChannel + routeMessage"
     notes: "模板 Chat（居中 Composer + 说明区，无 List 结构）。journey：在首页写第一条消息 -> 有 @ 则显式选定 coworker、无 @ 则走 routeMessage 自动 routing、routing 失败回落 fallback -> 创建 channel 并跳转。权限：已登录即可见；探索区只列 `!a.mine && a.visibility === 'public'` 的 coworker。**分歧登记**：设计系统文档 §5.2 的 List 行把「首页 channel 列表」归 List，但固定 commit 的本文件是 composer 起始页，channel 列表实际在 components/app-sidebar/app-sidebar.tsx；本条按实测结构归 Chat。"
   - id: agents-index
