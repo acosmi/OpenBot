@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -22,8 +22,8 @@ use openbot_application::{
     SandboxedComponentAdministration, SandboxedComponentAdministrationError,
     SandboxedComponentDraft, ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError,
     ThreadEventSubscription, ThreadHistoryRequest, ToolApprovalAdministration,
-    ToolApprovalAdministrationError, UiPreferenceAdministration, UiPreferenceAdministrationError,
-    UpdateMemoryControlRequest,
+    ToolApprovalAdministrationError, ToolApprovalPresentation, ToolApprovalRequest,
+    UiPreferenceAdministration, UiPreferenceAdministrationError, UpdateMemoryControlRequest,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
@@ -43,7 +43,8 @@ use openbot_contracts::components::{
     SHOW_ACTIVITY_REPORT_COMPONENT_NAME, validate_component_human_decision_answer,
 };
 use openbot_contracts::ids::{
-    ActorId, BotId, ChannelId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId,
+    ActorId, BotId, CatalogGeneration, ChannelId, ComputerGeneration, DeploymentId, RunId,
+    TenantId, ThreadId, ToolCallId,
 };
 use openbot_contracts::mcp::{
     McpConnection, McpConnectionDisconnected, McpConnections, McpOAuthAuthorization,
@@ -64,8 +65,13 @@ use openbot_contracts::tool::{
     ToolApprovalDecision, ToolApprovalEffect, ToolApprovalResolved,
 };
 use openbot_contracts::ui::{UiPreferences, UpdateUiPreferences};
+use openbot_domain::audit::hash::Sha256Digest;
 use openbot_domain::identity::session::{SessionState, TrustedOrigins, evaluate_session};
+use openbot_domain::tool::approval::{ApprovalTarget, PolicyVersionTag};
+use openbot_domain::tool::metadata::{ApprovalClass, Effect, ToolName};
 use openbot_infra::auth::config::default_session_lifetime;
+use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::tool_approval::{DurableHumanDecision, PostgresToolApprovalCoordinator};
 use openbot_server::{
     AuthResolver, ResolvedAuth, SensitiveWriteSecurity, ServerBuilder, StaticApp,
 };
@@ -80,6 +86,47 @@ const FIXTURE_GOOGLE_DRIVE_SERVER: &str = "google-drive";
 const FIXTURE_GOOGLE_DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 const FIXTURE_ACTIVITY_FOLLOW_UP: &str =
     "What has bot-busiest actually been doing? Look at the audit trail and summarise it.";
+const FIXTURE_DEPLOYMENT: &str = "fixture-deployment";
+const FIXTURE_TENANT: &str = "fixture-tenant";
+const FIXTURE_ACTOR: &str = "fixture-actor";
+const FIXTURE_PG_BOT: &str = "fixture-pg-approval-bot";
+const FIXTURE_PG_THREAD: &str = "fixture-pg-approval-thread";
+const FIXTURE_PG_RUN: &str = "fixture-pg-approval-run";
+const FIXTURE_PG_CALL: &str = "fixture-pg-approval-call";
+const FIXTURE_APPROVAL_DATABASE_URL: &str = "OPENBOT_UI_APPROVAL_DATABASE_URL";
+const FIXTURE_APPROVAL_DATABASE_PREFIX: &str = "openbot_ui_approval_fixture_";
+const FIXTURE_APPROVAL_AUDIT_KEY: &[u8] = b"fixture-approval-audit-key-at-least-32";
+const POSTGRES_APPROVAL_SEED_SQL: &str = "INSERT INTO public.users(id,email,auth_generation) VALUES
+       ('fixture-actor','fixture-actor@example.test',1);
+     INSERT INTO public.user_roles(user_id,role) VALUES
+       ('fixture-actor','user'),('fixture-actor','admin');
+     INSERT INTO public.agents(id,name,type,configuration)
+       VALUES('fixture-pg-approval-bot','Fixture Approval Bot','built_in','{}');
+     INSERT INTO public.agent_profiles(
+       agent_id,owner_user_id,title,role_description,avatar_seed,visibility
+     ) VALUES(
+       'fixture-pg-approval-bot',NULL,'Fixture Approval Bot','role','seed','public'
+     );
+     INSERT INTO public.threads(
+       thread_id,tenant_id,deployment_id,created_by,anchor_kind,anchor_id,status
+     ) VALUES(
+       'fixture-pg-approval-thread','fixture-tenant','fixture-deployment',
+       'fixture-actor','direct_bot','fixture-pg-approval-bot','active'
+     );
+     INSERT INTO public.thread_memberships(thread_id,user_id) VALUES
+       ('fixture-pg-approval-thread','fixture-actor');
+     INSERT INTO public.runs(
+       run_id,thread_id,bot_id,actor_id,foreground,status,fencing_token,started_at
+     ) VALUES(
+       'fixture-pg-approval-run','fixture-pg-approval-thread',
+       'fixture-pg-approval-bot','fixture-actor',true,'running',1,clock_timestamp()
+     );
+     INSERT INTO public.thread_leases(
+       thread_id,owner_id,fencing_token,acquired_at,expires_at,updated_at
+     ) VALUES(
+       'fixture-pg-approval-thread','fixture-runtime',1,clock_timestamp(),
+       clock_timestamp()+interval '10 minutes',clock_timestamp()
+     );";
 
 #[derive(Clone)]
 struct FixtureChannels {
@@ -2028,6 +2075,19 @@ struct FixtureApprovalProbe {
     subscription_calls: Arc<AtomicU64>,
 }
 
+struct ApprovalFixtureAssembly {
+    port: Arc<dyn ToolApprovalAdministration>,
+    memory_probe: Option<FixtureApprovalProbe>,
+    postgres_probe: Option<PostgresApprovalProbe>,
+    mode: &'static str,
+}
+
+#[derive(Clone)]
+struct PostgresApprovalProbe {
+    pool: deadpool_postgres::Pool,
+    waiter_state: Arc<AtomicU8>,
+}
+
 #[derive(Default)]
 struct FixturePreferences {
     stored: Mutex<UiPreferences>,
@@ -2183,21 +2243,235 @@ impl ToolApprovalAdministration for FixtureApprovals {
     }
 }
 
+async fn assemble_approval_fixture(
+    now: OffsetDateTime,
+    auth: &AuthContext,
+) -> Result<ApprovalFixtureAssembly, Box<dyn Error>> {
+    let database_url = match std::env::var(FIXTURE_APPROVAL_DATABASE_URL) {
+        Ok(database_url) if !database_url.is_empty() => database_url,
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{FIXTURE_APPROVAL_DATABASE_URL} must not be empty"),
+            )
+            .into());
+        }
+        Err(std::env::VarError::NotPresent) => {
+            let approvals = FixtureApprovals::new(now);
+            return Ok(ApprovalFixtureAssembly {
+                memory_probe: Some(approvals.probe()),
+                postgres_probe: None,
+                port: Arc::new(approvals),
+                mode: "memory",
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    let config = database_url.parse::<openbot_infra::db::pool::DatabaseConfig>()?;
+    validate_fixture_database(&config)?;
+    let database = pool::connect(&config).await?;
+    let mut client = database.get().await?;
+    baseline::apply(&client).await?;
+    native::apply(&mut client).await?;
+    seed_postgres_approval_scope(&mut client).await?;
+    drop(client);
+
+    let coordinator = Arc::new(PostgresToolApprovalCoordinator::new(
+        database.clone(),
+        auth.deployment().clone(),
+        auth.tenant().clone(),
+        FIXTURE_APPROVAL_AUDIT_KEY.to_vec(),
+    )?);
+    let request = postgres_approval_request(auth)?;
+    let waiter_state = Arc::new(AtomicU8::new(0));
+    let waiter_coordinator = Arc::clone(&coordinator);
+    let waiter_state_for_task = Arc::clone(&waiter_state);
+    tokio::spawn(async move {
+        let state = match waiter_coordinator.request_and_wait(&request).await {
+            Ok(DurableHumanDecision::Granted { .. }) => {
+                println!("OPENBOT_UI_APPROVAL_WAITER=granted");
+                1
+            }
+            Ok(DurableHumanDecision::Denied) => {
+                println!("OPENBOT_UI_APPROVAL_WAITER=denied");
+                2
+            }
+            Err(error) => {
+                tracing::error!(error = %error, "PostgreSQL approval fixture waiter failed");
+                println!("OPENBOT_UI_APPROVAL_WAITER=failed");
+                3
+            }
+        };
+        waiter_state_for_task.store(state, Ordering::SeqCst);
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let pending = coordinator.list_pending(auth).await?;
+            if !pending.approvals.is_empty() {
+                return Ok::<(), ToolApprovalAdministrationError>(());
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .map_err(|_| std::io::Error::other("PostgreSQL approval fixture did not become pending"))??;
+
+    Ok(ApprovalFixtureAssembly {
+        port: coordinator,
+        memory_probe: None,
+        postgres_probe: Some(PostgresApprovalProbe {
+            pool: database,
+            waiter_state,
+        }),
+        mode: "postgres",
+    })
+}
+
+fn validate_fixture_database(
+    config: &openbot_infra::db::pool::DatabaseConfig,
+) -> Result<(), std::io::Error> {
+    let name = config.dbname.as_str();
+    if config.host != "127.0.0.1"
+        || !name.starts_with(FIXTURE_APPROVAL_DATABASE_PREFIX)
+        || name.len() > 63
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "approval fixture requires a loopback, explicitly prefixed database",
+        ));
+    }
+    Ok(())
+}
+
+async fn seed_postgres_approval_scope(
+    client: &mut tokio_postgres::Client,
+) -> Result<(), tokio_postgres::Error> {
+    let transaction = client.transaction().await?;
+    transaction
+        .batch_execute(POSTGRES_APPROVAL_SEED_SQL)
+        .await?;
+    transaction.commit().await
+}
+
+fn postgres_approval_request(auth: &AuthContext) -> Result<ToolApprovalRequest, Box<dyn Error>> {
+    if auth.deployment().as_str() != FIXTURE_DEPLOYMENT
+        || auth.tenant().as_str() != FIXTURE_TENANT
+        || auth.actor().as_str() != FIXTURE_ACTOR
+        || auth.auth_generation() != AuthGeneration::new(1)
+    {
+        return Err(std::io::Error::other("fixture approval AuthContext drift").into());
+    }
+    let tool = ToolName::new("mcp__workspace__overwrite_report")
+        .map_err(|_| std::io::Error::other("fixture approval tool name drift"))?;
+    Ok(ToolApprovalRequest {
+        call_id: ToolCallId::new(FIXTURE_PG_CALL),
+        actor: auth.actor().clone(),
+        auth_generation: auth.auth_generation(),
+        bot: BotId::new(FIXTURE_PG_BOT),
+        run: RunId::new(FIXTURE_PG_RUN),
+        thread: ThreadId::new(FIXTURE_PG_THREAD),
+        tool,
+        args_hash: Sha256Digest::of(br#"{"path":"/reports/q4.txt","mode":"overwrite"}"#),
+        target: ApprovalTarget {
+            kind: "mcp_tool",
+            id: "workspace/reports/q4.txt".to_owned(),
+        },
+        effect: Effect::Write,
+        approval_class: ApprovalClass::EveryCall,
+        computer_generation: ComputerGeneration::new(0),
+        catalog_generation: CatalogGeneration::new(7),
+        target_document_generation: None,
+        policy_version: PolicyVersionTag::new("b".repeat(64)),
+        presentation: ToolApprovalPresentation {
+            arguments_summary: serde_json::json!({
+                "path": "/reports/q4.txt",
+                "mode": "overwrite",
+                "credential": "[redacted]"
+            }),
+            change_summary: Some(serde_json::json!({
+                "kind": "replace",
+                "linesRemoved": 12,
+                "linesAdded": 18
+            })),
+        },
+    })
+}
+
+async fn postgres_approval_proof(
+    probe: PostgresApprovalProbe,
+) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+    let client = probe
+        .pool
+        .get()
+        .await
+        .map_err(|_| axum::http::StatusCode::SERVICE_UNAVAILABLE)?;
+    let row = client
+        .query_one(
+            "SELECT
+               (SELECT count(*)::bigint FROM public.tool_approvals),
+               (SELECT count(*)::bigint FROM public.tool_approvals WHERE state='pending'),
+               (SELECT count(*)::bigint FROM public.tool_approvals WHERE state='granted'),
+               (SELECT count(*)::bigint FROM public.tool_approvals
+                 WHERE state<>'pending' AND arguments_summary IS NULL AND change_summary IS NULL),
+               (SELECT count(*)::bigint FROM public.audit_events
+                 WHERE event_type='tool.approval_requested'),
+               (SELECT count(*)::bigint FROM public.audit_events
+                 WHERE event_type='tool.approval_granted')",
+            &[],
+        )
+        .await
+        .map_err(|_| axum::http::StatusCode::SERVICE_UNAVAILABLE)?;
+    let value = |index| {
+        row.try_get::<_, i64>(index)
+            .map_err(|_| axum::http::StatusCode::SERVICE_UNAVAILABLE)
+    };
+    Ok(axum::Json(serde_json::json!({
+        "mode": "postgres",
+        "waiter": waiter_state_label(probe.waiter_state.load(Ordering::SeqCst)),
+        "approvals": value(0)?,
+        "pending": value(1)?,
+        "granted": value(2)?,
+        "summariesCleared": value(3)?,
+        "requestedAudits": value(4)?,
+        "grantedAudits": value(5)?,
+    })))
+}
+
+const fn waiter_state_label(state: u8) -> &'static str {
+    match state {
+        0 => "waiting",
+        1 => "granted",
+        2 => "denied",
+        _ => "failed",
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let (dist, port) = arguments()?;
     let now = OffsetDateTime::now_utc();
     let generation = AuthGeneration::new(1);
-    let tenant = TenantId::new("fixture-tenant");
-    let actor = ActorId::new("fixture-actor");
+    let tenant = TenantId::new(FIXTURE_TENANT);
+    let actor = ActorId::new(FIXTURE_ACTOR);
     let context = AuthContext::for_test(
-        DeploymentId::new("fixture-deployment"),
+        DeploymentId::new(FIXTURE_DEPLOYMENT),
         tenant.clone(),
         actor.clone(),
         [Role::User, Role::Admin],
         generation,
         false,
     );
+    let ApprovalFixtureAssembly {
+        port: approvals,
+        memory_probe: approval_probe,
+        postgres_probe,
+        mode: approval_mode,
+    } = assemble_approval_fixture(now, &context).await?;
     let lifetime = default_session_lifetime();
     let live = evaluate_session(
         lifetime,
@@ -2219,8 +2493,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let connections = FixtureConnections::new(actor, port, now);
     let components = FixtureComponents::new(now, threads.clone());
     let sandboxed = FixtureSandboxed::new(now);
-    let approvals = FixtureApprovals::new(now);
-    let approval_probe = approvals.probe();
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
@@ -2231,18 +2503,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_threads(threads)
             .with_memory(memory)
             .with_mcp_connections(Arc::new(connections))
-            .with_tool_approvals(Arc::new(approvals))
+            .with_tool_approvals(approvals)
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );
     let origin = format!("http://127.0.0.1:{port}");
-    let router = ServerBuilder::new(application, Arc::new(resolver))
+    let mut router = ServerBuilder::new(application, Arc::new(resolver))
         .with_sensitive_write_security(SensitiveWriteSecurity::new(
             lifetime,
             TrustedOrigins::from_configured([origin.as_str()])?,
         ))
         .with_static_app(StaticApp::open(dist)?)
-        .into_router()
-        .route(
+        .into_router();
+    if let Some(approval_probe) = approval_probe {
+        router = router.route(
             "/__fixture/approval-probe",
             axum::routing::get(move || {
                 let probe = approval_probe.clone();
@@ -2254,7 +2527,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }),
         );
+    }
+    if let Some(postgres_probe) = postgres_probe {
+        router = router.route(
+            "/api/__fixture/approval-pg-proof",
+            axum::routing::get(move || {
+                let probe = postgres_probe.clone();
+                async move { postgres_approval_proof(probe).await }
+            }),
+        );
+    }
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
+    println!("OPENBOT_UI_APPROVAL_MODE={approval_mode}");
     println!("OPENBOT_UI_FIXTURE_URL={origin}/approvals");
     axum::serve(listener, router).await?;
     Ok(())
@@ -2275,4 +2559,66 @@ fn arguments() -> Result<(String, u16), Box<dyn Error>> {
     }
     let dist = dist.ok_or("--dist is required")?;
     Ok((dist, port))
+}
+
+#[cfg(test)]
+mod approval_pg_tests {
+    use super::*;
+
+    fn auth() -> AuthContext {
+        AuthContext::for_test(
+            DeploymentId::new(FIXTURE_DEPLOYMENT),
+            TenantId::new(FIXTURE_TENANT),
+            ActorId::new(FIXTURE_ACTOR),
+            [Role::User, Role::Admin],
+            AuthGeneration::new(1),
+            false,
+        )
+    }
+
+    #[test]
+    fn postgres_request_seed_and_proof_states_are_one_closed_fixture_contract() {
+        for identity in [
+            FIXTURE_DEPLOYMENT,
+            FIXTURE_TENANT,
+            FIXTURE_ACTOR,
+            FIXTURE_PG_BOT,
+            FIXTURE_PG_THREAD,
+            FIXTURE_PG_RUN,
+        ] {
+            assert!(POSTGRES_APPROVAL_SEED_SQL.contains(identity));
+        }
+        let request = postgres_approval_request(&auth()).expect("closed fixture request");
+        assert_eq!(request.actor, ActorId::new(FIXTURE_ACTOR));
+        assert_eq!(request.bot, BotId::new(FIXTURE_PG_BOT));
+        assert_eq!(request.thread, ThreadId::new(FIXTURE_PG_THREAD));
+        assert_eq!(request.run, RunId::new(FIXTURE_PG_RUN));
+        assert_eq!(request.call_id, ToolCallId::new(FIXTURE_PG_CALL));
+        assert_eq!(request.effect, Effect::Write);
+        assert_eq!(request.approval_class, ApprovalClass::EveryCall);
+        assert_eq!(
+            request.presentation.arguments_summary["credential"],
+            "[redacted]"
+        );
+        assert_eq!(waiter_state_label(0), "waiting");
+        assert_eq!(waiter_state_label(1), "granted");
+        assert_eq!(waiter_state_label(2), "denied");
+        assert_eq!(waiter_state_label(3), "failed");
+
+        let valid = openbot_infra::db::pool::DatabaseConfig::new(
+            "127.0.0.1",
+            5432,
+            "postgres",
+            "openbot_ui_approval_fixture_test",
+        );
+        assert!(validate_fixture_database(&valid).is_ok());
+        assert!(validate_fixture_database(&valid.clone().with_dbname("postgres")).is_err());
+        let remote = openbot_infra::db::pool::DatabaseConfig::new(
+            "db.example.test",
+            5432,
+            "postgres",
+            "openbot_ui_approval_fixture_test",
+        );
+        assert!(validate_fixture_database(&remote).is_err());
+    }
 }
