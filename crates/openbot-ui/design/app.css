@@ -440,6 +440,68 @@ textarea:focus-visible,
   line-height: var(--text-xs--line-height);
 }
 
+.ob-people-search {
+  max-width: var(--size-content-max-chat);
+  margin-block-start: calc(var(--spacing) * 4);
+}
+
+.ob-people-list {
+  display: grid;
+}
+
+.ob-person-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  min-width: 0;
+  padding: calc(var(--spacing) * 3);
+}
+
+.ob-person-row + .ob-person-row {
+  border-block-start: 1px solid var(--border);
+}
+
+.ob-person-media,
+.ob-person-actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ob-person-media {
+  color: var(--fg-secondary);
+}
+
+.ob-person-content {
+  display: grid;
+  min-width: 0;
+  gap: var(--spacing);
+}
+
+.ob-person-content strong,
+.ob-person-content span {
+  overflow-wrap: anywhere;
+}
+
+.ob-person-content strong {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.ob-person-content span {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+
+.ob-person-actions {
+  gap: calc(var(--spacing) * 2);
+}
+
+.ob-people-load-more {
+  margin-block-start: calc(var(--spacing) * 4);
+}
+
 .ob-settings-shell {
   display: grid;
   grid-template-columns: var(--size-subnav) minmax(0, 1fr);
@@ -3924,6 +3986,15 @@ textarea:focus-visible,
     display: flex;
     min-width: 0;
     flex-wrap: wrap;
+  }
+
+  .ob-person-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ob-person-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
   }
 }
 

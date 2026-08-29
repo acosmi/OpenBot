@@ -45,6 +45,7 @@ use openbot_contracts::components::{
     RECENT_REFUSALS_FUNCTION_NAME, RecentRefusalRow, RecentRefusalsReport,
     SHOW_ACTIVITY_REPORT_COMPONENT_NAME, validate_component_human_decision_answer,
 };
+use openbot_contracts::error::IdentityConflictReason;
 use openbot_contracts::ids::{
     ActorId, AuditEventId, BotId, CatalogGeneration, ChannelId, ComputerGeneration, DeploymentId,
     RunId, TenantId, ThreadId, ToolCallId,
@@ -69,6 +70,7 @@ use openbot_contracts::tool::{
 };
 use openbot_contracts::ui::{UiPreferences, UpdateUiPreferences};
 use openbot_domain::audit::hash::Sha256Digest;
+use openbot_domain::identity::roles::AdminFloor;
 use openbot_domain::identity::session::{
     SessionHashKey, SessionState, SessionToken, SessionTokenHash, TrustedOrigins, evaluate_session,
 };
@@ -76,6 +78,7 @@ use openbot_domain::tool::approval::{ApprovalTarget, PolicyVersionTag};
 use openbot_domain::tool::metadata::{ApprovalClass, Effect, ToolName};
 use openbot_infra::auth::config::default_session_lifetime;
 use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_infra::tool_approval::{DurableHumanDecision, PostgresToolApprovalCoordinator};
 use openbot_server::auth::SESSION_COOKIE_NAME;
 use openbot_server::{
@@ -106,10 +109,15 @@ const FIXTURE_APPROVAL_AUDIT_KEY: &[u8] = b"fixture-approval-audit-key-at-least-
 const FIXTURE_SESSION_ID: &str = "fixture-pg-session";
 const FIXTURE_SESSION_TOKEN: &str = "fixture-pg-session-token-with-enough-entropy-001";
 const FIXTURE_SESSION_HASH_KEY: &[u8] = b"fixture-session-hash-key-at-least-32";
+const FIXTURE_CONFIGURED_ADMIN_EMAIL: &str = "configured-admin@example.test";
 const POSTGRES_APPROVAL_SEED_SQL: &str = "INSERT INTO public.users(id,email,auth_generation) VALUES
        ('fixture-actor','fixture-actor@example.test',1);
+     INSERT INTO public.users(id,email,name,auth_generation) VALUES
+       ('fixture-target','target@example.test','Target Person',0),
+       ('fixture-configured-admin','configured-admin@example.test','Configured Administrator',0);
      INSERT INTO public.user_roles(user_id,role) VALUES
-       ('fixture-actor','user'),('fixture-actor','admin');
+       ('fixture-actor','user'),('fixture-actor','admin'),
+       ('fixture-target','user'),('fixture-configured-admin','admin');
      INSERT INTO public.agents(id,name,type,configuration)
        VALUES('fixture-pg-approval-bot','Fixture Approval Bot','built_in','{}');
      INSERT INTO public.agent_profiles(
@@ -1324,44 +1332,226 @@ impl AuditReader for FixtureAudit {
     }
 }
 
-#[derive(Clone, Copy)]
-struct FixturePeople;
+#[derive(Clone)]
+struct FixturePeople {
+    rows: Arc<Mutex<Vec<Person>>>,
+}
 
-#[async_trait]
-impl PeopleAdministration for FixturePeople {
-    async fn current_user(&self, actor: &ActorId) -> Result<CurrentUser, PeoplePortError> {
-        Ok(CurrentUser {
-            id: actor.clone(),
-            email: "fixture@example.test".to_owned(),
-            name: Some("Fixture User".to_owned()),
-            image: None,
-            role: Role::User,
-        })
+impl FixturePeople {
+    fn new(now: OffsetDateTime) -> Self {
+        let rows = (0..52)
+            .map(|index| {
+                let (id, email, name, role, revoked, configured_admin) = match index {
+                    0 => (
+                        FIXTURE_ACTOR.to_owned(),
+                        "fixture@example.test".to_owned(),
+                        "Fixture Administrator".to_owned(),
+                        Role::Admin,
+                        false,
+                        false,
+                    ),
+                    1 => (
+                        "fixture-configured-admin".to_owned(),
+                        FIXTURE_CONFIGURED_ADMIN_EMAIL.to_owned(),
+                        "Configured Administrator".to_owned(),
+                        Role::Admin,
+                        false,
+                        true,
+                    ),
+                    2 => (
+                        "fixture-revoked".to_owned(),
+                        "revoked@example.test".to_owned(),
+                        "Revoked Person".to_owned(),
+                        Role::User,
+                        true,
+                        false,
+                    ),
+                    51 => (
+                        "fixture-search-target".to_owned(),
+                        "outside-first-page@example.test".to_owned(),
+                        "Search Target".to_owned(),
+                        Role::User,
+                        false,
+                        false,
+                    ),
+                    _ => (
+                        format!("fixture-person-{index:02}"),
+                        format!("person-{index:02}@example.test"),
+                        format!("Fixture Person {index:02}"),
+                        Role::User,
+                        false,
+                        false,
+                    ),
+                };
+                let providers = match index % 4 {
+                    0 => vec!["google".to_owned()],
+                    1 => vec!["microsoft".to_owned()],
+                    2 => vec!["okta".to_owned()],
+                    _ => Vec::new(),
+                };
+                Person {
+                    id: ActorId::new(id),
+                    email,
+                    name: Some(name),
+                    image: None,
+                    role,
+                    providers,
+                    last_signed_in_at: (index != 3)
+                        .then_some(now - Duration::days(i64::from(index))),
+                    revoked,
+                    configured_admin,
+                }
+            })
+            .collect();
+        Self {
+            rows: Arc::new(Mutex::new(rows)),
+        }
     }
 
-    async fn list_people(
-        &self,
-        _request: PeoplePageRequest,
-    ) -> Result<PeoplePage, PeoplePortError> {
-        Err(PeoplePortError::Unavailable)
+    fn cursor_offset(cursor: Option<&str>) -> usize {
+        cursor
+            .and_then(|cursor| cursor.strip_prefix("fixture-people-offset-"))
+            .and_then(|offset| offset.parse().ok())
+            .unwrap_or(0)
+    }
+}
+
+#[derive(Clone)]
+enum FixturePeoplePort {
+    Memory(FixturePeople),
+    Postgres(PostgresPeopleAdministration),
+}
+
+#[async_trait]
+impl PeopleAdministration for FixturePeoplePort {
+    async fn current_user(&self, actor: &ActorId) -> Result<CurrentUser, PeoplePortError> {
+        match self {
+            Self::Memory(people) => people.current_user(actor).await,
+            Self::Postgres(people) => people.current_user(actor).await,
+        }
+    }
+
+    async fn list_people(&self, request: PeoplePageRequest) -> Result<PeoplePage, PeoplePortError> {
+        match self {
+            Self::Memory(people) => people.list_people(request).await,
+            Self::Postgres(people) => people.list_people(request).await,
+        }
     }
 
     async fn change_role(
         &self,
-        _actor: &ActorId,
-        _subject: &ActorId,
-        _desired: Role,
+        actor: &ActorId,
+        subject: &ActorId,
+        desired: Role,
     ) -> Result<Person, PeoplePortError> {
-        Err(PeoplePortError::Unavailable)
+        match self {
+            Self::Memory(people) => people.change_role(actor, subject, desired).await,
+            Self::Postgres(people) => people.change_role(actor, subject, desired).await,
+        }
     }
 
     async fn change_access(
         &self,
-        _actor: &ActorId,
-        _subject: &ActorId,
-        _revoked: bool,
+        actor: &ActorId,
+        subject: &ActorId,
+        revoked: bool,
     ) -> Result<Person, PeoplePortError> {
-        Err(PeoplePortError::Unavailable)
+        match self {
+            Self::Memory(people) => people.change_access(actor, subject, revoked).await,
+            Self::Postgres(people) => people.change_access(actor, subject, revoked).await,
+        }
+    }
+}
+
+#[async_trait]
+impl PeopleAdministration for FixturePeople {
+    async fn current_user(&self, actor: &ActorId) -> Result<CurrentUser, PeoplePortError> {
+        let rows = self.rows.lock().map_err(|_| PeoplePortError::Unavailable)?;
+        let person = rows
+            .iter()
+            .find(|person| &person.id == actor)
+            .ok_or(PeoplePortError::NotFound)?;
+        Ok(CurrentUser {
+            id: person.id.clone(),
+            email: person.email.clone(),
+            name: person.name.clone(),
+            image: person.image.clone(),
+            role: person.role,
+        })
+    }
+
+    async fn list_people(&self, request: PeoplePageRequest) -> Result<PeoplePage, PeoplePortError> {
+        let query = request.search.as_deref().map(str::to_lowercase);
+        let rows = self.rows.lock().map_err(|_| PeoplePortError::Unavailable)?;
+        let filtered = rows
+            .iter()
+            .filter(|person| {
+                query.as_ref().is_none_or(|query| {
+                    person.email.to_lowercase().contains(query)
+                        || person
+                            .name
+                            .as_deref()
+                            .is_some_and(|name| name.to_lowercase().contains(query))
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let start = Self::cursor_offset(request.cursor.as_deref()).min(filtered.len());
+        let end = (start + request.limit as usize).min(filtered.len());
+        Ok(PeoplePage {
+            people: filtered[start..end].to_vec(),
+            next_cursor: (end < filtered.len()).then(|| format!("fixture-people-offset-{end}")),
+        })
+    }
+
+    async fn change_role(
+        &self,
+        actor: &ActorId,
+        subject: &ActorId,
+        desired: Role,
+    ) -> Result<Person, PeoplePortError> {
+        let mut rows = self.rows.lock().map_err(|_| PeoplePortError::Unavailable)?;
+        let person = rows
+            .iter_mut()
+            .find(|person| &person.id == subject)
+            .ok_or(PeoplePortError::NotFound)?;
+        if person.configured_admin && desired != Role::Admin {
+            return Err(PeoplePortError::IdentityConflict {
+                reason: IdentityConflictReason::RoleConfiguredAdmin,
+            });
+        }
+        if actor == subject && desired != Role::Admin {
+            return Err(PeoplePortError::IdentityConflict {
+                reason: IdentityConflictReason::RoleSelfDemotion,
+            });
+        }
+        person.role = desired;
+        Ok(person.clone())
+    }
+
+    async fn change_access(
+        &self,
+        actor: &ActorId,
+        subject: &ActorId,
+        revoked: bool,
+    ) -> Result<Person, PeoplePortError> {
+        let mut rows = self.rows.lock().map_err(|_| PeoplePortError::Unavailable)?;
+        let person = rows
+            .iter_mut()
+            .find(|person| &person.id == subject)
+            .ok_or(PeoplePortError::NotFound)?;
+        if person.configured_admin && revoked {
+            return Err(PeoplePortError::IdentityConflict {
+                reason: IdentityConflictReason::AccessConfiguredAdmin,
+            });
+        }
+        if actor == subject && revoked {
+            return Err(PeoplePortError::IdentityConflict {
+                reason: IdentityConflictReason::AccessSelfRevocation,
+            });
+        }
+        person.revoked = revoked;
+        Ok(person.clone())
     }
 }
 
@@ -2153,6 +2343,7 @@ struct FixtureApprovalProbe {
 
 struct ApprovalFixtureAssembly {
     port: Arc<dyn ToolApprovalAdministration>,
+    people: FixturePeoplePort,
     auth_resolver: Option<Arc<dyn AuthResolver>>,
     memory_probe: Option<FixtureApprovalProbe>,
     postgres_probe: Option<PostgresApprovalProbe>,
@@ -2342,6 +2533,7 @@ async fn assemble_approval_fixture(
                 memory_probe: Some(approvals.probe()),
                 postgres_probe: None,
                 port: Arc::new(approvals),
+                people: FixturePeoplePort::Memory(FixturePeople::new(now)),
                 session_bootstrap: false,
                 mode: "memory",
                 auth_mode: "fixed",
@@ -2371,6 +2563,12 @@ async fn assemble_approval_fixture(
         default_session_lifetime(),
         auth.deployment().clone(),
         auth.tenant().clone(),
+    )?);
+    let floor = AdminFloor::from_configured([FIXTURE_CONFIGURED_ADMIN_EMAIL])?;
+    let people = FixturePeoplePort::Postgres(PostgresPeopleAdministration::new(
+        database.clone(),
+        Some(floor),
+        FIXTURE_APPROVAL_AUDIT_KEY.to_vec(),
     )?);
     let request = postgres_approval_request(auth)?;
     let waiter_state = Arc::new(AtomicU8::new(0));
@@ -2410,6 +2608,7 @@ async fn assemble_approval_fixture(
     Ok(ApprovalFixtureAssembly {
         auth_resolver: Some(auth_resolver),
         port: coordinator,
+        people,
         memory_probe: None,
         postgres_probe: Some(PostgresApprovalProbe {
             pool: database,
@@ -2601,6 +2800,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
     let ApprovalFixtureAssembly {
         port: approvals,
+        people,
         auth_resolver,
         memory_probe: approval_probe,
         postgres_probe,
@@ -2641,7 +2841,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_agent_directory(Arc::new(FixtureAgents::new()))
             .with_component_administration(Arc::new(components))
             .with_sandboxed_component_administration(Arc::new(sandboxed))
-            .with_people(FixturePeople)
+            .with_people(people)
             .with_threads(threads)
             .with_memory(memory)
             .with_mcp_connections(Arc::new(connections))
@@ -2801,5 +3001,80 @@ mod approval_pg_tests {
         assert!(cookie.contains("SameSite=Lax"));
         assert!(!cookie.contains("Domain="));
         assert!(!cookie.contains("Secure"));
+    }
+
+    #[tokio::test]
+    async fn memory_people_fixture_is_paged_searchable_mutable_and_keeps_locked_rows() {
+        let people = FixturePeople::new(OffsetDateTime::UNIX_EPOCH);
+        let first = people
+            .list_people(PeoplePageRequest {
+                search: None,
+                cursor: None,
+                limit: 50,
+            })
+            .await
+            .expect("fixture first page");
+        assert_eq!(first.people.len(), 50);
+        assert_eq!(
+            first.next_cursor.as_deref(),
+            Some("fixture-people-offset-50")
+        );
+        let second = people
+            .list_people(PeoplePageRequest {
+                search: None,
+                cursor: first.next_cursor,
+                limit: 50,
+            })
+            .await
+            .expect("fixture second page");
+        assert_eq!(second.people.len(), 2);
+        assert!(second.next_cursor.is_none());
+        let searched = people
+            .list_people(PeoplePageRequest {
+                search: Some("search target".to_owned()),
+                cursor: None,
+                limit: 50,
+            })
+            .await
+            .expect("server-side fixture search");
+        assert_eq!(searched.people[0].id, ActorId::new("fixture-search-target"));
+
+        let target = ActorId::new("fixture-person-04");
+        let promoted = people
+            .change_role(&ActorId::new(FIXTURE_ACTOR), &target, Role::Admin)
+            .await
+            .expect("target promotion");
+        assert_eq!(promoted.role, Role::Admin);
+        let removed = people
+            .change_access(&ActorId::new(FIXTURE_ACTOR), &target, true)
+            .await
+            .expect("target removal");
+        assert!(removed.revoked);
+        assert_eq!(
+            people
+                .change_role(
+                    &ActorId::new(FIXTURE_ACTOR),
+                    &ActorId::new("fixture-configured-admin"),
+                    Role::User,
+                )
+                .await
+                .unwrap_err(),
+            PeoplePortError::IdentityConflict {
+                reason: IdentityConflictReason::RoleConfiguredAdmin,
+            },
+        );
+        assert_eq!(
+            people
+                .change_access(
+                    &ActorId::new(FIXTURE_ACTOR),
+                    &ActorId::new(FIXTURE_ACTOR),
+                    true,
+                )
+                .await
+                .unwrap_err(),
+            PeoplePortError::IdentityConflict {
+                reason: IdentityConflictReason::AccessSelfRevocation,
+            },
+        );
     }
 }
