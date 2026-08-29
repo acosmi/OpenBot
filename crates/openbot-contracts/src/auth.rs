@@ -15,6 +15,123 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{ActorId, DeploymentId, TenantId};
 
+/// Maximum browser-authored email bytes accepted by the anonymous enterprise-SSO router.
+///
+/// This is a transport budget, not an email-address validator. The authoritative identity layer
+/// still owns normalization and provider-domain routing.
+pub const MAX_SSO_ROUTING_EMAIL_BYTES: usize = 512;
+
+/// Environment-configured sign-in providers exposed before authentication.
+///
+/// The closed set comes from the fixed upstream sign-in journey and the Server startup parser.
+/// Deployment-owned OIDC/SAML providers never enter this enum: the anonymous surface exposes only
+/// the boolean [`AuthenticationCapabilities::sso_configured`].
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthProviderId {
+    /// Google OpenID Connect.
+    Google,
+    /// Microsoft Entra OpenID Connect.
+    Microsoft,
+    /// Deployment-configured Okta OpenID Connect.
+    Okta,
+}
+
+impl AuthProviderId {
+    /// Stable identifier used in the same-origin start route.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Google => "google",
+            Self::Microsoft => "microsoft",
+            Self::Okta => "okta",
+        }
+    }
+}
+
+impl fmt::Display for AuthProviderId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Unknown environment sign-in provider identifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("unknown_auth_provider")]
+pub struct UnknownAuthProvider;
+
+impl FromStr for AuthProviderId {
+    type Err = UnknownAuthProvider;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "google" => Ok(Self::Google),
+            "microsoft" => Ok(Self::Microsoft),
+            "okta" => Ok(Self::Okta),
+            _ => Err(UnknownAuthProvider),
+        }
+    }
+}
+
+/// Runtime family reported by the anonymous capabilities endpoint.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApplicationRuntimeMode {
+    /// Native Rust Server and application runtime.
+    Rust,
+}
+
+/// Complete anonymous capability response used to paint the sign-in page.
+///
+/// The shape cannot carry a dynamic provider ID, domain, issuer, or secret. Provider IDs must be
+/// strictly sorted and unique; [`Self::is_canonical`] lets every consumer fail closed on a corrupt
+/// or drifting response.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuthenticationCapabilities {
+    /// Runtime implementation family.
+    pub mode: ApplicationRuntimeMode,
+    /// Whether durable native history is available.
+    pub durable_history: bool,
+    /// Environment providers, in stable identifier order.
+    pub auth_providers: Vec<AuthProviderId>,
+    /// Whether at least one deployment-owned email-routed provider exists.
+    pub sso_configured: bool,
+}
+
+impl AuthenticationCapabilities {
+    /// Whether the bounded provider list is strictly ordered and duplicate-free.
+    #[must_use]
+    pub fn is_canonical(&self) -> bool {
+        self.auth_providers.len() <= 3
+            && self.auth_providers.windows(2).all(|pair| pair[0] < pair[1])
+    }
+}
+
+/// Successful environment OIDC start response.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthenticationStartResponse {
+    /// Authorization URL assembled by the trusted Server coordinator.
+    pub url: String,
+}
+
+/// Anonymous enterprise-email routing request.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnterpriseSsoStartRequest {
+    /// Address used only for domain routing and keyed rate limiting.
+    pub email: String,
+}
+
+/// Enumeration-resistant acceptance receipt for enterprise-email routing.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnterpriseSsoRoutingAccepted {
+    /// Always true when a route ticket—matched or unmatched—was issued.
+    pub accepted: bool,
+}
+
 /// 角色。封闭 enum，恰两个取值。
 ///
 /// 取值来自上游真实迁移库里的 `role` enum（`('admin','user')`），不是猜的。新增角色是
@@ -463,5 +580,77 @@ mod tests {
         assert_eq!(Role::User.as_str(), "user");
         assert_eq!(serde_json::to_string(&Role::Admin).unwrap(), "\"admin\"");
         assert_eq!(serde_json::to_string(&Role::User).unwrap(), "\"user\"");
+    }
+
+    #[test]
+    fn anonymous_auth_contract_is_closed_canonical_and_contains_no_enterprise_identity() {
+        let capabilities = AuthenticationCapabilities {
+            mode: ApplicationRuntimeMode::Rust,
+            durable_history: true,
+            auth_providers: vec![
+                AuthProviderId::Google,
+                AuthProviderId::Microsoft,
+                AuthProviderId::Okta,
+            ],
+            sso_configured: true,
+        };
+        assert!(capabilities.is_canonical());
+        assert_eq!(
+            serde_json::to_string(&capabilities).unwrap(),
+            r#"{"mode":"rust","durableHistory":true,"authProviders":["google","microsoft","okta"],"ssoConfigured":true}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<AuthenticationCapabilities>(
+                r#"{"mode":"rust","durableHistory":true,"authProviders":["google","microsoft","okta"],"ssoConfigured":true}"#
+            )
+            .unwrap(),
+            capabilities
+        );
+
+        for noncanonical in [
+            vec![AuthProviderId::Google, AuthProviderId::Google],
+            vec![AuthProviderId::Okta, AuthProviderId::Google],
+        ] {
+            assert!(
+                !AuthenticationCapabilities {
+                    mode: ApplicationRuntimeMode::Rust,
+                    durable_history: true,
+                    auth_providers: noncanonical,
+                    sso_configured: false,
+                }
+                .is_canonical()
+            );
+        }
+        assert!(serde_json::from_str::<AuthenticationCapabilities>(
+            r#"{"mode":"rust","durableHistory":true,"authProviders":["acme-saml"],"ssoConfigured":true}"#
+        )
+        .is_err());
+        assert_eq!("google".parse(), Ok(AuthProviderId::Google));
+        assert_eq!(
+            "acme-saml".parse::<AuthProviderId>(),
+            Err(UnknownAuthProvider)
+        );
+    }
+
+    #[test]
+    fn sign_in_start_and_enterprise_route_receipts_have_exact_wire_shapes() {
+        assert_eq!(
+            serde_json::to_string(&AuthenticationStartResponse {
+                url: "https://idp.example/authorize?state=opaque".to_owned(),
+            })
+            .unwrap(),
+            r#"{"url":"https://idp.example/authorize?state=opaque"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&EnterpriseSsoStartRequest {
+                email: "person@example.com".to_owned(),
+            })
+            .unwrap(),
+            r#"{"email":"person@example.com"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&EnterpriseSsoRoutingAccepted { accepted: true }).unwrap(),
+            r#"{"accepted":true}"#
+        );
     }
 }

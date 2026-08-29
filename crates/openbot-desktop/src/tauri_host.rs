@@ -16,6 +16,7 @@ use openbot_contracts::components::{
 };
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::BotId;
+use openbot_contracts::people::CurrentUserResponse;
 use openbot_contracts::sandboxed::SaveSandboxedComponentRequest;
 use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme, UpdateUiPreferences};
@@ -151,6 +152,9 @@ impl DesktopTauriProtocol {
             Err(_) => return dependency_response(),
         };
         let path = request.uri().path().to_owned();
+        if path == "/api/me" {
+            return self.current_user(request, authority).await;
+        }
         if path == "/api/me/preferences" {
             return self.preferences(request, authority).await;
         }
@@ -244,6 +248,25 @@ impl DesktopTauriProtocol {
             .read()
             .map(|windows| windows.get(label).cloned())
             .map_err(|_| TauriHostError::AuthorityUnavailable)
+    }
+
+    async fn current_user(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::GetCurrentUser)
+            .await
+        {
+            Ok(AppReply::CurrentUser(user)) => json_response(&CurrentUserResponse { user }),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
     }
 
     async fn preferences(
@@ -973,10 +996,10 @@ mod tests {
     use openbot_application::{
         ChannelReader, ComponentAdministration, ComponentAdministrationError,
         ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentRuntimeScope,
-        OpenBotApplication, PortError, SandboxedComponentAdministration,
-        SandboxedComponentAdministrationError, SandboxedComponentDraft, ToolApprovalAdministration,
-        ToolApprovalAdministrationError, UiPreferenceAdministration,
-        UiPreferenceAdministrationError,
+        OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
+        SandboxedComponentAdministration, SandboxedComponentAdministrationError,
+        SandboxedComponentDraft, ToolApprovalAdministration, ToolApprovalAdministrationError,
+        UiPreferenceAdministration, UiPreferenceAdministrationError,
     };
     use openbot_contracts::auth::{AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
@@ -989,6 +1012,7 @@ mod tests {
         PendingComponentHumanDecisions, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
+    use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
     use openbot_contracts::sandboxed::{
         PublishedSandboxedComponent, PublishedSandboxedComponents, SandboxedComponentDeleted,
         SandboxedComponentRecord, SandboxedComponentResponse, SandboxedComponents,
@@ -1011,6 +1035,46 @@ mod tests {
             _cursor: Option<ChannelCursor>,
         ) -> Result<Vec<ChannelSummary>, PortError> {
             Ok(Vec::new())
+        }
+    }
+
+    struct FakePeople;
+
+    #[async_trait]
+    impl PeopleAdministration for FakePeople {
+        async fn current_user(&self, actor: &ActorId) -> Result<CurrentUser, PeoplePortError> {
+            Ok(CurrentUser {
+                id: actor.clone(),
+                email: "desktop@example.test".to_owned(),
+                name: Some("Desktop User".to_owned()),
+                image: None,
+                role: Role::Admin,
+            })
+        }
+
+        async fn list_people(
+            &self,
+            _request: PeoplePageRequest,
+        ) -> Result<PeoplePage, PeoplePortError> {
+            Err(PeoplePortError::Unavailable)
+        }
+
+        async fn change_role(
+            &self,
+            _actor: &ActorId,
+            _subject: &ActorId,
+            _desired: Role,
+        ) -> Result<Person, PeoplePortError> {
+            Err(PeoplePortError::Unavailable)
+        }
+
+        async fn change_access(
+            &self,
+            _actor: &ActorId,
+            _subject: &ActorId,
+            _revoked: bool,
+        ) -> Result<Person, PeoplePortError> {
+            Err(PeoplePortError::Unavailable)
         }
     }
 
@@ -1289,6 +1353,7 @@ mod tests {
         })));
         let application = Arc::new(
             OpenBotApplication::new(EmptyChannels)
+                .with_people(FakePeople)
                 .with_ui_preferences(preferences)
                 .with_component_administration(Arc::new(FakeComponents))
                 .with_sandboxed_component_administration(Arc::new(FakeSandboxed))
@@ -1345,6 +1410,20 @@ mod tests {
                 .unwrap()
                 .contains("lang=\"zh-CN\" class=\"dark\"")
         );
+
+        let current_user = protocol
+            .handle(
+                "main",
+                Request::builder().uri("/api/me").body(Vec::new()).unwrap(),
+            )
+            .await;
+        assert_eq!(current_user.status(), StatusCode::OK);
+        assert_eq!(current_user.headers()[CACHE_CONTROL], "no-store");
+        let current_user =
+            serde_json::from_slice::<CurrentUserResponse>(current_user.body()).unwrap();
+        assert_eq!(current_user.user.id.as_str(), "actor");
+        assert_eq!(current_user.user.email, "desktop@example.test");
+        assert_eq!(current_user.user.role, Role::Admin);
 
         let update = protocol
             .handle(

@@ -3,7 +3,6 @@
 use leptos::prelude::*;
 use leptos_meta::{Title, provide_meta_context};
 use leptos_router::components::{Route, Router, Routes};
-use leptos_router::hooks::use_location;
 use leptos_router::path;
 
 use crate::features::admin::{
@@ -21,7 +20,7 @@ use crate::features::settings::{
 use crate::i18n::{I18nContextProvider, t, t_string, use_i18n};
 use crate::preferences::provide_ui_preferences;
 use crate::primitives::{Sidebar, SidebarProvider, SidebarTrigger};
-use crate::shell::{AppSidebar, HomePage};
+use crate::shell::{AppSidebar, AuthenticatedBoundary, HomePage};
 
 /// Single CSR application root used by both supported hosts.
 #[component]
@@ -39,22 +38,17 @@ pub fn App() -> impl IntoView {
 
 #[component]
 fn AppShell() -> impl IntoView {
-    let i18n = use_i18n();
-    provide_ui_preferences(i18n);
-    let location = use_location();
     view! {
-        <Show
-            when=move || location.pathname.get() == "/sign"
-            fallback=AuthenticatedShell
-        >
-            <SignedOutPage />
-        </Show>
+        <AuthenticatedBoundary>
+            <AuthenticatedShell />
+        </AuthenticatedBoundary>
     }
 }
 
 #[component]
 fn AuthenticatedShell() -> impl IntoView {
     let i18n = use_i18n();
+    provide_ui_preferences(i18n);
     let collapsed = RwSignal::new(false);
     view! {
         <a class="ob-skip-link" href="#main-content">
@@ -82,21 +76,6 @@ fn AuthenticatedShell() -> impl IntoView {
                 </div>
             </div>
         </SidebarProvider>
-    }
-}
-
-#[component]
-fn SignedOutPage() -> impl IntoView {
-    let i18n = use_i18n();
-    view! {
-        <main id="main-content" class="ob-auth-state" tabindex="-1">
-            <section class="ob-empty-state" aria-labelledby="signed-out-title">
-                <h1 id="signed-out-title" class="ob-page-title">
-                    {move || t!(i18n, auth.signed_out_title)}
-                </h1>
-                <p class="ob-empty-body">{move || t!(i18n, auth.signed_out_body)}</p>
-            </section>
-        </main>
     }
 }
 

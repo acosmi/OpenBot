@@ -29,7 +29,10 @@ use openbot_application::{
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
 use openbot_contracts::audit::{AuditEventView, AuditPage};
-use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
+use openbot_contracts::auth::{
+    ApplicationRuntimeMode, AuthContext, AuthGeneration, AuthProviderId,
+    AuthenticationCapabilities, EnterpriseSsoRoutingAccepted, Role,
+};
 use openbot_contracts::command::{
     AppEvent, ChannelActivityEvent, ChannelDetail, ChannelSummary, ThreadConversationSnapshot,
     ThreadForegroundRunState, ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole,
@@ -109,6 +112,7 @@ const FIXTURE_PG_THREAD: &str = "fixture-pg-approval-thread";
 const FIXTURE_PG_RUN: &str = "fixture-pg-approval-run";
 const FIXTURE_PG_CALL: &str = "fixture-pg-approval-call";
 const FIXTURE_APPROVAL_DATABASE_URL: &str = "OPENBOT_UI_APPROVAL_DATABASE_URL";
+const FIXTURE_AUTH_JOURNEY_ENV: &str = "OPENBOT_UI_AUTH_FIXTURE";
 const FIXTURE_APPROVAL_DATABASE_PREFIX: &str = "openbot_ui_approval_fixture_";
 const FIXTURE_APPROVAL_AUDIT_KEY: &[u8] = b"fixture-approval-audit-key-at-least-32";
 const FIXTURE_SESSION_ID: &str = "fixture-pg-session";
@@ -116,6 +120,7 @@ const FIXTURE_SESSION_TOKEN: &str = "fixture-pg-session-token-with-enough-entrop
 const FIXTURE_SESSION_HASH_KEY: &[u8] = b"fixture-session-hash-key-at-least-32";
 const FIXTURE_CONFIGURED_ADMIN_EMAIL: &str = "configured-admin@example.test";
 const FIXTURE_SSO_PUBLIC_URL: &str = "https://fixture.openbot.test";
+const FIXTURE_SSO_ROUTE_COOKIE: &str = "openbot_sso_route=fixture-auth-route";
 const POSTGRES_APPROVAL_SEED_SQL: &str = "INSERT INTO public.users(id,email,auth_generation) VALUES
        ('fixture-actor','fixture-actor@example.test',1);
      INSERT INTO public.users(id,email,name,auth_generation) VALUES
@@ -153,6 +158,29 @@ const POSTGRES_APPROVAL_SEED_SQL: &str = "INSERT INTO public.users(id,email,auth
        'fixture-pg-approval-thread','fixture-runtime',1,clock_timestamp(),
        clock_timestamp()+interval '10 minutes',clock_timestamp()
      );";
+
+#[derive(Clone, Default)]
+struct AuthJourneyProbe {
+    me_requests: Arc<AtomicU64>,
+    capability_requests: Arc<AtomicU64>,
+    oidc_start_requests: Arc<AtomicU64>,
+    enterprise_start_requests: Arc<AtomicU64>,
+    enterprise_continue_requests: Arc<AtomicU64>,
+    protected_requests: Arc<AtomicU64>,
+}
+
+impl AuthJourneyProbe {
+    fn proof(&self) -> serde_json::Value {
+        serde_json::json!({
+            "meRequests": self.me_requests.load(Ordering::SeqCst),
+            "capabilityRequests": self.capability_requests.load(Ordering::SeqCst),
+            "oidcStartRequests": self.oidc_start_requests.load(Ordering::SeqCst),
+            "enterpriseStartRequests": self.enterprise_start_requests.load(Ordering::SeqCst),
+            "enterpriseContinueRequests": self.enterprise_continue_requests.load(Ordering::SeqCst),
+            "protectedRequests": self.protected_requests.load(Ordering::SeqCst),
+        })
+    }
+}
 
 #[derive(Clone)]
 struct FixtureChannels {
@@ -3086,9 +3114,143 @@ async fn fixture_session_start() -> Result<axum::response::Response, axum::http:
     Ok(response)
 }
 
+fn auth_journey_enabled() -> Result<bool, Box<dyn Error>> {
+    match std::env::var(FIXTURE_AUTH_JOURNEY_ENV) {
+        Ok(value) if value == "1" => Ok(true),
+        Ok(_) => Err(format!("{FIXTURE_AUTH_JOURNEY_ENV} must be exactly 1 when present").into()),
+        Err(std::env::VarError::NotPresent) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn auth_journey_middleware(
+    axum::extract::State(probe): axum::extract::State<AuthJourneyProbe>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::header::{CACHE_CONTROL, COOKIE, SET_COOKIE};
+    use axum::http::{HeaderValue, Method, StatusCode};
+
+    let method = request.method().clone();
+    let path = request.uri().path();
+    if path == "/api/me" {
+        probe.me_requests.fetch_add(1, Ordering::SeqCst);
+        return next.run(request).await;
+    }
+    if method == Method::GET && path == "/api/capabilities" {
+        probe.capability_requests.fetch_add(1, Ordering::SeqCst);
+        let mut response = axum::Json(AuthenticationCapabilities {
+            mode: ApplicationRuntimeMode::Rust,
+            durable_history: true,
+            auth_providers: vec![
+                AuthProviderId::Google,
+                AuthProviderId::Microsoft,
+                AuthProviderId::Okta,
+            ],
+            sso_configured: true,
+        })
+        .into_response();
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return response;
+    }
+    if method == Method::POST
+        && matches!(
+            path,
+            "/api/auth/oidc/google/start"
+                | "/api/auth/oidc/microsoft/start"
+                | "/api/auth/oidc/okta/start"
+        )
+    {
+        probe.oidc_start_requests.fetch_add(1, Ordering::SeqCst);
+        let mut response = (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({"code":"authentication_unavailable"})),
+        )
+            .into_response();
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return response;
+    }
+    if method == Method::POST && path == "/api/auth/sso/start" {
+        probe
+            .enterprise_start_requests
+            .fetch_add(1, Ordering::SeqCst);
+        let mut response = (
+            StatusCode::ACCEPTED,
+            axum::Json(EnterpriseSsoRoutingAccepted { accepted: true }),
+        )
+            .into_response();
+        response.headers_mut().insert(
+            SET_COOKIE,
+            HeaderValue::from_static(
+                "openbot_sso_route=fixture-auth-route; Path=/; HttpOnly; SameSite=Lax",
+            ),
+        );
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return response;
+    }
+    if method == Method::GET && path == "/api/auth/sso/continue" {
+        probe
+            .enterprise_continue_requests
+            .fetch_add(1, Ordering::SeqCst);
+        let has_ticket = request
+            .headers()
+            .get(COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(';')
+                    .map(str::trim)
+                    .any(|cookie| cookie == FIXTURE_SSO_ROUTE_COOKIE)
+            });
+        if !has_ticket {
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+        let mut response =
+            axum::response::Redirect::to("/sign?fixture-sso=continued").into_response();
+        response.headers_mut().insert(
+            SET_COOKIE,
+            HeaderValue::from_static(
+                "openbot_sso_route=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+            ),
+        );
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return response;
+    }
+    if is_auth_journey_protected_path(path) {
+        probe.protected_requests.fetch_add(1, Ordering::SeqCst);
+    }
+    next.run(request).await
+}
+
+fn is_auth_journey_protected_path(path: &str) -> bool {
+    [
+        "/api/channels",
+        "/api/agents",
+        "/api/route",
+        "/api/threads",
+        "/api/tool-approvals",
+        "/api/components",
+        "/api/sandboxed",
+        "/api/memories",
+        "/api/me/preferences",
+        "/api/admin",
+    ]
+    .iter()
+    .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let (dist, port) = arguments()?;
+    let auth_journey = auth_journey_enabled()?;
     let now = OffsetDateTime::now_utc();
     let generation = AuthGeneration::new(1);
     let tenant = TenantId::new(FIXTURE_TENANT);
@@ -3243,9 +3405,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         identity_provider_http,
         count_identity_provider_http,
     ));
+    if auth_journey {
+        let auth_probe = AuthJourneyProbe::default();
+        let proof_probe = auth_probe.clone();
+        router = router.route(
+            "/api/__fixture/auth-proof",
+            axum::routing::get(move || {
+                let probe = proof_probe.clone();
+                async move { axum::Json(probe.proof()) }
+            }),
+        );
+        router = router.layer(axum::middleware::from_fn_with_state(
+            auth_probe,
+            auth_journey_middleware,
+        ));
+    }
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     println!("OPENBOT_UI_APPROVAL_MODE={approval_mode}");
     println!("OPENBOT_UI_AUTH_MODE={auth_mode}");
+    println!("OPENBOT_UI_AUTH_JOURNEY={auth_journey}");
     println!("OPENBOT_UI_FIXTURE_URL={origin}/approvals");
     axum::serve(listener, router).await?;
     Ok(())
@@ -3378,6 +3556,42 @@ mod approval_pg_tests {
             ),
         ] {
             assert_eq!(identity_provider_http_operation(&method, path), None);
+        }
+    }
+
+    #[test]
+    fn auth_journey_probe_counts_only_auth_and_protected_product_surfaces() {
+        let probe = AuthJourneyProbe::default();
+        probe.me_requests.store(2, Ordering::SeqCst);
+        probe.capability_requests.store(1, Ordering::SeqCst);
+        probe.protected_requests.store(3, Ordering::SeqCst);
+        assert_eq!(
+            probe.proof(),
+            serde_json::json!({
+                "meRequests":2,
+                "capabilityRequests":1,
+                "oidcStartRequests":0,
+                "enterpriseStartRequests":0,
+                "enterpriseContinueRequests":0,
+                "protectedRequests":3,
+            })
+        );
+        for protected in [
+            "/api/channels",
+            "/api/channels/channel-1",
+            "/api/agents",
+            "/api/me/preferences",
+            "/api/admin/status",
+        ] {
+            assert!(is_auth_journey_protected_path(protected), "{protected}");
+        }
+        for anonymous in [
+            "/api/me",
+            "/api/capabilities",
+            "/api/auth/sso/start",
+            "/api/__fixture/auth-proof",
+        ] {
+            assert!(!is_auth_journey_protected_path(anonymous), "{anonymous}");
         }
     }
 

@@ -254,6 +254,77 @@ textarea:focus-visible,
   padding: calc(var(--spacing) * 6);
 }
 
+.ob-sign-card {
+  display: grid;
+  width: min(100%, calc(var(--spacing) * 96));
+  gap: calc(var(--spacing) * 6);
+  padding: calc(var(--spacing) * 8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg-popover);
+  box-shadow: var(--shadow-popover);
+}
+
+.ob-sign-header,
+.ob-sign-actions,
+.ob-sign-enterprise {
+  display: grid;
+  gap: calc(var(--spacing) * 2);
+}
+
+.ob-sign-header {
+  text-align: center;
+}
+
+.ob-sign-provider .ob-button,
+.ob-sign-enterprise > .ob-button,
+.ob-sign-actions > .ob-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.ob-sign-divider {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.ob-sign-divider > :first-child,
+.ob-sign-divider > :last-child {
+  height: 1px;
+  background: var(--border);
+}
+
+.ob-sign-empty {
+  display: grid;
+  gap: var(--spacing);
+  text-align: center;
+}
+
+.ob-sign-empty h2,
+.ob-sign-empty p,
+.ob-sign-error {
+  margin: 0;
+}
+
+.ob-sign-empty h2 {
+  font-size: var(--text-base);
+}
+
+.ob-sign-empty p {
+  color: var(--fg-secondary);
+  font-size: var(--text-sm);
+}
+
+.ob-sign-error {
+  color: var(--danger);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
 .ob-page {
   width: min(100%, var(--size-content-max));
   margin-inline: auto;

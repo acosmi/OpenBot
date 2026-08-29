@@ -61,7 +61,8 @@ entries:
     owner: openbot-ui
     test_id: T-ROUTE-0002
     migration_rule: "preserve: beforeLoad 守卫保留；CopilotProvider 由 openbot-agent 的 AG-UI 客户端会话替代，仍必须挂在登录边界之内"
-    status: todo
+    status: done
+    done_evidence: "Batch64 AuthenticatedBoundary只把/api/me的401解释为未登录；403/404/网络/坏响应/503均停在可重试失败页。release浏览器从隔离hostname访问/channel/new与/approvals均replace到/sign，计数差值与最终干净fixture都证明guard前protected API增量0；PG17.11 keyed-hash session经仅testkit bootstrap后真实mount /approvals，已登录硬进/sign在capabilities计数不增加时直接回/。Desktop custom protocol新增同一GetCurrentUser typed投影，bound/unbound分别200/401；UI155、Desktop80、Server213与WASM/Clippy全绿。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed.tsx 得 createFileRoute(\"/_authed\")；同文件 beforeLoad 内 `if (!user) throw redirect({ to: \"/sign\" })`"
     notes: "模板 n/a（layout，非页面）。journey：未登录访问任何受保护页面 -> 重定向 /sign；已登录则建立运行时会话上下文。权限：这是登录边界本身；上游注释写明 provider 刻意挂在边界之内，避免未登录访客开出一个 run。"
   - id: app-shell-layout
@@ -369,7 +370,8 @@ entries:
     owner: openbot-ui
     test_id: T-ROUTE-0031
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch64共享AuthenticationCapabilities把provider闭成google/microsoft/okta、严格排序去重且类型构造性装不下动态domain/provider；SignIn首屏等完整capabilities后才画控件。release浏览器实得三按钮+企业邮箱；Google真实POST落fixture 503后留在/sign并显示点名Google的本地化alert；邮箱Enter得到202 route ticket、full-page continue后回/sign?fixture-sso=continued，最终计数capabilities4/OIDC2/enterprise start1/continue1/protected0、运行日志0。PG keyed session已登录访问/sign直接回/；1280机械overflow0且600/1280 main1/h1 1/nav0/3 provider、duplicate/nested0，最终600截图无横向裁切。T-UI-0039官方品牌SVG仍因Okta官方press kit只有PNG而独立todo，不由route冒充关闭。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/sign.tsx 得 createFileRoute(\"/sign\")；同文件 beforeLoad 内 `throw redirect({ to: \"/\" })`、useQuery(authProvidersQueryOptions())、signInWithEmailDomain(email)"
     notes: "模板 Focus（无 sidebar，居中卡片，按钮纵排）。journey：点 Google/Microsoft/Okta 按钮，或输入企业邮箱按 email-domain 路由到该公司自建 IdP（v3 §3.1 条 1）。权限：唯一在登录边界之外的页面；已登录访问时 redirect 到 /。"
 

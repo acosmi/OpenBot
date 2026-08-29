@@ -1,5 +1,6 @@
 //! Tokenized textbox primitive with Field-owned accessibility wiring.
 
+use leptos::ev::KeyboardEvent;
 use leptos::prelude::*;
 
 use super::field::field_context;
@@ -68,6 +69,9 @@ pub fn Input(
     /// Deterministic gallery state.
     #[prop(optional)]
     preview_state: Option<InputPreviewState>,
+    /// Optional Enter activation owned by the surrounding use case; IME composition never submits.
+    #[prop(optional)]
+    on_submit: Option<UnsyncCallback<()>>,
 ) -> impl IntoView {
     let field = field_context();
     let control_id = resolve_control_id(field.as_ref(), id);
@@ -79,6 +83,8 @@ pub fn Input(
     let field_disabled = field.clone();
     let described_by = field.clone();
     let aria_label_value = aria_label;
+    let composing = StoredValue::new(false);
+    let submit = StoredValue::new(on_submit);
     let is_invalid = Signal::derive(move || {
         invalid.get().unwrap_or(false)
             || field_invalid
@@ -98,6 +104,7 @@ pub fn Input(
             class="ob-input"
             type=input_type.as_str()
             name=name
+            autocomplete=(input_type == InputType::Email).then_some("email")
             placeholder=move || {
                 let value = placeholder.get();
                 (!value.is_empty()).then_some(value)
@@ -116,6 +123,18 @@ pub fn Input(
                 is_disabled.get(),
             )
             on:input=move |event| value.set(event_target_value(&event))
+            on:compositionstart=move |_| composing.set_value(true)
+            on:compositionend=move |_| composing.set_value(false)
+            on:keydown=move |event: KeyboardEvent| {
+                if event.key() == "Enter"
+                    && !composing.get_value()
+                    && !is_disabled.get()
+                    && let Some(callback) = submit.get_value()
+                {
+                    event.prevent_default();
+                    callback.run(());
+                }
+            }
         />
     }
 }
@@ -183,6 +202,7 @@ mod tests {
     #[test]
     fn input_type_and_state_tokens_are_closed() {
         assert_eq!(InputType::Password.as_str(), "password");
+        assert_eq!(InputType::Email.as_str(), "email");
         assert_eq!(input_state_tokens(None, false, false), None);
         assert_eq!(
             input_state_tokens(Some(InputPreviewState::Focus), true, true),
