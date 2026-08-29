@@ -1,7 +1,15 @@
 # Original release archive
 
-This directory preserves the publicly distributed Grok Bot 0.18.0 installers
-used by the reconstruction. The large binaries are tracked with Git LFS.
+This directory records the identity (size, SHA-256, original URL) of the publicly
+distributed Grok Bot 0.18.0 installers used by the reconstruction.
+
+**The installer binaries themselves are not stored in this repository** (OpenBot
+first source R116, 2026-08-28). The Git LFS pointers were removed because the
+objects had never been pushed to the LFS store (every default `git clone` failed
+on the smudge filter), and because what this repository references is the
+reconstruction, not the proprietary installer. `artifacts.json` and `SHA256SUMS`
+remain the machine-readable identity record; fetch the originals from the URLs
+below only if a forensic re-check is ever needed.
 
 ## Artifacts
 
@@ -17,10 +25,16 @@ toolchain.
 ## Fetching and verification
 
 ```sh
-git lfs install
-git lfs pull
-(cd research-archives/original/0.18.0 && shasum -a 256 -c SHA256SUMS)
+cd research-archives/original/0.18.0
+curl -L -o macos-arm64/Grok_Bot_0.18.0.dmg \
+  https://downloads.cursor.com/grokbot/stable/darwin-arm64/0.18.0/Grok_Bot_0.18.0.dmg
+curl -L -o windows-x64/Grok_Bot_0.18.0_Setup.exe \
+  https://downloads.cursor.com/grokbot/stable/win32-x64/0.18.0/Grok_Bot_0.18.0_Setup.exe
+shasum -a 256 -c SHA256SUMS
 ```
+
+The downloaded files are ignored by Git (`.gitignore` in this directory); do not
+re-add them, with or without LFS.
 
 `artifacts.json` is the machine-readable source, size, and digest inventory.
 These files are preservation inputs, not reconstructed build outputs.
