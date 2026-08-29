@@ -60,8 +60,8 @@ use openbot_contracts::sandboxed::{
     SandboxedComponents,
 };
 use openbot_contracts::tool::{
-    PendingToolApproval, PendingToolApprovals, ToolApprovalClass, ToolApprovalDecision,
-    ToolApprovalEffect, ToolApprovalResolved,
+    PendingToolApproval, PendingToolApprovals, ToolApprovalActivityEvent, ToolApprovalClass,
+    ToolApprovalDecision, ToolApprovalEffect, ToolApprovalResolved,
 };
 use openbot_contracts::ui::{UiPreferences, UpdateUiPreferences};
 use openbot_domain::identity::session::{SessionState, TrustedOrigins, evaluate_session};
@@ -2017,6 +2017,15 @@ impl AuthResolver for FixtureAuthResolver {
 #[derive(Clone)]
 struct FixtureApprovals {
     pending: Arc<Mutex<Option<PendingToolApproval>>>,
+    subscribers: Arc<Mutex<Vec<tokio::sync::mpsc::Sender<AppEvent>>>>,
+    list_calls: Arc<AtomicU64>,
+    subscription_calls: Arc<AtomicU64>,
+}
+
+#[derive(Clone)]
+struct FixtureApprovalProbe {
+    list_calls: Arc<AtomicU64>,
+    subscription_calls: Arc<AtomicU64>,
 }
 
 #[derive(Default)]
@@ -2081,6 +2090,16 @@ impl FixtureApprovals {
                 requested_at: now,
                 expires_at: now + Duration::hours(1),
             }))),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            list_calls: Arc::new(AtomicU64::new(0)),
+            subscription_calls: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn probe(&self) -> FixtureApprovalProbe {
+        FixtureApprovalProbe {
+            list_calls: Arc::clone(&self.list_calls),
+            subscription_calls: Arc::clone(&self.subscription_calls),
         }
     }
 }
@@ -2091,6 +2110,7 @@ impl ToolApprovalAdministration for FixtureApprovals {
         &self,
         _auth: &AuthContext,
     ) -> Result<PendingToolApprovals, ToolApprovalAdministrationError> {
+        self.list_calls.fetch_add(1, Ordering::SeqCst);
         Ok(PendingToolApprovals {
             approvals: self
                 .pending
@@ -2108,21 +2128,58 @@ impl ToolApprovalAdministration for FixtureApprovals {
         approval_id: &str,
         decision: ToolApprovalDecision,
     ) -> Result<ToolApprovalResolved, ToolApprovalAdministrationError> {
-        let mut pending = self
-            .pending
+        let subscribers = self
+            .subscribers
             .lock()
-            .map_err(|_| ToolApprovalAdministrationError::Unavailable)?;
-        let Some(request) = pending.as_ref() else {
-            return Err(ToolApprovalAdministrationError::NotVisible);
-        };
-        if request.approval_id != approval_id {
-            return Err(ToolApprovalAdministrationError::NotVisible);
+            .map_err(|_| ToolApprovalAdministrationError::Unavailable)?
+            .clone();
+        {
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| ToolApprovalAdministrationError::Unavailable)?;
+            let Some(request) = pending.as_ref() else {
+                return Err(ToolApprovalAdministrationError::NotVisible);
+            };
+            if request.approval_id != approval_id {
+                return Err(ToolApprovalAdministrationError::NotVisible);
+            }
+            *pending = None;
         }
-        *pending = None;
+        for subscriber in subscribers {
+            _ = subscriber
+                .send(AppEvent::ToolApprovalActivity(ToolApprovalActivityEvent {
+                    pending_count: 0,
+                }))
+                .await;
+        }
         Ok(ToolApprovalResolved {
             approval_id: approval_id.to_owned(),
             decision,
         })
+    }
+
+    async fn subscribe_activity(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<AppEventStream, ToolApprovalAdministrationError> {
+        let pending_count = self
+            .pending
+            .lock()
+            .map_err(|_| ToolApprovalAdministrationError::Unavailable)
+            .map(|pending| u32::from(pending.is_some()))?;
+        let (sender, receiver) = tokio::sync::mpsc::channel(2);
+        sender
+            .try_send(AppEvent::ToolApprovalActivity(ToolApprovalActivityEvent {
+                pending_count,
+            }))
+            .map_err(|_| ToolApprovalAdministrationError::Unavailable)?;
+        self.subscribers
+            .lock()
+            .map_err(|_| ToolApprovalAdministrationError::Unavailable)?
+            .push(sender);
+        self.subscription_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::pin(FixtureEventStream { receiver }))
     }
 }
 
@@ -2162,6 +2219,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let connections = FixtureConnections::new(actor, port, now);
     let components = FixtureComponents::new(now, threads.clone());
     let sandboxed = FixtureSandboxed::new(now);
+    let approvals = FixtureApprovals::new(now);
+    let approval_probe = approvals.probe();
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
@@ -2172,7 +2231,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_threads(threads)
             .with_memory(memory)
             .with_mcp_connections(Arc::new(connections))
-            .with_tool_approvals(Arc::new(FixtureApprovals::new(now)))
+            .with_tool_approvals(Arc::new(approvals))
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );
     let origin = format!("http://127.0.0.1:{port}");
@@ -2182,7 +2241,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
             TrustedOrigins::from_configured([origin.as_str()])?,
         ))
         .with_static_app(StaticApp::open(dist)?)
-        .into_router();
+        .into_router()
+        .route(
+            "/__fixture/approval-probe",
+            axum::routing::get(move || {
+                let probe = approval_probe.clone();
+                async move {
+                    axum::Json(serde_json::json!({
+                        "listCalls": probe.list_calls.load(Ordering::SeqCst),
+                        "subscriptionCalls": probe.subscription_calls.load(Ordering::SeqCst),
+                    }))
+                }
+            }),
+        );
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     println!("OPENBOT_UI_FIXTURE_URL={origin}/approvals");
     axum::serve(listener, router).await?;

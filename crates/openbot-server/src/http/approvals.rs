@@ -1,18 +1,26 @@
 //! Human tool-approval HTTP framing; all binding/decision rules stay behind typed ApplicationService.
 
+use core::future::poll_fn;
+
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::extract::{Path, State};
 use axum::http::header::CACHE_CONTROL;
 use axum::http::{HeaderMap, HeaderValue};
-use openbot_contracts::command::{AppCommand, AppReply};
+use axum::response::Response;
+use openbot_contracts::command::{AppCommand, AppEvent, AppReply, SubscriptionRequest};
 use openbot_contracts::error::AppError;
 use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalDecision, ToolApprovalResolved};
 use serde::Deserialize;
 
-use crate::auth::{Authenticated, SensitiveAuthenticated};
+use crate::auth::{Authenticated, OriginAuthenticated, SensitiveAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
+
+/// Closed read-only approval activity protocol.
+pub const TOOL_APPROVAL_ACTIVITY_PROTOCOL: &str = "openbot.tool-approvals.v1";
+const TOOL_APPROVAL_INPUT_LIMIT: usize = 1024;
 
 /// `GET /api/tool-approvals`; current actor only, no-store.
 pub async fn pending_get(
@@ -28,6 +36,107 @@ pub async fn pending_get(
         _ => return Err(application_contract_error()),
     };
     Ok((no_store(), Json(approvals)))
+}
+
+/// `GET /api/tool-approvals/events`; actor-scoped, same-origin, read-only WebSocket.
+pub async fn events(
+    State(state): State<ServerState>,
+    OriginAuthenticated(auth): OriginAuthenticated,
+    ws: WebSocketUpgrade,
+) -> Result<Response, HttpError> {
+    if !ws
+        .requested_protocols()
+        .any(|protocol| protocol == TOOL_APPROVAL_ACTIVITY_PROTOCOL)
+    {
+        return Err(AppError::MalformedPayload {
+            field: "websocket_protocol",
+        }
+        .into());
+    }
+    let stream = state
+        .application()
+        .subscribe(auth, SubscriptionRequest::ToolApprovalActivity)
+        .await?;
+    Ok(ws
+        .protocols([TOOL_APPROVAL_ACTIVITY_PROTOCOL])
+        .max_message_size(TOOL_APPROVAL_INPUT_LIMIT)
+        .max_frame_size(TOOL_APPROVAL_INPUT_LIMIT)
+        .on_failed_upgrade(|error| {
+            tracing::debug!(error = %error, "tool approval websocket upgrade failed");
+        })
+        .on_upgrade(move |socket| drive_activity_socket(socket, stream)))
+}
+
+async fn drive_activity_socket(
+    mut socket: WebSocket,
+    mut stream: openbot_application::AppEventStream,
+) {
+    loop {
+        tokio::select! {
+            event = poll_fn(|cx| stream.as_mut().poll_next(cx)) => {
+                let Some(event) = event else {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::NORMAL,
+                        reason: "stream_complete".into(),
+                    }))).await;
+                    return;
+                };
+                let (text, terminal) = match event {
+                    AppEvent::ToolApprovalActivity(event) => match serde_json::to_string(&event) {
+                        Ok(text) => (text, false),
+                        Err(error) => {
+                            tracing::error!(error = %error, "typed tool approval activity encoding failed");
+                            let _ = socket.send(Message::Close(Some(CloseFrame {
+                                code: close_code::ERROR,
+                                reason: "event_encoding_failed".into(),
+                            }))).await;
+                            return;
+                        }
+                    },
+                    AppEvent::ToolApprovalStreamError { code } => {
+                        (serde_json::json!({"error":{"code":code}}).to_string(), true)
+                    }
+                    AppEvent::Heartbeat { .. }
+                    | AppEvent::ThreadRunEvent(_)
+                    | AppEvent::ThreadStreamError { .. }
+                    | AppEvent::ChannelActivity(_)
+                    | AppEvent::ChannelStreamError { .. } => {
+                        tracing::error!("approval subscription emitted non-approval event");
+                        let _ = socket.send(Message::Close(Some(CloseFrame {
+                            code: close_code::ERROR,
+                            reason: "application_contract_failed".into(),
+                        }))).await;
+                        return;
+                    }
+                };
+                if socket.send(Message::Text(text.into())).await.is_err() {
+                    return;
+                }
+                if terminal {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::ERROR,
+                        reason: "approval_stream_failed".into(),
+                    }))).await;
+                    return;
+                }
+            }
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(Message::Close(_))) | None => return,
+                Some(Ok(Message::Text(_) | Message::Binary(_))) => {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::POLICY,
+                        reason: "tool_approval_activity_read_only".into(),
+                    }))).await;
+                    return;
+                }
+                Some(Err(error)) => {
+                    tracing::debug!(error = %error, "tool approval websocket input failed");
+                    return;
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,12 +207,15 @@ mod tests {
     use http::{Method, Request, StatusCode};
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
-        ApplicationService, ChannelReader, OpenBotApplication, PortError,
+        AppEventStream, ApplicationService, ChannelReader, OpenBotApplication, PortError,
         ToolApprovalAdministration, ToolApprovalAdministrationError,
     };
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
+    use openbot_contracts::command::AppEvent;
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ToolCallId};
-    use openbot_contracts::tool::{PendingToolApproval, ToolApprovalClass, ToolApprovalEffect};
+    use openbot_contracts::tool::{
+        PendingToolApproval, ToolApprovalActivityEvent, ToolApprovalClass, ToolApprovalEffect,
+    };
     use openbot_domain::identity::session::{SessionState, TrustedOrigins, evaluate_session};
     use openbot_infra::auth::config::default_session_lifetime;
     use std::sync::{Arc, Mutex};
@@ -131,11 +243,22 @@ mod tests {
     enum Call {
         List(ActorId),
         Decide(ActorId, String, ToolApprovalDecision),
+        Subscribe(ActorId),
     }
 
     #[derive(Clone, Default)]
     struct FakeApprovals {
         calls: Arc<Mutex<Vec<Call>>>,
+        events: Arc<Vec<AppEvent>>,
+    }
+
+    impl FakeApprovals {
+        fn with_events(events: Vec<AppEvent>) -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                events: Arc::new(events),
+            }
+        }
     }
 
     #[async_trait]
@@ -182,6 +305,22 @@ mod tests {
                 approval_id: approval_id.to_owned(),
                 decision,
             })
+        }
+
+        async fn subscribe_activity(
+            &self,
+            auth: &AuthContext,
+        ) -> Result<AppEventStream, ToolApprovalAdministrationError> {
+            use futures_util::StreamExt as _;
+
+            self.calls
+                .lock()
+                .unwrap()
+                .push(Call::Subscribe(auth.actor().clone()));
+            Ok(Box::pin(
+                futures_util::stream::iter(self.events.as_ref().clone())
+                    .chain(futures_util::stream::pending()),
+            ))
         }
     }
 
@@ -303,5 +442,163 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn approval_activity_websocket_is_actor_scoped_typed_and_read_only() {
+        use futures_util::{SinkExt as _, StreamExt as _};
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let approvals = FakeApprovals::with_events(vec![AppEvent::ToolApprovalActivity(
+            ToolApprovalActivityEvent { pending_count: 1 },
+        )]);
+        let observed = approvals.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind approval websocket test");
+        let address = listener.local_addr().expect("approval test address");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router(approvals))
+                .with_graceful_shutdown(async move {
+                    let _ = stopped.await;
+                })
+                .await
+        });
+        let (mut socket, _) = approval_websocket(address, true, true)
+            .await
+            .expect("trusted approval websocket handshake");
+        let event = socket
+            .next()
+            .await
+            .expect("approval event")
+            .expect("valid approval event");
+        let ClientMessage::Text(text) = event else {
+            panic!("approval event must be text: {event:?}");
+        };
+        assert_eq!(
+            serde_json::from_str::<ToolApprovalActivityEvent>(text.as_str()).unwrap(),
+            ToolApprovalActivityEvent { pending_count: 1 }
+        );
+        assert_eq!(
+            observed.calls.lock().unwrap().as_slice(),
+            [Call::Subscribe(ActorId::new("actor"))]
+        );
+
+        socket
+            .send(ClientMessage::Text("forged client event".into()))
+            .await
+            .expect("send read-only violation");
+        let close = socket
+            .next()
+            .await
+            .expect("policy close")
+            .expect("valid policy close");
+        assert!(
+            matches!(close, ClientMessage::Close(Some(frame)) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy)
+        );
+        let _ = stop.send(());
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test]
+    async fn approval_activity_handshake_requires_trusted_origin_and_exact_protocol() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind approval websocket test");
+        let address = listener.local_addr().expect("approval test address");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router(FakeApprovals::default()))
+                .with_graceful_shutdown(async move {
+                    let _ = stopped.await;
+                })
+                .await
+        });
+        assert!(approval_websocket(address, false, true).await.is_err());
+        assert!(approval_websocket(address, true, false).await.is_err());
+        let _ = stop.send(());
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test]
+    async fn approval_activity_terminal_error_is_a_stable_frame_then_error_close() {
+        use futures_util::StreamExt as _;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let approvals = FakeApprovals::with_events(vec![AppEvent::ToolApprovalStreamError {
+            code: "not_visible".to_owned(),
+        }]);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind approval websocket test");
+        let address = listener.local_addr().expect("approval test address");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router(approvals))
+                .with_graceful_shutdown(async move {
+                    let _ = stopped.await;
+                })
+                .await
+        });
+        let (mut socket, _) = approval_websocket(address, true, true)
+            .await
+            .expect("trusted approval websocket handshake");
+        let event = socket
+            .next()
+            .await
+            .expect("approval error frame")
+            .expect("valid approval error frame");
+        let ClientMessage::Text(text) = event else {
+            panic!("approval error must be text: {event:?}");
+        };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(text.as_str()).unwrap(),
+            serde_json::json!({"error":{"code":"not_visible"}})
+        );
+        let close = socket
+            .next()
+            .await
+            .expect("approval error close")
+            .expect("valid approval error close");
+        assert!(
+            matches!(close, ClientMessage::Close(Some(frame)) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Error)
+        );
+        let _ = stop.send(());
+        server.await.expect("server task").expect("server result");
+    }
+
+    type ClientSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+    type ClientHandshake = Result<
+        (ClientSocket, http::Response<Option<Vec<u8>>>),
+        tokio_tungstenite::tungstenite::Error,
+    >;
+
+    async fn approval_websocket(
+        address: std::net::SocketAddr,
+        origin: bool,
+        protocol: bool,
+    ) -> ClientHandshake {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+
+        let mut request = format!("ws://{address}/api/tool-approvals/events")
+            .into_client_request()
+            .expect("approval websocket request");
+        if origin {
+            request.headers_mut().insert(
+                http::header::ORIGIN,
+                http::HeaderValue::from_static("https://app.example.test"),
+            );
+        }
+        if protocol {
+            request.headers_mut().insert(
+                http::header::SEC_WEBSOCKET_PROTOCOL,
+                http::HeaderValue::from_static(TOOL_APPROVAL_ACTIVITY_PROTOCOL),
+            );
+        }
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("connect approval websocket test");
+        tokio_tungstenite::client_async(request, stream).await
     }
 }

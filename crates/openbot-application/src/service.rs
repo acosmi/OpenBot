@@ -165,6 +165,7 @@ pub const fn subscription_kind(request: &SubscriptionRequest) -> &'static str {
         SubscriptionRequest::Health => "health",
         SubscriptionRequest::ThreadEvents { .. } => "thread_events",
         SubscriptionRequest::ChannelActivity => "channel_activity",
+        SubscriptionRequest::ToolApprovalActivity => "tool_approval_activity",
     }
 }
 
@@ -444,6 +445,10 @@ mod tests {
         assert_eq!(
             subscription_kind(&SubscriptionRequest::ChannelActivity),
             "channel_activity"
+        );
+        assert_eq!(
+            subscription_kind(&SubscriptionRequest::ToolApprovalActivity),
+            "tool_approval_activity"
         );
     }
 

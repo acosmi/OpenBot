@@ -6,13 +6,16 @@ use std::time::Duration as StdDuration;
 use async_trait::async_trait;
 use deadpool_postgres::Pool;
 use openbot_application::{
-    ToolApprovalAdministration, ToolApprovalAdministrationError, ToolApprovalRequest, ToolPortError,
+    AppEventStream, ToolApprovalAdministration, ToolApprovalAdministrationError,
+    ToolApprovalRequest, ToolPortError,
 };
 use openbot_contracts::auth::AuthContext;
+use openbot_contracts::command::AppEvent;
 use openbot_contracts::ids::{ActorId, BotId, RunId, ToolCallId};
 use openbot_contracts::tool::{
-    PendingToolApproval, PendingToolApprovals, ToolApprovalClass, ToolApprovalDecision,
-    ToolApprovalEffect, ToolApprovalResolved,
+    MAX_PENDING_TOOL_APPROVALS, PendingToolApproval, PendingToolApprovals,
+    ToolApprovalActivityEvent, ToolApprovalClass, ToolApprovalDecision, ToolApprovalEffect,
+    ToolApprovalResolved,
 };
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
 use openbot_domain::audit::payload::{AuditIdentifier, AuditLabel, AuditPayload};
@@ -26,7 +29,7 @@ use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 
 const APPROVAL_TTL: Duration = Duration::minutes(5);
 const CROSS_REPLICA_POLL: StdDuration = StdDuration::from_secs(1);
-const MAX_PENDING_APPROVALS: i64 = 100;
+const MAX_PENDING_APPROVALS: i64 = MAX_PENDING_TOOL_APPROVALS as i64;
 const MAX_PRESENTATION_BYTES: usize = 16 * 1024;
 
 /// Durable decision returned to the tool control plane after waiting.
@@ -433,6 +436,29 @@ impl PostgresToolApprovalCoordinator {
         .await
         .map_err(map_tool_port_admin)
     }
+
+    async fn activity_scope_current(
+        &self,
+        auth: &AuthContext,
+    ) -> Result<bool, ToolApprovalAdministrationError> {
+        ensure_auth_scope(self, auth)?;
+        let generation = to_i64_admin(auth.auth_generation().get(), "auth_generation")?;
+        let client = self.pool.get().await.map_err(admin_unavailable)?;
+        client
+            .query_one(
+                "SELECT EXISTS(
+                    SELECT 1 FROM public.users u
+                    WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
+                      AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
+                      AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                      WHERE ra.email=lower(u.email)))",
+                &[&auth.actor().as_str(), &generation],
+            )
+            .await
+            .map_err(admin_query)?
+            .try_get(0)
+            .map_err(|_| admin_corrupt("approval_activity_scope"))
+    }
 }
 
 #[async_trait]
@@ -558,6 +584,96 @@ impl ToolApprovalAdministration for PostgresToolApprovalCoordinator {
             approval_id: approval_id.to_owned(),
             decision,
         })
+    }
+
+    async fn subscribe_activity(
+        &self,
+        auth: &AuthContext,
+    ) -> Result<AppEventStream, ToolApprovalAdministrationError> {
+        if !self.activity_scope_current(auth).await? {
+            return Err(ToolApprovalAdministrationError::NotVisible);
+        }
+        // Validate current authority before any transport headers are committed.
+        let initial = self.list_pending(auth).await?;
+        let state = ApprovalActivityState {
+            coordinator: self.clone(),
+            auth: auth.clone(),
+            previous: None,
+            next: Some(initial),
+            terminal: false,
+        };
+        Ok(Box::pin(futures_util::stream::unfold(
+            state,
+            next_approval_activity,
+        )))
+    }
+}
+
+struct ApprovalActivityState {
+    coordinator: PostgresToolApprovalCoordinator,
+    auth: AuthContext,
+    previous: Option<PendingToolApprovals>,
+    next: Option<PendingToolApprovals>,
+    terminal: bool,
+}
+
+async fn next_approval_activity(
+    mut state: ApprovalActivityState,
+) -> Option<(AppEvent, ApprovalActivityState)> {
+    if state.terminal {
+        return None;
+    }
+    loop {
+        let current = if let Some(initial) = state.next.take() {
+            Ok(initial)
+        } else {
+            tokio::select! {
+                () = state.coordinator.wake.notified() => {}
+                () = tokio::time::sleep(CROSS_REPLICA_POLL) => {}
+            }
+            match state.coordinator.activity_scope_current(&state.auth).await {
+                Ok(true) => state.coordinator.list_pending(&state.auth).await,
+                Ok(false) => Err(ToolApprovalAdministrationError::NotVisible),
+                Err(error) => Err(error),
+            }
+        };
+        match current {
+            Ok(current) if state.previous.as_ref() != Some(&current) => {
+                let pending_count = match u32::try_from(current.approvals.len()) {
+                    Ok(count) => count,
+                    Err(_) => {
+                        state.terminal = true;
+                        return Some((
+                            AppEvent::ToolApprovalStreamError {
+                                code: ToolApprovalAdministrationError::Corrupt {
+                                    field: "pending_count",
+                                }
+                                .into_app_error()
+                                .code()
+                                .as_str()
+                                .to_owned(),
+                            },
+                            state,
+                        ));
+                    }
+                };
+                state.previous = Some(current);
+                return Some((
+                    AppEvent::ToolApprovalActivity(ToolApprovalActivityEvent { pending_count }),
+                    state,
+                ));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                state.terminal = true;
+                return Some((
+                    AppEvent::ToolApprovalStreamError {
+                        code: error.into_app_error().code().as_str().to_owned(),
+                    },
+                    state,
+                ));
+            }
+        }
     }
 }
 

@@ -529,6 +529,7 @@ pub fn router(state: ServerState) -> Router {
         .route("/api/sandboxed/{name}", delete(sandboxed::delete))
         .route("/sandbox/runner", get(sandbox_runner::document))
         .route("/api/tool-approvals", get(approvals::pending_get))
+        .route("/api/tool-approvals/events", get(approvals::events))
         .route(
             "/api/tool-approvals/{approval_id}",
             post(approvals::decision_post),

@@ -32,7 +32,9 @@ fn sequence(event: &AppEvent) -> Option<u64> {
         AppEvent::Heartbeat { .. }
         | AppEvent::ThreadStreamError { .. }
         | AppEvent::ChannelActivity(_)
-        | AppEvent::ChannelStreamError { .. } => None,
+        | AppEvent::ChannelStreamError { .. }
+        | AppEvent::ToolApprovalActivity(_)
+        | AppEvent::ToolApprovalStreamError { .. } => None,
     }
 }
 

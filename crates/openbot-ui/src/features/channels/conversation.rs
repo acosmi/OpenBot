@@ -1381,7 +1381,9 @@ fn open_event_source(
             }
             AppEvent::Heartbeat { .. }
             | AppEvent::ChannelActivity(_)
-            | AppEvent::ChannelStreamError { .. } => {
+            | AppEvent::ChannelStreamError { .. }
+            | AppEvent::ToolApprovalActivity(_)
+            | AppEvent::ToolApprovalStreamError { .. } => {
                 stream_error.set(true);
                 event_source.close();
             }

@@ -14,7 +14,7 @@
 #       identity_provider.registered / knowledge.searched）在 server/src 无任何发出点。
 #       owner 判据（机械）：发出点是进程启动顶层代码或传输层看门狗（无 use case）=> openbot-infra，
 #       其余 => openbot-application（铸造）；落库一律 openbot-infra，见 §8.6 的 DB role 分离。
-#   (c) 新增语义事件 18 条，label=新增，upstream=-。
+#   (c) 新增语义事件 19 条，label=新增，upstream=-。
 #
 # target 统一写事件名的 Rust 符号落点；audit 的名字是契约层封闭枚举（§5.1 openbot-contracts
 # 的职责原文 = "native/wasm-safe ID、DTO、event、error、schema"），owner 写的是谁负责铸造它。
@@ -43,17 +43,17 @@ recount:
   - command: |-
       grep -c '^  - id: ' parity/events.yaml
     cwd: repo
-    expect: 86
-  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，18 新增）
+    expect: 87
+  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，19 新增）
   - command: |-
       printf 'parity=%s 新增=%s 替代=%s\n' "$(grep -c "^    label: 'parity'$" parity/events.yaml)" "$(grep -c "^    label: '新增'$" parity/events.yaml)" "$(grep -c "^    label: '替代'$" parity/events.yaml)"
     cwd: repo
-    expect: 'parity=68 新增=18 替代=0'
-  # owner 分布（openbot-agent 11；openbot-infra 3；其余 openbot-application 72 = audit 54 + 新增 18）
+    expect: 'parity=68 新增=19 替代=0'
+  # owner 分布（openbot-agent 11；openbot-infra 3；其余 openbot-application 73 = audit 54 + 新增 19）
   - command: |-
       grep -oE "^    owner: 'openbot-[a-z]+'" parity/events.yaml | tr -d "'" | sort | uniq -c | awk '{print $3"="$1}' | paste -sd' ' -
     cwd: repo
-    expect: 'openbot-agent=11 openbot-application=72 openbot-infra=3'
+    expect: 'openbot-agent=11 openbot-application=73 openbot-infra=3'
   # 新增 absolute deadline audit 在固定上游零命中；同形命令对既有 stall audit 命中 5 个文件。
   - command: |-
       printf 'deadline=%s stalled=%s\n' "$(git grep -l 'agent.run_deadline_exceeded' | wc -l | tr -d ' ')" "$(git grep -l 'agent.stream_stalled' | wc -l | tr -d ' ')"
@@ -967,3 +967,14 @@ entries:
     done_evidence: 'Batch47真库在actor auth_generation 0→1后，跨副本waiter检测scope_current=false，原子推进cancelled并写component.human_cancelled；旧session list=0、answer不可见。'
     evidence: '固定上游无durable component human state；v3 §6.2 generation变化使旧approval/run authority失效'
     notes: 'cancelled不含answer，也不冒充用户拒绝。'
+  - id: 'tool-approval-activity'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-contracts::command::AppEvent::ToolApprovalActivity + openbot-infra::tool_approval::PostgresToolApprovalCoordinator::subscribe_activity'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0087'
+    migration_rule: 'n/a: durable acting approval已有状态真源，但v4 §13.4要求critical realtime invalidation'
+    status: 'done'
+    done_evidence: 'Batch56：closed ToolApprovalActivityEvent只含pendingCount；subscribe先同步actor-scoped list以便upgrade前fail-closed，之后同进程Notify或1s durable poll均整页重读，页面任一变化才发hint；错误发稳定code后terminal。PG17.11 SCRAM跨replica实得owner 0→1→0、other初始0且1.2s零外泄；Server exact protocol/same-origin/read-only loopback绿；Desktop budget归Critical，满队列显式断开迫使GET refetch。'
+    evidence: '固定上游与既有ledger均无tool approval activity事件；v4 §24.1明确列approval critical realtime为G4余项'
+    notes: '该事件不是durable approval内容，也不带cursor、id、tool、target或summary；消费端永远通过authoritative PendingToolApprovals GET取状态，重连前先refetch。ToolApprovalStreamError属于同一closed family。'

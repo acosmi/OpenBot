@@ -3,6 +3,8 @@
 use std::collections::BTreeSet;
 
 use leptos::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::tool::MAX_PENDING_TOOL_APPROVALS;
 use openbot_contracts::tool::{ToolApprovalClass, ToolApprovalDecision, ToolApprovalEffect};
 use time::format_description::well_known::Rfc3339;
 
@@ -19,6 +21,31 @@ use crate::primitives::{
     Badge, BadgeTone, Button, ButtonSize, ButtonVariant, EmptyState, IconSize, IconView,
 };
 
+#[cfg(target_arch = "wasm32")]
+const APPROVAL_ACTIVITY_PROTOCOL: &str = "openbot.tool-approvals.v1";
+#[cfg(any(target_arch = "wasm32", test))]
+const FIRST_RETRY_MS: u32 = 500;
+#[cfg(any(target_arch = "wasm32", test))]
+const MAX_RETRY_MS: u32 = 5_000;
+#[cfg(target_arch = "wasm32")]
+const FALLBACK_REFRESH_SECONDS: u32 = 30;
+
+#[derive(Clone, Copy)]
+struct ApprovalRefresh {
+    approvals: RwSignal<Vec<ApprovalCardView>>,
+    loading: RwSignal<bool>,
+    load_error: RwSignal<Option<ApiError>>,
+    epoch: RwSignal<u64>,
+    #[cfg(target_arch = "wasm32")]
+    worker_owner: StoredValue<Option<Owner>>,
+}
+
+impl ApprovalRefresh {
+    fn request(self) {
+        request_refresh(self);
+    }
+}
+
 /// Current-actor list page for pending durable tool approvals.
 #[component]
 pub fn ApprovalPage() -> impl IntoView {
@@ -30,11 +57,19 @@ pub fn ApprovalPage() -> impl IntoView {
     let notice = RwSignal::new(None::<ToolApprovalDecision>);
     let in_flight = RwSignal::new(BTreeSet::<String>::new());
     let now = RwSignal::new(now_epoch_seconds());
+    let refresh = ApprovalRefresh {
+        approvals,
+        loading,
+        load_error,
+        epoch: RwSignal::new(0_u64),
+        #[cfg(target_arch = "wasm32")]
+        worker_owner: StoredValue::new(Owner::current()),
+    };
 
-    start_polling(approvals, loading, load_error, now);
+    start_realtime(refresh, now);
 
-    let refresh = move |_| {
-        refresh_once(approvals, loading, load_error);
+    let refresh_page = move |_| {
+        refresh.request();
     };
 
     view! {
@@ -46,7 +81,7 @@ pub fn ApprovalPage() -> impl IntoView {
                     size=ButtonSize::Medium
                     disabled=loading
                     loading=loading
-                    on_activate=refresh
+                    on_activate=refresh_page
                 >
                     <IconView icon=Icon::RefreshCw size=IconSize::Inline />
                     {move || t!(i18n, common.refresh)}
@@ -126,6 +161,7 @@ pub fn ApprovalPage() -> impl IntoView {
                                             approvals
                                             decision_error
                                             notice
+                                            refresh
                                         />
                                     }
                                 }
@@ -147,6 +183,7 @@ fn ApprovalCard(
     approvals: RwSignal<Vec<ApprovalCardView>>,
     decision_error: RwSignal<bool>,
     notice: RwSignal<Option<ToolApprovalDecision>>,
+    refresh: ApprovalRefresh,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let heading_id = approval_heading_id(&card.approval_id);
@@ -175,6 +212,7 @@ fn ApprovalCard(
             in_flight,
             decision_error,
             notice,
+            refresh,
         );
     };
     let deny = move |_| {
@@ -185,6 +223,7 @@ fn ApprovalCard(
             in_flight,
             decision_error,
             notice,
+            refresh,
         );
     };
     let effect = card.effect;
@@ -289,6 +328,7 @@ fn dispatch_decision(
     in_flight: RwSignal<BTreeSet<String>>,
     decision_error: RwSignal<bool>,
     notice: RwSignal<Option<ToolApprovalDecision>>,
+    refresh: ApprovalRefresh,
 ) {
     if in_flight.with(|ids| ids.contains(&approval_id)) {
         return;
@@ -300,22 +340,32 @@ fn dispatch_decision(
     notice.set(None);
 
     #[cfg(target_arch = "wasm32")]
-    leptos::task::spawn_local_scoped_with_cancellation(async move {
-        match decide_tool_approval(&approval_id, decision).await {
-            Ok(_) => {
-                approvals.update(|cards| cards.retain(|card| card.approval_id != approval_id));
-                notice.set(Some(decision));
-            }
-            Err(_) => decision_error.set(true),
+    {
+        let start_worker = || {
+            leptos::task::spawn_local_scoped_with_cancellation(async move {
+                match decide_tool_approval(&approval_id, decision).await {
+                    Ok(_) => {
+                        notice.set(Some(decision));
+                        approvals
+                            .update(|cards| cards.retain(|card| card.approval_id != approval_id));
+                        refresh.request();
+                    }
+                    Err(_) => decision_error.set(true),
+                }
+                in_flight.update(|ids| {
+                    ids.remove(&approval_id);
+                });
+            });
+        };
+        match refresh.worker_owner.get_value() {
+            Some(owner) => owner.with(start_worker),
+            None => start_worker(),
         }
-        in_flight.update(|ids| {
-            ids.remove(&approval_id);
-        });
-    });
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (decision, approvals);
+        let _ = (decision, approvals, refresh);
         in_flight.update(|ids| {
             ids.remove(&approval_id);
         });
@@ -323,76 +373,161 @@ fn dispatch_decision(
     }
 }
 
-fn refresh_once(
-    approvals: RwSignal<Vec<ApprovalCardView>>,
-    loading: RwSignal<bool>,
-    load_error: RwSignal<Option<ApiError>>,
-) {
-    loading.set(true);
+fn request_refresh(refresh: ApprovalRefresh) {
+    let Some(request_epoch) = next_refresh_epoch(refresh.epoch.get_untracked()) else {
+        refresh.loading.set(false);
+        refresh.load_error.set(Some(ApiError::Unavailable));
+        return;
+    };
+    refresh.epoch.set(request_epoch);
+    refresh.loading.set(true);
     #[cfg(target_arch = "wasm32")]
-    leptos::task::spawn_local_scoped_with_cancellation(async move {
-        refresh(approvals, loading, load_error).await;
-    });
+    {
+        let start_worker = || {
+            leptos::task::spawn_local_scoped_with_cancellation(async move {
+                refresh_page(refresh, request_epoch).await;
+            });
+        };
+        match refresh.worker_owner.get_value() {
+            Some(owner) => owner.with(start_worker),
+            None => start_worker(),
+        }
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = approvals;
-        loading.set(false);
-        load_error.set(Some(ApiError::Unavailable));
+        let _ = refresh.approvals;
+        refresh.loading.set(false);
+        refresh.load_error.set(Some(ApiError::Unavailable));
     }
 }
 
-fn start_polling(
-    approvals: RwSignal<Vec<ApprovalCardView>>,
-    loading: RwSignal<bool>,
-    load_error: RwSignal<Option<ApiError>>,
-    now: RwSignal<i64>,
-) {
+fn start_realtime(refresh: ApprovalRefresh, now: RwSignal<i64>) {
+    refresh.request();
     #[cfg(target_arch = "wasm32")]
     leptos::task::spawn_local_scoped_with_cancellation(async move {
+        let mut elapsed_seconds = 0_u32;
         loop {
+            delay_ms(1_000).await;
             now.set(now_epoch_seconds());
-            refresh(approvals, loading, load_error).await;
-            poll_delay().await;
+            elapsed_seconds = elapsed_seconds.saturating_add(1);
+            if elapsed_seconds >= FALLBACK_REFRESH_SECONDS {
+                elapsed_seconds = 0;
+                refresh.request();
+            }
         }
     });
+    #[cfg(target_arch = "wasm32")]
+    install_approval_socket(refresh);
     #[cfg(not(target_arch = "wasm32"))]
     {
-        loading.set(false);
-        load_error.set(Some(ApiError::Unavailable));
-        let _ = (approvals, now);
+        refresh.loading.set(false);
+        refresh.load_error.set(Some(ApiError::Unavailable));
+        let _ = (refresh.approvals, now, refresh.epoch);
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn poll_delay() {
+async fn delay_ms(milliseconds: u32) {
     let promise = js_sys::Promise::new(&mut |resolve, _reject| {
         web_sys::window()
-            .expect("CSR approval polling requires Window")
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 1_000)
-            .expect("browser rejected approval polling timer");
+            .expect("CSR approval realtime requires Window")
+            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                &resolve,
+                i32::try_from(milliseconds).unwrap_or(i32::MAX),
+            )
+            .expect("browser rejected approval realtime timer");
     });
     _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn refresh(
-    approvals: RwSignal<Vec<ApprovalCardView>>,
-    loading: RwSignal<bool>,
-    load_error: RwSignal<Option<ApiError>>,
-) {
-    match list_pending_tool_approvals().await {
+fn install_approval_socket(refresh: ApprovalRefresh) {
+    leptos::task::spawn_local_scoped_with_cancellation(async move {
+        use futures_util::StreamExt as _;
+        use gloo_net::websocket::{Message, futures::WebSocket};
+        use openbot_contracts::tool::ToolApprovalActivityEvent;
+
+        let mut retry = FIRST_RETRY_MS;
+        loop {
+            // The socket has no replay cursor. Refetch before every connection/reconnection.
+            refresh.request();
+            let Some(url) = approval_socket_url() else {
+                delay_ms(retry).await;
+                retry = next_retry(retry);
+                continue;
+            };
+            let Ok(mut socket) = WebSocket::open_with_protocol(&url, APPROVAL_ACTIVITY_PROTOCOL)
+            else {
+                delay_ms(retry).await;
+                retry = next_retry(retry);
+                continue;
+            };
+            while let Some(message) = socket.next().await {
+                match message {
+                    Ok(Message::Text(text)) => {
+                        let event = serde_json::from_str::<ToolApprovalActivityEvent>(&text);
+                        if !matches!(event, Ok(event) if event.pending_count <= MAX_PENDING_TOOL_APPROVALS)
+                        {
+                            refresh.request();
+                            break;
+                        }
+                        retry = FIRST_RETRY_MS;
+                        refresh.request();
+                    }
+                    Ok(Message::Bytes(_)) | Err(_) => {
+                        refresh.request();
+                        break;
+                    }
+                }
+            }
+            delay_ms(retry).await;
+            retry = next_retry(retry);
+        }
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn approval_socket_url() -> Option<String> {
+    let location = web_sys::window()?.location();
+    let protocol = match location.protocol().ok()?.as_str() {
+        "https:" => "wss:",
+        "http:" => "ws:",
+        _ => return None,
+    };
+    Some(format!(
+        "{protocol}//{}/api/tool-approvals/events",
+        location.host().ok()?
+    ))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn next_retry(current: u32) -> u32 {
+    current.saturating_mul(2).min(MAX_RETRY_MS)
+}
+
+fn next_refresh_epoch(current: u64) -> Option<u64> {
+    current.checked_add(1)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn refresh_page(refresh: ApprovalRefresh, request_epoch: u64) {
+    let result = list_pending_tool_approvals().await;
+    if refresh.epoch.get_untracked() != request_epoch {
+        return;
+    }
+    match result {
         Ok(page) => {
-            approvals.set(
+            refresh.approvals.set(
                 page.approvals
                     .iter()
                     .map(ApprovalCardView::from_pending)
                     .collect(),
             );
-            load_error.set(None);
+            refresh.load_error.set(None);
         }
-        Err(error) => load_error.set(Some(error)),
+        Err(error) => refresh.load_error.set(Some(error)),
     }
-    loading.set(false);
+    refresh.loading.set(false);
 }
 
 fn effect_label(
@@ -458,5 +593,9 @@ mod tests {
             id.chars()
                 .all(|character| character.is_ascii_alphanumeric() || character == '-')
         );
+        assert_eq!(next_retry(FIRST_RETRY_MS), 1_000);
+        assert_eq!(next_retry(MAX_RETRY_MS), MAX_RETRY_MS);
+        assert_eq!(next_refresh_epoch(0), Some(1));
+        assert_eq!(next_refresh_epoch(u64::MAX), None);
     }
 }

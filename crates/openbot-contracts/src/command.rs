@@ -55,7 +55,8 @@ use crate::sandboxed::{
     SandboxedComponents, SaveSandboxedComponentRequest,
 };
 use crate::tool::{
-    PendingToolApprovals, ToolApprovalDecision, ToolApprovalResolved, ToolInvocation, ToolResult,
+    PendingToolApprovals, ToolApprovalActivityEvent, ToolApprovalDecision, ToolApprovalResolved,
+    ToolInvocation, ToolResult,
 };
 use crate::ui::{UiPreferences, UpdateUiPreferences};
 
@@ -889,6 +890,8 @@ pub enum SubscriptionRequest {
     },
     /// Subscribe to low-latency channel roster activity for the authenticated actor.
     ChannelActivity,
+    /// Subscribe to actor-scoped approval refresh hints; durable state remains the typed list.
+    ToolApprovalActivity,
 }
 
 /// 订阅流上的事件。封闭 enum。
@@ -915,6 +918,13 @@ pub enum AppEvent {
     /// Channel LISTEN/membership dependency failed; the socket closes after this frame.
     ChannelStreamError {
         /// Stable error code; no database/network text.
+        code: String,
+    },
+    /// Approval state changed for this authenticated actor; clients refetch the durable list.
+    ToolApprovalActivity(ToolApprovalActivityEvent),
+    /// Approval activity dependency failed; socket closes after this stable error.
+    ToolApprovalStreamError {
+        /// Stable error code; no database/network text or approval identity.
         code: String,
     },
 }
@@ -1587,6 +1597,22 @@ mod tests {
             serde_json::to_string(&request).unwrap(),
             r#"{"kind":"channel_activity"}"#
         );
+
+        let request = SubscriptionRequest::ToolApprovalActivity;
+        assert_eq!(
+            serde_json::to_string(&request).unwrap(),
+            r#"{"kind":"tool_approval_activity"}"#
+        );
+
+        let event = AppEvent::ToolApprovalActivity(crate::tool::ToolApprovalActivityEvent {
+            pending_count: 2,
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"tool_approval_activity","pendingCount":2}"#
+        );
+        assert_eq!(serde_json::from_str::<AppEvent>(&json).unwrap(), event);
 
         let event = AppEvent::Heartbeat { seq: 7 };
         let json = serde_json::to_string(&event).unwrap();
