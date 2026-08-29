@@ -1,7 +1,8 @@
-# OpenBot GUI 设计系统与视觉规格（v1）
+# OpenBot GUI 设计系统与视觉规格（v2）
 
 > **定位**：第一方 GUI（Server Web 与 Desktop 共用的同一份 Leptos bundle）的视觉、布局、主题、国际化、无障碍与视觉闸门的**唯一真源**。`docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（v3）只定义旅程、能力与架构；两者冲突时，视觉/交互以本文件为准、架构/能力以 v3 为准，并同 PR 修订另一方。
 > **日期**：2026-08-22。**上游基线**：`CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d`（与 v3 §1.2 相同，本文件所有"上游"数字都在该 commit 的干净克隆上复算，命令见 §17）。
+> **v2 就地修订**：2026-08-28，与后端方案 v4（§28.1 R115–R125）同 PR，清单见 §14 条 9：D2 措辞精确化（零 npm 与 engine shim manifest 唯一例外）、Desktop sandboxed component 的具名 a11y fallback（§9.1）、CSS 预算 96 → 128 KiB 与 120 KiB 警戒（§10.5，R123）、品牌概念稿登记（§2）。范围与非目标不变：v4 不新增任何 Grok Bot 产品旅程（v3 R115），本文件的 27 页 golden 矩阵与 152 条 UI 台账口径不变。
 
 ---
 
@@ -12,7 +13,7 @@
 | # | 裁决 | 后果 |
 | --- | --- | --- |
 | D1 | **自有设计系统**，不复刻上游视觉 | 旅程 / route / 组件行为保持 parity（v3 §3.1、v3 §21.1），**视觉不是 parity 对象**；视觉 oracle = 本项目自己的 golden 截图（§10），不是上游截图 |
-| D2 | **Tailwind v4 standalone CLI，零 Node** | 仓库没有 `package.json` / `node_modules`；CSS 由钉 sha256 的单文件二进制编译，登记进 v3 §16.3 供应链（§12） |
+| D2 | **Tailwind v4 standalone CLI，零 Node** | 工作区构建链零 Node / npm，没有 `node_modules`；CSS 由钉 sha256 的单文件二进制编译，登记进 v3 §16.3 供应链（§12）。2026-08-28 R117 精确化：仓内唯一允许的 `package.json` 是 Electron engine shim 的 app manifest（v3 §11.3：零 dependencies、零 scripts、无 lockfile）；`grok-bot/` 参考树里的 `package.json` 不参与任何构建（v3 §11.5）。Electron 本身以官方 release zip + sha256 获取（`tools/engine-pins.toml`），不经 npm |
 | D3 | **中英双语，首版带 i18n 框架** | `en`（源语言）+ `zh-CN`；字符串进目录，缺译是闸门红（§8） |
 
 三个标签贯穿全文，每一项都必须带其一（与仓库 `CLAUDE.md` §4 "parity vs 新增必须标注"同义）：
@@ -53,7 +54,7 @@ v3 全文 `样式` / `Tailwind` / `设计系统` / `字体` / `深色` / `响应
 **非目标**（不在本文件、也不在首版）：
 
 1. 用户发布的 sandboxed component 内部样式——它是不可信数据（v3 §3.3），只约束其**容器**（尺寸、边框、加载/错误态）；
-2. 最终品牌名、logo、应用图标——待 v3 §23.4 商标清查后另立文档；本文件只规定品牌标的落位与尺寸；
+2. 最终品牌名、logo、应用图标——待 v3 §23.4 商标清查后另立文档；本文件只规定品牌标的落位与尺寸。`docs/assets/brand-concept/`（2026-08-28 随 v4 计划提交的 4 个文件）是**候选概念稿**，不是品牌真源：不进 bundle、不被任何 golden 或 icon allowlist 引用，商标清查前不得升格；
 3. 移动端、触屏手势、RTL（上游 `components.json` 亦 `rtl: false`）；
 4. compiled component 各自的内部视觉（v3 §21.1 条 5 的 golden 按组件各自立案），本文件只给它们可用的 token 与容器；
 5. 打印样式。
@@ -405,6 +406,8 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 
 第一方 GUI（Web 与 Desktop 主 WebView）达到 **WCAG 2.2 AA** 的可机械判定子集；唯一豁免 = Desktop sandboxed component（v3 §3.3 已写死，帧流画面不可达）。
 
+豁免的**具名 fallback**（2026-08-28 v3 R118 裁决，**新增**）：Desktop 上每个 sandboxed component 的帧画布旁，由 Rust/Leptos 以只读 `<dl>` 渲染该次 tool call 的 `arguments` JSON（键 → 值；嵌套对象展开为 `a.b.c` 路径键；数组展开为 `a[0]`），标题为组件名，容器带 i18n 的 `aria-label`（语义："预览画面不可达，以下为结构化参数"）；画布本身 `role="img"` + `aria-label=<组件名>`；`Escape` 把焦点从画布交回 transcript。fallback 只含 Rust 已按 published JSON Schema 校验过的结构化参数——**不含**作者 HTML/CSS/JS 的任何文本，也**不含**模型自由文本；它是可判定的替代物，不是 a11y parity 的宣称。Web 宿主（iframe）不适用本段，继续按 §9.2 全量判据。
+
 ### 9.2 机械判据（全部进 CI）
 
 1. `token_contrast_wcag_aa`：Rust 单测读 `tokens.toml`，按 §4.2 的配对与阈值断言；改 token 就必跑。
@@ -459,11 +462,13 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 | 产物 | 上限 |
 | --- | --- |
 | `app.wasm`（gzip） | 3.5 MiB |
-| `app.css` | 96 KiB |
+| `app.css` | **128 KiB**（2026-08-28 R123 由 96 KiB 放宽；**120 KiB 为警戒线**，`xtask bundle-budget` 越线只打印 warning、不判红） |
 | 字体（两份 woff2） | 800 KiB（实测 740,216 B） |
 | 图标 | 内联进 wasm，不单列 |
 
 超限即红；放宽只能经 delta audit 附实测。
+
+R123 的实测依据（全部是本仓已登记的数字，可复算）：R103（Batch 43）时 `app.css` 余 4,658 B = 93,646 B；R111（Batch 48）余 2,254 B = 96,050 B；Batch 50 实测 97,848 B，余 456 B —— 7 个批次 +4,202 B ≈ 600 B/批，而固定成本（token 三块 CSS + 27 条 primitive）已经全部在里面。剩余 24 个 route journey、完整 Composer/AppSidebar 与 admin 面按 ≤ 30 批估算 +18 KiB → ≈ 116 KiB；96 KiB 下任何下一批 UI 都会判红。128 KiB 留 12 KiB 余量；再放宽同样只能经 delta audit，且必须先证明 CSS 复用已做尽。
 
 ---
 
@@ -600,6 +605,7 @@ v3（记为 R20，进 v3 §28.1 / §28.4；以下编号均为 v3 章节）：
 6. §19.3：追加 §11 的产物清单。
 7. §26：GUI 组追加 Tailwind standalone / trunk / leptos_i18n / Lucide / Inter 五个一手来源。
 8. §28.1 追加 R20 行；§28.4 追加 §17 的 UI 计数命令。
+9. （2026-08-28，v2）与 v3 R115–R125 同 PR：§0 D2 措辞、§2 品牌概念稿登记、§9.1 Desktop sandboxed component 具名 fallback、§10.5 CSS 预算 128 KiB / 120 KiB 警戒、§15 G6 文本与 §15.1 勾选；`CLAUDE.md` §2 / §4a 的预算与零 npm 措辞同步；`crates/openbot-testkit/src/xtask/ui_gates.rs` 的 `CSS_LIMIT` / `CSS_WARN` 同批落地。
 
 `CLAUDE.md`：①"真源"段加第二真源（本文件）；② §2 允许的非 Rust 例外加构建期工具；③ 新增 §4a「GUI 视觉约束」（原则 7 条的压缩版 + 三条裁决 + 反向 grep 闸门；编号 4a 是为了不重排 §5–§11 的既有引用）；④ §3 固定基线表加 Leptos 生态 / GUI 构建工具 / GUI 资产三行；⑤ §10 闸门加 `cargo test -p openbot-ui` / `xtask i18n-check` / `design-lint` / `css-check` / `bundle-budget` / golden / AX 检查。
 
@@ -615,7 +621,7 @@ G6 重写后的文本（替换 v3 原四条）：
 - **视觉**：§10.1 矩阵的 golden 全部通过（Web 110 张、Desktop 每平台 54 张），§10.4 判据；三平台 bundle 摘要相等；
 - **a11y**：§9.2 四项机械判据全绿（Desktop sandboxed component 豁免，v3 §3.3）；
 - **i18n**：`xtask i18n-check` 绿；`zh-CN` 下 27 页 golden 另录一套（进 §10.1 的主题维度之外、首版只 1440×900 亮色，27 张）；
-- `xtask design-lint` / `css-check` / `bundle-budget` 绿。
+- `xtask design-lint` / `css-check` / `bundle-budget` 绿（`app.css` 上限 128 KiB、警戒 120 KiB，R123）。
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
@@ -744,6 +750,11 @@ G6 重写后的文本（替换 v3 原四条）：
   bundle 摘要尚未闭合；
 - [ ] Tauri 图的 MPL-2.0×5、runtime UNIC unmaintained×5、Cargo Vet macOS 270/Windows 269
   仍红；不得把 bans/sources 已绿写成供应链整关已绿。
+- [x] 2026-08-28 R123：`xtask bundle-budget` 的 `CSS_LIMIT` 96 → 128 KiB 并新增 `CSS_WARN` 120 KiB
+  警戒（`crates/openbot-testkit/src/xtask/ui_gates.rs`），实跑结果见 v3 R123 证据列；本轮没有重新构建
+  bundle，Batch 50 的 97,848 B 实测不变，不冒充新 bundle 证据；
+- [ ] 2026-08-28 R118：Desktop sandboxed component 的 Electron component role 渲染路径与 §9.1 结构化参数
+  fallback 尚未实现，T-CMP-0021（owner 已改 openbot-computer，R124）/ T-CMP-0022 继续 todo。
 
 完整证据见 Batch16–18 文档、`docs/2026-08-25-G6-Dialog与Sheet-batch19.md`、
 `docs/2026-08-25-G6-Menu原语-batch20.md` 与

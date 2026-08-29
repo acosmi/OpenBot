@@ -1,7 +1,7 @@
 # OpenBot Tauri GUI + Electron Chromium + Grok Bot 大面积 Rust 迁移：v4 修订计划（用户裁决版）
 
 > 日期：2026-08-28（America/Los_Angeles）
-> 状态：**架构方向已由用户裁决；正式第一真源与机械台账尚待按本文件迁移**。
+> 状态：**已被吸收，只作历史记录，不是实施依据（2026-08-28）**。本文件的五项裁决与同日前置审计的结论已就地写入后端方案 v4（`docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md` §28.1 R115–R125）与 GUI 真源 v2。本文件与 R 行不一致之处**一律以 R 行为准**，已知的不一致包括：真源优先级第 3/4 层次序（R115 把固定上游 OpenBot 放在 `grok-bot` 之上）、`T` 类近机械翻译与 `C` 类候选（R116 改为规格先行吸收，v4 不新增 Grok 产品能力）、全量 census 作为 P0 退出条件（R116 改为 tier-1 文件级 inventory）、`engine-shim/package-lock.json`（R117 零 npm）、`grok-bot` tree hash（R116 移除安装包指针后已变）、§12 的四个待明确项（R118 / R122 / R115 / R118 已逐一裁决）。
 > 基线：OpenBot `56f35a563e0e3fca907cc6c2a12ee8299f1fc89d`；`grok-bot` tree `b68f24972427952c4934e4364736fec62661044f`。
 > 本文件是本轮审计与用户裁决后的唯一有效 v4 修订计划；先前关于 standalone Chromium 和将 `grok-bot` 仅作 forensic reference 的临时提案已清理，不再作为实施依据。
 > 范围说明：按用户决定，本技术计划不把权利状态或独立权利审查列为阻断项；全文只处理产品、架构、实现、测试与发行工程。
