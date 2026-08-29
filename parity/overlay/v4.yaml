@@ -294,6 +294,10 @@ entries:
   - id: T-ROUTE-0013
     disposition: revalidate
     notes: "Batch59 reruns typed audit pagination, reload and non-admin refusal."
+  # Added mechanically because the Batch60 Admin People diff closes this target.
+  - id: T-ROUTE-0020
+    disposition: revalidate
+    notes: "Batch60 reruns typed People paging/search, role/access writes and non-admin child suppression."
   - id: T-CMP-0015
     disposition: split
     scope: web

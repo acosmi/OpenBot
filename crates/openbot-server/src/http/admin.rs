@@ -5,26 +5,21 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use http::HeaderMap;
 use openbot_contracts::audit::AuditPage;
-use openbot_contracts::auth::Role;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ActorId;
+use openbot_contracts::people::{
+    AdminStatus, ChangePersonAccess, ChangePersonRole, CurrentUserResponse, PeoplePage,
+    PersonResponse,
+};
 #[cfg(test)]
-use openbot_contracts::people::CurrentUser;
-use openbot_contracts::people::{AdminStatus, CurrentUserResponse, PeoplePage, Person};
+use openbot_contracts::people::{CurrentUser, Person};
 use openbot_domain::text::is_ecmascript_whitespace;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::auth::{Authenticated, SensitiveAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
-
-/// role/access 上游信封。
-#[derive(Debug, Serialize)]
-pub struct PersonResponse {
-    /// 变化后的 person。
-    pub person: Person,
-}
 
 /// people query；limit 先保留原串，按 JS `Number.parseInt(value, 10)` 的十进制前缀语义解析。
 #[derive(Debug, Default, Deserialize)]
@@ -58,22 +53,6 @@ pub struct AuditQuery {
     pub to: Option<String>,
     /// 原始页长，走 JS parseInt 十进制前缀语义。
     pub limit: Option<String>,
-}
-
-/// role 请求体。
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoleBody {
-    /// 目标角色。
-    pub role: Role,
-}
-
-/// access 请求体。
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AccessBody {
-    /// `true` 移除，`false` 恢复。
-    pub revoked: bool,
 }
 
 /// `GET /api/me`。
@@ -173,7 +152,7 @@ pub async fn people_role(
     SensitiveAuthenticated(resolved): SensitiveAuthenticated,
     headers: HeaderMap,
     Path(user_id): Path<String>,
-    body: Result<Json<RoleBody>, JsonRejection>,
+    body: Result<Json<ChangePersonRole>, JsonRejection>,
 ) -> Result<Json<PersonResponse>, HttpError> {
     state
         .authorize_sensitive_write(&resolved, request_origin(&headers))
@@ -204,7 +183,7 @@ pub async fn people_access(
     SensitiveAuthenticated(resolved): SensitiveAuthenticated,
     headers: HeaderMap,
     Path(user_id): Path<String>,
-    body: Result<Json<AccessBody>, JsonRejection>,
+    body: Result<Json<ChangePersonAccess>, JsonRejection>,
 ) -> Result<Json<PersonResponse>, HttpError> {
     state
         .authorize_sensitive_write(&resolved, request_origin(&headers))

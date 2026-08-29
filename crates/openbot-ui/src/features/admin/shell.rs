@@ -14,6 +14,7 @@ use crate::primitives::{IconSize, IconView};
 
 const ADMIN_HOME_PATH: &str = "/admin";
 const ADMIN_AUDIT_PATH: &str = "/admin/audit";
+const ADMIN_PEOPLE_PATH: &str = "/admin/people";
 const ADMIN_PLAYGROUND_PATH: &str = "/admin/playground";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +69,7 @@ fn admin_shell_view(
 ) -> impl IntoView {
     let home_location = location.clone();
     let audit_location = location.clone();
+    let people_location = location.clone();
     let playground_location = location;
     view! {
         <div class="ob-settings-shell">
@@ -93,6 +95,14 @@ fn admin_shell_view(
                             })
                             icon=Icon::ListChecks
                             label=move || t_string!(i18n, admin.nav_audit).to_owned()
+                        />
+                        <AdminNavItem
+                            href=ADMIN_PEOPLE_PATH
+                            current=Signal::derive(move || {
+                                is_exact(&people_location.pathname.get(), ADMIN_PEOPLE_PATH)
+                            })
+                            icon=Icon::Users
+                            label=move || t_string!(i18n, admin.nav_people).to_owned()
                         />
                         <AdminNavItem
                             href=ADMIN_PLAYGROUND_PATH
@@ -176,13 +186,24 @@ mod tests {
     #[test]
     fn admin_sidebar_exposes_only_real_destinations_and_exact_current_state() {
         assert_eq!(
-            [ADMIN_HOME_PATH, ADMIN_AUDIT_PATH, ADMIN_PLAYGROUND_PATH],
-            ["/admin", "/admin/audit", "/admin/playground"]
+            [
+                ADMIN_HOME_PATH,
+                ADMIN_AUDIT_PATH,
+                ADMIN_PEOPLE_PATH,
+                ADMIN_PLAYGROUND_PATH,
+            ],
+            [
+                "/admin",
+                "/admin/audit",
+                "/admin/people",
+                "/admin/playground",
+            ]
         );
         assert!(is_exact("/admin", ADMIN_HOME_PATH));
         assert!(!is_exact("/admin/audit", ADMIN_HOME_PATH));
         assert!(is_exact("/admin/audit", ADMIN_AUDIT_PATH));
         assert!(!is_exact("/admin/audit-old", ADMIN_AUDIT_PATH));
+        assert!(is_exact("/admin/people", ADMIN_PEOPLE_PATH));
         assert_eq!(admin_gate_state(Ok(())), AdminGateState::Authorized);
         assert_eq!(
             admin_gate_state(Err(ApiError::Forbidden)),

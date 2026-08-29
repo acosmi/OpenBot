@@ -40,9 +40,12 @@ use openbot_contracts::memory::{
 };
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::memory::{MemoryScope, MemoryStatus};
-use openbot_contracts::people::CurrentUser;
 #[cfg(target_arch = "wasm32")]
-use openbot_contracts::people::{AdminState, AdminStatus, CurrentUserResponse};
+use openbot_contracts::people::{
+    AdminState, AdminStatus, ChangePersonAccess, ChangePersonRole, CurrentUserResponse,
+    PersonResponse,
+};
+use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::sandboxed::SandboxedComponentDeleted;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -81,6 +84,8 @@ pub const CHANNEL_PAGE_SIZE: u32 = 50;
 pub const MEMORY_PAGE_SIZE: u32 = 50;
 /// Audit page size; application clamps the authoritative maximum to 100.
 pub const AUDIT_PAGE_SIZE: u32 = 50;
+/// People page size; the application owns the authoritative 1..=200 clamp.
+pub const PEOPLE_PAGE_SIZE: u32 = 50;
 
 /// Announce the exact build-owned compiled component manifest; existing governance is untouched.
 pub async fn announce_component_catalogue() -> Result<ComponentCatalogueAdded, ApiError> {
@@ -1295,6 +1300,115 @@ pub async fn require_admin_status() -> Result<(), ApiError> {
     }
 }
 
+/// Load one administrator people keyset page using server-side search.
+pub async fn load_people_page(search: &str, cursor: Option<&str>) -> Result<PeoplePage, ApiError> {
+    let path = people_page_path(search, cursor)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let page = response
+            .json::<PeoplePage>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_people_page(&page)?;
+        Ok(page)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = path;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Commit one role mutation for a Server-selected person row.
+pub async fn change_person_role(
+    user_id: &str,
+    role: openbot_contracts::auth::Role,
+) -> Result<Person, ApiError> {
+    let path = person_mutation_path(user_id, "role")?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&ChangePersonRole { role })
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let response = response
+            .json::<PersonResponse>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_mutated_person(user_id, &response.person)?;
+        if response.person.role != role {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(response.person)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, role);
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Commit one access removal or restoration for a Server-selected person row.
+pub async fn change_person_access(user_id: &str, revoked: bool) -> Result<Person, ApiError> {
+    let path = person_mutation_path(user_id, "access")?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&ChangePersonAccess { revoked })
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let response = response
+            .json::<PersonResponse>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_mutated_person(user_id, &response.person)?;
+        if response.person.revoked != revoked {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(response.person)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, revoked);
+        Err(ApiError::Unavailable)
+    }
+}
+
 /// Load one administrator audit keyset page through the existing typed API.
 pub async fn load_audit_page(cursor: Option<&str>) -> Result<AuditPage, ApiError> {
     let path = audit_page_path(cursor)?;
@@ -2035,6 +2149,106 @@ fn component_human_decision_answer_path(decision_id: &str) -> Result<String, Api
         "/api/components/human-decisions/{}/answer",
         encode_url_component(decision_id)
     ))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn people_page_path(search: &str, cursor: Option<&str>) -> Result<String, ApiError> {
+    validate_people_text(search, 2048, true)?;
+    let mut path = format!("/api/admin/people?limit={PEOPLE_PAGE_SIZE}");
+    if !search.is_empty() {
+        path.push_str("&search=");
+        path.push_str(&encode_url_component(search));
+    }
+    if let Some(cursor) = cursor {
+        validate_people_text(cursor, 2048, false)?;
+        path.push_str("&cursor=");
+        path.push_str(&encode_url_component(cursor));
+    }
+    Ok(path)
+}
+
+#[cfg(not(any(target_arch = "wasm32", test)))]
+fn people_page_path(_search: &str, _cursor: Option<&str>) -> Result<String, ApiError> {
+    Err(ApiError::Unavailable)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn person_mutation_path(user_id: &str, operation: &str) -> Result<String, ApiError> {
+    validate_people_text(user_id, 512, false)?;
+    if !matches!(operation, "role" | "access") {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(format!(
+        "/api/admin/people/{}/{}",
+        encode_url_component(user_id),
+        operation,
+    ))
+}
+
+#[cfg(not(any(target_arch = "wasm32", test)))]
+fn person_mutation_path(_user_id: &str, _operation: &str) -> Result<String, ApiError> {
+    Err(ApiError::Unavailable)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_people_page(page: &PeoplePage) -> Result<(), ApiError> {
+    if page.people.len() > PEOPLE_PAGE_SIZE as usize {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for person in &page.people {
+        validate_person(person)?;
+        if !ids.insert(person.id.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+    }
+    if let Some(cursor) = page.next_cursor.as_deref() {
+        validate_people_text(cursor, 2048, false)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_mutated_person(expected_id: &str, person: &Person) -> Result<(), ApiError> {
+    validate_person(person)?;
+    if person.id.as_str() != expected_id {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_person(person: &Person) -> Result<(), ApiError> {
+    validate_people_text(person.id.as_str(), 512, false)?;
+    validate_people_text(&person.email, 512, false)?;
+    if let Some(name) = person.name.as_deref() {
+        validate_people_text(name, 512, true)?;
+    }
+    if let Some(image) = person.image.as_deref() {
+        validate_people_text(image, 2048, true)?;
+    }
+    if person.providers.len() > 32 {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut previous = None;
+    for provider in &person.providers {
+        validate_people_text(provider, 128, false)?;
+        if previous.is_some_and(|previous| previous >= provider.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+        previous = Some(provider.as_str());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_people_text(value: &str, max: usize, allow_empty: bool) -> Result<(), ApiError> {
+    if value.len() > max || !allow_empty && value.is_empty() || value.chars().any(char::is_control)
+    {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -2805,6 +3019,51 @@ mod tests {
         };
         assert_eq!(
             validate_audit_page(&duplicate).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn people_paths_pages_and_mutation_receipts_are_closed_and_unique() {
+        assert_eq!(
+            people_page_path("Target + one", Some("cursor/one?x=1")).unwrap(),
+            "/api/admin/people?limit=50&search=Target%20%2B%20one&cursor=cursor%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
+            people_page_path("bad\nsearch", None).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        assert_eq!(
+            person_mutation_path("person/one?x=1", "role").unwrap(),
+            "/api/admin/people/person%2Fone%3Fx%3D1/role"
+        );
+        assert_eq!(
+            person_mutation_path("person-1", "delete").unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let person = Person {
+            id: openbot_contracts::ids::ActorId::new("person-1"),
+            email: "person-1@example.test".to_owned(),
+            name: Some("Person One".to_owned()),
+            image: None,
+            role: openbot_contracts::auth::Role::User,
+            providers: vec!["google".to_owned(), "okta".to_owned()],
+            last_signed_in_at: Some(OffsetDateTime::UNIX_EPOCH),
+            revoked: false,
+            configured_admin: false,
+        };
+        assert!(validate_mutated_person("person-1", &person).is_ok());
+        assert_eq!(
+            validate_mutated_person("person-2", &person).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let duplicate = PeoplePage {
+            people: vec![person.clone(), person],
+            next_cursor: None,
+        };
+        assert_eq!(
+            validate_people_page(&duplicate).unwrap_err(),
             ApiError::InvalidResponse
         );
     }

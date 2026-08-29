@@ -65,6 +65,30 @@ pub struct PeoplePage {
     pub next_cursor: Option<String>,
 }
 
+/// Administrator role mutation body. Identity and actor binding never come from this payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangePersonRole {
+    /// Requested effective role.
+    pub role: Role,
+}
+
+/// Administrator access mutation body. Identity and actor binding never come from this payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangePersonAccess {
+    /// `true` removes access; `false` restores it.
+    pub revoked: bool,
+}
+
+/// Exact response envelope shared by Server and GUI for person mutations.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersonResponse {
+    /// Authoritative row after the committed mutation.
+    pub person: Person,
+}
+
 /// `/api/admin/status` 的封闭状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -138,6 +162,22 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&person).unwrap(),
             r#"{"id":"user-1","email":"user@example.com","name":null,"image":null,"role":"user","providers":["oidc"],"lastSignedInAt":null,"revoked":false,"configuredAdmin":false}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&ChangePersonRole { role: Role::Admin }).unwrap(),
+            r#"{"role":"admin"}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&ChangePersonAccess { revoked: true }).unwrap(),
+            r#"{"revoked":true}"#,
+        );
+        let response = PersonResponse {
+            person: person.clone(),
+        };
+        assert_eq!(
+            serde_json::from_str::<PersonResponse>(&serde_json::to_string(&response).unwrap())
+                .unwrap(),
+            response,
         );
     }
 

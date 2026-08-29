@@ -82,7 +82,7 @@ entries:
     test_id: T-ROUTE-0004
     migration_rule: "preserve: admin 二级侧栏与守卫保留；非 admin 的可见性由上游的 redirect 改为 v3 §3.2 的统一 404（行为差异，不得写成 parity 的当前行为）"
     status: done
-    done_evidence: "Batch59：AdminShell先GET /api/admin/status，child page在gate通过前不构造；admin得200后只显示Overview/Audit/Playground三条真实secondary destination，global AppSidebar也只在同一admin probe成功时显示/section-current Admin入口。真实PG session把role由admin原子改user并同步user/session generation后，浏览器global Admin link0，/admin与/admin/audit统一NotFound、admin nav0、audit row0；Server既有non-admin status/audit 403测试保持。release浏览器main1/nav2/current1/console0。"
+    done_evidence: "Batch59建立权威GET /api/admin/status gate与Overview/Audit/Playground；Batch60在People production journey闭合后才加入第四条People destination。child始终在gate通过前不构造，global AppSidebar也只按同一probe显示Admin。Batch60真实PG session原子降admin并同步user/session generation后，新tab仅有两次status 403、/api/admin/people请求0、global link/admin nav/People child均0并统一NotFound；admin正向main1/nav2/current1、runtime console error0。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/admin/route.tsx 得 createFileRoute(\"/_authed/admin\")；同文件 beforeLoad 内 `if (user?.role !== \"admin\") throw redirect({ to: \"/\" })`"
     notes: "模板 n/a（layout，非页面）。journey：管理员进入 admin 区，左侧换成 AdminSidebar。权限：上游判据是 user.role === 'admin'，不满足时 redirect 到 /；v3 §3.2 要求无权访问统一 404 以避免资源枚举，重写时按 404 实现并单列测试。"
   - id: settings-shell-layout
@@ -169,7 +169,7 @@ entries:
     test_id: T-ROUTE-0012
     migration_rule: "preserve"
     status: done
-    done_evidence: "Batch59：global AppSidebar通过权威admin probe出现Admin link并可点击到/admin；页面经AdminShell后渲染唯一h1与三个implemented Item destination（Audit、Approvals、Playground），不画People/Plugins等断链；secondary nav href精确为/、/admin、/admin/audit、/admin/playground且aria-current恰1。UI unit与release浏览器均绿。formal page golden仍由T-UI-0139独立保持todo。"
+    done_evidence: "Batch59建立Audit/Approvals/Playground三个implemented Item；Batch60在People route完成后加入第四项People。页面经AdminShell渲染唯一h1，不画Plugins等未实现断链；secondary href精确为/、/admin、/admin/audit、/admin/people、/admin/playground且aria-current恰1。UI unit与release浏览器均绿；formal page golden仍由T-UI-0139独立保持todo。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/index.tsx 得 title=\"Admin\" + description=\"Settings that apply to everybody in this deployment...\"；同文件按 section 渲染 Item 列表"
     notes: "模板 List（分组 Item 列表构成的导航落地页）。journey：管理员进入 admin 区，从分组清单跳到具体管理页。权限：仅 admin；非 admin 按 admin-shell-layout 条的裁决走 404。"
   - id: admin-audit
@@ -246,11 +246,12 @@ entries:
   - id: admin-people
     upstream: app/src/routes/_authed/admin/people.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_people -> /admin/people"
+    target: "openbot_ui::features::admin::AdminPeoplePage -> /admin/people"
     owner: openbot-ui
     test_id: T-ROUTE-0020
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch60：closed same-origin/no-store transport固定limit50、server-side search与opaque cursor，role/access body分别只有role/revoked，receipt必须同person且等于请求结果；页内/跨页ID重复与checked request epoch fail-closed。release memory fixture首屏50→52、首屏外Search Target经250ms服务端查询唯一命中，self/configured-admin两类控制均disabled；role与remove/restore双向、hard reload、中英、600/1280 overflow0、runtime console error0。真实PG17.11 SCRAM+production keyed session/PostgresPeopleAdministration浏览器双向后DB精确generation3/role user/revoked0/target session0/role audit2/revoke1/restore1/actor sh1 session1；降当前admin并同步generation后People API请求0、统一NotFound。formal golden T-UI-0140仍todo。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/people.tsx 得 title=\"People\" / \"Who is here\" + description=\"An address named in INITIAL_ADMIN_EMAILS is an administrator whatever this screen says, so it cannot be changed here.\""
     notes: "模板 List。journey：管理员查看所有登录过的人并改其角色；INITIAL_ADMIN_EMAILS 命中的地址是环境授予的 admin，本页改不动。权限：仅 admin；该 env 的处置见 parity/env.yaml。"
   - id: admin-playground
