@@ -2,6 +2,12 @@
 
 use std::collections::BTreeSet;
 
+use openbot_contracts::identity_provider::{
+    MAX_IDENTITY_PROVIDER_CLIENT_ID_BYTES, MAX_IDENTITY_PROVIDER_CLIENT_SECRET_BYTES,
+    MAX_IDENTITY_PROVIDER_DOMAINS, MAX_IDENTITY_PROVIDER_METADATA_BYTES,
+    MAX_IDENTITY_PROVIDER_URL_BYTES, MAX_SAML_ENTITY_ID_BYTES,
+};
+pub use openbot_contracts::identity_provider::{RegisteredIdentityProvider, SsoProtocol};
 use openbot_domain::identity::groups::{
     GroupClaimPath, GroupNormalization, IdentityProviderId, IdpGroupMapping,
 };
@@ -13,13 +19,7 @@ use crate::auth::oidc::provider::parse_issuer;
 use crate::auth::oidc::{EmailDomain, ProviderId};
 
 const STORAGE_VERSION: u8 = 2;
-const MAX_DOMAINS: usize = 16;
-const MAX_CLIENT_ID_BYTES: usize = 4 * 1024;
-const MAX_CLIENT_SECRET_BYTES: usize = 16 * 1024;
-const MAX_METADATA_BYTES: usize = 512 * 1024;
 const MAX_ATTRIBUTE_NAME_BYTES: usize = 1024;
-const MAX_URL_BYTES: usize = 4 * 1024;
-const MAX_SAML_ENTITY_ID_BYTES: usize = 1024;
 
 /// 动态 SSO 配置错误；不携带 secret、metadata 或管理员输入。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -117,25 +117,6 @@ pub struct RegisterIdentityProviderInput {
     pub oidc_config: Option<OidcRegistrationInput>,
     #[serde(default)]
     pub saml_config: Option<SamlRegistrationInput>,
-}
-
-/// 公开协议标识。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SsoProtocol {
-    Oidc,
-    Saml,
-}
-
-/// 管理页面唯一可见的 provider 投影；类型装不下 secret/metadata/certificate。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegisteredIdentityProvider {
-    pub provider_id: String,
-    pub issuer: String,
-    pub domain: String,
-    pub protocol: SsoProtocol,
-    pub registered_by: Option<String>,
 }
 
 /// 校验后的 OIDC 明文配置；只在 seal/runtime 构造路径短暂存在。
@@ -240,10 +221,10 @@ impl RegistrationPlan {
         match (input.oidc_config, input.saml_config) {
             (Some(oidc), None) => {
                 let issuer = validated_issuer(&input.issuer)?;
-                validate_nonempty_bounded(&oidc.client_id, MAX_CLIENT_ID_BYTES)
+                validate_nonempty_bounded(&oidc.client_id, MAX_IDENTITY_PROVIDER_CLIENT_ID_BYTES)
                     .map_err(|_| SsoConfigError::ShapeRejected)?;
                 if oidc.client_secret.0.is_empty()
-                    || oidc.client_secret.0.len() > MAX_CLIENT_SECRET_BYTES
+                    || oidc.client_secret.0.len() > MAX_IDENTITY_PROVIDER_CLIENT_SECRET_BYTES
                 {
                     return Err(SsoConfigError::SecretRejected);
                 }
@@ -275,7 +256,7 @@ impl RegistrationPlan {
                 validate_saml_entity_id(&input.issuer)?;
                 validate_https_url(&saml.entry_point)?;
                 if saml.idp_metadata.metadata.is_empty()
-                    || saml.idp_metadata.metadata.len() > MAX_METADATA_BYTES
+                    || saml.idp_metadata.metadata.len() > MAX_IDENTITY_PROVIDER_METADATA_BYTES
                 {
                     return Err(SsoConfigError::MetadataRejected);
                 }
@@ -502,10 +483,10 @@ pub(crate) fn decode_legacy(
             let issuer = validated_issuer(issuer)?;
             let legacy: LegacyOidcConfig = serde_json::from_slice(value.expose())
                 .map_err(|_| SsoConfigError::ShapeRejected)?;
-            validate_nonempty_bounded(&legacy.client_id, MAX_CLIENT_ID_BYTES)
+            validate_nonempty_bounded(&legacy.client_id, MAX_IDENTITY_PROVIDER_CLIENT_ID_BYTES)
                 .map_err(|_| SsoConfigError::ShapeRejected)?;
             if legacy.client_secret.is_empty()
-                || legacy.client_secret.len() > MAX_CLIENT_SECRET_BYTES
+                || legacy.client_secret.len() > MAX_IDENTITY_PROVIDER_CLIENT_SECRET_BYTES
             {
                 return Err(SsoConfigError::SecretRejected);
             }
@@ -531,7 +512,7 @@ pub(crate) fn decode_legacy(
                 .map_err(|_| SsoConfigError::ShapeRejected)?;
             validate_https_url(&legacy.entry_point)?;
             if legacy.idp_metadata.metadata.is_empty()
-                || legacy.idp_metadata.metadata.len() > MAX_METADATA_BYTES
+                || legacy.idp_metadata.metadata.len() > MAX_IDENTITY_PROVIDER_METADATA_BYTES
             {
                 return Err(SsoConfigError::MetadataRejected);
             }
@@ -563,7 +544,10 @@ impl core::fmt::Debug for DecodedSecretConfig {
 
 fn parse_domains(raw: &str) -> Result<BTreeSet<EmailDomain>, SsoConfigError> {
     let parts: Vec<&str> = raw.split(',').map(str::trim).collect();
-    if parts.is_empty() || parts.len() > MAX_DOMAINS || parts.iter().any(|part| part.is_empty()) {
+    if parts.is_empty()
+        || parts.len() > MAX_IDENTITY_PROVIDER_DOMAINS
+        || parts.iter().any(|part| part.is_empty())
+    {
         return Err(SsoConfigError::DomainRejected);
     }
     let expected_count = parts.len();
@@ -617,7 +601,8 @@ fn parse_normalization(raw: Option<&str>) -> Result<Option<GroupNormalization>, 
 }
 
 fn validate_https_url(raw: &str) -> Result<(), SsoConfigError> {
-    validate_nonempty_bounded(raw, MAX_URL_BYTES).map_err(|_| SsoConfigError::EndpointRejected)?;
+    validate_nonempty_bounded(raw, MAX_IDENTITY_PROVIDER_URL_BYTES)
+        .map_err(|_| SsoConfigError::EndpointRejected)?;
     let url = Url::parse(raw).map_err(|_| SsoConfigError::EndpointRejected)?;
     if url.scheme() != "https"
         || url.host_str().is_none()
@@ -631,7 +616,8 @@ fn validate_https_url(raw: &str) -> Result<(), SsoConfigError> {
 }
 
 pub(crate) fn validated_issuer(raw: &str) -> Result<openidconnect::IssuerUrl, SsoConfigError> {
-    validate_nonempty_bounded(raw, MAX_URL_BYTES).map_err(|_| SsoConfigError::IssuerRejected)?;
+    validate_nonempty_bounded(raw, MAX_IDENTITY_PROVIDER_URL_BYTES)
+        .map_err(|_| SsoConfigError::IssuerRejected)?;
     parse_issuer(raw).map_err(|_| SsoConfigError::IssuerRejected)
 }
 
@@ -771,7 +757,10 @@ mod tests {
         );
 
         let mut oversized = oidc_body();
-        oversized.issuer = format!("https://idp.example/{}", "a".repeat(MAX_URL_BYTES));
+        oversized.issuer = format!(
+            "https://idp.example/{}",
+            "a".repeat(MAX_IDENTITY_PROVIDER_URL_BYTES)
+        );
         assert_eq!(
             RegistrationPlan::parse(oversized).unwrap_err(),
             SsoConfigError::IssuerRejected

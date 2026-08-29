@@ -237,11 +237,12 @@ entries:
   - id: admin-identity-providers
     upstream: app/src/routes/_authed/admin/identity-providers.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_identity_providers -> /admin/identity-providers"
+    target: "openbot_ui::features::admin::AdminIdentityProvidersPage -> /admin/identity-providers"
     owner: openbot-ui
     test_id: T-ROUTE-0019
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch62：wasm-safe shared list/delete contract不能表达secret/metadata/certificate；browser request serialize-only，infra secret input仍不可Clone/Serialize。UI对provider/domain/issuer/URL/metadata/client字段按Server上限与形态前置拒绝，SAML/OIDC exclusive body且discovery只从issuer派生；same-origin/no-store list/register/delete均校验closed response/receipt，成功后权威refetch。release浏览器空提交5字段拒绝；真实PG17.11 SCRAM+production keyed session/DynamicSsoService登记SAML后行精确为SAML/acme.example,second.example/issuer，DB探针providers1/saml1/v2 envelope1/plaintext metadata0/register audit1；hard reload保持，英文/中文与OIDC字段切换、password secret、取消清secret、删除回空态后providers0/remove audit1，runtime error0。降actor为user并同步user/session generation2后统一NotFound、child/button/dialog0，HTTP探针保持list1/register0/remove0。1280 overflow0；Browser viewport控制层未应用600 override，未冒充已跑；formal golden T-UI-0138继续todo。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/identity-providers.tsx 得 title=\"Identity providers\" / \"Registered\" + description=\"A company's own identity provider, by SAML or OpenID Connect...\" 与 \"Google, Microsoft and Okta are configured in the environment instead and do not appear here.\""
     notes: "模板 Form（设计系统文档 §5.2 Form 行点名 identity provider）。journey：管理员按 SAML / OIDC 注册企业 IdP，并绑定 email domain 做 SSO routing（v3 §3.1 条 1 与条 8）。权限：仅 admin；Google/Microsoft/Okta 由环境变量配置，本页不列出。"
   - id: admin-people

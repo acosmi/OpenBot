@@ -77,6 +77,7 @@ pub mod command;
 pub mod components;
 pub mod engine;
 pub mod error;
+pub mod identity_provider;
 pub mod ids;
 pub mod intelligence;
 pub mod mcp;

@@ -302,6 +302,10 @@ entries:
   - id: T-ROUTE-0014
     disposition: revalidate
     notes: "Batch61 reruns first setup, mode/rule/baseline writes, custom-allow preservation and non-admin child suppression."
+  # Added mechanically because the Batch62 Admin Identity Providers diff closes this target.
+  - id: T-ROUTE-0019
+    disposition: revalidate
+    notes: "Batch62 reruns closed SAML/OIDC forms, real PostgreSQL registration/removal and non-admin child suppression."
   - id: T-CMP-0015
     disposition: split
     scope: web
