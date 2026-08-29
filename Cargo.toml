@@ -76,6 +76,9 @@ serde_yaml = "0.9.34"
 walkdir = "2.5.0"
 flate2 = "=1.1.9"
 tar = "=0.4.46"
+# Electron 官方发行物只提供 zip。关闭默认 feature，避免 xtask 为只读 deflate 解包带入
+# AES/bzip2/lzma/zstd；该版本已经由 leptos_i18n_build 锁在 Cargo.lock 中，不新增 package。
+zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
 # `xtask test-inventory`（v3 §24 G0 / G8 点名的 AST 级 test inventory）的 TS/TSX 解析器。
 #
 # **版本 `0.146.0`（2026-08-22 实测最新）。五个 crate 同版本 —— oxc 全家桶同步发版。**

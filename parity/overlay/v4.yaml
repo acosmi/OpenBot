@@ -1,0 +1,35 @@
+# R124 v4 exception-only overlay. `carry` is always implicit and must never appear as a row.
+# `cargo xtask parity-check` joins every id to the nine parity ledgers and prints all four counts.
+schema: parity-overlay
+schema_version: 1
+baseline: v4
+generated_by: manual
+entries:
+  # Added mechanically for this batch because the control.rs diff matches these done targets.
+  - id: T-BROP-0005
+    disposition: revalidate
+    notes: "Batch52 reruns the ControlService state-machine suite after poison is added."
+  - id: T-BROP-0006
+    disposition: revalidate
+    notes: "Batch52 reruns release fencing after release becomes checked/fallible."
+  - id: T-BROP-0007
+    disposition: revalidate
+    notes: "Batch52 reruns help-request state behavior on the poisoned-capable service."
+  - id: T-BROP-0008
+    disposition: revalidate
+    notes: "Batch52 reruns scoped secret request behavior on the poisoned-capable service."
+  - id: T-BROP-0009
+    disposition: revalidate
+    notes: "Batch52 reruns take/transfer behavior with checked epoch advancement."
+  - id: T-BROP-0046
+    disposition: revalidate
+    defect: true
+    notes: "HumanLeaseEpoch saturation must become checked increment plus generation-recoverable poison."
+  - id: T-CMP-0015
+    disposition: split
+    scope: web
+    notes: "The completed iframe attribute evidence is Web-only; Desktop uses an engine render session."
+  - id: T-CMP-0018
+    disposition: split
+    scope: web
+    notes: "MessageChannel is Web-only; Desktop host communication is the closed engine pipe protocol."
