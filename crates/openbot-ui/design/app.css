@@ -502,6 +502,153 @@ textarea:focus-visible,
   margin-block-start: calc(var(--spacing) * 4);
 }
 
+.ob-boundaries-audit-link,
+.ob-boundary-mode-help,
+.ob-boundary-custom-allow,
+.ob-boundary-draft-error {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+
+.ob-boundaries-audit-link {
+  margin: calc(var(--spacing) * 3) 0 0;
+}
+
+.ob-boundaries-audit-link a {
+  color: var(--fg-secondary);
+  text-underline-offset: var(--spacing);
+}
+
+.ob-boundary-first-setup {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 3);
+  margin-block-start: calc(var(--spacing) * 4);
+}
+
+.ob-boundary-first-setup article {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-popover);
+}
+
+.ob-boundary-first-setup h3,
+.ob-boundary-first-setup p {
+  margin: 0;
+}
+
+.ob-boundary-first-setup h3 {
+  color: var(--fg);
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+}
+
+.ob-boundary-first-setup p {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+}
+
+.ob-boundary-mode-actions,
+.ob-boundary-rule-form {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  margin-block-start: calc(var(--spacing) * 3);
+}
+
+.ob-boundary-mode-help {
+  margin: calc(var(--spacing) * 2) 0 0;
+}
+
+.ob-boundary-rule-list,
+.ob-boundary-presets,
+.ob-boundary-allow-list {
+  margin: calc(var(--spacing) * 3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-boundary-rule-list {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-popover);
+}
+
+.ob-boundary-rule-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 4);
+  min-width: 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+}
+
+.ob-boundary-rule-list li + li {
+  border-block-start: 1px solid var(--border);
+}
+
+.ob-boundary-rule-list code,
+.ob-boundary-allow-list code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--fg-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+
+.ob-boundary-rule-form .ob-input {
+  min-width: 0;
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.ob-boundary-draft-error {
+  margin: calc(var(--spacing) * 2) 0 0;
+  color: var(--fg-danger);
+}
+
+.ob-boundary-presets {
+  display: grid;
+  gap: calc(var(--spacing) * 2);
+}
+
+.ob-boundary-presets li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: calc(var(--spacing) * 3);
+}
+
+.ob-boundary-presets span,
+.ob-boundary-custom-allow {
+  padding-block-start: calc(var(--spacing) * 2);
+}
+
+.ob-boundary-presets span {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+
+.ob-boundary-allow-list {
+  display: grid;
+  gap: var(--spacing);
+  margin-block-end: calc(var(--spacing) * 3);
+}
+
+.ob-boundary-custom-allow {
+  margin: 0;
+}
+
 .ob-settings-shell {
   display: grid;
   grid-template-columns: var(--size-subnav) minmax(0, 1fr);
@@ -3995,6 +4142,19 @@ textarea:focus-visible,
   .ob-person-actions {
     grid-column: 1 / -1;
     justify-content: flex-end;
+  }
+
+  .ob-boundary-first-setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ob-boundary-rule-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ob-boundary-presets li {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

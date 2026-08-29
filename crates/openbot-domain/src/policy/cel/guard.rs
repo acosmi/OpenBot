@@ -39,8 +39,6 @@
 //! 便宜得多。深度上限 8 之下，执行侧余量在 8 倍以上，不必再包一层线程 —— 而且求值在工具
 //! 调用的热路径上，每次评估都 spawn 一个线程是不可接受的开销。
 
-use super::failure::CelFailure;
-
 /// 策略表达式的字节上限。
 ///
 /// **4096 字节。** 取值理由：`fixtures/policy/cel-corpus.json` 全部 69 条表达式里最长的一条是
@@ -48,7 +46,9 @@ use super::failure::CelFailure;
 /// 4 KiB 给了约 28 倍余量；同时它足够小，使「先扫一遍再解析」的成本可以忽略。
 ///
 /// 它不是安全边界的主力（主力是 [`MAX_EXPRESSION_DEPTH`]），而是让扫描本身有界。
-pub const MAX_EXPRESSION_BYTES: usize = 4096;
+pub use openbot_contracts::policy::MAX_ACTION_POLICY_EXPRESSION_BYTES as MAX_EXPRESSION_BYTES;
+
+use super::failure::CelFailure;
 
 /// 策略表达式的括号嵌套深度上限。
 ///

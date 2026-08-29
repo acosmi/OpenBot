@@ -82,7 +82,7 @@ entries:
     test_id: T-ROUTE-0004
     migration_rule: "preserve: admin 二级侧栏与守卫保留；非 admin 的可见性由上游的 redirect 改为 v3 §3.2 的统一 404（行为差异，不得写成 parity 的当前行为）"
     status: done
-    done_evidence: "Batch59建立权威GET /api/admin/status gate与Overview/Audit/Playground；Batch60在People production journey闭合后才加入第四条People destination。child始终在gate通过前不构造，global AppSidebar也只按同一probe显示Admin。Batch60真实PG session原子降admin并同步user/session generation后，新tab仅有两次status 403、/api/admin/people请求0、global link/admin nav/People child均0并统一NotFound；admin正向main1/nav2/current1、runtime console error0。"
+    done_evidence: "Batch59建立权威GET /api/admin/status gate与Overview/Audit/Playground；Batch60/61只在People/Boundaries production journey分别闭合后加入destination。child始终在gate通过前不构造，global AppSidebar也只按同一probe显示Admin。Batch61真实PG session原子降admin并同步user/session generation后，新tab仅status403×2、/api/computers/policy请求0、global link/admin nav/Boundaries child均0并统一NotFound；admin正向main1/nav2/current1、runtime console error0。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/admin/route.tsx 得 createFileRoute(\"/_authed/admin\")；同文件 beforeLoad 内 `if (user?.role !== \"admin\") throw redirect({ to: \"/\" })`"
     notes: "模板 n/a（layout，非页面）。journey：管理员进入 admin 区，左侧换成 AdminSidebar。权限：上游判据是 user.role === 'admin'，不满足时 redirect 到 /；v3 §3.2 要求无权访问统一 404 以避免资源枚举，重写时按 404 实现并单列测试。"
   - id: settings-shell-layout
@@ -169,7 +169,7 @@ entries:
     test_id: T-ROUTE-0012
     migration_rule: "preserve"
     status: done
-    done_evidence: "Batch59建立Audit/Approvals/Playground三个implemented Item；Batch60在People route完成后加入第四项People。页面经AdminShell渲染唯一h1，不画Plugins等未实现断链；secondary href精确为/、/admin、/admin/audit、/admin/people、/admin/playground且aria-current恰1。UI unit与release浏览器均绿；formal page golden仍由T-UI-0139独立保持todo。"
+    done_evidence: "Batch59建立Audit/Approvals/Playground三个implemented Item；Batch60/61在People/Boundaries完成后加入，当前五项。页面经AdminShell渲染唯一h1，不画Plugins等未实现断链；secondary href精确为/、/admin、/admin/boundaries、/admin/audit、/admin/people、/admin/playground且aria-current恰1。UI unit与release浏览器均绿；formal page golden仍由T-UI-0139独立保持todo。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/index.tsx 得 title=\"Admin\" + description=\"Settings that apply to everybody in this deployment...\"；同文件按 section 渲染 Item 列表"
     notes: "模板 List（分组 Item 列表构成的导航落地页）。journey：管理员进入 admin 区，从分组清单跳到具体管理页。权限：仅 admin；非 admin 按 admin-shell-layout 条的裁决走 404。"
   - id: admin-audit
@@ -186,11 +186,12 @@ entries:
   - id: admin-boundaries
     upstream: app/src/routes/_authed/admin/boundaries.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_boundaries -> /admin/boundaries"
+    target: "openbot_ui::features::admin::AdminBoundariesPage -> /admin/boundaries"
     owner: openbot-ui
     test_id: T-ROUTE-0014
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch61：shared ActionPolicyResponse保留policy:null/default-deny，4096-byte CEL上限由contracts/domain/UI单源。release memory浏览器未配置时只显示无默认选中的严格/兼容两preset；两者各实选，mode enforce↔dry-run、固定preset、Enter自定义、重复拒绝、按index移除、default-deny↔allow true、hard reload、中英、600/1280均绿；真实浏览器发现并修复成功PUT后stale draft alert。PG17.11 SCRAM+production keyed session/PolicyStore预置custom allow；页面无baseline覆盖按钮，add deny+dry-run后DB精确mode/deny/custom allow/updated_by/current row=1并reload保持。application同批亲跑证明dry-run审计后执行、enforce拒绝零attempt。降当前admin并同步generation后policy GET/PUT=0、统一NotFound/child0。formal golden T-UI-0133仍todo。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/boundaries.tsx 得 title=\"Boundaries\" / \"When a rule matches\" + description=\"Enforce stops the action. Record it and allow it writes the same row and lets the action through...\""
     notes: "模板 List（规则列表 + 就地编辑）。journey：管理员看规则清单、切 enforce / record-and-allow 两档，在真实流量上先试再拒。权限：仅 admin。"
   - id: admin-components-index

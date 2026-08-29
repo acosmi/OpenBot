@@ -78,6 +78,7 @@ use openbot_domain::tool::approval::{ApprovalTarget, PolicyVersionTag};
 use openbot_domain::tool::metadata::{ApprovalClass, Effect, ToolName};
 use openbot_infra::auth::config::default_session_lifetime;
 use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::policy::PolicyStore;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_infra::tool_approval::{DurableHumanDecision, PostgresToolApprovalCoordinator};
 use openbot_server::auth::SESSION_COOKIE_NAME;
@@ -118,6 +119,8 @@ const POSTGRES_APPROVAL_SEED_SQL: &str = "INSERT INTO public.users(id,email,auth
      INSERT INTO public.user_roles(user_id,role) VALUES
        ('fixture-actor','user'),('fixture-actor','admin'),
        ('fixture-target','user'),('fixture-configured-admin','admin');
+     INSERT INTO public.action_policy(id,mode,deny,allow,updated_by) VALUES
+       ('current','enforce','{}',ARRAY['actor.id == \"fixture-actor\"'],'fixture-seed');
      INSERT INTO public.agents(id,name,type,configuration)
        VALUES('fixture-pg-approval-bot','Fixture Approval Bot','built_in','{}');
      INSERT INTO public.agent_profiles(
@@ -2344,6 +2347,7 @@ struct FixtureApprovalProbe {
 struct ApprovalFixtureAssembly {
     port: Arc<dyn ToolApprovalAdministration>,
     people: FixturePeoplePort,
+    policy: PolicyStore,
     auth_resolver: Option<Arc<dyn AuthResolver>>,
     memory_probe: Option<FixtureApprovalProbe>,
     postgres_probe: Option<PostgresApprovalProbe>,
@@ -2534,6 +2538,7 @@ async fn assemble_approval_fixture(
                 postgres_probe: None,
                 port: Arc::new(approvals),
                 people: FixturePeoplePort::Memory(FixturePeople::new(now)),
+                policy: PolicyStore::in_memory(None),
                 session_bootstrap: false,
                 mode: "memory",
                 auth_mode: "fixed",
@@ -2550,6 +2555,9 @@ async fn assemble_approval_fixture(
     native::apply(&mut client).await?;
     seed_postgres_approval_scope(&mut client, now).await?;
     drop(client);
+
+    let policy = PolicyStore::postgres(database.clone(), None);
+    policy.load().await?;
 
     let coordinator = Arc::new(PostgresToolApprovalCoordinator::new(
         database.clone(),
@@ -2609,6 +2617,7 @@ async fn assemble_approval_fixture(
         auth_resolver: Some(auth_resolver),
         port: coordinator,
         people,
+        policy,
         memory_probe: None,
         postgres_probe: Some(PostgresApprovalProbe {
             pool: database,
@@ -2801,6 +2810,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let ApprovalFixtureAssembly {
         port: approvals,
         people,
+        policy,
         auth_resolver,
         memory_probe: approval_probe,
         postgres_probe,
@@ -2842,6 +2852,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_component_administration(Arc::new(components))
             .with_sandboxed_component_administration(Arc::new(sandboxed))
             .with_people(people)
+            .with_policy(policy)
             .with_threads(threads)
             .with_memory(memory)
             .with_mcp_connections(Arc::new(connections))
@@ -2913,6 +2924,7 @@ fn arguments() -> Result<(String, u16), Box<dyn Error>> {
 #[cfg(test)]
 mod approval_pg_tests {
     use super::*;
+    use openbot_domain::policy::{ActionPolicy, PolicyMode};
 
     fn auth() -> AuthContext {
         AuthContext::for_test(
@@ -2978,6 +2990,10 @@ mod approval_pg_tests {
         assert!(token_hash.starts_with("sh1_"));
         assert!(!token_hash.contains(FIXTURE_SESSION_TOKEN));
         assert!(!POSTGRES_APPROVAL_SEED_SQL.contains(FIXTURE_SESSION_TOKEN));
+        assert!(
+            POSTGRES_APPROVAL_SEED_SQL.contains("actor.id == \"fixture-actor\""),
+            "PG fixture must exercise custom-allow preservation",
+        );
     }
 
     #[tokio::test]
@@ -3076,5 +3092,26 @@ mod approval_pg_tests {
                 reason: IdentityConflictReason::AccessSelfRevocation,
             },
         );
+    }
+
+    #[tokio::test]
+    async fn memory_policy_fixture_starts_unconfigured_then_keeps_the_explicit_preset() {
+        let store = PolicyStore::in_memory(None);
+        assert!(store.current().is_none());
+        store
+            .set(
+                ActionPolicy {
+                    mode: PolicyMode::Enforce,
+                    deny: Vec::new(),
+                    allow: vec!["true".to_owned()],
+                },
+                Some(FIXTURE_ACTOR),
+            )
+            .await
+            .expect("fixture policy preset");
+        let stored = store.current().expect("explicit fixture policy");
+        assert_eq!(stored.mode, PolicyMode::Enforce);
+        assert!(stored.deny.is_empty());
+        assert_eq!(stored.allow, ["true"]);
     }
 }

@@ -14,6 +14,7 @@ use crate::primitives::{IconSize, IconView};
 
 const ADMIN_HOME_PATH: &str = "/admin";
 const ADMIN_AUDIT_PATH: &str = "/admin/audit";
+const ADMIN_BOUNDARIES_PATH: &str = "/admin/boundaries";
 const ADMIN_PEOPLE_PATH: &str = "/admin/people";
 const ADMIN_PLAYGROUND_PATH: &str = "/admin/playground";
 
@@ -69,6 +70,7 @@ fn admin_shell_view(
 ) -> impl IntoView {
     let home_location = location.clone();
     let audit_location = location.clone();
+    let boundaries_location = location.clone();
     let people_location = location.clone();
     let playground_location = location;
     view! {
@@ -87,6 +89,17 @@ fn admin_shell_view(
                             })
                             icon=Icon::Landmark
                             label=move || t_string!(i18n, admin.nav_overview).to_owned()
+                        />
+                        <AdminNavItem
+                            href=ADMIN_BOUNDARIES_PATH
+                            current=Signal::derive(move || {
+                                is_exact(
+                                    &boundaries_location.pathname.get(),
+                                    ADMIN_BOUNDARIES_PATH,
+                                )
+                            })
+                            icon=Icon::ShieldCheck
+                            label=move || t_string!(i18n, boundaries.title).to_owned()
                         />
                         <AdminNavItem
                             href=ADMIN_AUDIT_PATH
@@ -188,12 +201,14 @@ mod tests {
         assert_eq!(
             [
                 ADMIN_HOME_PATH,
+                ADMIN_BOUNDARIES_PATH,
                 ADMIN_AUDIT_PATH,
                 ADMIN_PEOPLE_PATH,
                 ADMIN_PLAYGROUND_PATH,
             ],
             [
                 "/admin",
+                "/admin/boundaries",
                 "/admin/audit",
                 "/admin/people",
                 "/admin/playground",
@@ -203,6 +218,7 @@ mod tests {
         assert!(!is_exact("/admin/audit", ADMIN_HOME_PATH));
         assert!(is_exact("/admin/audit", ADMIN_AUDIT_PATH));
         assert!(!is_exact("/admin/audit-old", ADMIN_AUDIT_PATH));
+        assert!(is_exact("/admin/boundaries", ADMIN_BOUNDARIES_PATH));
         assert!(is_exact("/admin/people", ADMIN_PEOPLE_PATH));
         assert_eq!(admin_gate_state(Ok(())), AdminGateState::Authorized);
         assert_eq!(
