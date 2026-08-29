@@ -16,9 +16,10 @@
 # 2. v3 §18〈File/shell〉那行的四条封闭操作（files/list、files/read、files/write、exec）
 #    本来就在这 29 条里，所以不另开重复 entry，而是就地标注它们属于 File/shell 封闭集、
 #    **不进** `BrowserOperation`（v3 §11.2 末句）。四条上游都在，label 全 parity。
-# 3. 29 条之外另有 17 条 entry（T-BROP-0030..0046）：3 条 screencast 子操作 + 1 条 profile ensure
+# 3. 29 条之外另有 21 条 entry（T-BROP-0030..0050）：3 条 screencast 子操作 + 1 条 profile ensure
 #    + 3 条 R1 新增/负向闭合（download_refused / JS dialog dismiss / 无 upload）
-#    + 8 条 §12.5 输入 union 成员 + 1 条 IME/drag 裁决 + 1 条 lease epoch 栅栏。
+#    + 8 条 §12.5 输入 union 成员 + 1 条 IME/drag 裁决 + 1 条 lease epoch 栅栏
+#    + 4 条 P0-code Engine 契约（boot / role / confinement / Browser role conformance）。
 #
 # 关键负向断言（v3 §11.2「没有 download、没有 upload」）：
 #   `grep -rlE 'page\.on\(|setInputFiles|filechooser' agent-computer/src | wc -l` = 0。
@@ -29,7 +30,7 @@
 #   配第 6 条（server/src 得 2）；dialog 的负向（第 7 条得 0）配第 8 条（app/src 得 10）。
 #   recount 里所有 command 都是可直接执行的裸命令，不带任何说明前缀，方便 CI 逐条重跑。
 #
-# Batch51 后本表 7 done / 39 todo：只关闭不依赖 Electron/CDP 的 control/HumanLease 状态机与
+# Batch52 后本表 7 done / 43 todo：只关闭不依赖 Electron/CDP 的 control/HumanLease 状态机与
 # closed input-union 裁决。mouse/wheel/key/secret 的真实 CDP execution、engine reject、screen/frame/
 # viewer ticket 仍全部 todo，不能用 Rust enum 冒充运行时。
 #
@@ -87,25 +88,25 @@ recount:
     expect: 1
   - command: "grep -c '^  - id: ' parity/browser-operations.yaml"
     cwd: repo
-    expect: 46
+    expect: 50
   - command: "grep -c '^    label: parity$' parity/browser-operations.yaml"
     cwd: repo
     expect: 38
   - command: "grep -c '^    label: 新增$' parity/browser-operations.yaml"
     cwd: repo
-    expect: 5
+    expect: 9
   - command: "grep -c '^    label: 替代$' parity/browser-operations.yaml"
     cwd: repo
     expect: 3
   - command: "grep -c '^    status: todo$' parity/browser-operations.yaml"
     cwd: repo
-    expect: 39
+    expect: 43
   - command: "grep -c '^    upstream: \"-\"$' parity/browser-operations.yaml"
     cwd: repo
-    expect: 5
+    expect: 9
   - command: "grep -oE '^    test_id: T-BROP-[0-9]{4}$' parity/browser-operations.yaml | sort -u | wc -l"
     cwd: repo
-    expect: 46
+    expect: 50
 
 entries:
   # ===========================================================================
@@ -594,3 +595,51 @@ entries:
     done_evidence: "Batch51 HumanLease绑定Rust AuthContext actor/auth generation、computer/tab/computer generation、epoch与显式expires-at；take/transfer/release/inclusive expiry/navigation/restart各推进epoch，旧ticket在队列后到达仍拒绝。computer generation不前进拒绝，u64::MAX饱和不回绕；竞态单测绿。"
     evidence: "grep -nE 'epoch|generation' agent-computer/src/control.ts | wc -l 得 0；同文件 ControlState 的全部字段是 holder / since / reason / requested / requestedAt / secretWanted / secretRef / secretSnapshotId，其中 secretSnapshotId 是 snapshot 代次而不是 lease 代次；对照 v3 §12.5 的 HumanLease(owner, computer, tab, epoch, expires_at)"
     notes: "登记在本表是因为它是每一条输入操作的前置栅栏：v3 §12.5 要求 lease transfer / release / expiry / navigation / computer restart 都递增 epoch，且「旧 input 即使已经躺在 socket buffer 里也会被拒绝」。上游没有这层——它只有一个布尔式的「谁握着方向盘」，所以一条在 take 之前就发出、在 take 之后才被处理的输入会被当成合法输入执行。**这是新增，不得写进任何 parity 条目的 migration_rule 里冒充当前行为**：T-BROP-0006 / 0009 / 0021 / 0003 四条的 notes 都只承诺上游可观察行为，epoch 部分统一指回本条。2026-08-28 v3 R124：target 按 Batch51 实际落点改为 openbot_computer::control::ControlService（原写的 screen::lease 模块不存在）；同批发现 HumanLeaseEpoch::next 用 saturating_add——到 u64::MAX 后 epoch 不再推进、栅栏失效，现有断言 `HumanLeaseEpoch::new(u64::MAX).next().get() == u64::MAX` 恰好把这个行为固定了下来。v4 overlay 记 revalidate + defect：P0-code 改为 checked 递增，溢出进入 poisoned 状态（清 lease、拒绝输入与 acting，直到 ComputerGeneration 推进），修复后本条在新符号上重跑；历史 status 不回写。"
+
+  # ===========================================================================
+  # F 段：P0-code 新增的 Engine 阶段门 T-ID（R117–R119 / R125）。
+  # 本批只登记可判定契约；P1/P2 真进程、CDP 与 conformance 证据落地前全部 todo。
+  # ===========================================================================
+  - id: engine-boot-handshake
+    upstream: "-"
+    label: 新增
+    target: "openbot_computer::engine::boot::BootHandshake"
+    owner: openbot-computer
+    test_id: T-BROP-0047
+    migration_rule: "n/a: R119 新增 stdin boot capability + authenticated pipe peer credential"
+    status: todo
+    evidence: "v4 §11.2 boot handshake 与 §19.1 P1 退出证据"
+    notes: "Rust 写入一次性 token/role/protocol/release epoch 后关闭 stdin；hello 必须同时通过 token 与 UDS/Named Pipe peer credential，任一失败即 kill 并推进 ComputerGeneration。P0 只建台账，不冒充握手代码或真进程已存在。"
+
+  - id: engine-role-authority
+    upstream: "-"
+    label: 新增
+    target: "openbot_computer::engine::role::EngineRole"
+    owner: openbot-computer
+    test_id: T-BROP-0048
+    migration_rule: "n/a: R118 新增 BrowserComputer/SandboxedComponent 双 role 封闭域"
+    status: todo
+    evidence: "v4 §10.6 EngineRole 与 §11.1 单一 engine"
+    notes: "role 只能由 Rust 在 boot capability 中铸造，不接受 renderer、argv 自由字符串或 URL 自报；两个 role 必须是不同进程实例、profile/partition/egress/预算互不复用。"
+
+  - id: engine-process-confinement
+    upstream: "-"
+    label: 新增
+    target: "openbot_computer::engine::confinement::EngineConfinement"
+    owner: openbot-computer
+    test_id: T-BROP-0049
+    migration_rule: "n/a: R119 新增 Electron 主进程 OS 约束 fidelity"
+    status: todo
+    evidence: "v4 §11.3 固定安全配置与 §24 G5E"
+    notes: "Desktop helper 只放行 scope profile/temp、loopback proxy 与自身 helper；macOS Enforced、Windows Degraded、Linux tier-2 进入 readiness。Unavailable 不启动；不得用 --no-sandbox 或其它 Chromium flag 规避。"
+
+  - id: engine-browser-role-conformance
+    upstream: "-"
+    label: 新增
+    target: "openbot_computer::engine::conformance::BrowserRoleConformance"
+    owner: openbot-computer
+    test_id: T-BROP-0050
+    migration_rule: "n/a: R125 G5A 为 Browser role 新增独立 conformance suite"
+    status: todo
+    evidence: "v4 §24 G5A：boot、peer credential、CDP mapping、actual renderer sandbox"
+    notes: "必须以真 Electron 进程覆盖 malformed/stale frame 拒绝、无 listening debug port、renderer 实际 sandboxed 与 start→frame→stop 清理；P0 的 pin/静态闸门不算 conformance。"

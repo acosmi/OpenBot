@@ -30,6 +30,7 @@ xtask = [
     "dep:toml",
     "dep:flate2",
     "dep:tar",
+    "dep:zip",
     "dep:sha2",
     "dep:oxc_allocator",
     "dep:oxc_ast",
@@ -56,6 +57,7 @@ walkdir = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 
 # ---------------------------------------------------------------------------

@@ -3,11 +3,13 @@
 # 与 tools/pins.toml 的区别：pins.toml 是构建期工具（不进发行物）；本文件是**进发行物**、参与
 # release epoch 与签名、由 Rust 监管的外部引擎。engine 的 "lockfile" 就是本文件，不存在 npm lock。
 #
-# 消费者（P0-code 批次实现，v3 §19.1）：
+# 消费者（Batch52 已实现 fetch/verify；bundle 属 P1，v4 §19.1）：
 #   `cargo xtask engine fetch`    按本平台 artifacts 下载到 `target/engine/<id>/`，先校 sha256 再解包
-#   `cargo xtask engine verify`   校验 sha256 / `--version` / fuses / ASAR integrity / release epoch
-#   `cargo xtask engine bundle`   rebrand → shim ASAR → fuses → integrity → sidecar manifest（零 npm）
-# 实现之前本文件只是钉版记录；`cargo xtask tools fetch|verify` 不读它（tools.rs 硬编码四个工具 id）。
+#   `cargo xtask engine verify`   P0 校验 sha256 / `--version`；P1 bundle 后扩到 fuses / ASAR / epoch
+#   `cargo xtask engine bundle`   P1：rebrand → shim ASAR → fuses → integrity → sidecar manifest（零 npm）
+# 当前 verify 覆盖官方 archive sha256 / 上游 SHASUMS join / `--version`；bundle 后才增加
+# fuses / ASAR integrity / rebrand / release epoch 实值，不能用 P0 verify 冒充。`cargo xtask tools`
+# 不读本文件（tools.rs 硬编码四个构建期工具 id）。
 #
 # 字段约定与 tools/pins.toml 相同（version / license / install / artifacts[] / sha256_source /
 # url_http_status / verify.* / status）。status 口径与 parity ledger 一致：没有本轮实证的一律 todo。
@@ -39,7 +41,7 @@ checksums_manifest = "https://github.com/electron/electron/releases/download/v43
 checksums_manifest_http_status = 200
 checksums_manifest_copy = "tools/electron-v43.3.0.SHASUMS256.txt"
 status = "done"
-done_evidence = "五个平台 zip 的 sha256 与上游 SHASUMS256.txt 逐字相等（recount electron-sha-crosscheck）；windows-x64 另有本机真下载 144,396,349 B、sha256sum 与上游相等、解压后 `electron.exe --version` stdout = `v43.3.0`（recount 见 verify）。xtask 消费者尚未实现，不冒充 `engine verify` 已跑"
+done_evidence = "五个平台 zip 的 sha256 与上游 SHASUMS256.txt 逐字相等（recount electron-sha-crosscheck）；windows-x64 真下载 144,396,349 B、macos-arm64 Batch52 真下载 122,102,881 B，二者 sha256 均与 pin/上游相等，解压后各自 `--version` = `v43.3.0`。Batch52 `cargo xtask engine fetch|verify` 已实跑；bundle/fuses/ASAR/integrity/rebrand/release epoch 仍属 P1，不冒充已验"
 notes = """
 获取渠道只有官方 GitHub release zip（v3 §1.2 / R117）；不经 npm，因此没有 package-lock。
 Electron zip 解压后是未签名的通用二进制：rebrand、shim ASAR、fuses、ASAR integrity 与签名全部在
@@ -53,12 +55,14 @@ Chromium critical/high 修复 72 小时内升级（v3 §11.3）：升级 = 改�
   stream = "stdout"
   expect_regex = "^\\s*v43\\.3\\.0\\s*$"
   expect_exit_code = 0
-  verified_on = "windows-x64"
+  verified_on = "windows-x64,macos-arm64"
   status_verify = "done"
   known_trap = """
 Windows 上 electron.exe 是 GUI 子系统程序：从 PowerShell 用 `$v = & electron.exe --version` 捕获得到空串，
 从 Git Bash 把 stdout 重定向到文件（`./electron.exe --version > ver.txt 2>&1`）得到一个空行加 `v43.3.0`。
 所以 expect_regex 允许前后空白，且 verify 实现必须走 pipe/文件重定向而不是 console 捕获。
+Codex 默认 macOS 命令沙箱会把 Electron GUI 子系统进程以 SIGABRT 阻断；宿主普通 shell/获准执行
+同一 binary `--version` 正常返回 v43.3.0。这是验证环境边界，不允许跳过版本校验。
 """
 
   [[engines.electron.artifacts]]

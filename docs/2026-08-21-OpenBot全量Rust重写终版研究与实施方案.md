@@ -1792,7 +1792,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 
 ### 24.1 实施状态勾选（2026-08-28；进度证据以机器台账为准）
 
-- [ ] **G0**：Phase 0 证据产物已落；仍缺 §1.1 两份输入文档原件，故整关不勾。2026-08-28 R116 后 `grok-bot/` LFS 指针 = 0、可完整检出；`grok-inventory --check` 与 engine-pins 交叉校验待 P0-code。
+- [ ] **G0**：Phase 0 证据产物已落；仍缺 §1.1 两份输入文档原件，故整关不勾。2026-08-28 R116 后 `grok-bot/` LFS 指针 = 0、可完整检出。
+  - [x] **P0-code / Batch52**：`grok-inventory --check` 对钉死 tree 的 2,110 文件逐字同步；本平台 Electron 官方 zip 与 `engine-pins.toml` / 上游 SHASUMS 副本交叉一致并实跑 `v43.3.0`；overlay、shim 规则、6 条 Engine T-ID 与 poisoned epoch 全部落地。五个 xtask 退出子命令及 `openbot-computer` 9/0/0 在 macOS arm64 本轮实跑绿；这只勾 P0-code，不替代缺失的两份输入原件，也不勾 G0 整关。
 - [x] **G1**：10 crate/locked build、Axum/in-process、28 表/13 migration/read checksum、tracing/metrics 四判据均已通过。
 - [ ] **G2**：整关未通过；以下子项已经有本机机械证据：
   - [x] CEL 69 条 corpus 与固定 6 条差异台账；
@@ -1881,6 +1882,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     低confidence均由Application成功fallback，tool output拒绝，消息与模型理由不进hash-chain audit；
   - [ ] provider gate 要求的三家 recorded vendor trace 仍为 **0/3**，本批未使用 live vendor credential；human approval 的 Leptos/Axum 可点击竖切已落，但真实 PG 浏览器端到端、critical realtime/完整 thread 集成仍未闭合；完整 run-wide token/cost/并发/computer budget、Desktop Local installed-app client/system browser/random loopback callback、RMCP/computer/file/shell各自的协议级cancel notification/process-tree、MCP 专用 private egress与 admin custom/通用 refresh/grant/effect 完整 UI、用户创建 remote Agent lifecycle/customer auth、interrupt/resume 与其余事件 durable/UI projection、browser/file/shell executor 尚未闭合。Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
+  - [x] P0-code 规则与台账地基：engine fetch/verify、shim 静态 allowlist、boot/role/confinement/render/conformance T-ID、HumanLeaseEpoch checked + generation-recoverable poison 已绿；P1 真 shim/boot、P2 CDP/Screen、P3 component、P4 realm 均未实施，故 G5A–G5F 不勾。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
   - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 456 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
@@ -1947,10 +1949,10 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     1440/1024/900双列与600单列均overflow0、duplicate/alerts/console0；其余settings route仍todo；
   - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及AppSidebar总项+其余32业务组件/28 route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
   - [ ] Tauri target-aware bans/sources 已绿；macOS/Windows 各仍有 5 个 MPL-2.0、5 个 runtime UNIC unmaintained（无 patched 版），Cargo Vet 为 macOS **270** / Windows **269** unvetted（既有 target 基线 181，净增 89/88）；未改 license/advisory/vet policy，故供应链与 G6 整关均不勾。
-- [ ] **G7**：Screen/Handover 性能、安全票据、human lease 未实施完成。
+- [ ] **G7**：本地 `ControlService` 的 HumanLease actor/auth/computer/tab/generation/epoch fencing 与 poisoned exhaustion 已有 9/0/0 单测；ScreenHub/viewer ticket、真 engine input、fps/latency/backpressure、coordinates/drag/IME 与跨 scope 矩阵仍未实施完成，故整关不勾。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账：parity **644/1678 done（1034 todo）**，fixtures **16/38 done（22 todo）**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账（`cargo xtask parity-check` 复算）：parity **693/1692 done（999 todo）**，fixtures **17/39 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1684/6/2/0**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 

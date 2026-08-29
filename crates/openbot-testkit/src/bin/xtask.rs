@@ -15,6 +15,9 @@
 //! - `css-check`    —— Rust class 字面量必须存在于实际编译 CSS。
 //! - `bundle-budget`—— WASM gzip、CSS 与字体体积预算。
 //! - `tools`        —— 获取并校验 GUI 构建期钉版二进制。
+//! - `grok-inventory`—— 机械生成或核对 tier-1 文件级参考树 inventory。
+//! - `engine`       —— 获取并校验当前平台的钉版 Electron 官方 zip。
+//! - `electron-shim-check` —— 在 P1 写 shim 前先锁定文件、LOC 与 API allowlist。
 //! - `ci`           —— 按 v3 §16.3 的固定顺序跑本机可执行的那一段闸门。
 //!
 //! 用法（`.cargo/config.toml` 已配 alias）：
@@ -54,6 +57,18 @@ mod ui_finalize;
 
 #[path = "../xtask/tools.rs"]
 mod tools;
+
+#[path = "../xtask/engine.rs"]
+mod engine;
+
+#[path = "../xtask/electron_shim.rs"]
+mod electron_shim;
+
+#[path = "../xtask/grok_inventory.rs"]
+mod grok_inventory;
+
+#[path = "../xtask/parity_overlay.rs"]
+mod parity_overlay;
 
 // ---------------------------------------------------------------------------
 // 契约常量
@@ -205,6 +220,13 @@ fn main() -> ExitCode {
         Some("ui-assets") => workspace_root().and_then(|root| ui_assets::run(&root)),
         Some("ui-finalize") => ui_finalize::run(),
         Some("tools") => workspace_root().and_then(|root| tools::run(&root, &args[1..])),
+        Some("grok-inventory") => {
+            workspace_root().and_then(|root| grok_inventory::run(&root, &args[1..]))
+        }
+        Some("engine") => workspace_root().and_then(|root| engine::run(&root, &args[1..])),
+        Some("electron-shim-check") => {
+            workspace_root().and_then(|root| electron_shim::run(&root, &args[1..]))
+        }
         Some("ci") => cmd_ci(),
         Some("help") | Some("--help") | Some("-h") | None => {
             print_usage();
@@ -253,6 +275,10 @@ xtask —— OpenBot 仓库闸门驱动器
   cargo xtask tools fetch            获取当前平台的钉版 Tailwind/wasm-opt，并按 lock 安装
                                       trunk/wasm-bindgen CLI 到 target/tools/bin
   cargo xtask tools verify           校验四个工具的 sha256（下载件）、版本输出与退出码
+  cargo xtask grok-inventory [--check]
+                                      生成 tier-1 文件 inventory；--check 要求与 grok-bot/ 逐字同步
+  cargo xtask engine fetch|verify    获取/校验当前平台 Electron zip、sha256 与 --version
+  cargo xtask electron-shim-check    校验 shim 文件/LOC/API allowlist；P1 代码未落时校验规则与空目录
   cargo xtask ci                      按 v3 §16.3 顺序跑本机可执行的闸门段
   cargo xtask help                    打印本帮助
 "
@@ -332,6 +358,8 @@ struct ParityReport {
     total_entries: usize,
     /// 只统计 `ledgers`，不含 `fixtures`。
     total_status_counts: BTreeMap<String, usize>,
+    /// R124 的 exception-only v4 overlay；单列报告，不污染九份 parity ledger 的合计。
+    overlay: parity_overlay::OverlayReport,
     violations: Vec<String>,
     warnings: Vec<String>,
 }
@@ -450,11 +478,13 @@ fn build_parity_report(root: &Path) -> Result<ParityReport> {
             format!("{} 不存在", parity_dir.display())
         };
         warnings.push(format!("0 ledger：{reason}"));
+        let overlay = parity_overlay::OverlayReport::empty(0);
         return Ok(ParityReport {
             ledgers: Vec::new(),
             fixtures: Vec::new(),
             total_entries: 0,
             total_status_counts: BTreeMap::new(),
+            overlay,
             violations,
             warnings,
         });
@@ -466,6 +496,8 @@ fn build_parity_report(root: &Path) -> Result<ParityReport> {
     // fixtures 台账**也**进这张表：规则 5 的原文是"test_id 在全部 ledger 内唯一"，
     // 把 fixtures 排除在外就等于给 T-FIX-* 开了一个不受唯一性约束的后门。
     let mut global_test_ids: BTreeMap<String, String> = BTreeMap::new();
+    let mut parity_test_ids = BTreeSet::new();
+    let mut done_targets = BTreeMap::new();
 
     for source in &sources {
         let display = rel(root, &source.path);
@@ -478,6 +510,11 @@ fn build_parity_report(root: &Path) -> Result<ParityReport> {
                 continue;
             }
         };
+
+        if source.kind == LedgerKind::Parity {
+            collect_document_test_ids(&doc, &mut parity_test_ids);
+            collect_done_targets(&doc, &mut done_targets);
+        }
 
         if let Some(report) = check_ledger(
             &display,
@@ -502,12 +539,29 @@ fn build_parity_report(root: &Path) -> Result<ParityReport> {
             *total_status_counts.entry(status.clone()).or_insert(0) += count;
         }
     }
+    let overlay_path = root.join("parity/overlay/v4.yaml");
+    let overlay = if overlay_path.is_file() || ledgers.len() == KNOWN_SCHEMAS.len() {
+        parity_overlay::validate(
+            root,
+            &parity_test_ids,
+            &done_targets,
+            total_entries,
+            &mut violations,
+        )
+    } else {
+        // Unit/skeleton repositories may intentionally exercise one ledger in isolation. Once all
+        // nine production ledgers exist, absence becomes a hard R124 violation above.
+        warnings
+            .push("parity/overlay/v4.yaml 未校验：当前不是九份生产 ledger 的完整仓库".to_owned());
+        parity_overlay::OverlayReport::empty(total_entries)
+    };
 
     Ok(ParityReport {
         ledgers,
         fixtures,
         total_entries,
         total_status_counts,
+        overlay,
         violations,
         warnings,
     })
@@ -558,6 +612,17 @@ fn print_parity_report(report: &ParityReport) {
         }
     }
 
+    let overlay = &report.overlay.disposition_counts;
+    println!(
+        "\nv4 overlay（carry 隐含；显式 exceptions={}；git diff 要求 revalidate={}）：carry={} revalidate={} split={} superseded={}",
+        report.overlay.explicit_entries,
+        report.overlay.diff_required_revalidations,
+        overlay.get("carry").copied().unwrap_or_default(),
+        overlay.get("revalidate").copied().unwrap_or_default(),
+        overlay.get("split").copied().unwrap_or_default(),
+        overlay.get("superseded").copied().unwrap_or_default(),
+    );
+
     if !report.warnings.is_empty() {
         println!("\n告警（不影响退出码）：");
         for w in &report.warnings {
@@ -576,6 +641,63 @@ fn print_parity_report(report: &ParityReport) {
         for v in &report.violations {
             println!("  x {v}");
         }
+    }
+}
+
+/// 从已解析的统一 ledger schema 中提取 test_id，供 R124 overlay 做存在性 join。
+/// 结构错误仍由八条规则报告；这里刻意只收可读的字符串，不重复制造第二套 schema 错误。
+fn collect_document_test_ids(document: &serde_yaml::Value, ids: &mut BTreeSet<String>) {
+    let Some(entries) = document
+        .as_mapping()
+        .and_then(|map| map.get(serde_yaml::Value::from("entries")))
+        .and_then(serde_yaml::Value::as_sequence)
+    else {
+        return;
+    };
+    for entry in entries {
+        let Some(test_id) = entry
+            .as_mapping()
+            .and_then(|map| map.get(serde_yaml::Value::from("test_id")))
+            .and_then(serde_yaml::Value::as_str)
+        else {
+            continue;
+        };
+        ids.insert(test_id.to_owned());
+    }
+}
+
+fn collect_done_targets(document: &serde_yaml::Value, targets: &mut BTreeMap<String, String>) {
+    let Some(entries) = document
+        .as_mapping()
+        .and_then(|map| map.get(serde_yaml::Value::from("entries")))
+        .and_then(serde_yaml::Value::as_sequence)
+    else {
+        return;
+    };
+    for entry in entries {
+        let Some(entry) = entry.as_mapping() else {
+            continue;
+        };
+        if entry
+            .get(serde_yaml::Value::from("status"))
+            .and_then(serde_yaml::Value::as_str)
+            != Some("done")
+        {
+            continue;
+        }
+        let Some(test_id) = entry
+            .get(serde_yaml::Value::from("test_id"))
+            .and_then(serde_yaml::Value::as_str)
+        else {
+            continue;
+        };
+        let Some(target) = entry
+            .get(serde_yaml::Value::from("target"))
+            .and_then(serde_yaml::Value::as_str)
+        else {
+            continue;
+        };
+        targets.insert(test_id.to_owned(), target.to_owned());
     }
 }
 

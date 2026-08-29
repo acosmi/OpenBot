@@ -5,6 +5,7 @@
 #   (b) sandboxed component —— `app/src/lib/copilot/sandboxed-tools.tsx` 与
 #       `app/src/routes/_authed/admin/playground.tsx` 定义的运行时契约，逐条拆开（12 条）。
 #   (c) Desktop 独立 renderer 的两条必然后果（v3 §3.3 末段写死，2 条）。
+#   (d) P0-code Engine component role 的 render session / conformance 阶段门（2 条）。
 #
 # label 的判据（CLAUDE.md §4 硬要求，不得含糊）：
 #   parity = 上游此刻真的这么跑，本轮有命令输出为证；
@@ -67,7 +68,10 @@ recount:
     expect: 2
   - command: "grep -c '^  - id: ' parity/components.yaml"
     cwd: "repo"
-    expect: 22
+    expect: 24
+  - command: "grep -oE '^    test_id: \"T-CMP-[0-9]{4}\"$' parity/components.yaml | sort -u | wc -l"
+    cwd: "repo"
+    expect: 24
 
 entries:
   # =========================================================================
@@ -350,6 +354,32 @@ entries:
     status: "todo"
     evidence: "docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md §3.3 末段：Desktop 的 sandboxed component 不承诺 a11y parity，§18 / G6 的 a11y 要求对其明确豁免"
     notes: "后果②：画面以帧流回主 GUI，文本不可选中、屏幕阅读器不可达，所以 Desktop sandboxed component **不承诺** a11y parity，§18 / G6 的 a11y 要求对它明确豁免并写进产品文档；Web 路径（iframe）保持 a11y 要求不变。这条必须在 a11y 闸门里做成**具名豁免**而不是把整条闸门放宽——豁免面大于实际不可达面就等于把 Web 路径也一起豁免了。豁免的作用域是 Desktop × sandboxed component，compiled gallery 在 Desktop 上仍是原生 Leptos DOM，不在豁免内。上游无 Desktop 形态，故 label=新增。"
+
+  # =========================================================================
+  # (d) P0-code 新增的 component role 阶段门。真 renderer 属 P3，本批只登记 T-ID。
+  # =========================================================================
+
+  - id: "desktop-render-session-contract"
+    upstream: "-"
+    label: "新增"
+    target: "openbot_computer::component::runtime::RenderSession"
+    owner: "openbot-computer"
+    test_id: "T-CMP-0023"
+    migration_rule: "n/a: R118 新增每次渲染=TabId 的封闭 RenderSessionOperation"
+    status: "todo"
+    evidence: "v4 §3.3 / §10.6 / §11.2：component render session = TabId"
+    notes: "每次 Start 只接收 Rust 一次性注入的 published html/css/js/validated args，独立 in-memory partition 与 component:// opaque origin；Input 复用 closed BrowserInput，Stop 只清本 session。P0 不写 runtime。"
+
+  - id: "engine-component-role-conformance"
+    upstream: "-"
+    label: "新增"
+    target: "openbot_computer::component::conformance::ComponentRoleConformance"
+    owner: "openbot-computer"
+    test_id: "T-CMP-0024"
+    migration_rule: "n/a: R125 G5F 为 Component role 新增独立 conformance suite"
+    status: "todo"
+    evidence: "v4 §24 G5F：临时 partition、三层零 egress、预算、清理与零 callback 正向实测"
+    notes: "真 Electron role 必须证明 start→frame→stop、proxy/webRequest/CSP 三层各自有效、≤8 session/256MiB/5s/5fps/100 console error 与 crash/DoS 只杀单 session；静态 shim 闸门不能替代这些正向证据。"
 
 # =========================================================================
 # 未验证项（本轮没跑出证据的东西，明写缺什么 + 解除条件）。

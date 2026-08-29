@@ -28,7 +28,7 @@ pub enum ControlHolder {
     Human,
 }
 
-/// Monotonic HumanLease epoch. Saturation is fail-closed; it never wraps and revives stale input.
+/// Monotonic HumanLease epoch within one computer generation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HumanLeaseEpoch(u64);
 
@@ -46,8 +46,11 @@ impl HumanLeaseEpoch {
     }
 
     #[must_use]
-    const fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
+    const fn next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(next) => Some(Self(next)),
+            None => None,
+        }
     }
 }
 
@@ -88,6 +91,7 @@ struct ControlState {
 pub struct ControlSnapshot {
     state: ControlState,
     epoch: HumanLeaseEpoch,
+    poisoned: bool,
     lease_expires_at: Option<OffsetDateTime>,
 }
 
@@ -138,6 +142,12 @@ impl ControlSnapshot {
     #[must_use]
     pub const fn epoch(&self) -> HumanLeaseEpoch {
         self.epoch
+    }
+
+    /// Epoch exhaustion poisoned this generation; only a newer ComputerGeneration can recover it.
+    #[must_use]
+    pub const fn poisoned(&self) -> bool {
+        self.poisoned
     }
 
     /// Human lease expiry; absent while the Bot holds the wheel.
@@ -233,6 +243,9 @@ pub enum ControlError {
     /// Computer restart generation did not advance.
     #[error("computer_generation_did_not_advance")]
     ComputerGenerationDidNotAdvance,
+    /// The HumanLease epoch was exhausted; this generation refuses both human input and Bot acting.
+    #[error("human_lease_epoch_poisoned")]
+    HumanLeaseEpochPoisoned,
 }
 
 /// One computer/tab's wheel and HumanLease state machine.
@@ -242,6 +255,7 @@ pub struct ControlService {
     tab_id: TabId,
     computer_generation: ComputerGeneration,
     epoch: HumanLeaseEpoch,
+    poisoned: bool,
     state: ControlState,
     lease: Option<HumanLease>,
 }
@@ -260,6 +274,7 @@ impl ControlService {
             tab_id,
             computer_generation,
             epoch: HumanLeaseEpoch::default(),
+            poisoned: false,
             state: ControlState {
                 holder: ControlHolder::Bot,
                 since: now,
@@ -275,7 +290,7 @@ impl ControlService {
 
     /// Read current state, lazily retiring expired asks/leases exactly when somebody observes them.
     pub fn state(&mut self, now: OffsetDateTime) -> ControlSnapshot {
-        self.expire_human_lease(now);
+        let _ = self.expire_human_lease(now);
         self.expire_help_request(now);
         self.snapshot()
     }
@@ -345,10 +360,11 @@ impl ControlService {
         expires_at: OffsetDateTime,
         now: OffsetDateTime,
     ) -> Result<ControlSnapshot, ControlError> {
+        self.ensure_not_poisoned()?;
         if expires_at <= now {
             return Err(ControlError::InvalidLeaseExpiry);
         }
-        self.bump_epoch();
+        self.bump_epoch()?;
         self.state = ControlState {
             holder: ControlHolder::Human,
             since: now,
@@ -371,15 +387,17 @@ impl ControlService {
     }
 
     /// Hand control back to the Bot and invalidate every queued human input.
-    pub fn release(&mut self, now: OffsetDateTime) -> ControlSnapshot {
-        self.bump_epoch();
+    pub fn release(&mut self, now: OffsetDateTime) -> Result<ControlSnapshot, ControlError> {
+        self.ensure_not_poisoned()?;
+        self.bump_epoch()?;
         self.release_without_bump(now);
-        self.snapshot()
+        Ok(self.snapshot())
     }
 
     /// Refuse Agent acting while a current human lease exists. Nothing is queued.
     pub fn assert_bot_may_act(&mut self, now: OffsetDateTime) -> Result<(), ControlError> {
-        self.expire_human_lease(now);
+        self.ensure_not_poisoned()?;
+        self.expire_human_lease(now)?;
         if self.state.holder == ControlHolder::Human {
             return Err(ControlError::HumanHasControl);
         }
@@ -391,7 +409,8 @@ impl ControlService {
         &mut self,
         now: OffsetDateTime,
     ) -> Result<HumanInputTicket, ControlError> {
-        if self.expire_human_lease(now) {
+        self.ensure_not_poisoned()?;
+        if self.expire_human_lease(now)? {
             return Err(ControlError::LeaseExpired);
         }
         let lease = self.lease.as_ref().ok_or(ControlError::TakeControlFirst)?;
@@ -411,7 +430,8 @@ impl ControlService {
         ticket: &HumanInputTicket,
         now: OffsetDateTime,
     ) -> Result<(), ControlError> {
-        if self.expire_human_lease(now) {
+        self.ensure_not_poisoned()?;
+        if self.expire_human_lease(now)? {
             return Err(ControlError::LeaseExpired);
         }
         let lease = self.lease.as_ref().ok_or(ControlError::TakeControlFirst)?;
@@ -429,12 +449,13 @@ impl ControlService {
     }
 
     /// Navigation invalidates already queued input while preserving a current person's handover.
-    pub fn document_navigated(&mut self) -> ControlSnapshot {
-        self.bump_epoch();
+    pub fn document_navigated(&mut self) -> Result<ControlSnapshot, ControlError> {
+        self.ensure_not_poisoned()?;
+        self.bump_epoch()?;
         if let Some(lease) = &mut self.lease {
             lease.epoch = self.epoch;
         }
-        self.snapshot()
+        Ok(self.snapshot())
     }
 
     /// Restart/reset advances computer generation, releases control and clears pending requests.
@@ -447,7 +468,10 @@ impl ControlService {
             return Err(ControlError::ComputerGenerationDidNotAdvance);
         }
         self.computer_generation = new_generation;
-        self.bump_epoch();
+        // ComputerGeneration is the outer fence. Once it advances, resetting an exhausted epoch
+        // cannot revive an old ticket because every ticket also binds the former generation.
+        self.epoch = self.epoch.next().unwrap_or_default();
+        self.poisoned = false;
         self.release_without_bump(now);
         Ok(self.snapshot())
     }
@@ -456,12 +480,37 @@ impl ControlService {
         ControlSnapshot {
             state: self.state.clone(),
             epoch: self.epoch,
+            poisoned: self.poisoned,
             lease_expires_at: self.lease.as_ref().map(|lease| lease.expires_at),
         }
     }
 
-    fn bump_epoch(&mut self) {
-        self.epoch = self.epoch.next();
+    fn bump_epoch(&mut self) -> Result<(), ControlError> {
+        let Some(next) = self.epoch.next() else {
+            self.enter_poisoned();
+            return Err(ControlError::HumanLeaseEpochPoisoned);
+        };
+        self.epoch = next;
+        Ok(())
+    }
+
+    fn ensure_not_poisoned(&self) -> Result<(), ControlError> {
+        if self.poisoned {
+            Err(ControlError::HumanLeaseEpochPoisoned)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn enter_poisoned(&mut self) {
+        self.poisoned = true;
+        self.lease = None;
+        self.state.holder = ControlHolder::Bot;
+        self.state.requested = false;
+        self.state.requested_at = None;
+        self.state.reason = None;
+        self.state.secret_wanted = None;
+        self.state.pending_secret = None;
     }
 
     fn release_without_bump(&mut self, now: OffsetDateTime) {
@@ -477,16 +526,16 @@ impl ControlService {
         self.lease = None;
     }
 
-    fn expire_human_lease(&mut self, now: OffsetDateTime) -> bool {
+    fn expire_human_lease(&mut self, now: OffsetDateTime) -> Result<bool, ControlError> {
         let expired = self
             .lease
             .as_ref()
             .is_some_and(|lease| now >= lease.expires_at);
         if expired {
-            self.bump_epoch();
+            self.bump_epoch()?;
             self.release_without_bump(now);
         }
-        expired
+        Ok(expired)
     }
 
     fn expire_help_request(&mut self, now: OffsetDateTime) {
@@ -653,7 +702,9 @@ mod tests {
             .authorize_human_input(&actor_b, &ticket_b, START + Duration::seconds(1))
             .expect("new owner can drive");
 
-        let released = service.release(START + Duration::seconds(2));
+        let released = service
+            .release(START + Duration::seconds(2))
+            .expect("release");
         assert_eq!(released.holder(), ControlHolder::Bot);
         assert_eq!(released.reason(), None);
         assert_eq!(released.epoch(), HumanLeaseEpoch::new(3));
@@ -667,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn expiry_navigation_and_restart_each_invalidate_old_input_without_epoch_wrap() {
+    fn expiry_navigation_and_restart_each_invalidate_old_input_with_checked_epoch() {
         let mut service = service();
         let actor = auth("actor-a", 1);
         service
@@ -675,7 +726,7 @@ mod tests {
             .expect("take");
         let before_navigation = service.issue_human_input_ticket(START).expect("ticket");
 
-        let after_navigation = service.document_navigated();
+        let after_navigation = service.document_navigated().expect("navigation");
         assert_eq!(after_navigation.epoch(), HumanLeaseEpoch::new(2));
         assert_eq!(
             service.authorize_human_input(&actor, &before_navigation, START),
@@ -704,7 +755,73 @@ mod tests {
         assert_eq!(restarted.epoch(), HumanLeaseEpoch::new(4));
         assert_eq!(restarted.holder(), ControlHolder::Bot);
 
-        assert_eq!(HumanLeaseEpoch::new(u64::MAX).next().get(), u64::MAX);
+        assert_eq!(
+            HumanLeaseEpoch::new(u64::MAX - 1).next(),
+            Some(HumanLeaseEpoch::new(u64::MAX))
+        );
+        assert_eq!(HumanLeaseEpoch::new(u64::MAX).next(), None);
+    }
+
+    #[test]
+    fn epoch_exhaustion_clears_lease_and_poison_fails_closed_until_generation_advances() {
+        let mut service = service();
+        let actor = auth("actor-a", 1);
+        service
+            .take(&actor, START + Duration::minutes(5), START)
+            .expect("take");
+        let old_ticket = service.issue_human_input_ticket(START).expect("ticket");
+
+        // Same-module test injection reaches the otherwise infeasible boundary without billions of
+        // transitions. The next real invalidation must poison rather than saturate or wrap.
+        service.epoch = HumanLeaseEpoch::new(u64::MAX);
+        assert_eq!(
+            service.document_navigated(),
+            Err(ControlError::HumanLeaseEpochPoisoned)
+        );
+        let poisoned = service.state(START + Duration::seconds(1));
+        assert!(poisoned.poisoned());
+        assert_eq!(poisoned.holder(), ControlHolder::Bot);
+        assert_eq!(poisoned.lease_expires_at(), None, "poison clears lease");
+        assert_eq!(
+            service.issue_human_input_ticket(START + Duration::seconds(1)),
+            Err(ControlError::HumanLeaseEpochPoisoned)
+        );
+        assert_eq!(
+            service.authorize_human_input(&actor, &old_ticket, START + Duration::seconds(1)),
+            Err(ControlError::HumanLeaseEpochPoisoned)
+        );
+        assert_eq!(
+            service.assert_bot_may_act(START + Duration::seconds(1)),
+            Err(ControlError::HumanLeaseEpochPoisoned)
+        );
+        assert_eq!(
+            service.take(
+                &actor,
+                START + Duration::minutes(6),
+                START + Duration::seconds(1)
+            ),
+            Err(ControlError::HumanLeaseEpochPoisoned)
+        );
+
+        assert_eq!(
+            service.computer_restarted(ComputerGeneration::new(7), START + Duration::seconds(2)),
+            Err(ControlError::ComputerGenerationDidNotAdvance)
+        );
+        assert!(service.state(START + Duration::seconds(2)).poisoned());
+
+        let recovered = service
+            .computer_restarted(ComputerGeneration::new(8), START + Duration::seconds(2))
+            .expect("new generation recovers poison");
+        assert!(!recovered.poisoned());
+        assert_eq!(recovered.epoch(), HumanLeaseEpoch::default());
+        service
+            .assert_bot_may_act(START + Duration::seconds(2))
+            .expect("Bot may act only after generation advances");
+        assert_eq!(
+            service.authorize_human_input(&actor, &old_ticket, START + Duration::seconds(2)),
+            Err(ControlError::TakeControlFirst),
+            "old-generation input remains unusable after recovery"
+        );
     }
 
     #[test]

@@ -31,6 +31,10 @@ v3 §19.3 与 GUI 设计系统文档 §11 一共点名 9 份 ledger：
 名单内缺席的文件不会被它发现——**缺文件由 G0 人工核对，不由本工具兜底**。
 扩展名写成 `.yml` 的文件会被单独 warn 点名，避免「文件名写错所以没被校验」这种静默漏检。
 
+R124 的 `parity/overlay/v4.yaml` **不是第 10 份 ledger**：它位于子目录，使用下面的
+exception-only schema，由 `parity-check` 单独读取、join 九份 ledger 的 `test_id`，不进入
+ledger 数量或 done/todo 合计。
+
 ---
 
 ## 2. Schema v1
@@ -97,6 +101,32 @@ entries:
 2. **视觉不是 parity 对象**（CLAUDE.md §4a）。旅程 / route / 组件行为对上游 parity，
    外观是本项目自有设计系统，所以 `ui.yaml` 里大量条目天然是 `新增` 或 `替代`。
 
+### 2.4 v4 exception-only overlay（R124）
+
+```yaml
+schema: parity-overlay
+schema_version: 1
+baseline: v4
+generated_by: manual
+entries:
+  - id: T-BROP-0046       # 必须是九份 ledger 中已存在的 test_id
+    disposition: revalidate
+    defect: true           # 可选；只允许 true
+  - id: T-CMP-0015
+    disposition: split
+    scope: web             # split 必填，web | desktop
+```
+
+- disposition 封闭为 `carry` / `revalidate` / `split` / `superseded`；`carry` **只能隐含**，
+  写成显式行直接判红。`superseded` 必须带非空 `replacement`。
+- R124 三行初值（T-BROP-0046 revalidate+defect、T-CMP-0015 split web、
+  T-CMP-0018 split web）由校验器硬锁，不能静默删除或改形。
+- 校验器把当前 branch 相对 `origin/main`（兜底 `main`）的 Rust 文件路径机械转成 target
+  前缀；diff 命中任一 `status: done` target 时，该 test_id 必须在 overlay 里显式
+  `revalidate`。这保证「改了已完成符号却沿用旧证据」在提交前判红。
+- 报告固定打印四类计数，且四者之和等于九份 ledger 的 total；JSON 报告在独立
+  `overlay` 字段输出，不污染原有 parity 合计。
+
 ---
 
 ## 3. 八条校验规则
@@ -138,7 +168,7 @@ warn 不影响退出码，但会打印出来。它们不是硬规则，因为都
 # 全量校验（退出码 0 = 通过，非 0 = 有违规）
 cargo xtask parity-check
 
-# 机器可读报告：每份 ledger 的条目数、status 分布、recount 条数、violations、warnings
+# 机器可读报告：每份 ledger 的条目数、status 分布、overlay 四类计数、violations、warnings
 cargo xtask parity-check --json
 ```
 
