@@ -21,10 +21,40 @@ entries:
   - id: T-BROP-0009
     disposition: revalidate
     notes: "Batch52 reruns take/transfer behavior with checked epoch advancement."
+  - id: T-BROP-0045
+    disposition: revalidate
+    notes: "Batch53 reruns the closed BrowserInput member test after exporting the new engine module."
   - id: T-BROP-0046
     disposition: revalidate
     defect: true
     notes: "HumanLeaseEpoch saturation must become checked increment plus generation-recoverable poison."
+  - id: T-TEST-0328
+    disposition: revalidate
+    notes: "Batch53 reruns the contracts closed-envelope test after adding the engine protocol module."
+  - id: T-TEST-0978
+    disposition: revalidate
+    notes: "Batch53 reruns the fixed thread identity UUID shape test after the contracts public surface change."
+  - id: T-TEST-0979
+    disposition: revalidate
+    notes: "Batch53 reruns the custom thread identity layout test after the contracts public surface change."
+  - id: T-TEST-0980
+    disposition: revalidate
+    notes: "Batch53 reruns own-deployment thread recognition after the contracts public surface change."
+  - id: T-TEST-0981
+    disposition: revalidate
+    notes: "Batch53 reruns foreign-deployment rejection after the contracts public surface change."
+  - id: T-TEST-0982
+    disposition: revalidate
+    notes: "Batch53 reruns cross-process thread recognition after the contracts public surface change."
+  - id: T-TEST-0983
+    disposition: revalidate
+    notes: "Batch53 reruns thread randomness preservation after the contracts public surface change."
+  - id: T-TEST-0984
+    disposition: revalidate
+    notes: "Batch53 reruns pre-deployment-name thread rejection after the contracts public surface change."
+  - id: T-TEST-0985
+    disposition: revalidate
+    notes: "Batch53 reruns malformed thread identity rejection after the contracts public surface change."
   - id: T-CMP-0015
     disposition: split
     scope: web

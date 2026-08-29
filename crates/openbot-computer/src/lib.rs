@@ -25,13 +25,16 @@
 //!
 //! # 当前实施边界
 //!
-//! Batch51 starts the G5 implementation with the closed browser/input protocol and the
-//! authority-owned HumanLease state machine. The Electron/Chromium process, authenticated engine
-//! framing, screen hub, file/shell executors and supervisor remain separate unfinished boundaries;
-//! protocol types alone are not evidence that an operation executed.
+//! Batch51 started G5 with the closed browser/input protocol and authority-owned HumanLease.
+//! Batch53 adds a real macOS Electron P1 baseline: dual-role scope, digest-before-spawn bundle,
+//! authenticated UDS boot/control/frame paths, SBPL confinement and two host conformance loops.
+//! P1 is still open because Windows Named Pipe/Job/restricted-token and Linux runsc spikes lack
+//! machine evidence. ScreenHub, product CDP mappings, file/shell executors and supervisor remain
+//! separate unfinished boundaries; the macOS fixture page is not a browser product operation.
 
 pub mod browser;
 pub mod control;
+pub mod engine;
 
 pub use control::{
     ControlError, ControlHolder, ControlService, ControlSnapshot, HumanInputTicket,

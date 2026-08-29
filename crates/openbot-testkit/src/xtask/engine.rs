@@ -15,7 +15,12 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<()> {
     match args {
         [command] if command == "fetch" => fetch(root),
         [command] if command == "verify" => verify(root),
-        _ => bail!("usage: cargo xtask engine fetch|verify"),
+        [command] if command == "protocol" => crate::engine_protocol::generate(root, false),
+        [command, flag] if command == "protocol" && flag == "--check" => {
+            crate::engine_protocol::generate(root, true)
+        }
+        [command] if command == "bundle" => crate::engine_bundle::bundle(root),
+        _ => bail!("usage: cargo xtask engine fetch|verify|protocol [--check]|bundle"),
     }
 }
 
@@ -67,10 +72,15 @@ fn fetch(root: &Path) -> Result<()> {
         string(electron, "version")?,
         install.display()
     );
-    verify(root)
+    verify_raw(root)
 }
 
 fn verify(root: &Path) -> Result<()> {
+    verify_raw(root)?;
+    crate::engine_bundle::verify_if_required(root)
+}
+
+fn verify_raw(root: &Path) -> Result<()> {
     let pins = pins(root)?;
     let electron = electron(&pins)?;
     crosscheck_checksum_copy(root, electron)?;
@@ -144,7 +154,7 @@ fn verify(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn pins(root: &Path) -> Result<toml::Value> {
+pub(crate) fn pins(root: &Path) -> Result<toml::Value> {
     let path = root.join(PINS_RELPATH);
     let value: toml::Value = toml::from_str(
         &fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?,
@@ -161,14 +171,14 @@ fn pins(root: &Path) -> Result<toml::Value> {
     Ok(value)
 }
 
-fn electron(pins: &toml::Value) -> Result<&toml::Table> {
+pub(crate) fn electron(pins: &toml::Value) -> Result<&toml::Table> {
     pins.get("engines")
         .and_then(|engines| engines.get("electron"))
         .and_then(toml::Value::as_table)
         .ok_or_else(|| anyhow!("{PINS_RELPATH}: engines.electron missing"))
 }
 
-fn artifact<'a>(electron: &'a toml::Table, platform: &str) -> Result<&'a toml::Table> {
+pub(crate) fn artifact<'a>(electron: &'a toml::Table, platform: &str) -> Result<&'a toml::Table> {
     electron
         .get("artifacts")
         .and_then(toml::Value::as_array)
@@ -215,20 +225,20 @@ fn crosscheck_checksum_copy(root: &Path, electron: &toml::Table) -> Result<()> {
     Ok(())
 }
 
-fn archive_path(root: &Path, artifact: &toml::Table) -> Result<PathBuf> {
+pub(crate) fn archive_path(root: &Path, artifact: &toml::Table) -> Result<PathBuf> {
     Ok(root
         .join("target/engine/downloads")
         .join(string(artifact, "asset")?))
 }
 
-fn install_dir(root: &Path, electron: &toml::Table, platform: &str) -> Result<PathBuf> {
+pub(crate) fn install_dir(root: &Path, electron: &toml::Table, platform: &str) -> Result<PathBuf> {
     Ok(root.join(format!(
         "target/engine/electron-{}/{platform}",
         string(electron, "version")?
     )))
 }
 
-fn electron_executable(install: &Path) -> Result<PathBuf> {
+pub(crate) fn electron_executable(install: &Path) -> Result<PathBuf> {
     let relative = if cfg!(target_os = "macos") {
         "Electron.app/Contents/MacOS/Electron"
     } else if cfg!(target_os = "windows") {
@@ -241,7 +251,7 @@ fn electron_executable(install: &Path) -> Result<PathBuf> {
     Ok(install.join(relative))
 }
 
-fn current_platform() -> Result<&'static str> {
+pub(crate) fn current_platform() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Ok("macos-arm64"),
         ("macos", "x86_64") => Ok("macos-x64"),
@@ -290,7 +300,7 @@ fn verify_size(path: &Path, expected: u64) -> Result<()> {
     Ok(())
 }
 
-fn verify_sha(path: &Path, expected: &str) -> Result<()> {
+pub(crate) fn verify_sha(path: &Path, expected: &str) -> Result<()> {
     if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("invalid sha256 pin `{expected}`");
     }
@@ -429,7 +439,7 @@ fn set_mode(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
 }
 
-fn string<'a>(table: &'a toml::Table, key: &str) -> Result<&'a str> {
+pub(crate) fn string<'a>(table: &'a toml::Table, key: &str) -> Result<&'a str> {
     table
         .get(key)
         .and_then(toml::Value::as_str)
@@ -451,7 +461,7 @@ fn integer(table: &toml::Table, key: &str) -> Result<i64> {
         .ok_or_else(|| anyhow!("{PINS_RELPATH}: integer `{key}` missing"))
 }
 
-fn positive_u64(table: &toml::Table, key: &str) -> Result<u64> {
+pub(crate) fn positive_u64(table: &toml::Table, key: &str) -> Result<u64> {
     u64::try_from(integer(table, key)?).with_context(|| format!("{PINS_RELPATH}: `{key}` negative"))
 }
 

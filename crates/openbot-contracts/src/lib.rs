@@ -75,6 +75,7 @@ pub mod audit;
 pub mod auth;
 pub mod command;
 pub mod components;
+pub mod engine;
 pub mod error;
 pub mod ids;
 pub mod intelligence;

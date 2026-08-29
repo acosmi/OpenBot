@@ -15,7 +15,7 @@ const ALLOWED_FILES: [&str; 3] = ["generated/protocol.mjs", "main.mjs", "package
 const PACKAGE_KEYS: [&str; 5] = ["main", "name", "private", "type", "version"];
 const ELECTRON_IMPORTS: [&str; 5] = ["BrowserWindow", "app", "protocol", "session", "webContents"];
 const NODE_IMPORTS: [&str; 3] = ["node:buffer", "node:net", "node:process"];
-const FORBIDDEN_STRINGS: [&str; 20] = [
+const FORBIDDEN_STRINGS: [&str; 22] = [
     "child_process",
     "node:fs",
     "node:http",
@@ -36,6 +36,8 @@ const FORBIDDEN_STRINGS: [&str; 20] = [
     "XMLHttpRequest",
     "WebSocket",
     "EventSource",
+    "process.stderr",
+    "console.",
 ];
 
 pub(crate) fn run(root: &Path, args: &[String]) -> Result<()> {
@@ -239,6 +241,31 @@ fn check_javascript(relative: &str, text: &str) -> Result<()> {
             _ => bail!("electron-shim-check: `{relative}` imports forbidden module `{specifier}`"),
         }
     }
+    if relative == "main.mjs" {
+        for required in [
+            "app.enableSandbox()",
+            "nodeIntegration: false",
+            "contextIsolation: true",
+            "sandbox: true",
+            "webSecurity: true",
+            "webviewTag: false",
+            "devTools: false",
+            "setPermissionRequestHandler",
+            "setPermissionCheckHandler",
+            "setWindowOpenHandler",
+            "webRequest.onBeforeRequest",
+            "setProxy",
+            "Page.captureScreenshot",
+            "Runtime.evaluate",
+            "app.getAppMetrics()",
+        ] {
+            if !text.contains(required) {
+                bail!(
+                    "electron-shim-check: `main.mjs` lacks required security literal `{required}`"
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -266,6 +293,14 @@ fn check_electron_bindings(relative: &str, bindings: &str) -> Result<()> {
 }
 
 fn check_protocol_hash(root: &Path, protocol: &Path) -> Result<()> {
+    let expected_module = crate::engine_protocol::render(root)?;
+    let actual_module = fs::read(protocol)?;
+    if actual_module != expected_module.as_bytes() {
+        bail!(
+            "electron-shim-check: generated/protocol.mjs differs from {DESCRIPTOR}; run `cargo xtask engine protocol`",
+            DESCRIPTOR = crate::engine_protocol::DESCRIPTOR_RELPATH
+        );
+    }
     let expected_path = root.join(PROTOCOL_HASH_RELPATH);
     let expected = fs::read_to_string(&expected_path)
         .with_context(|| format!("read Rust-owned protocol hash {}", expected_path.display()))?;
@@ -273,7 +308,7 @@ fn check_protocol_hash(root: &Path, protocol: &Path) -> Result<()> {
     if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("electron-shim-check: {PROTOCOL_HASH_RELPATH} must contain one sha256");
     }
-    let actual = format!("{:x}", Sha256::digest(fs::read(protocol)?));
+    let actual = format!("{:x}", Sha256::digest(&actual_module));
     if actual != expected {
         bail!(
             "electron-shim-check: generated/protocol.mjs sha256 {actual} != Rust-owned {expected}"
@@ -298,12 +333,12 @@ mod tests {
     #[test]
     fn electron_and_node_import_domains_are_closed() {
         check_javascript(
-            "main.mjs",
+            "fixture.mjs",
             "import { app, BrowserWindow, session } from 'electron';\nimport net from 'node:net';",
         )
         .expect("allowlisted imports");
         assert!(
-            check_javascript("main.mjs", "import fs from 'node:fs';").is_err(),
+            check_javascript("fixture.mjs", "import fs from 'node:fs';").is_err(),
             "forbidden Node built-in must fail"
         );
         assert!(
@@ -320,7 +355,7 @@ mod tests {
             "eval(payload);",
             "contents.executeJavaScript(payload);",
         ] {
-            assert!(check_javascript("main.mjs", source).is_err(), "{source}");
+            assert!(check_javascript("fixture.mjs", source).is_err(), "{source}");
         }
     }
 }

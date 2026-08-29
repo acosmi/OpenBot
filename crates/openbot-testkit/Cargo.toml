@@ -31,6 +31,7 @@ xtask = [
     "dep:flate2",
     "dep:tar",
     "dep:zip",
+    "dep:plist",
     "dep:sha2",
     "dep:oxc_allocator",
     "dep:oxc_ast",
@@ -58,6 +59,7 @@ toml = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
+plist = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 
 # ---------------------------------------------------------------------------
