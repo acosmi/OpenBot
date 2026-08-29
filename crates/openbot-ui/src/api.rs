@@ -6,6 +6,9 @@
 use openbot_contracts::agent::AgentProfile;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::agent::{AgentProfileResponse, AgentProfilesResponse};
+#[cfg(any(target_arch = "wasm32", test))]
+use openbot_contracts::audit::AuditEventView;
+use openbot_contracts::audit::AuditPage;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::command::ThreadRunCancellationState;
 #[cfg(target_arch = "wasm32")]
@@ -39,7 +42,7 @@ use openbot_contracts::memory::{
 use openbot_contracts::memory::{MemoryScope, MemoryStatus};
 use openbot_contracts::people::CurrentUser;
 #[cfg(target_arch = "wasm32")]
-use openbot_contracts::people::CurrentUserResponse;
+use openbot_contracts::people::{AdminState, AdminStatus, CurrentUserResponse};
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::sandboxed::SandboxedComponentDeleted;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -76,6 +79,8 @@ pub enum ApiError {
 pub const CHANNEL_PAGE_SIZE: u32 = 50;
 /// Memory page size; the application owns the authoritative clamp.
 pub const MEMORY_PAGE_SIZE: u32 = 50;
+/// Audit page size; application clamps the authoritative maximum to 100.
+pub const AUDIT_PAGE_SIZE: u32 = 50;
 
 /// Announce the exact build-owned compiled component manifest; existing governance is untouched.
 pub async fn announce_component_catalogue() -> Result<ComponentCatalogueAdded, ApiError> {
@@ -1258,6 +1263,70 @@ pub async fn load_current_user() -> Result<CurrentUser, ApiError> {
     }
 }
 
+/// Verify the current session has passed the production administrator gate.
+pub async fn require_admin_status() -> Result<(), ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/admin/status")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let status = response
+            .json::<AdminStatus>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if status.status != AdminState::Ok {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load one administrator audit keyset page through the existing typed API.
+pub async fn load_audit_page(cursor: Option<&str>) -> Result<AuditPage, ApiError> {
+    let path = audit_page_path(cursor)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let page = response
+            .json::<AuditPage>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_audit_page(&page)?;
+        Ok(page)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = path;
+        Err(ApiError::Unavailable)
+    }
+}
+
 /// Load at most the Server-bounded current-actor approval page without using browser cache.
 pub async fn list_pending_tool_approvals() -> Result<PendingToolApprovals, ApiError> {
     #[cfg(target_arch = "wasm32")]
@@ -1969,6 +2038,69 @@ fn component_human_decision_answer_path(decision_id: &str) -> Result<String, Api
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn audit_page_path(cursor: Option<&str>) -> Result<String, ApiError> {
+    let mut path = format!("/api/admin/audit-events?limit={AUDIT_PAGE_SIZE}");
+    if let Some(cursor) = cursor {
+        validate_audit_text(cursor, 2048, false)?;
+        path.push_str("&cursor=");
+        path.push_str(&encode_url_component(cursor));
+    }
+    Ok(path)
+}
+
+#[cfg(not(any(target_arch = "wasm32", test)))]
+fn audit_page_path(_cursor: Option<&str>) -> Result<String, ApiError> {
+    Err(ApiError::Unavailable)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_audit_page(page: &AuditPage) -> Result<(), ApiError> {
+    if page.events.len() > AUDIT_PAGE_SIZE as usize {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for event in &page.events {
+        validate_audit_event(event)?;
+        if !ids.insert(event.id.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+    }
+    if let Some(cursor) = page.next_cursor.as_deref() {
+        validate_audit_text(cursor, 2048, false)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_audit_event(event: &AuditEventView) -> Result<(), ApiError> {
+    validate_audit_text(event.id.as_str(), 256, false)?;
+    validate_audit_text(&event.event_type, 256, false)?;
+    validate_audit_text(&event.target_type, 128, false)?;
+    if let Some(actor) = event.actor_user_id.as_ref() {
+        validate_audit_text(actor.as_str(), 512, false)?;
+    }
+    if let Some(target) = event.target_id.as_deref() {
+        validate_audit_text(target, 1024, false)?;
+    }
+    if !event.payload.is_object()
+        || serde_json::to_vec(&event.payload).map_or(true, |payload| payload.len() > 64 * 1024)
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_audit_text(value: &str, max: usize, allow_empty: bool) -> Result<(), ApiError> {
+    if value.len() > max || !allow_empty && value.is_empty() || value.chars().any(char::is_control)
+    {
+        Err(ApiError::InvalidResponse)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn memory_list_path(cursor: Option<&str>) -> Result<String, ApiError> {
     let mut path = format!("/api/memories?limit={MEMORY_PAGE_SIZE}");
     if let Some(cursor) = cursor {
@@ -2639,6 +2771,40 @@ mod tests {
         };
         assert_eq!(
             validate_memory_page(&duplicate).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn audit_path_and_page_are_bounded_unique_and_payload_closed() {
+        assert_eq!(
+            audit_page_path(Some("cursor/one?x=1")).unwrap(),
+            "/api/admin/audit-events?limit=50&cursor=cursor%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
+            audit_page_path(Some("bad\ncursor")).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let event = AuditEventView {
+            id: openbot_contracts::ids::AuditEventId::new("event-1"),
+            actor_user_id: Some(openbot_contracts::ids::ActorId::new("actor-1")),
+            event_type: "tool.approval_granted".to_owned(),
+            target_type: "tool_approval".to_owned(),
+            target_id: Some("approval-1".to_owned()),
+            payload: serde_json::json!({"effect":"execute"}),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        let page = AuditPage {
+            events: vec![event.clone()],
+            next_cursor: Some("cursor-2".to_owned()),
+        };
+        assert!(validate_audit_page(&page).is_ok());
+        let duplicate = AuditPage {
+            events: vec![event.clone(), event],
+            next_cursor: None,
+        };
+        assert_eq!(
+            validate_audit_page(&duplicate).unwrap_err(),
             ApiError::InvalidResponse
         );
     }

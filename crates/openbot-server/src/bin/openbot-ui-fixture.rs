@@ -12,21 +12,23 @@ use axum::response::IntoResponse as _;
 use futures_core::Stream;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
-    AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, BeginThreadRunRequest,
-    CancelThreadRunRequest, ChannelAdministration, ChannelAdministrationError,
-    ChannelCreateRequest, ChannelReadScope, ChannelReader, ComponentAdministration,
-    ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
-    ComponentRuntimeScope, CorrectMemoryRequest, McpConnectionAdministration, McpConnectionError,
-    MemoryAdministration, MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest,
-    MutateMemoryRequest, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
-    PeoplePortError, PortError, RecallMemoriesRequest, RememberMemoryRequest,
-    SandboxedComponentAdministration, SandboxedComponentAdministrationError,
-    SandboxedComponentDraft, ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError,
-    ThreadEventSubscription, ThreadHistoryRequest, ToolApprovalAdministration,
-    ToolApprovalAdministrationError, ToolApprovalPresentation, ToolApprovalRequest,
-    UiPreferenceAdministration, UiPreferenceAdministrationError, UpdateMemoryControlRequest,
+    AgentDirectory, AgentReadScope, AppEventStream, ApplicationService, AuditPageRequest,
+    AuditReadError, AuditReader, BeginThreadRunRequest, CancelThreadRunRequest,
+    ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
+    ChannelReader, ComponentAdministration, ComponentAdministrationError,
+    ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentRuntimeScope,
+    CorrectMemoryRequest, McpConnectionAdministration, McpConnectionError, MemoryAdministration,
+    MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest, MutateMemoryRequest,
+    OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
+    RecallMemoriesRequest, RememberMemoryRequest, SandboxedComponentAdministration,
+    SandboxedComponentAdministrationError, SandboxedComponentDraft, ThreadConversationRequest,
+    ThreadDirectory, ThreadDirectoryError, ThreadEventSubscription, ThreadHistoryRequest,
+    ToolApprovalAdministration, ToolApprovalAdministrationError, ToolApprovalPresentation,
+    ToolApprovalRequest, UiPreferenceAdministration, UiPreferenceAdministrationError,
+    UpdateMemoryControlRequest,
 };
 use openbot_contracts::agent::{AgentProfile, AgentVisibility};
+use openbot_contracts::audit::{AuditEventView, AuditPage};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
 use openbot_contracts::command::{
     AppEvent, ChannelActivityEvent, ChannelDetail, ChannelSummary, ThreadConversationSnapshot,
@@ -44,8 +46,8 @@ use openbot_contracts::components::{
     SHOW_ACTIVITY_REPORT_COMPONENT_NAME, validate_component_human_decision_answer,
 };
 use openbot_contracts::ids::{
-    ActorId, BotId, CatalogGeneration, ChannelId, ComputerGeneration, DeploymentId, RunId,
-    TenantId, ThreadId, ToolCallId,
+    ActorId, AuditEventId, BotId, CatalogGeneration, ChannelId, ComputerGeneration, DeploymentId,
+    RunId, TenantId, ThreadId, ToolCallId,
 };
 use openbot_contracts::mcp::{
     McpConnection, McpConnectionDisconnected, McpConnections, McpOAuthAuthorization,
@@ -1253,6 +1255,72 @@ impl MemoryAdministration for FixtureMemory {
             .cloned()
             .collect();
         Ok(MemoryRecall { memories })
+    }
+}
+
+#[derive(Clone)]
+struct FixtureAudit {
+    events: Arc<Vec<AuditEventView>>,
+}
+
+impl FixtureAudit {
+    fn new(now: OffsetDateTime) -> Self {
+        let events = (0..52)
+            .map(|index| AuditEventView {
+                id: AuditEventId::new(format!("fixture-audit-{index:02}")),
+                actor_user_id: (index % 5 != 0).then(|| ActorId::new(FIXTURE_ACTOR)),
+                event_type: if index % 3 == 0 {
+                    "tool.approval_granted".to_owned()
+                } else {
+                    "agent.invoked".to_owned()
+                },
+                target_type: if index % 3 == 0 {
+                    "tool_approval".to_owned()
+                } else {
+                    "run".to_owned()
+                },
+                target_id: Some(format!("fixture-target-{index:02}")),
+                payload: serde_json::json!({
+                    "sequence": index,
+                    "outcome": if index % 3 == 0 { "granted" } else { "started" }
+                }),
+                created_at: now - Duration::seconds(i64::from(index)),
+            })
+            .collect();
+        Self {
+            events: Arc::new(events),
+        }
+    }
+}
+
+#[async_trait]
+impl AuditReader for FixtureAudit {
+    async fn list_audit_events(
+        &self,
+        request: AuditPageRequest,
+    ) -> Result<AuditPage, AuditReadError> {
+        if !request.event_types.is_empty()
+            || request.actor_user_id.is_some()
+            || request.target_type.is_some()
+            || request.target_id.is_some()
+            || request.from.is_some()
+            || request.to.is_some()
+            || request.limit != 50
+        {
+            return Err(AuditReadError::Corrupt {
+                field: "fixture_audit_request",
+            });
+        }
+        let start = match request.cursor.as_deref() {
+            None => 0,
+            Some("fixture-audit-page-2") => 50,
+            Some(_) => return Err(AuditReadError::InvalidCursor),
+        };
+        let end = (start + request.limit as usize).min(self.events.len());
+        Ok(AuditPage {
+            events: self.events[start..end].to_vec(),
+            next_cursor: (end < self.events.len()).then(|| "fixture-audit-page-2".to_owned()),
+        })
     }
 }
 
@@ -2569,6 +2637,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
+            .with_audit(FixtureAudit::new(now))
             .with_agent_directory(Arc::new(FixtureAgents::new()))
             .with_component_administration(Arc::new(components))
             .with_sandboxed_component_administration(Arc::new(sandboxed))
