@@ -4504,10 +4504,15 @@ dependencies = [
 name = "openbot-computer"
 version = "0.0.0"
 dependencies = [
+ "getrandom 0.4.3",
  "openbot-contracts",
  "openbot-domain",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.20",
  "time",
+ "tokio",
 ]
 
 [[package]]
@@ -4674,6 +4679,7 @@ dependencies = [
  "oxc_ast_visit",
  "oxc_parser",
  "oxc_span",
+ "plist",
  "regex",
  "serde",
  "serde_json",

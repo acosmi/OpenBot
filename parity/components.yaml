@@ -368,7 +368,7 @@ entries:
     migration_rule: "n/a: R118 新增每次渲染=TabId 的封闭 RenderSessionOperation"
     status: "todo"
     evidence: "v4 §3.3 / §10.6 / §11.2：component render session = TabId"
-    notes: "每次 Start 只接收 Rust 一次性注入的 published html/css/js/validated args，独立 in-memory partition 与 component:// opaque origin；Input 复用 closed BrowserInput，Stop 只清本 session。P0 不写 runtime。"
+    notes: "每次 Start 只接收 Rust 一次性注入的 published html/css/js/validated args，独立 in-memory partition 与 component:// opaque origin；Input 复用 closed BrowserInput，Stop 只清本 session。Batch53 只真闭合 macOS P1 内部固定conformance文档的component://session与临时partition/start-frame-stop；尚未接published source/args/Input，故保持todo。"
 
   - id: "engine-component-role-conformance"
     upstream: "-"
@@ -379,7 +379,7 @@ entries:
     migration_rule: "n/a: R125 G5F 为 Component role 新增独立 conformance suite"
     status: "todo"
     evidence: "v4 §24 G5F：临时 partition、三层零 egress、预算、清理与零 callback 正向实测"
-    notes: "真 Electron role 必须证明 start→frame→stop、proxy/webRequest/CSP 三层各自有效、≤8 session/256MiB/5s/5fps/100 console error 与 crash/DoS 只杀单 session；静态 shim 闸门不能替代这些正向证据。"
+    notes: "真 Electron role 必须证明 start→frame→stop、proxy/webRequest/CSP 三层各自有效、≤8 session/256MiB/5s/5fps/100 console error 与 crash/DoS 只杀单 session；静态 shim 闸门不能替代这些正向证据。Batch53 macOS真进程只闭合P1 start→frame→stop/OS sandbox/no-listener/no-orphan；三层逐层失效、预算、DoS与P3正式source仍缺，保持todo。"
 
 # =========================================================================
 # 未验证项（本轮没跑出证据的东西，明写缺什么 + 解除条件）。

@@ -3,13 +3,13 @@
 # 与 tools/pins.toml 的区别：pins.toml 是构建期工具（不进发行物）；本文件是**进发行物**、参与
 # release epoch 与签名、由 Rust 监管的外部引擎。engine 的 "lockfile" 就是本文件，不存在 npm lock。
 #
-# 消费者（Batch52 已实现 fetch/verify；bundle 属 P1，v4 §19.1）：
+# 消费者（Batch52 fetch/verify；Batch53 macOS bundle，v4 §19.1）：
 #   `cargo xtask engine fetch`    按本平台 artifacts 下载到 `target/engine/<id>/`，先校 sha256 再解包
 #   `cargo xtask engine verify`   P0 校验 sha256 / `--version`；P1 bundle 后扩到 fuses / ASAR / epoch
 #   `cargo xtask engine bundle`   P1：rebrand → shim ASAR → fuses → integrity → sidecar manifest（零 npm）
-# 当前 verify 覆盖官方 archive sha256 / 上游 SHASUMS join / `--version`；bundle 后才增加
-# fuses / ASAR integrity / rebrand / release epoch 实值，不能用 P0 verify 冒充。`cargo xtask tools`
-# 不读本文件（tools.rs 硬编码四个构建期工具 id）。
+# 当前 macOS verify 同时覆盖 archive sha256 / SHASUMS / `--version` 与 bundle 的 ASAR、fuses、
+# rebrand、integrity、signature、release epoch、protocol、manifest；Windows/Linux bundle 的平台
+# 专属证据仍缺，不能从 macOS 外推。`cargo xtask tools` 不读本文件。
 #
 # 字段约定与 tools/pins.toml 相同（version / license / install / artifacts[] / sha256_source /
 # url_http_status / verify.* / status）。status 口径与 parity ledger 一致：没有本轮实证的一律 todo。
@@ -26,6 +26,8 @@ generated_at = "2026-08-28"
 # ===========================================================================
 [engines.electron]
 version = "43.3.0"
+release_epoch = 1
+protocol_version = 1
 chromium = "150.0.7871.212"
 node = "24.18.1"
 license = "MIT"
@@ -41,7 +43,7 @@ checksums_manifest = "https://github.com/electron/electron/releases/download/v43
 checksums_manifest_http_status = 200
 checksums_manifest_copy = "tools/electron-v43.3.0.SHASUMS256.txt"
 status = "done"
-done_evidence = "五个平台 zip 的 sha256 与上游 SHASUMS256.txt 逐字相等（recount electron-sha-crosscheck）；windows-x64 真下载 144,396,349 B、macos-arm64 Batch52 真下载 122,102,881 B，二者 sha256 均与 pin/上游相等，解压后各自 `--version` = `v43.3.0`。Batch52 `cargo xtask engine fetch|verify` 已实跑；bundle/fuses/ASAR/integrity/rebrand/release epoch 仍属 P1，不冒充已验"
+done_evidence = "五个平台 zip 的 sha256 与上游 SHASUMS256.txt 逐字相等；windows-x64 真下载 144,396,349 B、macos-arm64 真下载 122,102,881 B，二者 `--version` = `v43.3.0`。Batch53 macOS `engine bundle|verify` 又实得 Rust-only ASAR+4MiB integrity、九 fuse 000011001、外层rebrand、ElectronAsarIntegrity、ad-hoc signature、release epoch/protocol 1 与 manifest digest；双 role 真进程证据另见 Batch53。Windows/Linux bundle 专属证据仍未跑，不冒充三平台已验"
 notes = """
 获取渠道只有官方 GitHub release zip（v3 §1.2 / R117）；不经 npm，因此没有 package-lock。
 Electron zip 解压后是未签名的通用二进制：rebrand、shim ASAR、fuses、ASAR integrity 与签名全部在

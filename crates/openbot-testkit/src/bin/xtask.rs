@@ -61,6 +61,12 @@ mod tools;
 #[path = "../xtask/engine.rs"]
 mod engine;
 
+#[path = "../xtask/engine_protocol.rs"]
+mod engine_protocol;
+
+#[path = "../xtask/engine_bundle.rs"]
+mod engine_bundle;
+
 #[path = "../xtask/electron_shim.rs"]
 mod electron_shim;
 
@@ -277,7 +283,10 @@ xtask —— OpenBot 仓库闸门驱动器
   cargo xtask tools verify           校验四个工具的 sha256（下载件）、版本输出与退出码
   cargo xtask grok-inventory [--check]
                                       生成 tier-1 文件 inventory；--check 要求与 grok-bot/ 逐字同步
-  cargo xtask engine fetch|verify    获取/校验当前平台 Electron zip、sha256 与 --version
+  cargo xtask engine fetch|verify    获取/校验当前平台 Electron zip、sha256、版本与已存在 bundle
+  cargo xtask engine protocol [--check]
+                                      从 contracts descriptor 生成/核对 shim protocol 与 hash
+  cargo xtask engine bundle          Rust-only 组装 ASAR、fuses、rebrand、integrity 与 manifest
   cargo xtask electron-shim-check    校验 shim 文件/LOC/API allowlist；P1 代码未落时校验规则与空目录
   cargo xtask ci                      按 v3 §16.3 顺序跑本机可执行的闸门段
   cargo xtask help                    打印本帮助
