@@ -1,11 +1,13 @@
 # OpenBot Rust workspace —— Phase 0 骨架（v3 §19.3 / §24 G0）。
 #
-# 成员集合恰好等于 v3 §5.1〈精简 workspace〉的十个 crate，与 CLAUDE.md §4
-#〈10 crate workspace〉逐字对应。建第 11 个 crate 只有四个理由（v3 §5.1）：
+# 成员集合由 v3 §5.1〈精简 workspace〉的十个核心 crate，加 R127 唯一批准的
+# Windows Engine OS 安全边界 crate 组成。建第 11 个 crate 的四个允许理由（v3 §5.1）：
 #   1) 独立安全边界  2) 独立发布单元  3) 明显不同的 feature graph  4) 可单独复用的纯协议
 # 其余一律以 module 组织 —— 细粒度 crate 会放大编译时间、循环依赖与跨 crate 重构成本。
 #
-# xtask 刻意不是第 11 个 crate：它一条都不满足上面四个理由，只是仓库闸门的驱动器。
+# `openbot-windows-sandbox` 命中第 1/3 条：它是唯一允许 Win32 unsafe FFI 的独立安全
+# 边界且只进入 Windows feature graph。xtask 仍不是额外 crate：它一条都不满足，只是
+# 仓库闸门的驱动器。
 # 落点 = `openbot-testkit` 的 bin target（`crates/openbot-testkit/src/bin/xtask.rs`，
 # `required-features = ["xtask"]`），由 `.cargo/config.toml` 的 alias `cargo xtask` 调用。
 # v3 §5.1 的 crate 表里 `openbot-testkit` 的职责原文就写着 "golden trace、fault injection、
@@ -24,6 +26,7 @@ members = [
     "crates/openbot-ui",
     "crates/openbot-desktop",
     "crates/openbot-testkit",
+    "crates/openbot-windows-sandbox",
 ]
 
 [workspace.package]
@@ -58,6 +61,7 @@ openbot-server = { path = "crates/openbot-server" }
 openbot-ui = { path = "crates/openbot-ui" }
 openbot-desktop = { path = "crates/openbot-desktop" }
 openbot-testkit = { path = "crates/openbot-testkit" }
+openbot-windows-sandbox = { path = "crates/openbot-windows-sandbox" }
 
 # xtask（仓库闸门驱动器）的依赖。版本由本机 `cargo search` / `cargo add` 在 2026-08-22 实测
 # 解析出的真实最新版，不手写猜测；精确 lock 见提交入库的 `Cargo.lock`（v3 §16.3）。
@@ -111,6 +115,21 @@ oxc_span = "0.146.0"
 async-trait = "0.1.92"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal", "io-util"] }
+# R127 narrow Windows-only Engine boundary. `windows-sys` 0.61.2 was already present in the
+# locked Tauri graph; making it direct adds no registry package and keeps every Win32 call in the
+# one audited crate. Features are the exact API families used by spawn/token/ACL/pipe/Job code.
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Pipes",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
 
 # 可观测性（v3 §16.4）：tracing 是全链真源，Server 侧再由 openbot-server 暴露 Prometheus。
 # **刻意不在 G1 引入 opentelemetry SDK**：§16.4 要求 exporter「只在管理员显式配置 collector

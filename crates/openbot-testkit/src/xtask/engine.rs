@@ -400,16 +400,16 @@ fn extract_symlink<R: Read>(
     }
     #[cfg(unix)]
     {
+        let _ = destination;
         std::os::unix::fs::symlink(target, output)
             .with_context(|| format!("create symlink {}", output.display()))?;
+        Ok(())
     }
     #[cfg(not(unix))]
     {
         let _ = (destination, output);
-        bail!("Electron archive contains a symlink on a platform without symlink extraction");
+        bail!("Electron archive contains a symlink on a platform without symlink extraction")
     }
-    let _ = destination;
-    Ok(())
 }
 
 fn symlink_stays_inside(enclosed: &Path, target: &Path) -> bool {

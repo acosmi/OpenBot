@@ -48,6 +48,14 @@ struct BundleLayout {
     app_bundle: Option<PathBuf>,
 }
 
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct WindowsAsarIntegrity {
+    file: String,
+    alg: String,
+    value: String,
+}
+
 pub(crate) fn bundle(root: &Path) -> Result<()> {
     crate::engine_protocol::generate(root, true)?;
     crate::electron_shim::run(root, &[])?;
@@ -155,9 +163,16 @@ fn rebrand(root: &Path, platform: &str) -> Result<BundleLayout> {
         });
     }
     if platform == "windows-x64" {
-        bail!(
-            "engine bundle: Windows ASAR Integrity PE resource requires the P1 Windows spike; refusing a partial bundle"
-        );
+        let old = root.join("electron.exe");
+        let executable = root.join("acosmi-engine-fixture.exe");
+        fs::rename(&old, &executable)?;
+        return Ok(BundleLayout {
+            root: root.to_path_buf(),
+            executable: executable.clone(),
+            fuse_file: executable,
+            app_asar: root.join("resources/app.asar"),
+            app_bundle: None,
+        });
     }
     bail!("engine bundle: unsupported platform `{platform}`")
 }
@@ -265,7 +280,42 @@ fn write_asar_integrity(layout: &BundleLayout, hash: &str, platform: &str) -> Re
     if platform.starts_with("linux-") {
         return Ok(());
     }
+    if platform == "windows-x64" {
+        #[cfg(windows)]
+        {
+            let payload = windows_integrity_payload(hash)?;
+            openbot_windows_sandbox::replace_pe_resource(
+                &layout.executable,
+                "Integrity",
+                "ElectronAsar",
+                &payload,
+            )?;
+            let actual = openbot_windows_sandbox::read_pe_resource(
+                &layout.executable,
+                "Integrity",
+                "ElectronAsar",
+            )?;
+            if actual != payload {
+                bail!("Windows ElectronAsar resource differs immediately after write");
+            }
+            return Ok(());
+        }
+        #[cfg(not(windows))]
+        bail!("Windows PE resources may only be assembled on a Windows host");
+    }
     bail!("ASAR integrity metadata is not implemented for `{platform}`")
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn windows_integrity_payload(hash: &str) -> Result<Vec<u8>> {
+    if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("Windows ElectronAsar header hash is not SHA-256 hex");
+    }
+    Ok(serde_json::to_vec(&[WindowsAsarIntegrity {
+        file: r"resources\app.asar".to_owned(),
+        alg: "sha256".to_owned(),
+        value: hash.to_ascii_lowercase(),
+    }])?)
 }
 
 fn remove_default_app(layout: &BundleLayout) -> Result<()> {
@@ -582,6 +632,9 @@ fn verify_layout(root: &Path, manifest: &BundleManifest) -> Result<()> {
     if manifest.platform.starts_with("macos-") {
         verify_macos(root, manifest)?;
     }
+    if manifest.platform == "windows-x64" {
+        verify_windows(root, manifest)?;
+    }
     Ok(())
 }
 
@@ -697,6 +750,37 @@ fn verify_macos(root: &Path, manifest: &BundleManifest) -> Result<()> {
     Ok(())
 }
 
+fn verify_windows(root: &Path, manifest: &BundleManifest) -> Result<()> {
+    if manifest.executable != "acosmi-engine-fixture.exe"
+        || manifest.fuse_file != manifest.executable
+    {
+        bail!("Windows fixture executable/rebrand drift");
+    }
+    #[cfg(windows)]
+    {
+        let executable = root.join(&manifest.executable);
+        let resource =
+            openbot_windows_sandbox::read_pe_resource(&executable, "Integrity", "ElectronAsar")?;
+        if resource != windows_integrity_payload(&manifest.asar_header_sha256)? {
+            bail!("Windows ElectronAsar/Integrity resource drift");
+        }
+        let decoded: Vec<WindowsAsarIntegrity> = serde_json::from_slice(&resource)?;
+        if decoded.len() != 1
+            || decoded[0].file != r"resources\app.asar"
+            || decoded[0].alg != "sha256"
+            || decoded[0].value != manifest.asar_header_sha256
+        {
+            bail!("Windows ElectronAsar resource shape drift");
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = root;
+        bail!("Windows PE resources may only be verified on a Windows host");
+    }
+}
+
 fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     for entry in walkdir::WalkDir::new(source).follow_links(false) {
         let entry = entry?;
@@ -759,7 +843,10 @@ fn relative(root: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{FUSE_SENTINEL, FUSE_WIRE, find_subslice, integrity, pickle_string, pickle_u32};
+    use super::{
+        FUSE_SENTINEL, FUSE_WIRE, WindowsAsarIntegrity, find_subslice, integrity, pickle_string,
+        pickle_u32, windows_integrity_payload,
+    };
 
     #[test]
     fn pickle_layout_matches_official_asar_shape() {
@@ -796,5 +883,20 @@ mod tests {
             vec![7, 7 + FUSE_SENTINEL.len()]
         );
         assert_eq!(FUSE_WIRE, b"000011001");
+    }
+
+    #[test]
+    fn windows_integrity_resource_is_the_official_closed_shape() {
+        let hash = "ab".repeat(32);
+        let payload = windows_integrity_payload(&hash).expect("payload");
+        assert_eq!(
+            serde_json::from_slice::<Vec<WindowsAsarIntegrity>>(&payload).unwrap(),
+            vec![WindowsAsarIntegrity {
+                file: r"resources\app.asar".to_owned(),
+                alg: "sha256".to_owned(),
+                value: hash,
+            }]
+        );
+        assert!(windows_integrity_payload("not-a-hash").is_err());
     }
 }

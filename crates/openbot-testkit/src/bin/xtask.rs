@@ -94,6 +94,11 @@ const OWNERS: [&str; 10] = [
     "openbot-testkit",
 ];
 
+/// R127's sole workspace member outside the parity-owner domain. It contains no migrated product
+/// behavior and exists only because Win32 unsafe FFI is an independent security/feature boundary.
+#[cfg(test)]
+const NON_PARITY_WORKSPACE_MEMBERS: [&str; 1] = ["openbot-windows-sandbox"];
+
 /// CLAUDE.md §4〈parity 与新增必须分开标注〉：三值封闭域，中文原样（规则 2）。
 ///
 /// 把新增写成"当前行为"是 v2 审计里最重的一类错误（v3 §28.1 R1），所以这里不接受
@@ -2202,8 +2207,8 @@ mod tests {
 
     #[test]
     fn owners_match_workspace_members() {
-        // OWNERS 与 workspace members 是同一份事实的两个副本；这条把它们钉在一起，
-        // 免得有人加了 crate 却忘了 ledger 的 owner 域（或反过来）。
+        // 十个 parity OWNERS + R127 唯一窄化安全边界必须恰好覆盖 workspace；新增第二个
+        // 例外或把安全边界误列成产品迁移 owner 都会判红。
         let manifest = include_str!("../../../../Cargo.toml");
         for owner in OWNERS {
             assert!(
@@ -2211,14 +2216,21 @@ mod tests {
                 "OWNERS 里的 {owner} 不在 workspace members 里"
             );
         }
+        for member in NON_PARITY_WORKSPACE_MEMBERS {
+            assert!(
+                manifest.contains(&format!("\"crates/{member}\"")),
+                "R127 安全边界 {member} 不在 workspace members 里"
+            );
+            assert!(!OWNERS.contains(&member));
+        }
         let member_count = manifest
             .lines()
             .filter(|l| l.trim_start().starts_with("\"crates/openbot-"))
             .count();
         assert_eq!(
             member_count,
-            OWNERS.len(),
-            "workspace members 数量与 OWNERS 不等 —— v3 §5.1 是十个 crate"
+            OWNERS.len() + NON_PARITY_WORKSPACE_MEMBERS.len(),
+            "workspace 必须恰为十个 parity owner + R127 一个安全边界"
         );
     }
 

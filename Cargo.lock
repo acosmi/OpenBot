@@ -4507,6 +4507,7 @@ dependencies = [
  "getrandom 0.4.3",
  "openbot-contracts",
  "openbot-domain",
+ "openbot-windows-sandbox",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4674,6 +4675,7 @@ dependencies = [
  "openbot-domain",
  "openbot-infra",
  "openbot-server",
+ "openbot-windows-sandbox",
  "oxc_allocator",
  "oxc_ast",
  "oxc_ast_visit",
@@ -4720,6 +4722,15 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "openbot-windows-sandbox"
+version = "0.0.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
