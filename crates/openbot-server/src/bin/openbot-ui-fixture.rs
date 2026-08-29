@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
+use axum::response::IntoResponse as _;
 use futures_core::Stream;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
@@ -66,14 +67,18 @@ use openbot_contracts::tool::{
 };
 use openbot_contracts::ui::{UiPreferences, UpdateUiPreferences};
 use openbot_domain::audit::hash::Sha256Digest;
-use openbot_domain::identity::session::{SessionState, TrustedOrigins, evaluate_session};
+use openbot_domain::identity::session::{
+    SessionHashKey, SessionState, SessionToken, SessionTokenHash, TrustedOrigins, evaluate_session,
+};
 use openbot_domain::tool::approval::{ApprovalTarget, PolicyVersionTag};
 use openbot_domain::tool::metadata::{ApprovalClass, Effect, ToolName};
 use openbot_infra::auth::config::default_session_lifetime;
 use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::tool_approval::{DurableHumanDecision, PostgresToolApprovalCoordinator};
+use openbot_server::auth::SESSION_COOKIE_NAME;
 use openbot_server::{
-    AuthResolver, ResolvedAuth, SensitiveWriteSecurity, ServerBuilder, StaticApp,
+    AuthResolver, PostgresSessionAuthResolver, ResolvedAuth, SensitiveWriteSecurity, ServerBuilder,
+    StaticApp,
 };
 use time::{Duration, OffsetDateTime};
 
@@ -96,6 +101,9 @@ const FIXTURE_PG_CALL: &str = "fixture-pg-approval-call";
 const FIXTURE_APPROVAL_DATABASE_URL: &str = "OPENBOT_UI_APPROVAL_DATABASE_URL";
 const FIXTURE_APPROVAL_DATABASE_PREFIX: &str = "openbot_ui_approval_fixture_";
 const FIXTURE_APPROVAL_AUDIT_KEY: &[u8] = b"fixture-approval-audit-key-at-least-32";
+const FIXTURE_SESSION_ID: &str = "fixture-pg-session";
+const FIXTURE_SESSION_TOKEN: &str = "fixture-pg-session-token-with-enough-entropy-001";
+const FIXTURE_SESSION_HASH_KEY: &[u8] = b"fixture-session-hash-key-at-least-32";
 const POSTGRES_APPROVAL_SEED_SQL: &str = "INSERT INTO public.users(id,email,auth_generation) VALUES
        ('fixture-actor','fixture-actor@example.test',1);
      INSERT INTO public.user_roles(user_id,role) VALUES
@@ -2077,9 +2085,12 @@ struct FixtureApprovalProbe {
 
 struct ApprovalFixtureAssembly {
     port: Arc<dyn ToolApprovalAdministration>,
+    auth_resolver: Option<Arc<dyn AuthResolver>>,
     memory_probe: Option<FixtureApprovalProbe>,
     postgres_probe: Option<PostgresApprovalProbe>,
+    session_bootstrap: bool,
     mode: &'static str,
+    auth_mode: &'static str,
 }
 
 #[derive(Clone)]
@@ -2259,10 +2270,13 @@ async fn assemble_approval_fixture(
         Err(std::env::VarError::NotPresent) => {
             let approvals = FixtureApprovals::new(now);
             return Ok(ApprovalFixtureAssembly {
+                auth_resolver: None,
                 memory_probe: Some(approvals.probe()),
                 postgres_probe: None,
                 port: Arc::new(approvals),
+                session_bootstrap: false,
                 mode: "memory",
+                auth_mode: "fixed",
             });
         }
         Err(error) => return Err(error.into()),
@@ -2274,7 +2288,7 @@ async fn assemble_approval_fixture(
     let mut client = database.get().await?;
     baseline::apply(&client).await?;
     native::apply(&mut client).await?;
-    seed_postgres_approval_scope(&mut client).await?;
+    seed_postgres_approval_scope(&mut client, now).await?;
     drop(client);
 
     let coordinator = Arc::new(PostgresToolApprovalCoordinator::new(
@@ -2282,6 +2296,13 @@ async fn assemble_approval_fixture(
         auth.deployment().clone(),
         auth.tenant().clone(),
         FIXTURE_APPROVAL_AUDIT_KEY.to_vec(),
+    )?);
+    let auth_resolver: Arc<dyn AuthResolver> = Arc::new(PostgresSessionAuthResolver::new(
+        database.clone(),
+        FIXTURE_SESSION_HASH_KEY,
+        default_session_lifetime(),
+        auth.deployment().clone(),
+        auth.tenant().clone(),
     )?);
     let request = postgres_approval_request(auth)?;
     let waiter_state = Arc::new(AtomicU8::new(0));
@@ -2319,13 +2340,16 @@ async fn assemble_approval_fixture(
     .map_err(|_| std::io::Error::other("PostgreSQL approval fixture did not become pending"))??;
 
     Ok(ApprovalFixtureAssembly {
+        auth_resolver: Some(auth_resolver),
         port: coordinator,
         memory_probe: None,
         postgres_probe: Some(PostgresApprovalProbe {
             pool: database,
             waiter_state,
         }),
+        session_bootstrap: true,
         mode: "postgres",
+        auth_mode: "postgres_session",
     })
 }
 
@@ -2350,10 +2374,31 @@ fn validate_fixture_database(
 
 async fn seed_postgres_approval_scope(
     client: &mut tokio_postgres::Client,
+    now: OffsetDateTime,
 ) -> Result<(), tokio_postgres::Error> {
+    let token_hash = SessionTokenHash::compute(
+        SessionToken::new(FIXTURE_SESSION_TOKEN.as_bytes()),
+        SessionHashKey::new(FIXTURE_SESSION_HASH_KEY),
+    )
+    .to_column_value();
     let transaction = client.transaction().await?;
     transaction
         .batch_execute(POSTGRES_APPROVAL_SEED_SQL)
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO public.sessions(
+               id,user_id,token,expires_at,created_at,updated_at,auth_generation
+             ) VALUES($1,$2,$3,$4,$5,$5,$6)",
+            &[
+                &FIXTURE_SESSION_ID,
+                &FIXTURE_ACTOR,
+                &token_hash,
+                &(now + Duration::hours(1)),
+                &(now - Duration::minutes(1)),
+                &1_i64,
+            ],
+        )
         .await?;
     transaction.commit().await
 }
@@ -2421,7 +2466,9 @@ async fn postgres_approval_proof(
                (SELECT count(*)::bigint FROM public.audit_events
                  WHERE event_type='tool.approval_requested'),
                (SELECT count(*)::bigint FROM public.audit_events
-                 WHERE event_type='tool.approval_granted')",
+                 WHERE event_type='tool.approval_granted'),
+               (SELECT count(*)::bigint FROM public.sessions),
+               (SELECT count(*)::bigint FROM public.sessions WHERE left(token,4)='sh1_')",
             &[],
         )
         .await
@@ -2439,6 +2486,8 @@ async fn postgres_approval_proof(
         "summariesCleared": value(3)?,
         "requestedAudits": value(4)?,
         "grantedAudits": value(5)?,
+        "sessions": value(6)?,
+        "hashedSessions": value(7)?,
     })))
 }
 
@@ -2449,6 +2498,22 @@ const fn waiter_state_label(state: u8) -> &'static str {
         2 => "denied",
         _ => "failed",
     }
+}
+
+async fn fixture_session_start() -> Result<axum::response::Response, axum::http::StatusCode> {
+    let cookie = axum::http::HeaderValue::from_str(&format!(
+        "{SESSION_COOKIE_NAME}={FIXTURE_SESSION_TOKEN}; Path=/; HttpOnly; SameSite=Lax"
+    ))
+    .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut response = axum::response::Redirect::to("/approvals").into_response();
+    response
+        .headers_mut()
+        .insert(axum::http::header::SET_COOKIE, cookie);
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
 }
 
 #[tokio::main]
@@ -2468,24 +2533,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
     let ApprovalFixtureAssembly {
         port: approvals,
+        auth_resolver,
         memory_probe: approval_probe,
         postgres_probe,
+        session_bootstrap,
         mode: approval_mode,
+        auth_mode,
     } = assemble_approval_fixture(now, &context).await?;
     let lifetime = default_session_lifetime();
-    let live = evaluate_session(
-        lifetime,
-        SessionState::rehydrate(now - Duration::minutes(1), now, generation),
-        generation,
-        now,
-    )?;
-    let resolver = FixtureAuthResolver {
-        resolved: ResolvedAuth::from_live_session(
-            context,
-            live,
-            Some("fixture-session".to_owned()),
-        ),
-        revoked: AtomicBool::new(false),
+    let resolver: Arc<dyn AuthResolver> = match auth_resolver {
+        Some(resolver) => resolver,
+        None => {
+            let live = evaluate_session(
+                lifetime,
+                SessionState::rehydrate(now - Duration::minutes(1), now, generation),
+                generation,
+                now,
+            )?;
+            Arc::new(FixtureAuthResolver {
+                resolved: ResolvedAuth::from_live_session(
+                    context,
+                    live,
+                    Some("fixture-session".to_owned()),
+                ),
+                revoked: AtomicBool::new(false),
+            })
+        }
     };
     let channels = FixtureChannels::new(now);
     let threads = FixtureThreads::new(channels.clone());
@@ -2507,7 +2580,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );
     let origin = format!("http://127.0.0.1:{port}");
-    let mut router = ServerBuilder::new(application, Arc::new(resolver))
+    let mut router = ServerBuilder::new(application, resolver)
         .with_sensitive_write_security(SensitiveWriteSecurity::new(
             lifetime,
             TrustedOrigins::from_configured([origin.as_str()])?,
@@ -2537,8 +2610,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }),
         );
     }
+    if session_bootstrap {
+        router = router.route(
+            "/api/__fixture/session/start",
+            axum::routing::get(fixture_session_start),
+        );
+    }
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     println!("OPENBOT_UI_APPROVAL_MODE={approval_mode}");
+    println!("OPENBOT_UI_AUTH_MODE={auth_mode}");
     println!("OPENBOT_UI_FIXTURE_URL={origin}/approvals");
     axum::serve(listener, router).await?;
     Ok(())
@@ -2620,5 +2700,37 @@ mod approval_pg_tests {
             "openbot_ui_approval_fixture_test",
         );
         assert!(validate_fixture_database(&remote).is_err());
+
+        let token_hash = SessionTokenHash::compute(
+            SessionToken::new(FIXTURE_SESSION_TOKEN.as_bytes()),
+            SessionHashKey::new(FIXTURE_SESSION_HASH_KEY),
+        )
+        .to_column_value();
+        assert!(token_hash.starts_with("sh1_"));
+        assert!(!token_hash.contains(FIXTURE_SESSION_TOKEN));
+        assert!(!POSTGRES_APPROVAL_SEED_SQL.contains(FIXTURE_SESSION_TOKEN));
+    }
+
+    #[tokio::test]
+    async fn session_bootstrap_is_host_only_http_only_lax_no_store_redirect() {
+        let response = fixture_session_start().await.expect("fixture redirect");
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.headers()[axum::http::header::LOCATION],
+            "/approvals"
+        );
+        assert_eq!(
+            response.headers()[axum::http::header::CACHE_CONTROL],
+            "no-store"
+        );
+        let cookie = response.headers()[axum::http::header::SET_COOKIE]
+            .to_str()
+            .expect("ASCII fixture cookie");
+        assert!(cookie.starts_with(&format!("{SESSION_COOKIE_NAME}={FIXTURE_SESSION_TOKEN};")));
+        assert!(cookie.contains("Path=/"));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Lax"));
+        assert!(!cookie.contains("Domain="));
+        assert!(!cookie.contains("Secure"));
     }
 }
