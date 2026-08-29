@@ -1,12 +1,11 @@
 //! Pure create-time coworker routing and prompt projection (v3 §3.2 / R18).
 
+pub use openbot_contracts::command::MAX_CHANNEL_ROUTING_REASON_CODE_POINTS as MAX_ROUTING_REASON_CODE_POINTS;
 use openbot_contracts::ids::BotId;
 use serde_json::Value;
 
 /// Below this threshold an inferred match defers to the deterministic default.
 pub const MIN_ROUTING_CONFIDENCE: f64 = 0.6;
-/// Model-provided reasons are user-visible but bounded before crossing any durable boundary.
-pub const MAX_ROUTING_REASON_CODE_POINTS: usize = 500;
 
 /// One currently visible routing candidate.
 #[derive(Clone, Debug, PartialEq, Eq)]

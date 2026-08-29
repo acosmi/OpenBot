@@ -21,12 +21,83 @@ use crate::primitives::{Button, ButtonSize, ButtonVariant, IconSize, IconView, T
 
 use super::RecipientField;
 
+/// One recipient/message/run identity retained across a recoverable first-message retry.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct StartAttempt {
-    agent_id: BotId,
-    message: String,
-    run_id: RunId,
-    channel: Option<ChannelDetail>,
+pub(crate) struct StartAttempt {
+    pub(crate) agent_id: BotId,
+    pub(crate) message: String,
+    pub(crate) run_id: RunId,
+    pub(crate) channel: Option<ChannelDetail>,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StartFailureKind {
+    CreateDefinite,
+    CreateUncertain,
+    Begin,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StartFailure {
+    pub(crate) attempt: StartAttempt,
+    pub(crate) kind: StartFailureKind,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StartedChannel {
+    pub(crate) attempt: StartAttempt,
+    pub(crate) channel: ChannelDetail,
+}
+
+/// Execute the single shared create → BeginRun ordering.
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn execute_start_attempt(
+    mut attempt: StartAttempt,
+) -> Result<StartedChannel, StartFailure> {
+    let channel = match attempt.channel.clone() {
+        Some(channel) => channel,
+        None => match create_channel(&attempt.agent_id).await {
+            Ok(channel) => {
+                attempt.channel = Some(channel.clone());
+                channel
+            }
+            Err(error) => {
+                return Err(StartFailure {
+                    attempt,
+                    kind: if error == ApiError::Network {
+                        StartFailureKind::CreateUncertain
+                    } else {
+                        StartFailureKind::CreateDefinite
+                    },
+                });
+            }
+        },
+    };
+    let Some(thread_id) = channel.thread_id.as_ref() else {
+        return Err(StartFailure {
+            attempt,
+            kind: StartFailureKind::Begin,
+        });
+    };
+    if begin_channel_run(
+        thread_id,
+        &channel.id,
+        &attempt.agent_id,
+        &attempt.run_id,
+        &attempt.message,
+    )
+    .await
+    .is_err()
+    {
+        return Err(StartFailure {
+            attempt,
+            kind: StartFailureKind::Begin,
+        });
+    }
+    Ok(StartedChannel { attempt, channel })
 }
 
 /// Select one visible coworker, then atomically create a channel and begin its native first run.
@@ -94,49 +165,28 @@ pub fn ChannelNewPage() -> impl IntoView {
         let navigate_after_send = send_navigate.clone();
         #[cfg(target_arch = "wasm32")]
         leptos::task::spawn_local_scoped_with_cancellation(async move {
-            let mut attempt = resumable.get_untracked().unwrap_or_else(|| StartAttempt {
+            let attempt = resumable.get_untracked().unwrap_or_else(|| StartAttempt {
                 agent_id: profile.id.clone(),
                 message: message.clone(),
                 run_id: mint_run_id(),
                 channel: None,
             });
-            let channel = match attempt.channel.clone() {
-                Some(channel) => channel,
-                None => match create_channel(&attempt.agent_id).await {
-                    Ok(channel) => {
-                        attempt.channel = Some(channel.clone());
-                        resumable.set(Some(attempt.clone()));
-                        channel
+            match execute_start_attempt(attempt).await {
+                Ok(started) => {
+                    resumable.set(Some(started.attempt));
+                    match channel_route_href(started.channel.id.as_str()) {
+                        Ok(href) => navigate_after_send(&href, Default::default()),
+                        Err(_) => start_error.set(true),
                     }
-                    Err(error) => {
-                        if error == ApiError::Network {
-                            uncertain_create.set(true);
-                        }
-                        start_error.set(true);
-                        submitting.set(false);
-                        return;
+                }
+                Err(failure) => {
+                    match failure.kind {
+                        StartFailureKind::CreateUncertain => uncertain_create.set(true),
+                        StartFailureKind::CreateDefinite => resumable.set(None),
+                        StartFailureKind::Begin => resumable.set(Some(failure.attempt)),
                     }
-                },
-            };
-            let Some(thread_id) = channel.thread_id.as_ref() else {
-                start_error.set(true);
-                submitting.set(false);
-                return;
-            };
-            match begin_channel_run(
-                thread_id,
-                &channel.id,
-                &attempt.agent_id,
-                &attempt.run_id,
-                &attempt.message,
-            )
-            .await
-            {
-                Ok(_) => match channel_route_href(channel.id.as_str()) {
-                    Ok(href) => navigate_after_send(&href, Default::default()),
-                    Err(_) => start_error.set(true),
-                },
-                Err(_) => start_error.set(true),
+                    start_error.set(true);
+                }
             }
             submitting.set(false);
         });
@@ -273,26 +323,28 @@ fn install_recipient_loader(
 
 #[cfg(test)]
 mod tests {
+    use openbot_contracts::ids::{ChannelId, ThreadId};
+
     use super::*;
 
     #[test]
-    fn resumable_attempt_binds_recipient_message_run_and_created_channel() {
-        let attempt = StartAttempt {
+    fn retry_identity_is_unchanged_when_the_channel_becomes_known() {
+        let original = StartAttempt {
             agent_id: BotId::new("agent-1"),
             message: "hello".to_owned(),
             run_id: RunId::new("run-1"),
             channel: None,
         };
-        let mut resumed = attempt.clone();
+        let mut resumed = original.clone();
         resumed.channel = Some(ChannelDetail {
-            id: openbot_contracts::ids::ChannelId::new("channel-1"),
+            id: ChannelId::new("channel-1"),
             name: "Agent One".to_owned(),
             agent_ids: vec![BotId::new("agent-1")],
-            thread_id: Some(openbot_contracts::ids::ThreadId::new("thread-1")),
+            thread_id: Some(ThreadId::new("thread-1")),
             active: true,
         });
-        assert_eq!(resumed.agent_id, attempt.agent_id);
-        assert_eq!(resumed.message, attempt.message);
-        assert_eq!(resumed.run_id, attempt.run_id);
+        assert_eq!(resumed.agent_id, original.agent_id);
+        assert_eq!(resumed.message, original.message);
+        assert_eq!(resumed.run_id, original.run_id);
     }
 }

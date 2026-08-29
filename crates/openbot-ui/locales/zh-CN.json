@@ -87,6 +87,15 @@
     "session_expired_body": "重新登录后可以从中断处继续。",
     "sign_in_again": "重新登录"
   },
+  "home": {
+    "title": "新建频道",
+    "routing_hint": "消息会发送给最适合处理它的同事。输入 @ 可自行选择。",
+    "explore_agents": "探索同事",
+    "explore_empty": "当前没有可探索的公开同事。",
+    "agents_load_error": "无法加载同事列表。",
+    "mention_results": "匹配此提及的同事",
+    "mention_empty": "没有同事匹配此提及。"
+  },
   "channels": {
     "title": "频道",
     "channel": "频道",

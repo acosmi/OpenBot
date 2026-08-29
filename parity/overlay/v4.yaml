@@ -306,6 +306,52 @@ entries:
   - id: T-ROUTE-0019
     disposition: revalidate
     notes: "Batch62 reruns closed SAML/OIDC forms, real PostgreSQL registration/removal and non-admin child suppression."
+  # Added mechanically because the Batch63 Home Composer diff closes this target.
+  - id: T-ROUTE-0006
+    disposition: revalidate
+    notes: "Batch63 reruns structured mention, inferred routing, routing failure fallback and create-to-BeginRun navigation."
+  - id: T-ROUTE-0010
+    disposition: revalidate
+    notes: "Batch63 reruns ChannelNew after moving create-to-BeginRun retry choreography into its shared executor."
+  - id: T-TEST-0873
+    disposition: revalidate
+    notes: "Batch63 reruns the fixed routing specialist decision after sharing the public reason bound."
+  - id: T-TEST-0874
+    disposition: revalidate
+    notes: "Batch63 reruns routing unavailable fallback after sharing the public reason bound."
+  - id: T-TEST-0875
+    disposition: revalidate
+    notes: "Batch63 reruns malformed completion fallback after sharing the public reason bound."
+  - id: T-TEST-0876
+    disposition: revalidate
+    notes: "Batch63 reruns roster-external decision refusal after sharing the public reason bound."
+  - id: T-TEST-0877
+    disposition: revalidate
+    notes: "Batch63 reruns low-confidence fallback after sharing the public reason bound."
+  - id: T-TEST-0878
+    disposition: revalidate
+    notes: "Batch63 reruns fenced JSON parsing after sharing the public reason bound."
+  - id: T-TEST-0879
+    disposition: revalidate
+    notes: "Batch63 reruns single-coworker deterministic fallback after sharing the public reason bound."
+  - id: T-TEST-0880
+    disposition: revalidate
+    notes: "Batch63 reruns routing reach projection after sharing the public reason bound."
+  - id: T-TEST-0881
+    disposition: revalidate
+    notes: "Batch63 reruns empty-reach prompt projection after sharing the public reason bound."
+  - id: T-TEST-0882
+    disposition: revalidate
+    notes: "Batch63 reruns reach-as-hint prompt semantics after sharing the public reason bound."
+  - id: T-TEST-0883
+    disposition: revalidate
+    notes: "Batch63 reruns no-reach prompt compatibility after sharing the public reason bound."
+  - id: T-UI-0020
+    disposition: revalidate
+    notes: "Batch63 reruns Textarea states/IME submit and its opt-in combobox ARIA contract."
+  - id: T-UI-0030
+    disposition: revalidate
+    notes: "Batch63 reruns AgentCard identity and same-origin destination guard for Home Explore cards."
   - id: T-CMP-0015
     disposition: split
     scope: web

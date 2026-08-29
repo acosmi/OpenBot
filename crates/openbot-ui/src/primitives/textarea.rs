@@ -21,6 +21,12 @@ pub fn Textarea(
     #[prop(optional, into)] name: Option<String>,
     #[prop(optional, into)] placeholder: Option<String>,
     #[prop(optional, into)] aria_label: TextProp,
+    /// Optional listbox id; when present this textarea is exposed as an editable combobox trigger.
+    #[prop(optional, into)]
+    combobox_controls: Option<String>,
+    /// Current popup state for an opted-in combobox textarea.
+    #[prop(optional, into)]
+    combobox_open: MaybeProp<bool>,
     #[prop(optional, into)] invalid: MaybeProp<bool>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
     /// Optional owner submit path: Enter submits, Shift+Enter and IME composition remain text input.
@@ -28,6 +34,11 @@ pub fn Textarea(
     on_submit: Option<UnsyncCallback<()>>,
     #[prop(optional)] preview_state: Option<TextareaPreviewState>,
 ) -> impl IntoView {
+    if let Some(controls) = combobox_controls.as_deref() {
+        assert_combobox_controls(controls);
+    }
+    let is_combobox = combobox_controls.is_some();
+    let combobox_open = Signal::derive(move || combobox_open.get().unwrap_or(false));
     let field = field_context();
     let control_id = resolve_control_id(field.as_ref(), id);
     assert!(
@@ -67,6 +78,12 @@ pub fn Textarea(
                 let label = aria_label_value.get();
                 (!label.is_empty()).then_some(label)
             }
+            role=is_combobox.then_some("combobox")
+            aria-autocomplete=is_combobox.then_some("list")
+            aria-controls=combobox_controls
+            aria-expanded=move || is_combobox.then(|| {
+                if combobox_open.get() { "true" } else { "false" }
+            })
             aria-invalid=move || if is_invalid.get() { "true" } else { "false" }
             aria-describedby=move || described_by.as_ref().and_then(FieldContext::described_by)
             data-state=move || textarea_state_tokens(
@@ -90,6 +107,17 @@ pub fn Textarea(
             }
         ></textarea>
     }
+}
+
+fn assert_combobox_controls(id: &str) {
+    assert!(
+        !id.is_empty()
+            && id.len() <= 128
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        "Textarea combobox_controls must be one bounded DOM token"
+    );
 }
 
 fn should_submit(key: &str, shift: bool, composing: bool) -> bool {
@@ -151,6 +179,13 @@ mod tests {
             textarea_state_tokens(Some(TextareaPreviewState::Focus), true, true),
             Some("focus invalid disabled".to_owned())
         );
+        assert_combobox_controls("home-mention-results");
+    }
+
+    #[test]
+    #[should_panic(expected = "combobox_controls")]
+    fn textarea_combobox_rejects_split_control_ids() {
+        assert_combobox_controls("bad controls");
     }
 
     #[test]
