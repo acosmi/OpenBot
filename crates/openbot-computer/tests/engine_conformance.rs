@@ -1,6 +1,6 @@
 //! Real Electron P1 conformance. Explicitly ignored by default because it needs a built host bundle.
 
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "windows"))]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use openbot_contracts::ids::{
 use sha2::{Digest as _, Sha256};
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires `cargo xtask engine bundle` and host permission to run Electron/sandbox-exec"]
+#[ignore = "requires `cargo xtask engine bundle` and host permission to run the real confined Electron"]
 async fn browser_role_start_frame_stop_has_no_debug_listener_or_orphan() {
     run_role(EngineRole::BrowserComputer(ComputerSecurityScope::new(
         TenantId::new("tenant-browser"),
@@ -30,7 +30,7 @@ async fn browser_role_start_frame_stop_has_no_debug_listener_or_orphan() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires `cargo xtask engine bundle` and host permission to run Electron/sandbox-exec"]
+#[ignore = "requires `cargo xtask engine bundle` and host permission to run the real confined Electron"]
 async fn component_role_start_frame_stop_has_no_debug_listener_or_orphan() {
     run_role(EngineRole::SandboxedComponent(ComponentRenderScope::new(
         TenantId::new("tenant-component"),
@@ -45,7 +45,10 @@ async fn run_role(role: EngineRole) {
         .parent()
         .and_then(Path::parent)
         .expect("workspace root");
-    let bundle_root = workspace.join("target/engine/bundle/electron-43.3.0/macos-arm64");
+    let bundle_root = workspace.join(format!(
+        "target/engine/bundle/electron-43.3.0/{}",
+        bundle_platform()
+    ));
     let manifest = bundle_root.join("manifest.json");
     let digest = format!(
         "{:x}",
@@ -74,7 +77,7 @@ async fn run_role(role: EngineRole) {
     ))
     .await
     .expect("launch + peer credential + ready");
-    assert_eq!(process.sandbox_fidelity(), EngineSandboxFidelity::Enforced);
+    assert_eq!(process.sandbox_fidelity(), expected_fidelity());
     let pid = process.pid();
     assert!(process.main_creation_time().is_finite());
     assert!(process.main_creation_time() > 0.0);
@@ -122,6 +125,7 @@ async fn run_role(role: EngineRole) {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn assert_no_tcp_listener(pid: u32) {
     let output = Command::new("/usr/sbin/lsof")
         .args(["-nP", "-a", "-p", &pid.to_string(), "-iTCP", "-sTCP:LISTEN"])
@@ -134,6 +138,21 @@ fn assert_no_tcp_listener(pid: u32) {
     );
 }
 
+#[cfg(target_os = "windows")]
+fn assert_no_tcp_listener(pid: u32) {
+    let script = format!(
+        "$items = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object {{ $_.OwningProcess -eq {pid} }}); if ($items.Count -ne 0) {{ $items | ConvertTo-Json -Compress; exit 7 }}"
+    );
+    let output = powershell(&script);
+    assert!(
+        output.status.success(),
+        "engine opened a TCP listener or the probe failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(target_os = "macos")]
 fn assert_process_gone(pid: u32) {
     let output = Command::new("/bin/ps")
         .args(["-p", &pid.to_string(), "-o", "pid="])
@@ -145,6 +164,19 @@ fn assert_process_gone(pid: u32) {
     );
 }
 
+#[cfg(target_os = "windows")]
+fn assert_process_gone(pid: u32) {
+    let script = format!("if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 7 }}");
+    for _ in 0..50 {
+        if powershell(&script).status.success() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("engine PID {pid} remained after shutdown");
+}
+
+#[cfg(target_os = "macos")]
 fn descendant_pids(root: u32) -> Vec<u32> {
     let output = Command::new("/bin/ps")
         .args(["-axo", "pid=,ppid="])
@@ -174,6 +206,83 @@ fn descendant_pids(root: u32) -> Vec<u32> {
     descendants
 }
 
+#[cfg(target_os = "windows")]
+fn descendant_pids(root: u32) -> Vec<u32> {
+    let output = powershell(
+        "Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { '{0} {1}' -f $_.ProcessId,$_.ParentProcessId }",
+    );
+    assert!(
+        output.status.success(),
+        "Win32 process-tree probe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((
+                fields.next()?.parse::<u32>().ok()?,
+                fields.next()?.parse::<u32>().ok()?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    descendants_from_rows(root, &rows)
+}
+
+#[cfg(target_os = "windows")]
+fn powershell(script: &str) -> std::process::Output {
+    let system_root = std::env::var_os("SystemRoot").expect("SystemRoot");
+    let executable =
+        PathBuf::from(system_root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    Command::new(executable)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .output()
+        .expect("PowerShell host probe")
+}
+
+#[cfg(target_os = "windows")]
+fn descendants_from_rows(root: u32, rows: &[(u32, u32)]) -> Vec<u32> {
+    let mut pending = vec![root];
+    let mut descendants = Vec::new();
+    while let Some(parent) = pending.pop() {
+        for (pid, ppid) in rows {
+            if *ppid == parent && !descendants.contains(pid) {
+                descendants.push(*pid);
+                pending.push(*pid);
+            }
+        }
+    }
+    descendants
+}
+
+fn bundle_platform() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "macos-arm64"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "windows-x64"
+    }
+}
+
+fn expected_fidelity() -> EngineSandboxFidelity {
+    #[cfg(target_os = "macos")]
+    {
+        EngineSandboxFidelity::Enforced
+    }
+    #[cfg(target_os = "windows")]
+    {
+        EngineSandboxFidelity::Degraded
+    }
+}
+
 struct TestDirectories {
     root: PathBuf,
     profile: PathBuf,
@@ -182,8 +291,8 @@ struct TestDirectories {
 
 impl TestDirectories {
     fn new(tag: &str) -> Self {
-        let root = PathBuf::from(format!(
-            "/private/tmp/openbot-engine-conformance-{tag}-{}",
+        let root = std::env::temp_dir().join(format!(
+            "openbot-engine-conformance-{tag}-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);

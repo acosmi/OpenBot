@@ -1,9 +1,11 @@
 //! Digest-before-spawn engine lifecycle with one-shot stdin boot and OS peer credentials.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
+#[cfg(unix)]
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -22,7 +24,11 @@ use super::protocol::{
 };
 use super::scope::EngineRole;
 
-#[cfg(unix)]
+#[cfg(windows)]
+use openbot_windows_sandbox::{
+    NamedPipeConnection, NamedPipeListener, RestrictedChild, SpawnPolicy,
+};
+#[cfg(any(unix, windows))]
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 #[cfg(unix)]
 use tokio::net::UnixListener;
@@ -31,9 +37,34 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 #[cfg(unix)]
 use tokio::process::{Child, Command};
 
+#[cfg(unix)]
+type EngineChild = Child;
+#[cfg(windows)]
+type EngineChild = RestrictedChild;
+#[cfg(unix)]
+type EnginePipeListener = UnixListener;
+#[cfg(windows)]
+type EnginePipeListener = NamedPipeListener;
+#[cfg(unix)]
+type EnginePipeConnection = tokio::net::UnixStream;
+#[cfg(windows)]
+type EnginePipeConnection = NamedPipeConnection;
+#[cfg(unix)]
+type EnginePipeReadHalf = OwnedReadHalf;
+#[cfg(unix)]
+type EnginePipeWriteHalf = OwnedWriteHalf;
+#[cfg(windows)]
+type EnginePipeReadHalf = tokio::io::ReadHalf<NamedPipeConnection>;
+#[cfg(windows)]
+type EnginePipeWriteHalf = tokio::io::WriteHalf<NamedPipeConnection>;
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(windows)]
+const WINDOWS_JOB_MAX_PROCESSES: u32 = 32;
+#[cfg(windows)]
+const WINDOWS_JOB_MAX_MEMORY_BYTES: usize = 4 * 1024 * 1024 * 1024;
 
 /// Expected SHA-256 of the release-owned sidecar manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,16 +256,16 @@ pub struct StartedSession {
     pub origin: String,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 /// Live engine process. Drop kills the child; normal shutdown additionally proves bounded cleanup.
 pub struct EngineProcess {
-    child: Child,
+    child: EngineChild,
     child_pid: u32,
     main_creation_time: f64,
-    control_reader: BufReader<OwnedReadHalf>,
-    control_writer: OwnedWriteHalf,
-    frame_reader: BufReader<OwnedReadHalf>,
-    _frame_writer: OwnedWriteHalf,
+    control_reader: BufReader<EnginePipeReadHalf>,
+    control_writer: EnginePipeWriteHalf,
+    frame_reader: BufReader<EnginePipeReadHalf>,
+    _frame_writer: EnginePipeWriteHalf,
     role: EngineRole,
     computer_id: ComputerId,
     generation: ComputerGeneration,
@@ -243,11 +274,11 @@ pub struct EngineProcess {
     fidelity: EngineSandboxFidelity,
 }
 
-#[cfg(not(unix))]
-/// Placeholder type until the Windows Named Pipe/Job Object P1 spike lands.
+#[cfg(not(any(unix, windows)))]
+/// Placeholder type for unsupported targets; partial launch is refused.
 pub struct EngineProcess;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl EngineProcess {
     /// Spawn, authenticate both UDS connections, and complete hello/ready.
     pub async fn launch(config: EngineLaunchConfig) -> Result<Self, EngineProcessError> {
@@ -280,34 +311,28 @@ impl EngineProcess {
             config.generation,
         )?;
 
-        let (mut command, fidelity) = launch_command(
+        let (mut child, fidelity) = spawn_engine(
             &config.bundle.executable,
             &bundle_root,
             &profile_dir,
             &temp_dir,
             &runtime,
         )?;
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        let mut child = command.spawn().map_err(EngineProcessError::Io)?;
-        let child_pid = child.id().ok_or(EngineProcessError::SpawnIdentity)?;
-        let mut stdin = child.stdin.take().ok_or(EngineProcessError::BootPipe)?;
-        stdin.write_all(&boot.line()?).await?;
-        stdin.shutdown().await?;
-        drop(stdin);
+        let child_pid = child_pid(&child)?;
+        write_boot(&mut child, &boot.line()?).await?;
 
-        let ((control, _), (frame, _)) = tokio::time::timeout(CONNECT_TIMEOUT, async {
-            tokio::try_join!(control_listener.accept(), frame_listener.accept())
+        let (control, frame) = tokio::time::timeout(CONNECT_TIMEOUT, async {
+            tokio::try_join!(
+                accept_listener(control_listener),
+                accept_listener(frame_listener)
+            )
         })
         .await
         .map_err(|_| EngineProcessError::ConnectTimeout)??;
         verify_peer(&control, &mut child, child_pid)?;
         verify_peer(&frame, &mut child, child_pid)?;
-        let (control_read, control_writer) = control.into_split();
-        let (frame_read, frame_writer) = frame.into_split();
+        let (control_read, control_writer) = split_connection(control);
+        let (frame_read, frame_writer) = split_connection(frame);
         let mut control_reader = BufReader::new(control_read);
         let mut frame_reader = BufReader::new(frame_read);
         tokio::time::timeout(CONNECT_TIMEOUT, read_frame_hello(&mut frame_reader, &token))
@@ -332,9 +357,7 @@ impl EngineProcess {
                 if main_pid != child_pid {
                     return Err(EngineProcessError::ReadyPid);
                 }
-                if !main_creation_time.is_finite() || main_creation_time <= 0.0 {
-                    return Err(EngineProcessError::ReadyCreationTime);
-                }
+                verify_main_creation_time(&child, main_creation_time)?;
                 if protocol_version != ENGINE_PROTOCOL_VERSION {
                     return Err(EngineProcessError::ReadyProtocol);
                 }
@@ -441,8 +464,7 @@ impl EngineProcess {
             } if operation_id == operation.as_str()
                 && echoed_tab == tab_id.as_str()
                 && renderer_pid != 0
-                && renderer_creation_time.is_finite()
-                && renderer_creation_time > 0.0
+                && renderer_identity_matches(&self.child, renderer_pid, renderer_creation_time)
                 && renderer_sandboxed
                 && !node_exposed
                 && internal_origin_matches(self.role.kind(), &origin) =>
@@ -498,10 +520,11 @@ impl EngineProcess {
             }
             _ => return Err(EngineProcessError::ShutdownIdentity),
         }
-        let status = match tokio::time::timeout(SHUTDOWN_TIMEOUT, self.child.wait()).await {
+        let status = match tokio::time::timeout(SHUTDOWN_TIMEOUT, wait_child(&mut self.child)).await
+        {
             Ok(status) => status?,
             Err(_) => {
-                self.child.kill().await?;
+                kill_child(&mut self.child).await?;
                 return Err(EngineProcessError::ShutdownTimeout);
             }
         };
@@ -522,26 +545,62 @@ impl EngineProcess {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl EngineProcess {
-    /// Windows Named Pipe/Job Object support is a separate P1 spike; partial launch is refused.
+    /// Unsupported targets never fall back to an unconfined Engine.
     pub async fn launch(_config: EngineLaunchConfig) -> Result<Self, EngineProcessError> {
         Err(EngineProcessError::UnsupportedPlatform)
     }
 }
 
 #[cfg(unix)]
-fn bind_listener(path: &Path) -> Result<UnixListener, EngineProcessError> {
+fn bind_listener(path: &Path) -> Result<EnginePipeListener, EngineProcessError> {
     let listener = UnixListener::bind(path)?;
     use std::os::unix::fs::PermissionsExt as _;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     Ok(listener)
 }
 
+#[cfg(windows)]
+fn bind_listener(path: &Path) -> Result<EnginePipeListener, EngineProcessError> {
+    NamedPipeListener::bind(path).map_err(|_| EngineProcessError::SandboxUnavailable)
+}
+
+#[cfg(unix)]
+async fn accept_listener(
+    listener: EnginePipeListener,
+) -> Result<EnginePipeConnection, EngineProcessError> {
+    listener
+        .accept()
+        .await
+        .map(|(stream, _)| stream)
+        .map_err(Into::into)
+}
+
+#[cfg(windows)]
+async fn accept_listener(
+    listener: EnginePipeListener,
+) -> Result<EnginePipeConnection, EngineProcessError> {
+    listener
+        .accept()
+        .await
+        .map_err(|_| EngineProcessError::SandboxUnavailable)
+}
+
+#[cfg(unix)]
+fn split_connection(connection: EnginePipeConnection) -> (EnginePipeReadHalf, EnginePipeWriteHalf) {
+    connection.into_split()
+}
+
+#[cfg(windows)]
+fn split_connection(connection: EnginePipeConnection) -> (EnginePipeReadHalf, EnginePipeWriteHalf) {
+    tokio::io::split(connection)
+}
+
 #[cfg(unix)]
 fn verify_peer(
-    stream: &tokio::net::UnixStream,
-    child: &mut Child,
+    stream: &EnginePipeConnection,
+    child: &mut EngineChild,
     child_pid: u32,
 ) -> Result<(), EngineProcessError> {
     let credential = stream.peer_cred()?;
@@ -556,10 +615,32 @@ fn verify_peer(
     Ok(())
 }
 
-#[cfg(unix)]
-async fn read_event(
-    reader: &mut BufReader<OwnedReadHalf>,
-) -> Result<EngineEventWire, EngineProcessError> {
+#[cfg(windows)]
+fn verify_peer(
+    stream: &EnginePipeConnection,
+    child: &mut EngineChild,
+    child_pid: u32,
+) -> Result<(), EngineProcessError> {
+    if child.identity().pid() != child_pid {
+        return Err(EngineProcessError::SpawnIdentity);
+    }
+    stream
+        .verify_peer(child.identity())
+        .map_err(|_| EngineProcessError::PeerCredential)?;
+    if child
+        .try_wait()
+        .map_err(|_| EngineProcessError::SandboxUnavailable)?
+        .is_some()
+    {
+        return Err(EngineProcessError::Exited);
+    }
+    Ok(())
+}
+
+async fn read_event<R>(reader: &mut R) -> Result<EngineEventWire, EngineProcessError>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
     let mut line = Vec::new();
     let read = reader.read_until(b'\n', &mut line).await?;
     if read == 0 || line.last() != Some(&b'\n') || line.len() > MAX_ENGINE_CONTROL_FRAME_BYTES {
@@ -567,6 +648,147 @@ async fn read_event(
     }
     line.pop();
     serde_json::from_slice(&line).map_err(|_| EngineProcessError::ControlFrame)
+}
+
+#[cfg(unix)]
+fn spawn_engine(
+    executable: &Path,
+    bundle_root: &Path,
+    profile_dir: &Path,
+    temp_dir: &Path,
+    runtime: &RuntimeDirectory,
+) -> Result<(EngineChild, EngineSandboxFidelity), EngineProcessError> {
+    let (mut command, fidelity) =
+        launch_command(executable, bundle_root, profile_dir, temp_dir, runtime)?;
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    command
+        .spawn()
+        .map(|child| (child, fidelity))
+        .map_err(EngineProcessError::Io)
+}
+
+#[cfg(windows)]
+fn spawn_engine(
+    executable: &Path,
+    bundle_root: &Path,
+    profile_dir: &Path,
+    temp_dir: &Path,
+    _runtime: &RuntimeDirectory,
+) -> Result<(EngineChild, EngineSandboxFidelity), EngineProcessError> {
+    let policy = SpawnPolicy::new(
+        executable,
+        engine_args(profile_dir, temp_dir),
+        bundle_root,
+        profile_dir,
+        temp_dir,
+        WINDOWS_JOB_MAX_PROCESSES,
+        WINDOWS_JOB_MAX_MEMORY_BYTES,
+    )
+    .map_err(|_| EngineProcessError::SandboxUnavailable)?;
+    openbot_windows_sandbox::spawn_restricted(&policy)
+        .map(|child| (child, EngineSandboxFidelity::Degraded))
+        .map_err(|_| EngineProcessError::SandboxUnavailable)
+}
+
+#[cfg(unix)]
+fn child_pid(child: &EngineChild) -> Result<u32, EngineProcessError> {
+    child.id().ok_or(EngineProcessError::SpawnIdentity)
+}
+
+#[cfg(windows)]
+fn child_pid(child: &EngineChild) -> Result<u32, EngineProcessError> {
+    let pid = child.identity().pid();
+    (pid != 0)
+        .then_some(pid)
+        .ok_or(EngineProcessError::SpawnIdentity)
+}
+
+#[cfg(unix)]
+async fn write_boot(child: &mut EngineChild, line: &[u8]) -> Result<(), EngineProcessError> {
+    let mut stdin = child.stdin.take().ok_or(EngineProcessError::BootPipe)?;
+    stdin.write_all(line).await?;
+    stdin.shutdown().await?;
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn write_boot(child: &mut EngineChild, line: &[u8]) -> Result<(), EngineProcessError> {
+    use std::io::Write as _;
+
+    let mut stdin = child.take_stdin().ok_or(EngineProcessError::BootPipe)?;
+    stdin.write_all(line)?;
+    stdin.flush()?;
+    drop(stdin);
+    Ok(())
+}
+
+#[cfg(unix)]
+fn verify_main_creation_time(
+    _child: &EngineChild,
+    reported: f64,
+) -> Result<(), EngineProcessError> {
+    (reported.is_finite() && reported > 0.0)
+        .then_some(())
+        .ok_or(EngineProcessError::ReadyCreationTime)
+}
+
+#[cfg(windows)]
+fn verify_main_creation_time(child: &EngineChild, reported: f64) -> Result<(), EngineProcessError> {
+    let expected = child
+        .identity()
+        .creation_unix_millis()
+        .map_err(|_| EngineProcessError::ReadyCreationTime)?;
+    (reported.is_finite() && reported == expected)
+        .then_some(())
+        .ok_or(EngineProcessError::ReadyCreationTime)
+}
+
+#[cfg(unix)]
+fn renderer_identity_matches(_child: &EngineChild, pid: u32, creation_time: f64) -> bool {
+    pid != 0 && creation_time.is_finite() && creation_time > 0.0
+}
+
+#[cfg(windows)]
+fn renderer_identity_matches(child: &EngineChild, pid: u32, creation_time: f64) -> bool {
+    child.verify_job_member(pid, creation_time).is_ok()
+}
+
+#[cfg(unix)]
+async fn wait_child(
+    child: &mut EngineChild,
+) -> Result<std::process::ExitStatus, EngineProcessError> {
+    child.wait().await.map_err(Into::into)
+}
+
+#[cfg(windows)]
+async fn wait_child(
+    child: &mut EngineChild,
+) -> Result<std::process::ExitStatus, EngineProcessError> {
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|_| EngineProcessError::SandboxUnavailable)?
+        {
+            return Ok(status);
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[cfg(unix)]
+async fn kill_child(child: &mut EngineChild) -> Result<(), EngineProcessError> {
+    child.kill().await.map_err(Into::into)
+}
+
+#[cfg(windows)]
+async fn kill_child(child: &mut EngineChild) -> Result<(), EngineProcessError> {
+    child
+        .kill()
+        .map_err(|_| EngineProcessError::SandboxUnavailable)
 }
 
 #[cfg(unix)]
@@ -605,28 +827,32 @@ fn launch_command(
 #[cfg(unix)]
 fn append_engine_args(command: &mut Command, profile_dir: &Path, temp_dir: &Path) {
     command
-        .arg(format!("--user-data-dir={}", profile_dir.display()))
-        .arg(format!(
-            "--disk-cache-dir={}",
-            temp_dir.join("cache").display()
-        ))
-        .args([
-            "--disable-background-networking",
-            "--disable-component-update",
-            "--disable-default-apps",
-            "--disable-features=WebRtcAllowInputVolumeAdjustment",
-            "--disable-quic",
-            "--disable-sync",
-            "--no-default-browser-check",
-            "--no-first-run",
-            "--proxy-server=http=127.0.0.1:1;https=127.0.0.1:1",
-            "--proxy-bypass-list=<-loopback>",
-        ])
+        .args(engine_args(profile_dir, temp_dir))
         .env_remove("ELECTRON_RUN_AS_NODE")
         .env_remove("NODE_OPTIONS")
         .env_remove("NODE_EXTRA_CA_CERTS")
         .env_remove("ELECTRON_ENABLE_LOGGING")
         .env("TMPDIR", temp_dir);
+}
+
+fn engine_args(profile_dir: &Path, temp_dir: &Path) -> Vec<OsString> {
+    [
+        format!("--user-data-dir={}", profile_dir.display()),
+        format!("--disk-cache-dir={}", temp_dir.join("cache").display()),
+        "--disable-background-networking".into(),
+        "--disable-component-update".into(),
+        "--disable-default-apps".into(),
+        "--disable-features=WebRtcAllowInputVolumeAdjustment".into(),
+        "--disable-quic".into(),
+        "--disable-sync".into(),
+        "--no-default-browser-check".into(),
+        "--no-first-run".into(),
+        "--proxy-server=http=127.0.0.1:1;https=127.0.0.1:1".into(),
+        "--proxy-bypass-list=<-loopback>".into(),
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect()
 }
 
 #[cfg(target_os = "macos")]
@@ -721,6 +947,26 @@ impl Drop for RuntimeDirectory {
         let _ = fs::remove_file(&self.control_pipe);
         let _ = fs::remove_file(&self.frame_pipe);
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[cfg(windows)]
+struct RuntimeDirectory {
+    control_pipe: PathBuf,
+    frame_pipe: PathBuf,
+}
+
+#[cfg(windows)]
+impl RuntimeDirectory {
+    fn create(token: &BootToken) -> Result<Self, EngineProcessError> {
+        let nonce = token.hex();
+        if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(EngineProcessError::SandboxUnavailable);
+        }
+        Ok(Self {
+            control_pipe: PathBuf::from(format!(r"\\.\pipe\ob-eng-{nonce}.control")),
+            frame_pipe: PathBuf::from(format!(r"\\.\pipe\ob-eng-{nonce}.frame")),
+        })
     }
 }
 

@@ -26,6 +26,11 @@ sha2.workspace = true
 getrandom.workspace = true
 tokio = { workspace = true, features = ["process"] }
 
+[target.'cfg(windows)'.dependencies]
+# R127 keeps every Win32 unsafe call in one independently audited security-boundary crate. The
+# core computer crate remains `unsafe_code = deny` and consumes only owned safe types.
+openbot-windows-sandbox.workspace = true
+
 [dev-dependencies]
 # `AuthContext::for_test` is deliberately absent from production builds.
 openbot-contracts = { workspace = true, features = ["testkit"] }

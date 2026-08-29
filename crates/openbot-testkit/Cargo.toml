@@ -10,7 +10,7 @@ publish.workspace = true
 [lints]
 workspace = true
 
-# xtask 刻意不是第 11 个 crate（v3 §5.1 只允许四个理由建 crate，xtask 一个都不满足）。
+# xtask 刻意不是额外 workspace crate（v3 §5.1 只允许四个理由建 crate，xtask 一个都不满足）。
 # 它是本 crate 的 bin target，靠 `required-features` 与库面隔离：
 #   - 不开 `xtask` feature 时，`cargo build --workspace` 完全不编译它，六个依赖一个都不进图；
 #   - `.cargo/config.toml` 的 alias `cargo xtask` 显式开这个 feature。
@@ -38,6 +38,7 @@ xtask = [
     "dep:oxc_ast_visit",
     "dep:oxc_parser",
     "dep:oxc_span",
+    "dep:openbot-windows-sandbox",
 ]
 
 [dependencies]
@@ -61,6 +62,11 @@ tar = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 plist = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+# `engine bundle` writes and re-reads the official ElectronAsar/Integrity PE resource through the
+# same sole audited Win32 boundary as Engine process confinement; xtask itself stays unsafe-free.
+openbot-windows-sandbox = { workspace = true, optional = true }
 
 # ---------------------------------------------------------------------------
 # dev-dependencies —— 只服务 `tests/transport_parity.rs`（v3 §24 G1 判据第 2 条：
