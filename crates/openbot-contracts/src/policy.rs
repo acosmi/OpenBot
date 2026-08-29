@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Maximum UTF-8 byte length of one CEL policy expression before parsing.
+pub const MAX_ACTION_POLICY_EXPRESSION_BYTES: usize = 4096;
+
 /// Policy 执行档位的 wire 值。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -27,6 +30,14 @@ pub struct ActionPolicyDocument {
     pub allow: Vec<String>,
 }
 
+/// Exact GET/PUT response envelope. `None` means first setup is incomplete/default-deny.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionPolicyResponse {
+    /// Current persisted policy, or `None` while every acting tool remains denied.
+    pub policy: Option<ActionPolicyDocument>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,5 +60,16 @@ mod tests {
         );
         assert!(serde_json::from_str::<ActionPolicyDocument>(r#"{"mode":"advisory"}"#).is_err());
         assert!(serde_json::from_str::<ActionPolicyDocument>(r#"{"deny":[]}"#).is_err());
+        assert_eq!(MAX_ACTION_POLICY_EXPRESSION_BYTES, 4096);
+        let response = ActionPolicyResponse {
+            policy: Some(policy),
+        };
+        assert_eq!(
+            serde_json::from_str::<ActionPolicyResponse>(
+                &serde_json::to_string(&response).unwrap()
+            )
+            .unwrap(),
+            response,
+        );
     }
 }

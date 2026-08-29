@@ -6,19 +6,12 @@ use axum::extract::rejection::JsonRejection;
 use http::HeaderMap;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
-use openbot_contracts::policy::{ActionPolicyDocument, ActionPolicyMode};
-use serde::{Deserialize, Serialize};
+use openbot_contracts::policy::{ActionPolicyDocument, ActionPolicyMode, ActionPolicyResponse};
+use serde::Deserialize;
 
 use crate::auth::{Authenticated, SensitiveAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
-
-/// Policy GET/PUT 上游信封；`None` 明示首次设置尚未完成。
-#[derive(Debug, Serialize)]
-pub struct PolicyResponse {
-    /// 当前 policy；未配置为 `null`，不能伪造 allow-all。
-    pub policy: Option<ActionPolicyDocument>,
-}
 
 /// PUT body；缺失或 null 的规则列表按固定上游语义成为空表，mode 不得缺省。
 #[derive(Debug, Deserialize)]
@@ -35,13 +28,13 @@ pub struct PolicyBody {
 pub async fn policy_get(
     State(state): State<ServerState>,
     Authenticated(auth): Authenticated,
-) -> Result<Json<PolicyResponse>, HttpError> {
+) -> Result<Json<ActionPolicyResponse>, HttpError> {
     match state
         .application()
         .execute(auth, AppCommand::GetActionPolicy)
         .await?
     {
-        AppReply::ActionPolicy { policy } => Ok(Json(PolicyResponse { policy })),
+        AppReply::ActionPolicy { policy } => Ok(Json(ActionPolicyResponse { policy })),
         _ => Err(application_contract_error()),
     }
 }
@@ -52,7 +45,7 @@ pub async fn policy_put(
     SensitiveAuthenticated(resolved): SensitiveAuthenticated,
     headers: HeaderMap,
     body: Result<Json<PolicyBody>, JsonRejection>,
-) -> Result<Json<PolicyResponse>, HttpError> {
+) -> Result<Json<ActionPolicyResponse>, HttpError> {
     state
         .authorize_sensitive_write(&resolved, request_origin(&headers))
         .await?;
@@ -73,7 +66,7 @@ pub async fn policy_put(
         )
         .await?
     {
-        AppReply::ActionPolicy { policy } => Ok(Json(PolicyResponse { policy })),
+        AppReply::ActionPolicy { policy } => Ok(Json(ActionPolicyResponse { policy })),
         _ => Err(application_contract_error()),
     }
 }

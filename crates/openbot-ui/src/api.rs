@@ -46,6 +46,9 @@ use openbot_contracts::people::{
     PersonResponse,
 };
 use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
+use openbot_contracts::policy::ActionPolicyDocument;
+#[cfg(any(target_arch = "wasm32", test))]
+use openbot_contracts::policy::ActionPolicyResponse;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::sandboxed::SandboxedComponentDeleted;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -1298,6 +1301,81 @@ pub async fn require_admin_status() -> Result<(), ApiError> {
     {
         Err(ApiError::Unavailable)
     }
+}
+
+/// Load the deployment-wide action policy; `None` keeps first-setup default-deny explicit.
+pub async fn load_action_policy() -> Result<Option<ActionPolicyDocument>, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/computers/policy")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<ActionPolicyResponse>()
+            .await
+            .map(|response| response.policy)
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Replace the whole ordered action policy and require the authoritative receipt to match.
+pub async fn save_action_policy(
+    policy: &ActionPolicyDocument,
+) -> Result<ActionPolicyDocument, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::put("/api/computers/policy")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(policy)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let response = response
+            .json::<ActionPolicyResponse>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_action_policy_receipt(policy, response)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = policy;
+        Err(ApiError::Unavailable)
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_action_policy_receipt(
+    requested: &ActionPolicyDocument,
+    response: ActionPolicyResponse,
+) -> Result<ActionPolicyDocument, ApiError> {
+    let stored = response.policy.ok_or(ApiError::InvalidResponse)?;
+    if &stored != requested {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(stored)
 }
 
 /// Load one administrator people keyset page using server-side search.
@@ -3065,6 +3143,42 @@ mod tests {
         assert_eq!(
             validate_people_page(&duplicate).unwrap_err(),
             ApiError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn action_policy_receipt_must_be_present_and_exact() {
+        let requested = ActionPolicyDocument {
+            mode: openbot_contracts::policy::ActionPolicyMode::DryRun,
+            deny: vec!["intent == \"activate\"".to_owned()],
+            allow: vec!["true".to_owned()],
+        };
+        assert_eq!(
+            validate_action_policy_receipt(
+                &requested,
+                ActionPolicyResponse {
+                    policy: Some(requested.clone()),
+                },
+            )
+            .unwrap(),
+            requested,
+        );
+        assert_eq!(
+            validate_action_policy_receipt(&requested, ActionPolicyResponse { policy: None },)
+                .unwrap_err(),
+            ApiError::InvalidResponse,
+        );
+        let mut drifted = requested.clone();
+        drifted.allow.clear();
+        assert_eq!(
+            validate_action_policy_receipt(
+                &requested,
+                ActionPolicyResponse {
+                    policy: Some(drifted),
+                },
+            )
+            .unwrap_err(),
+            ApiError::InvalidResponse,
         );
     }
 

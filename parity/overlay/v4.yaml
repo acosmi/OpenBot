@@ -298,6 +298,10 @@ entries:
   - id: T-ROUTE-0020
     disposition: revalidate
     notes: "Batch60 reruns typed People paging/search, role/access writes and non-admin child suppression."
+  # Added mechanically because the Batch61 Admin Boundaries diff closes this target.
+  - id: T-ROUTE-0014
+    disposition: revalidate
+    notes: "Batch61 reruns first setup, mode/rule/baseline writes, custom-allow preservation and non-admin child suppression."
   - id: T-CMP-0015
     disposition: split
     scope: web

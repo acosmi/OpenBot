@@ -21,6 +21,11 @@ pub fn AdminHomePage() -> impl IntoView {
                 description=move || t_string!(i18n, admin.overview_intro).to_owned()
             />
             <PageRows>
+                <Item action=ItemAction::Link("/admin/boundaries".to_owned())>
+                    <ItemMedia><IconView icon=Icon::ShieldCheck size=IconSize::Navigation /></ItemMedia>
+                    <ItemTitle>{move || t_string!(i18n, boundaries.title).to_owned()}</ItemTitle>
+                    <ItemDescription>{move || t_string!(i18n, boundaries.intro).to_owned()}</ItemDescription>
+                </Item>
                 <Item action=ItemAction::Link("/admin/people".to_owned())>
                     <ItemMedia><IconView icon=Icon::Users size=IconSize::Navigation /></ItemMedia>
                     <ItemTitle>{move || t_string!(i18n, admin.nav_people).to_owned()}</ItemTitle>
