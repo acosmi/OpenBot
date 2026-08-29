@@ -7,8 +7,8 @@ use leptos_router::hooks::use_location;
 use leptos_router::path;
 
 use crate::features::admin::{
-    AdminAuditPage, AdminBoundariesPage, AdminHomePage, AdminPeoplePage, AdminShell,
-    SandboxPlaygroundPage,
+    AdminAuditPage, AdminBoundariesPage, AdminHomePage, AdminIdentityProvidersPage,
+    AdminPeoplePage, AdminShell, SandboxPlaygroundPage,
 };
 use crate::features::agents::AgentsPage;
 use crate::features::approvals::ApprovalPage;
@@ -113,6 +113,7 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/admin") view=AdminHomeRoute />
                 <Route path=path!("/admin/audit") view=AdminAuditRoute />
                 <Route path=path!("/admin/boundaries") view=AdminBoundariesRoute />
+                <Route path=path!("/admin/identity-providers") view=AdminIdentityProvidersRoute />
                 <Route path=path!("/admin/people") view=AdminPeopleRoute />
                 <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
                 <Route path=path!("/channel/new") view=ChannelNewPage />
@@ -136,6 +137,7 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/admin") view=AdminHomeRoute />
                 <Route path=path!("/admin/audit") view=AdminAuditRoute />
                 <Route path=path!("/admin/boundaries") view=AdminBoundariesRoute />
+                <Route path=path!("/admin/identity-providers") view=AdminIdentityProvidersRoute />
                 <Route path=path!("/admin/people") view=AdminPeopleRoute />
                 <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
                 <Route path=path!("/channel/new") view=ChannelNewPage />
@@ -164,6 +166,11 @@ fn AdminAuditRoute() -> impl IntoView {
 #[component]
 fn AdminBoundariesRoute() -> impl IntoView {
     view! { <AdminShell><AdminBoundariesPage /></AdminShell> }
+}
+
+#[component]
+fn AdminIdentityProvidersRoute() -> impl IntoView {
+    view! { <AdminShell><AdminIdentityProvidersPage /></AdminShell> }
 }
 
 #[component]

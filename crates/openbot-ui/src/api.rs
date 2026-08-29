@@ -31,6 +31,16 @@ use openbot_contracts::components::{
     ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecords,
     GrantedCompiledComponents, PendingComponentHumanDecisions, compiled_component_manifest,
 };
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::identity_provider::{IdentityProviderRemoved, IdentityProvidersResponse};
+use openbot_contracts::identity_provider::{
+    MAX_IDENTITY_PROVIDER_DOMAINS, MAX_IDENTITY_PROVIDER_ID_BYTES, RegisterIdentityProviderRequest,
+    RegisteredIdentityProvider,
+};
+#[cfg(any(target_arch = "wasm32", test))]
+use openbot_contracts::identity_provider::{
+    MAX_IDENTITY_PROVIDER_URL_BYTES, MAX_IDENTITY_PROVIDERS,
+};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::mcp::{McpConnectionDisconnected, McpConnections, McpOAuthAuthorization};
 #[cfg(target_arch = "wasm32")]
@@ -1378,6 +1388,126 @@ fn validate_action_policy_receipt(
     Ok(stored)
 }
 
+/// Load every deployment-owned dynamic identity provider.
+pub async fn load_identity_providers() -> Result<Vec<RegisteredIdentityProvider>, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/admin/identity-providers")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let response = response
+            .json::<IdentityProvidersResponse>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_identity_providers(&response.providers)?;
+        Ok(response.providers)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Register one SAML/OIDC provider and bind the public receipt to the non-secret request fields.
+pub async fn register_identity_provider(
+    request: RegisterIdentityProviderRequest,
+) -> Result<RegisteredIdentityProvider, ApiError> {
+    let expected_domain = canonical_identity_provider_domains(request.domain())?;
+    if !valid_identity_provider_id(request.provider_id()) {
+        return Err(ApiError::InvalidResponse);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::post("/api/auth/sso/register")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&request)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let provider = response
+            .json::<RegisteredIdentityProvider>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_identity_provider(&provider)?;
+        if provider.provider_id != request.provider_id()
+            || provider.issuer != request.issuer()
+            || provider.domain != expected_domain
+            || provider.protocol != request.protocol()
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(provider)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (request, expected_domain);
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Remove one provider by a validated path segment and require an exact positive receipt.
+pub async fn remove_identity_provider(provider_id: &str) -> Result<(), ApiError> {
+    let path = identity_provider_remove_path(provider_id)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::delete(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let receipt = response
+            .json::<IdentityProviderRemoved>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if !receipt.removed {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = path;
+        Err(ApiError::Unavailable)
+    }
+}
+
+fn identity_provider_remove_path(provider_id: &str) -> Result<String, ApiError> {
+    if !valid_identity_provider_id(provider_id) {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(format!(
+        "/api/admin/identity-providers/{}",
+        encode_url_component(provider_id)
+    ))
+}
+
 /// Load one administrator people keyset page using server-side search.
 pub async fn load_people_page(search: &str, cursor: Option<&str>) -> Result<PeoplePage, ApiError> {
     let path = people_page_path(search, cursor)?;
@@ -2330,6 +2460,88 @@ fn validate_people_text(value: &str, max: usize, allow_empty: bool) -> Result<()
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn validate_identity_providers(providers: &[RegisteredIdentityProvider]) -> Result<(), ApiError> {
+    if providers.len() > MAX_IDENTITY_PROVIDERS {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut provider_ids = std::collections::BTreeSet::new();
+    let mut domains = std::collections::BTreeSet::new();
+    for provider in providers {
+        validate_identity_provider(provider)?;
+        if !provider_ids.insert(provider.provider_id.as_str()) {
+            return Err(ApiError::InvalidResponse);
+        }
+        for domain in provider.domain.split(',') {
+            if !domains.insert(domain) {
+                return Err(ApiError::InvalidResponse);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_identity_provider(provider: &RegisteredIdentityProvider) -> Result<(), ApiError> {
+    if !valid_identity_provider_id(&provider.provider_id)
+        || provider.issuer.is_empty()
+        || provider.issuer.len() > MAX_IDENTITY_PROVIDER_URL_BYTES
+        || provider.issuer.chars().any(char::is_control)
+        || canonical_identity_provider_domains(&provider.domain)? != provider.domain
+        || provider.registered_by.as_deref().is_some_and(|actor| {
+            actor.is_empty() || actor.len() > 512 || actor.chars().any(char::is_control)
+        })
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+pub(crate) fn valid_identity_provider_id(value: &str) -> bool {
+    if value.is_empty() || value.len() > MAX_IDENTITY_PROVIDER_ID_BYTES {
+        return false;
+    }
+    let mut characters = value.chars();
+    characters.next().is_some_and(|first| {
+        (first.is_ascii_lowercase() || first.is_ascii_digit())
+            && characters.all(|character| {
+                character.is_ascii_lowercase()
+                    || character.is_ascii_digit()
+                    || matches!(character, '-' | '_')
+            })
+    })
+}
+
+pub(crate) fn canonical_identity_provider_domains(value: &str) -> Result<String, ApiError> {
+    let parts = value.split(',').map(str::trim).collect::<Vec<_>>();
+    if parts.is_empty()
+        || parts.len() > MAX_IDENTITY_PROVIDER_DOMAINS
+        || parts.iter().any(|part| part.is_empty())
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut domains = std::collections::BTreeSet::new();
+    for part in parts {
+        if !part.is_ascii() {
+            return Err(ApiError::InvalidResponse);
+        }
+        let domain = part.to_ascii_lowercase();
+        if domain.starts_with('.')
+            || domain.starts_with('-')
+            || domain.ends_with('.')
+            || domain.ends_with('-')
+            || domain.contains("..")
+            || !domain
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+            || !domains.insert(domain)
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+    }
+    Ok(domains.into_iter().collect::<Vec<_>>().join(","))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn audit_page_path(cursor: Option<&str>) -> Result<String, ApiError> {
     let mut path = format!("/api/admin/audit-events?limit={AUDIT_PAGE_SIZE}");
     if let Some(cursor) = cursor {
@@ -3142,6 +3354,58 @@ mod tests {
         };
         assert_eq!(
             validate_people_page(&duplicate).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn identity_provider_projection_domains_and_delete_path_are_closed() {
+        assert_eq!(
+            canonical_identity_provider_domains("Second.Example, acme.example").unwrap(),
+            "acme.example,second.example"
+        );
+        assert_eq!(
+            canonical_identity_provider_domains("acme.example,ACME.EXAMPLE").unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        assert_eq!(
+            identity_provider_remove_path("acme-saml").unwrap(),
+            "/api/admin/identity-providers/acme-saml"
+        );
+        assert_eq!(
+            identity_provider_remove_path("Acme/saml").unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let provider = RegisteredIdentityProvider {
+            provider_id: "acme-saml".to_owned(),
+            issuer: "urn:acme:idp".to_owned(),
+            domain: "acme.example,second.example".to_owned(),
+            protocol: openbot_contracts::identity_provider::SsoProtocol::Saml,
+            registered_by: Some("actor".to_owned()),
+        };
+        assert!(validate_identity_providers(core::slice::from_ref(&provider)).is_ok());
+        assert_eq!(
+            validate_identity_providers(&[provider.clone(), provider]).unwrap_err(),
+            ApiError::InvalidResponse
+        );
+
+        let duplicate_domain = RegisteredIdentityProvider {
+            provider_id: "other-saml".to_owned(),
+            issuer: "urn:other:idp".to_owned(),
+            domain: "second.example".to_owned(),
+            protocol: openbot_contracts::identity_provider::SsoProtocol::Saml,
+            registered_by: None,
+        };
+        let first = RegisteredIdentityProvider {
+            provider_id: "acme-saml".to_owned(),
+            issuer: "urn:acme:idp".to_owned(),
+            domain: "acme.example,second.example".to_owned(),
+            protocol: openbot_contracts::identity_provider::SsoProtocol::Saml,
+            registered_by: None,
+        };
+        assert_eq!(
+            validate_identity_providers(&[first, duplicate_domain]).unwrap_err(),
             ApiError::InvalidResponse
         );
     }

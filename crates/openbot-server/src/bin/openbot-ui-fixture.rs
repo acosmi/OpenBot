@@ -76,8 +76,11 @@ use openbot_domain::identity::session::{
 };
 use openbot_domain::tool::approval::{ApprovalTarget, PolicyVersionTag};
 use openbot_domain::tool::metadata::{ApprovalClass, Effect, ToolName};
+use openbot_domain::vault::{KeyVersion, WrappingKey};
 use openbot_infra::auth::config::default_session_lifetime;
+use openbot_infra::auth::sso::DynamicSsoService;
 use openbot_infra::db::{baseline, native, pool};
+use openbot_infra::net::safe_http::{EgressPolicy, SafeDialer};
 use openbot_infra::policy::PolicyStore;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_infra::tool_approval::{DurableHumanDecision, PostgresToolApprovalCoordinator};
@@ -111,6 +114,7 @@ const FIXTURE_SESSION_ID: &str = "fixture-pg-session";
 const FIXTURE_SESSION_TOKEN: &str = "fixture-pg-session-token-with-enough-entropy-001";
 const FIXTURE_SESSION_HASH_KEY: &[u8] = b"fixture-session-hash-key-at-least-32";
 const FIXTURE_CONFIGURED_ADMIN_EMAIL: &str = "configured-admin@example.test";
+const FIXTURE_SSO_PUBLIC_URL: &str = "https://fixture.openbot.test";
 const POSTGRES_APPROVAL_SEED_SQL: &str = "INSERT INTO public.users(id,email,auth_generation) VALUES
        ('fixture-actor','fixture-actor@example.test',1);
      INSERT INTO public.users(id,email,name,auth_generation) VALUES
@@ -2349,6 +2353,7 @@ struct ApprovalFixtureAssembly {
     people: FixturePeoplePort,
     policy: PolicyStore,
     auth_resolver: Option<Arc<dyn AuthResolver>>,
+    dynamic_sso: Option<Arc<DynamicSsoService>>,
     memory_probe: Option<FixtureApprovalProbe>,
     postgres_probe: Option<PostgresApprovalProbe>,
     session_bootstrap: bool,
@@ -2360,6 +2365,20 @@ struct ApprovalFixtureAssembly {
 struct PostgresApprovalProbe {
     pool: deadpool_postgres::Pool,
     waiter_state: Arc<AtomicU8>,
+}
+
+#[derive(Clone, Default)]
+struct IdentityProviderHttpProbe {
+    list: Arc<AtomicU64>,
+    register: Arc<AtomicU64>,
+    remove: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IdentityProviderHttpOperation {
+    List,
+    Register,
+    Remove,
 }
 
 #[derive(Default)]
@@ -2534,6 +2553,7 @@ async fn assemble_approval_fixture(
             let approvals = FixtureApprovals::new(now);
             return Ok(ApprovalFixtureAssembly {
                 auth_resolver: None,
+                dynamic_sso: None,
                 memory_probe: Some(approvals.probe()),
                 postgres_probe: None,
                 port: Arc::new(approvals),
@@ -2573,6 +2593,24 @@ async fn assemble_approval_fixture(
         auth.tenant().clone(),
     )?);
     let floor = AdminFloor::from_configured([FIXTURE_CONFIGURED_ADMIN_EMAIL])?;
+    let dynamic_sso = Arc::new(DynamicSsoService::new(
+        database.clone(),
+        auth.tenant(),
+        FIXTURE_SESSION_HASH_KEY,
+        FIXTURE_SESSION_HASH_KEY,
+        FIXTURE_APPROVAL_AUDIT_KEY,
+        WrappingKey::from_bytes(vec![0x62; 32])?,
+        KeyVersion::new(1),
+        default_session_lifetime(),
+        floor.clone(),
+        [
+            "google".to_owned(),
+            "microsoft".to_owned(),
+            "okta".to_owned(),
+        ],
+        SafeDialer::new(EgressPolicy::default()),
+        FIXTURE_SSO_PUBLIC_URL.to_owned(),
+    )?);
     let people = FixturePeoplePort::Postgres(PostgresPeopleAdministration::new(
         database.clone(),
         Some(floor),
@@ -2615,6 +2653,7 @@ async fn assemble_approval_fixture(
 
     Ok(ApprovalFixtureAssembly {
         auth_resolver: Some(auth_resolver),
+        dynamic_sso: Some(dynamic_sso),
         port: coordinator,
         people,
         policy,
@@ -2767,6 +2806,96 @@ async fn postgres_approval_proof(
     })))
 }
 
+async fn postgres_identity_provider_proof(
+    probe: PostgresApprovalProbe,
+) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+    let client = probe
+        .pool
+        .get()
+        .await
+        .map_err(|_| axum::http::StatusCode::SERVICE_UNAVAILABLE)?;
+    let row = client
+        .query_one(
+            "SELECT
+               (SELECT count(*)::bigint FROM public.sso_providers),
+               (SELECT count(*)::bigint FROM public.sso_providers
+                 WHERE saml_config IS NOT NULL),
+               (SELECT count(*)::bigint FROM public.sso_providers
+                 WHERE saml_config LIKE '{\"version\":2%'),
+               (SELECT count(*)::bigint FROM public.sso_providers
+                 WHERE saml_config LIKE '%EntityDescriptor%'),
+               (SELECT count(*)::bigint FROM public.audit_events
+                 WHERE event_type='identity_provider.registered'),
+               (SELECT count(*)::bigint FROM public.audit_events
+                 WHERE event_type='identity_provider.removed')",
+            &[],
+        )
+        .await
+        .map_err(|_| axum::http::StatusCode::SERVICE_UNAVAILABLE)?;
+    let value = |index| {
+        row.try_get::<_, i64>(index)
+            .map_err(|_| axum::http::StatusCode::SERVICE_UNAVAILABLE)
+    };
+    Ok(axum::Json(serde_json::json!({
+        "providers": value(0)?,
+        "samlConfigs": value(1)?,
+        "v2Envelopes": value(2)?,
+        "plaintextMetadata": value(3)?,
+        "registeredAudits": value(4)?,
+        "removedAudits": value(5)?,
+    })))
+}
+
+async fn identity_provider_http_probe(
+    probe: IdentityProviderHttpProbe,
+) -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "list": probe.list.load(Ordering::SeqCst),
+        "register": probe.register.load(Ordering::SeqCst),
+        "remove": probe.remove.load(Ordering::SeqCst),
+    }))
+}
+
+async fn count_identity_provider_http(
+    axum::extract::State(probe): axum::extract::State<IdentityProviderHttpProbe>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    match identity_provider_http_operation(request.method(), request.uri().path()) {
+        Some(IdentityProviderHttpOperation::List) => {
+            probe.list.fetch_add(1, Ordering::SeqCst);
+        }
+        Some(IdentityProviderHttpOperation::Register) => {
+            probe.register.fetch_add(1, Ordering::SeqCst);
+        }
+        Some(IdentityProviderHttpOperation::Remove) => {
+            probe.remove.fetch_add(1, Ordering::SeqCst);
+        }
+        None => {}
+    }
+    next.run(request).await
+}
+
+fn identity_provider_http_operation(
+    method: &axum::http::Method,
+    path: &str,
+) -> Option<IdentityProviderHttpOperation> {
+    match (method, path) {
+        (&axum::http::Method::GET, "/api/admin/identity-providers") => {
+            Some(IdentityProviderHttpOperation::List)
+        }
+        (&axum::http::Method::POST, "/api/auth/sso/register") => {
+            Some(IdentityProviderHttpOperation::Register)
+        }
+        (&axum::http::Method::DELETE, path)
+            if path.starts_with("/api/admin/identity-providers/") =>
+        {
+            Some(IdentityProviderHttpOperation::Remove)
+        }
+        _ => None,
+    }
+}
+
 const fn waiter_state_label(state: u8) -> &'static str {
     match state {
         0 => "waiting",
@@ -2812,6 +2941,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         people,
         policy,
         auth_resolver,
+        dynamic_sso,
         memory_probe: approval_probe,
         postgres_probe,
         session_bootstrap,
@@ -2860,13 +2990,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );
     let origin = format!("http://127.0.0.1:{port}");
-    let mut router = ServerBuilder::new(application, resolver)
+    let mut builder = ServerBuilder::new(application, resolver)
         .with_sensitive_write_security(SensitiveWriteSecurity::new(
             lifetime,
             TrustedOrigins::from_configured([origin.as_str()])?,
         ))
-        .with_static_app(StaticApp::open(dist)?)
-        .into_router();
+        .with_static_app(StaticApp::open(dist)?);
+    if let Some(dynamic_sso) = dynamic_sso {
+        builder = builder.with_dynamic_sso(dynamic_sso);
+    }
+    let mut router = builder.into_router();
     if let Some(approval_probe) = approval_probe {
         router = router.route(
             "/__fixture/approval-probe",
@@ -2882,11 +3015,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
         );
     }
     if let Some(postgres_probe) = postgres_probe {
+        let identity_provider_probe = postgres_probe.clone();
         router = router.route(
             "/api/__fixture/approval-pg-proof",
             axum::routing::get(move || {
                 let probe = postgres_probe.clone();
                 async move { postgres_approval_proof(probe).await }
+            }),
+        );
+        router = router.route(
+            "/api/__fixture/identity-provider-pg-proof",
+            axum::routing::get(move || {
+                let probe = identity_provider_probe.clone();
+                async move { postgres_identity_provider_proof(probe).await }
             }),
         );
     }
@@ -2896,6 +3037,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
             axum::routing::get(fixture_session_start),
         );
     }
+    let identity_provider_http = IdentityProviderHttpProbe::default();
+    let identity_provider_http_route = identity_provider_http.clone();
+    router = router.route(
+        "/api/__fixture/identity-provider-http-proof",
+        axum::routing::get(move || {
+            let probe = identity_provider_http_route.clone();
+            async move { identity_provider_http_probe(probe).await }
+        }),
+    );
+    router = router.layer(axum::middleware::from_fn_with_state(
+        identity_provider_http,
+        count_identity_provider_http,
+    ));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     println!("OPENBOT_UI_APPROVAL_MODE={approval_mode}");
     println!("OPENBOT_UI_AUTH_MODE={auth_mode}");
@@ -2925,6 +3079,39 @@ fn arguments() -> Result<(String, u16), Box<dyn Error>> {
 mod approval_pg_tests {
     use super::*;
     use openbot_domain::policy::{ActionPolicy, PolicyMode};
+
+    #[test]
+    fn identity_provider_http_probe_counts_only_the_three_product_surfaces() {
+        for (method, path, expected) in [
+            (
+                axum::http::Method::GET,
+                "/api/admin/identity-providers",
+                Some(IdentityProviderHttpOperation::List),
+            ),
+            (
+                axum::http::Method::POST,
+                "/api/auth/sso/register",
+                Some(IdentityProviderHttpOperation::Register),
+            ),
+            (
+                axum::http::Method::DELETE,
+                "/api/admin/identity-providers/acme-saml",
+                Some(IdentityProviderHttpOperation::Remove),
+            ),
+        ] {
+            assert_eq!(identity_provider_http_operation(&method, path), expected);
+        }
+        for (method, path) in [
+            (axum::http::Method::GET, "/api/admin/status"),
+            (axum::http::Method::POST, "/api/auth/sso/update-provider"),
+            (
+                axum::http::Method::GET,
+                "/api/__fixture/identity-provider-http-proof",
+            ),
+        ] {
+            assert_eq!(identity_provider_http_operation(&method, path), None);
+        }
+    }
 
     fn auth() -> AuthContext {
         AuthContext::for_test(

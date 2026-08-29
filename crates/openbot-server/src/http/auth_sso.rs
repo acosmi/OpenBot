@@ -11,11 +11,10 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use openbot_contracts::auth::Role;
 use openbot_contracts::error::AppError;
+use openbot_contracts::identity_provider::{IdentityProviderRemoved, IdentityProvidersResponse};
 use openbot_contracts::ids::ActorId;
 use openbot_infra::auth::oidc::ProviderId;
-use openbot_infra::auth::sso::{
-    DynamicSsoStart, RegisterIdentityProviderInput, RegisteredIdentityProvider, SamlStart,
-};
+use openbot_infra::auth::sso::{DynamicSsoStart, RegisterIdentityProviderInput, SamlStart};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -39,24 +38,12 @@ struct RoutingAccepted {
     accepted: bool,
 }
 
-#[derive(Serialize)]
-/// 管理列表信封。
-pub struct ProvidersResponse {
-    /// deployment 全部动态 provider 的无 secret 投影。
-    providers: Vec<RegisteredIdentityProvider>,
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Better Auth delete-provider 兼容 body。
 pub struct ProviderIdBody {
     /// 要删除的 provider ID。
     pub provider_id: String,
-}
-
-#[derive(Serialize)]
-struct RemovedResponse {
-    removed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -254,7 +241,7 @@ pub async fn list(
             dependency: "dynamic_sso",
         })?;
     Ok(no_store_response(
-        Json(ProvidersResponse { providers }).into_response(),
+        Json(IdentityProvidersResponse { providers }).into_response(),
     ))
 }
 
@@ -371,7 +358,9 @@ async fn remove_authorized(state: ServerState, actor: ActorId, provider_id: Stri
         );
     };
     match service.remove(&provider, &actor).await {
-        Ok(()) => no_store_response(Json(RemovedResponse { removed: true }).into_response()),
+        Ok(()) => {
+            no_store_response(Json(IdentityProviderRemoved { removed: true }).into_response())
+        }
         Err(error) => dynamic_login_error(error),
     }
 }

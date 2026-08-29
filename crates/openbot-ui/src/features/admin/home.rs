@@ -31,6 +31,11 @@ pub fn AdminHomePage() -> impl IntoView {
                     <ItemTitle>{move || t_string!(i18n, admin.nav_people).to_owned()}</ItemTitle>
                     <ItemDescription>{move || t_string!(i18n, admin.people_intro).to_owned()}</ItemDescription>
                 </Item>
+                <Item action=ItemAction::Link("/admin/identity-providers".to_owned())>
+                    <ItemMedia><IconView icon=Icon::Landmark size=IconSize::Navigation /></ItemMedia>
+                    <ItemTitle>{move || t_string!(i18n, admin.nav_identity_providers).to_owned()}</ItemTitle>
+                    <ItemDescription>{move || t_string!(i18n, admin.identity_providers_intro).to_owned()}</ItemDescription>
+                </Item>
                 <Item action=ItemAction::Link("/admin/audit".to_owned())>
                     <ItemMedia><IconView icon=Icon::ListChecks size=IconSize::Navigation /></ItemMedia>
                     <ItemTitle>{move || t_string!(i18n, admin.nav_audit).to_owned()}</ItemTitle>
