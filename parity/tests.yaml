@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 675
+    expect: 670
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -1846,11 +1846,12 @@ entries:
   - id: "app-tests-auth-client--signinwith--starts-s-through-the-same-call"
     upstream: "app/tests/auth-client.test.ts::signInWith"
     label: 替代
-    target: "openbot_ui::features::auth::client::tests::starts_s_through_the_same_call"
+    target: "openbot_ui::api::tests::all_environment_auth_providers_share_one_closed_start_route_shape"
     owner: openbot-ui
     test_id: T-TEST-0166
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch64 AuthProviderId闭成Google/Microsoft/Okta；同一start_environment_sign_in只由environment_sign_in_path映射成三条/api/auth/oidc/{id}/start，UI155中该单测逐条通过；release浏览器Google按钮实发一次POST，fixture oidcStartRequests=2来自两轮显式点击而非分叉客户端。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[200]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §6.2 必须实现的认证面：Better Auth 客户端被 Rust 自建认证面取代；登录入口与 provider 显示名判据逐条移植。上游用例标题：「starts %s through the same call」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "app-tests-auth-client--signinwith--sends-the-browser-back-where-it-started"
@@ -1866,21 +1867,23 @@ entries:
   - id: "app-tests-auth-client--signinwith--throws-what-the-client-said-when-it-refuses"
     upstream: "app/tests/auth-client.test.ts::signInWith"
     label: 替代
-    target: "openbot_ui::features::auth::client::tests::throws_what_the_client_said_when_it_refuses"
+    target: "openbot_ui::shell::auth::SignInPage"
     owner: openbot-ui
     test_id: T-TEST-0168
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch64按Rust稳定错误域替代Better Auth自由message：503不回显服务端/IdP正文，release浏览器留在/sign并显示本地化`无法开始 Google 登录，请重试。`；其它失败同一payload-free类别，UI155、i18n689与最终运行日志0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[202]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §6.2 必须实现的认证面：Better Auth 客户端被 Rust 自建认证面取代；登录入口与 provider 显示名判据逐条移植。上游用例标题：「throws what the client said when it refuses」。"
   - id: "app-tests-auth-client--signinwith--names-the-provider-when-the-client-says-nothing"
     upstream: "app/tests/auth-client.test.ts::signInWith"
     label: 替代
-    target: "openbot_ui::features::auth::client::tests::names_the_provider_when_the_client_says_nothing"
+    target: "openbot_ui::shell::auth::tests::provider_labels_and_enterprise_input_share_closed_limits"
     owner: openbot-ui
     test_id: T-TEST-0169
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch64 provider_name单测逐项固定Google/Microsoft/Okta；无远端message的fixture 503在release浏览器可见alert精确点名Google，600px截图文案完整。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[203]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §6.2 必须实现的认证面：Better Auth 客户端被 Rust 自建认证面取代；登录入口与 provider 显示名判据逐条移植。上游用例标题：「names the provider when the client says nothing」。"
   - id: "app-tests-auth-client--signinwith--resolves-quietly-when-the-redirect-is-under-way"
@@ -1896,11 +1899,12 @@ entries:
   - id: "app-tests-auth-client--providername--gives-each-provider-the-name-people-call-it"
     upstream: "app/tests/auth-client.test.ts::providerName"
     label: 替代
-    target: "openbot_ui::features::auth::client::tests::gives_each_provider_the_name_people_call_it"
+    target: "openbot_ui::shell::auth::tests::provider_labels_and_enterprise_input_share_closed_limits"
     owner: openbot-ui
     test_id: T-TEST-0171
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch64同一provider_name单源逐项断言Google/Microsoft/Okta；release浏览器三按钮可见名分别为使用Google/Microsoft/Okta登录，中英键集合与placeholder exact。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[206]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §6.2 必须实现的认证面：Better Auth 客户端被 Rust 自建认证面取代；登录入口与 provider 显示名判据逐条移植。上游用例标题：「gives each provider the name people call it」。"
   # ---------------------------------------------------------------------------
@@ -1909,11 +1913,12 @@ entries:
   - id: "app-tests-auth-queries--uses-a-stable-key-for-the-current-authenticated-user"
     upstream: "app/tests/auth-queries.test.ts"
     label: 替代
-    target: "openbot_ui::features::auth::queries::tests::uses_a_stable_key_for_the_current_authenticated_user"
+    target: "openbot_ui::shell::auth::tests::only_unauthorized_is_a_signed_out_answer_and_sign_redirects_are_exact"
     owner: openbot-ui
     test_id: T-TEST-0172
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch64不移植TanStack query key；唯一AuthenticatedBoundary owner在每次full mount做一次权威/api/me probe，checked retry generation拒绝旧响应。纯状态测试覆盖authenticated/sign、authenticated/protected、401/sign、401/protected与其余七类失败；release最终me5/capabilities4/protected0及已登录/sign不新增capability证明边界稳定且无双认证缓存。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[207]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.2：query key 稳定性是 TanStack Query 的机制属性，Leptos + typed in-process 侧无对应物；当前用户读取语义逐条移植。上游用例标题：「uses a stable key for the current authenticated user」。"
   # ---------------------------------------------------------------------------

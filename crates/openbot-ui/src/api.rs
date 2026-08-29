@@ -9,6 +9,12 @@ use openbot_contracts::agent::{AgentProfileResponse, AgentProfilesResponse};
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::audit::AuditEventView;
 use openbot_contracts::audit::AuditPage;
+use openbot_contracts::auth::{AuthProviderId, AuthenticationCapabilities};
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::auth::{
+    AuthenticationStartResponse, EnterpriseSsoRoutingAccepted, EnterpriseSsoStartRequest,
+    MAX_SSO_ROUTING_EMAIL_BYTES,
+};
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::command::MAX_CHANNEL_ROUTING_REASON_CODE_POINTS;
 #[cfg(target_arch = "wasm32")]
@@ -1280,7 +1286,111 @@ pub async fn mutate_memory_record(
     }
 }
 
-/// Load the current authenticated user for the sidebar footer.
+/// Load the complete anonymous sign-in capability surface before painting provider controls.
+pub async fn load_authentication_capabilities() -> Result<AuthenticationCapabilities, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/capabilities")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let capabilities = response
+            .json::<AuthenticationCapabilities>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if !capabilities.is_canonical() {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(capabilities)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Mint one environment-provider OIDC attempt and return its validated full-page target.
+pub async fn start_environment_sign_in(provider: AuthProviderId) -> Result<String, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = environment_sign_in_path(provider);
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let started = response
+            .json::<AuthenticationStartResponse>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_oidc_authorization_target(&started.url)?;
+        Ok(started.url)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = provider;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Issue one enumeration-resistant enterprise-email route ticket.
+///
+/// The caller must navigate to `/api/auth/sso/continue` only after this exact 202 receipt.
+pub async fn start_enterprise_sign_in(email: String) -> Result<(), ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        if email.is_empty() || email.len() > MAX_SSO_ROUTING_EMAIL_BYTES {
+            return Err(ApiError::InvalidResponse);
+        }
+        let response = Request::post("/api/auth/sso/start")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&EnterpriseSsoStartRequest { email })
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 202 {
+            return Err(status_error(response.status()));
+        }
+        let accepted = response
+            .json::<EnterpriseSsoRoutingAccepted>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if !accepted.accepted {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = email;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Load the current authenticated user for the sidebar footer and route guard.
 pub async fn load_current_user() -> Result<CurrentUser, ApiError> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -2369,6 +2479,21 @@ fn validate_authorization_target(value: &str) -> Result<(), ApiError> {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn validate_oidc_authorization_target(value: &str) -> Result<(), ApiError> {
+    validate_authorization_target(value)?;
+    let parsed = url::Url::parse(value).map_err(|_| ApiError::InvalidResponse)?;
+    if parsed.scheme() != "https" {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn environment_sign_in_path(provider: AuthProviderId) -> String {
+    format!("/api/auth/oidc/{}/start", provider.as_str())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn approval_decision_path(approval_id: &str) -> Result<String, ApiError> {
     if approval_id.is_empty() || approval_id.len() > 128 || approval_id.as_bytes().contains(&0) {
         return Err(ApiError::InvalidResponse);
@@ -2889,6 +3014,22 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn all_environment_auth_providers_share_one_closed_start_route_shape() {
+        assert_eq!(
+            environment_sign_in_path(AuthProviderId::Google),
+            "/api/auth/oidc/google/start"
+        );
+        assert_eq!(
+            environment_sign_in_path(AuthProviderId::Microsoft),
+            "/api/auth/oidc/microsoft/start"
+        );
+        assert_eq!(
+            environment_sign_in_path(AuthProviderId::Okta),
+            "/api/auth/oidc/okta/start"
+        );
+    }
+
     fn memory_record(id: &str, content: Option<&str>, status: MemoryStatus) -> MemoryRecord {
         MemoryRecord {
             memory_id: id.to_owned(),
@@ -3149,6 +3290,22 @@ mod tests {
             )
             .is_ok()
         );
+        assert!(
+            validate_oidc_authorization_target(
+                "https://accounts.google.com/o/oauth2/v2/auth?state=opaque"
+            )
+            .is_ok()
+        );
+        for invalid in [
+            "/api/auth/sso/continue",
+            "http://accounts.google.com/authorize",
+            "https://accounts.google.com/authorize#token",
+        ] {
+            assert_eq!(
+                validate_oidc_authorization_target(invalid).unwrap_err(),
+                ApiError::InvalidResponse
+            );
+        }
 
         for invalid in [
             "//attacker.example/path",

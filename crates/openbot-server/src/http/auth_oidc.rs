@@ -9,21 +9,15 @@ use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::header::{CACHE_CONTROL, LOCATION, ORIGIN, SET_COOKIE, USER_AGENT};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use openbot_contracts::auth::{
+    ApplicationRuntimeMode, AuthProviderId, AuthenticationCapabilities, AuthenticationStartResponse,
+};
 use openbot_infra::auth::oidc::{OidcLoginError, ProviderId};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::auth::SESSION_COOKIE_NAME;
 use crate::http::ServerState;
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CapabilitiesResponse<'a> {
-    mode: &'static str,
-    durable_history: bool,
-    auth_providers: &'a [String],
-    sso_configured: bool,
-}
 
 /// 未认证能力面；动态企业 IdP 只贡献布尔值。
 pub(crate) async fn capabilities(State(state): State<ServerState>) -> Response {
@@ -40,20 +34,35 @@ pub(crate) async fn capabilities(State(state): State<ServerState>) -> Response {
         },
         None => false,
     };
-    let mut response = Json(CapabilitiesResponse {
-        mode: "rust",
+    let auth_providers = match surface
+        .provider_ids()
+        .iter()
+        .map(|provider| provider.parse::<AuthProviderId>())
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(providers) => providers,
+        Err(_) => {
+            return auth_failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "authentication_unavailable",
+            );
+        }
+    };
+    let capabilities = AuthenticationCapabilities {
+        mode: ApplicationRuntimeMode::Rust,
         durable_history: true,
-        auth_providers: surface.provider_ids(),
+        auth_providers,
         sso_configured: surface.enterprise_sso_available() || dynamic_sso,
-    })
-    .into_response();
+    };
+    if !capabilities.is_canonical() {
+        return auth_failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "authentication_unavailable",
+        );
+    }
+    let mut response = Json(capabilities).into_response();
     no_store(response.headers_mut());
     response
-}
-
-#[derive(Serialize)]
-struct StartResponse {
-    url: String,
 }
 
 /// 铸造 state/nonce/PKCE 并返回 IdP URL。只接受可信 Origin 的 POST。
@@ -84,7 +93,7 @@ pub(crate) async fn start(
         .await
     {
         Ok(url) => {
-            let mut response = Json(StartResponse {
+            let mut response = Json(AuthenticationStartResponse {
                 url: url.to_string(),
             })
             .into_response();

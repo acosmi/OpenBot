@@ -352,6 +352,35 @@ entries:
   - id: T-UI-0030
     disposition: revalidate
     notes: "Batch63 reruns AgentCard identity and same-origin destination guard for Home Explore cards."
+  # Added mechanically because Batch64 extends Input with closed email autofill and IME-safe Enter.
+  - id: T-UI-0007
+    disposition: revalidate
+    notes: "Batch64 reruns InputGroup composition after Input gains type-derived email autofill and optional IME-safe Enter submit."
+  - id: T-UI-0008
+    disposition: revalidate
+    notes: "Batch64 reruns Input type/state/Field wiring and release-browser email Enter behavior."
+  # Added mechanically because Batch64 closes the authenticated boundary, sign route and tests.
+  - id: T-ROUTE-0002
+    disposition: revalidate
+    notes: "Batch64 reruns 401-only protected redirects, authenticated mount and Desktop typed /api/me."
+  - id: T-ROUTE-0031
+    disposition: revalidate
+    notes: "Batch64 reruns capability-first provider controls, enterprise email continue and authenticated reverse redirect."
+  - id: T-TEST-0166
+    disposition: revalidate
+    notes: "Batch64 runs the shared closed OIDC start path test for all three environment providers."
+  - id: T-TEST-0168
+    disposition: revalidate
+    notes: "Batch64 proves a refused start stays on sign and renders a payload-free localized error."
+  - id: T-TEST-0169
+    disposition: revalidate
+    notes: "Batch64 proves the fallback refusal names the exact provider."
+  - id: T-TEST-0171
+    disposition: revalidate
+    notes: "Batch64 reruns exact Google, Microsoft and Okta display names."
+  - id: T-TEST-0172
+    disposition: revalidate
+    notes: "Batch64 reruns the single Boundary-owned current-session probe and checked retry state."
   - id: T-CMP-0015
     disposition: split
     scope: web

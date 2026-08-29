@@ -9,7 +9,7 @@ use axum::extract::{ConnectInfo, Form, Path, State};
 use axum::http::header::{CONTENT_TYPE, COOKIE, LOCATION, ORIGIN, SET_COOKIE, USER_AGENT};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use openbot_contracts::auth::Role;
+use openbot_contracts::auth::{EnterpriseSsoRoutingAccepted, EnterpriseSsoStartRequest, Role};
 use openbot_contracts::error::AppError;
 use openbot_contracts::identity_provider::{IdentityProviderRemoved, IdentityProvidersResponse};
 use openbot_contracts::ids::ActorId;
@@ -24,19 +24,6 @@ use crate::http::ServerState;
 use crate::http::auth_oidc::{dynamic_login_error, issued_session_response, no_store};
 
 const ROUTE_COOKIE_NAME: &str = "openbot_sso_route";
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-/// 匿名 email routing body。
-pub struct RouteEmailBody {
-    /// 只用于服务端域名路由与 HMAC 限速，不落原文。
-    pub email: String,
-}
-
-#[derive(Serialize)]
-struct RoutingAccepted {
-    accepted: bool,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -63,7 +50,7 @@ pub async fn route_email(
     State(state): State<ServerState>,
     headers: HeaderMap,
     ConnectInfo(address): ConnectInfo<SocketAddr>,
-    body: Result<Json<RouteEmailBody>, JsonRejection>,
+    body: Result<Json<EnterpriseSsoStartRequest>, JsonRejection>,
 ) -> Response {
     if !trusted_origin(&state, &headers) {
         return stable_error(StatusCode::FORBIDDEN, "authentication_origin_rejected");
@@ -97,7 +84,7 @@ pub async fn route_email(
             };
             let mut response = (
                 StatusCode::ACCEPTED,
-                Json(RoutingAccepted { accepted: true }),
+                Json(EnterpriseSsoRoutingAccepted { accepted: true }),
             )
                 .into_response();
             response.headers_mut().insert(SET_COOKIE, cookie);
