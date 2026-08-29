@@ -28,9 +28,10 @@
 //! Batch51 started G5 with the closed browser/input protocol and authority-owned HumanLease.
 //! Batch53 adds a real macOS Electron P1 baseline: dual-role scope, digest-before-spawn bundle,
 //! authenticated UDS boot/control/frame paths, SBPL confinement and two host conformance loops.
-//! P1 is still open because Windows Named Pipe/Job/restricted-token and Linux runsc spikes lack
-//! machine evidence. ScreenHub, product CDP mappings, file/shell executors and supervisor remain
-//! separate unfinished boundaries; the macOS fixture page is not a browser product operation.
+//! Batch54/55 add executable Windows and runsc probes, but P1 is still open because neither has
+//! corresponding machine evidence. ScreenHub, product CDP mappings, file/shell executors and
+//! supervisor remain separate unfinished boundaries; the fixture page is not a browser product
+//! operation.
 
 pub mod browser;
 pub mod control;

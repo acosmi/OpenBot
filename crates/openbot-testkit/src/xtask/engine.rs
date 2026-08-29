@@ -20,7 +20,27 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<()> {
             crate::engine_protocol::generate(root, true)
         }
         [command] if command == "bundle" => crate::engine_bundle::bundle(root),
-        _ => bail!("usage: cargo xtask engine fetch|verify|protocol [--check]|bundle"),
+        [
+            command,
+            archive_flag,
+            archive,
+            sha_flag,
+            sha,
+            version_flag,
+            version,
+            rootfs_flag,
+            rootfs,
+        ] if command == "runsc-spike"
+            && archive_flag == "--archive"
+            && sha_flag == "--sha256"
+            && version_flag == "--version"
+            && rootfs_flag == "--rootfs" =>
+        {
+            crate::engine_runsc::run(root, Path::new(archive), sha, version, Path::new(rootfs))
+        }
+        _ => bail!(
+            "usage: cargo xtask engine fetch|verify|protocol [--check]|bundle|runsc-spike --archive PATH --sha256 HEX --version release-YYYYMMDD.N --rootfs PATH"
+        ),
     }
 }
 

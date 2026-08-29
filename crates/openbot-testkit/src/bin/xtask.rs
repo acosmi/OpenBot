@@ -64,6 +64,9 @@ mod engine;
 #[path = "../xtask/engine_protocol.rs"]
 mod engine_protocol;
 
+#[path = "../xtask/engine_runsc.rs"]
+mod engine_runsc;
+
 #[path = "../xtask/engine_bundle.rs"]
 mod engine_bundle;
 

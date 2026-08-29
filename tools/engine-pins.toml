@@ -3,14 +3,17 @@
 # 与 tools/pins.toml 的区别：pins.toml 是构建期工具（不进发行物）；本文件是**进发行物**、参与
 # release epoch 与签名、由 Rust 监管的外部引擎。engine 的 "lockfile" 就是本文件，不存在 npm lock。
 #
-# 消费者（Batch52 fetch/verify；Batch53 macOS bundle；Batch54 Windows PE probe，v4 §19.1）：
+# 消费者（Batch52 fetch/verify；Batch53 macOS bundle；Batch54 Windows PE；Batch55 runsc harness，v4 §19.1）：
 #   `cargo xtask engine fetch`    按本平台 artifacts 下载到 `target/engine/<id>/`，先校 sha256 再解包
 #   `cargo xtask engine verify`   P0 校验 sha256 / `--version`；P1 bundle 后扩到 fuses / ASAR / epoch
 #   `cargo xtask engine bundle`   P1：rebrand → shim ASAR → fuses → integrity → sidecar manifest（零 npm）
+#   `cargo xtask engine runsc-spike ...` P1：只在Ubuntu24 x64真机全绿后打印runsc pin candidate
 # 当前 macOS verify 同时覆盖 archive sha256 / SHASUMS / `--version` 与 bundle 的 ASAR、fuses、
 # rebrand、integrity、signature、release epoch、protocol、manifest。Batch54 的 Windows PE
 # `Integrity/ElectronAsar`、Named Pipe、Job/restricted-token 只取得 target check/Clippy；Windows/Linux
 # 平台专属 runtime 证据仍缺，不能从 macOS 外推。`cargo xtask tools` 不读本文件。
+# Batch55刻意没有runsc/Xvfb条目：harness未在Linux运行前，runsc版本/URL/hash与rootfs
+# Xvfb package version/binary hash都不得预填。
 #
 # 字段约定与 tools/pins.toml 相同（version / license / install / artifacts[] / sha256_source /
 # url_http_status / verify.* / status）。status 口径与 parity ledger 一致：没有本轮实证的一律 todo。
