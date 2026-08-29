@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 169
+    expect: 170
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 23
+    expect: 24
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 169
+    expect: 170
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1840,3 +1840,14 @@ entries:
     done_evidence: "Batch47 body为untagged closed Approval{decision,note?}|Choice{choice,label}，不接受actor/run/Bot/component/binding自报；Application先ECMAScript trim/size，PG再按stored component/args校Choice id+label。trusted Origin先于body。PG17.11 SCRAM证明跨副本answer唤醒、same answer replay、different conflict、DB-clock expiry、AuthGeneration取消、answer/request audit失败全回滚；Axum/Tauri no-store定向绿。"
     evidence: "固定上游95条静态route无独立durable answer API；上游respond只在useHumanInTheLoop render callback内"
     notes: "新增。错误码：401/403 Origin/400 malformed或option mismatch/404不可见或失效/409异值重答/503/reconciliation。"
+  - id: "api-tool-approval-activity-events-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::approvals::events (GET /api/tool-approvals/events, WebSocket upgrade)"
+    owner: "openbot-server"
+    test_id: "T-API-0170"
+    migration_rule: "n/a: v4 §13.4/§24 G4 要求 approval critical realtime，固定上游没有 Rust actor-scoped invalidation surface"
+    status: "done"
+    done_evidence: "Batch56: upgrade前已认证同源与exact openbot.tool-approvals.v1；ApplicationService只订阅当前AuthContext actor。frame只含bounded pendingCount，不含approval id/tool/target/summary；client Text/Binary=>1008，错误frame后1011。Server真实loopback 212/0/0含两条新增socket用例；PG17.11 host SCRAM 1/0/0证明跨replica pending 0→1→0与other actor零frame；UI用frame只触发typed GET，重连前refetch、30s bounded fallback、checked epoch拒绝stale GET。"
+    evidence: "固定上游95条静态route无/api/tool-approvals/events；v4 §13.4规定approval不可静默丢，§24 G4登记critical realtime未闭合"
+    notes: "新增的read-only invalidation hint，不是第二状态存储；它故意没有durable cursor，任何连接/重连/坏帧均先回权威GET，因此不冒充§7.5 durable run event replay。错误码：401/403/400 protocol/503 upgrade前；frame内稳定error后1011。"

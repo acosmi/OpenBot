@@ -8,6 +8,9 @@ use time::OffsetDateTime;
 
 use crate::ids::{BotId, RunId, ToolCallId};
 
+/// Maximum actor-visible pending approval rows in one authoritative projection.
+pub const MAX_PENDING_TOOL_APPROVALS: u32 = 100;
+
 /// Agent 交给唯一 application 入口的一次工具调用。
 ///
 /// `call_id` / `call_seq` 由 Rust Agent gateway 铸造；`run_id` / `bot_id` 仍须由 application
@@ -166,8 +169,20 @@ impl fmt::Debug for PendingToolApproval {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PendingToolApprovals {
-    /// Oldest first; currently bounded to 100 by the application port.
+    /// Oldest first; bounded by [`MAX_PENDING_TOOL_APPROVALS`].
     pub approvals: Vec<PendingToolApproval>,
+}
+
+/// Actor-scoped realtime hint that pending durable approval state changed.
+///
+/// It deliberately carries no approval id, tool name, target or argument summary. Consumers must
+/// refetch [`PendingToolApprovals`] through the authoritative typed GET; the socket is not a second
+/// state store and has no replay cursor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ToolApprovalActivityEvent {
+    /// Current actor-visible pending count, bounded by [`MAX_PENDING_TOOL_APPROVALS`].
+    pub pending_count: u32,
 }
 
 /// Human decision input. There is no caller-supplied binding or role.

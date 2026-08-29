@@ -101,7 +101,7 @@ pub use agent_admin::{
 pub use app::OpenBotApplication;
 pub use approval_admin::{
     NoToolApprovalAdministration, ToolApprovalAdministration, ToolApprovalAdministrationError,
-    decide_tool_approval, list_pending_tool_approvals,
+    decide_tool_approval, list_pending_tool_approvals, subscribe_tool_approval_activity,
 };
 pub use builtin_tools::{
     BUILTIN_TOOL_CATALOG_GENERATION, REMEMBER_TOOL_NAME, RememberToolArguments, RememberToolMemory,

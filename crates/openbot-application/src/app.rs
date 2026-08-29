@@ -27,7 +27,7 @@ use crate::agent_admin::{
 };
 use crate::approval_admin::{
     NoToolApprovalAdministration, ToolApprovalAdministration, decide_tool_approval,
-    list_pending_tool_approvals,
+    list_pending_tool_approvals, subscribe_tool_approval_activity,
 };
 use crate::components::{
     ComponentAdministration, NoComponentAdministration, await_component_human_decision,
@@ -774,6 +774,9 @@ where
             SubscriptionRequest::ChannelActivity => {
                 subscribe_channel_activity(&self.threads, &auth).await
             }
+            SubscriptionRequest::ToolApprovalActivity => {
+                subscribe_tool_approval_activity(self.tool_approvals.as_ref(), &auth).await
+            }
         }
     }
 }
@@ -1433,6 +1436,25 @@ mod tests {
             capture(service.subscribe(auth_for("actor-1"), SubscriptionRequest::ChannelActivity));
         assert!(result.is_ok());
         assert_eq!(captured.value_of("operation"), Some("channel_activity"));
+    }
+
+    #[test]
+    fn approval_subscription_is_typed_and_fail_closed_without_the_production_port() {
+        let service = OpenBotApplication::new(FakeChannelReader::empty());
+        let (result, captured) = capture(service.subscribe(
+            auth_for("actor-1"),
+            SubscriptionRequest::ToolApprovalActivity,
+        ));
+        assert!(matches!(
+            result,
+            Err(AppError::DependencyUnavailable {
+                dependency: "tool_approval"
+            })
+        ));
+        assert_eq!(
+            captured.value_of("operation"),
+            Some("tool_approval_activity")
+        );
     }
 
     /// `dyn ApplicationService` 必须可用：transport 持有的是 trait 对象。

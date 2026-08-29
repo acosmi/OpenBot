@@ -5,6 +5,8 @@ use openbot_contracts::auth::AuthContext;
 use openbot_contracts::error::AppError;
 use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalDecision, ToolApprovalResolved};
 
+use crate::service::AppEventStream;
+
 /// Stable approval administration failure without argument summaries or database text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ToolApprovalAdministrationError {
@@ -68,6 +70,15 @@ pub trait ToolApprovalAdministration: Send + Sync {
         approval_id: &str,
         decision: ToolApprovalDecision,
     ) -> Result<ToolApprovalResolved, ToolApprovalAdministrationError>;
+
+    /// Subscribe to actor-scoped refresh hints. Implementations must derive every hint from the
+    /// same durable list projection and terminate on revocation/dependency failure.
+    async fn subscribe_activity(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<AppEventStream, ToolApprovalAdministrationError> {
+        Err(ToolApprovalAdministrationError::Unavailable)
+    }
 }
 
 /// Fail-closed default when no production coordinator is assembled.
@@ -116,6 +127,16 @@ pub async fn decide_tool_approval(
         });
     }
     port.decide(auth, approval_id, decision)
+        .await
+        .map_err(ToolApprovalAdministrationError::into_app_error)
+}
+
+/// Application use case: subscribe to actor-owned approval refresh hints.
+pub async fn subscribe_tool_approval_activity(
+    port: &dyn ToolApprovalAdministration,
+    auth: &AuthContext,
+) -> Result<AppEventStream, AppError> {
+    port.subscribe_activity(auth)
         .await
         .map_err(ToolApprovalAdministrationError::into_app_error)
 }

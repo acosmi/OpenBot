@@ -134,7 +134,9 @@ pub const fn delivery_class(event: &AppEvent) -> DeliveryClass {
         AppEvent::ThreadRunEvent(_)
         | AppEvent::ThreadStreamError { .. }
         | AppEvent::ChannelActivity(_)
-        | AppEvent::ChannelStreamError { .. } => DeliveryClass::Critical,
+        | AppEvent::ChannelStreamError { .. }
+        | AppEvent::ToolApprovalActivity(_)
+        | AppEvent::ToolApprovalStreamError { .. } => DeliveryClass::Critical,
     }
 }
 
@@ -218,6 +220,22 @@ mod tests {
         );
         assert_eq!(
             delivery_class(&AppEvent::ChannelStreamError {
+                code: "dependency_unavailable".to_owned(),
+            }),
+            DeliveryClass::Critical
+        );
+    }
+
+    #[test]
+    fn approval_activity_is_critical_so_pressure_forces_reconnect_and_durable_refetch() {
+        assert_eq!(
+            delivery_class(&AppEvent::ToolApprovalActivity(
+                openbot_contracts::tool::ToolApprovalActivityEvent { pending_count: 1 },
+            )),
+            DeliveryClass::Critical
+        );
+        assert_eq!(
+            delivery_class(&AppEvent::ToolApprovalStreamError {
                 code: "dependency_unavailable".to_owned(),
             }),
             DeliveryClass::Critical

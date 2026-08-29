@@ -4,17 +4,22 @@ mod harness {
     include!("../../../test-support/postgres_harness.rs");
 }
 
+use core::future::poll_fn;
 use std::sync::Arc;
 
 use openbot_application::{
-    ToolApprovalAdministration, ToolApprovalPresentation, ToolApprovalRequest,
+    AppEventStream, ToolApprovalAdministration, ToolApprovalAdministrationError,
+    ToolApprovalPresentation, ToolApprovalRequest,
 };
 use openbot_contracts::auth::{AuthContext, AuthContextBuilder, AuthGeneration, Role};
+use openbot_contracts::command::AppEvent;
 use openbot_contracts::ids::{
     ActorId, BotId, CatalogGeneration, ComputerGeneration, DeploymentId, RunId, TenantId, ThreadId,
     ToolCallId,
 };
-use openbot_contracts::tool::{ToolApprovalDecision, ToolApprovalEffect};
+use openbot_contracts::tool::{
+    ToolApprovalActivityEvent, ToolApprovalDecision, ToolApprovalEffect,
+};
 use openbot_domain::audit::hash::Sha256Digest;
 use openbot_domain::tool::approval::{ApprovalTarget, PolicyVersionTag};
 use openbot_domain::tool::metadata::{ApprovalClass, Effect, ToolName};
@@ -87,6 +92,62 @@ async fn wait_for_pending(
     .map_err(|_| "pending approval did not become visible".to_owned())?
 }
 
+async fn next_approval_activity(
+    label: &str,
+    stream: &mut AppEventStream,
+) -> Result<ToolApprovalActivityEvent, String> {
+    let event = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        poll_fn(|cx| stream.as_mut().poll_next(cx)),
+    )
+    .await
+    .map_err(|_| format!("{label}: approval activity timeout"))?
+    .ok_or_else(|| format!("{label}: approval activity stream ended"))?;
+    match event {
+        AppEvent::ToolApprovalActivity(event) => Ok(event),
+        other => Err(format!("{label}: unexpected approval event {other:?}")),
+    }
+}
+
+async fn expect_no_approval_activity(stream: &mut AppEventStream) -> Result<(), String> {
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(1_200),
+        poll_fn(|cx| stream.as_mut().poll_next(cx)),
+    )
+    .await
+    {
+        Err(_) => Ok(()),
+        Ok(Some(event)) => Err(format!("other actor received approval activity: {event:?}")),
+        Ok(None) => Err("other actor approval stream ended".to_owned()),
+    }
+}
+
+async fn next_approval_stream_error(stream: &mut AppEventStream) -> Result<String, String> {
+    let event = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        poll_fn(|cx| stream.as_mut().poll_next(cx)),
+    )
+    .await
+    .map_err(|_| "approval stream revocation timeout".to_owned())?
+    .ok_or_else(|| "approval stream ended before its terminal error".to_owned())?;
+    let AppEvent::ToolApprovalStreamError { code } = event else {
+        return Err(format!(
+            "approval stream emitted data after revocation: {event:?}"
+        ));
+    };
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        poll_fn(|cx| stream.as_mut().poll_next(cx)),
+    )
+    .await
+    {
+        Ok(None) => {}
+        Ok(Some(_)) => return Err("approval stream emitted after its terminal error".to_owned()),
+        Err(_) => return Err("approval stream did not end after its terminal error".to_owned()),
+    }
+    Ok(code)
+}
+
 #[tokio::test]
 #[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
 async fn durable_wait_grant_reuse_deny_expire_and_generation_cancel_are_real() {
@@ -149,6 +210,32 @@ async fn durable_wait_grant_reuse_deny_expire_and_generation_cancel_are_real() {
             );
             let owner = auth(ACTOR, 1);
             let other = auth(OTHER, 1);
+            let replica = PostgresToolApprovalCoordinator::new(
+                pool.clone(),
+                DeploymentId::new("approval-deployment"),
+                TenantId::new("approval-tenant"),
+                AUDIT_KEY.to_vec(),
+            )
+            .map_err(|error| error.to_string())?;
+            let mut owner_activity = replica
+                .subscribe_activity(&owner)
+                .await
+                .map_err(|error| error.to_string())?;
+            let mut other_activity = replica
+                .subscribe_activity(&other)
+                .await
+                .map_err(|error| error.to_string())?;
+            if next_approval_activity("owner initial", &mut owner_activity)
+                .await?
+                .pending_count
+                != 0
+                || next_approval_activity("other initial", &mut other_activity)
+                    .await?
+                    .pending_count
+                    != 0
+            {
+                return Err("approval activity initial snapshot was not empty".to_owned());
+            }
 
             let first_request = request("approval-call-1", ApprovalClass::OncePerRun);
             let waiting = {
@@ -157,6 +244,14 @@ async fn durable_wait_grant_reuse_deny_expire_and_generation_cancel_are_real() {
                 tokio::spawn(async move { coordinator.request_and_wait(&request).await })
             };
             let pending = wait_for_pending(&coordinator, &owner).await?;
+            if next_approval_activity("owner pending", &mut owner_activity)
+                .await?
+                .pending_count
+                != 1
+            {
+                return Err("cross-replica approval activity missed pending state".to_owned());
+            }
+            expect_no_approval_activity(&mut other_activity).await?;
             if pending.effect != ToolApprovalEffect::Write
                 || pending.arguments_summary["id"] != "note-1"
                 || pending.arguments_summary["secret"] != "[redacted]"
@@ -185,6 +280,13 @@ async fn durable_wait_grant_reuse_deny_expire_and_generation_cancel_are_real() {
                 .decide(&owner, &pending.approval_id, ToolApprovalDecision::Grant)
                 .await
                 .map_err(|error| error.to_string())?;
+            if next_approval_activity("owner granted", &mut owner_activity)
+                .await?
+                .pending_count
+                != 0
+            {
+                return Err("cross-replica approval activity missed resolution".to_owned());
+            }
             if !matches!(
                 waiting.await.map_err(|error| error.to_string())?,
                 Ok(DurableHumanDecision::Granted { .. })
@@ -271,6 +373,22 @@ async fn durable_wait_grant_reuse_deny_expire_and_generation_cancel_are_real() {
                 )
                 .await
                 .map_err(|error| format!("approval generation update: {error:?}"))?;
+            let revoked_code = next_approval_stream_error(&mut owner_activity).await?;
+            let expected_revoked_code = ToolApprovalAdministrationError::NotVisible
+                .into_app_error()
+                .code()
+                .as_str();
+            if revoked_code != expected_revoked_code {
+                return Err(format!(
+                    "approval stream revocation code drift: {revoked_code}"
+                ));
+            }
+            if !matches!(
+                replica.subscribe_activity(&owner).await,
+                Err(ToolApprovalAdministrationError::NotVisible)
+            ) {
+                return Err("stale generation opened a new approval stream".to_owned());
+            }
             if tokio::time::timeout(std::time::Duration::from_secs(3), cancel_waiter)
                 .await
                 .map_err(|_| "cancel waiter timed out".to_owned())?

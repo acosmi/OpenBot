@@ -403,7 +403,9 @@ async fn drive_channel_websocket(
                     }
                     AppEvent::Heartbeat { .. }
                     | AppEvent::ThreadRunEvent(_)
-                    | AppEvent::ThreadStreamError { .. } => {
+                    | AppEvent::ThreadStreamError { .. }
+                    | AppEvent::ToolApprovalActivity(_)
+                    | AppEvent::ToolApprovalStreamError { .. } => {
                         tracing::error!("channel subscription emitted non-channel event");
                         let _ = socket.send(Message::Close(Some(CloseFrame {
                             code: close_code::ERROR,

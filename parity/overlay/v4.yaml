@@ -55,6 +55,235 @@ entries:
   - id: T-TEST-0985
     disposition: revalidate
     notes: "Batch53 reruns malformed thread identity rejection after the contracts public surface change."
+  # Added mechanically because the Batch56 closed AppEvent diff matches these done targets.
+  - id: T-CMP-0011
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-CMP-0019
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0217
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0218
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0219
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0240
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0241
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0242
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0243
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0246
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0247
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0332
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0352
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0353
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0385
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0388
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0389
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0390
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0403
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0404
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0405
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0406
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0407
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0408
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0409
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0410
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0411
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0412
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0413
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0414
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0415
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0518
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0519
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0520
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0521
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0762
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0801
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0802
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0807
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0817
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0884
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0885
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0886
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0887
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0888
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0952
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0953
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0954
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0955
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0956
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0957
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0958
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0959
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0960
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0962
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0963
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0964
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0972
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0973
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0974
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0975
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0976
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0977
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0986
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0987
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0988
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0989
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0990
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0991
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0992
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0993
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0994
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0995
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0996
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0997
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
+  - id: T-TEST-0998
+    disposition: revalidate
+    notes: "Batch56 reruns the affected done target after extending the closed approval activity event surface."
   - id: T-CMP-0015
     disposition: split
     scope: web
