@@ -47,11 +47,12 @@ entries:
   - id: root-layout
     upstream: app/src/routes/__root.tsx
     label: parity
-    target: "openbot_ui::shell::layout::root -> (pathless) 根 layout"
+    target: "openbot_ui::shell::layout::RootLayout -> (pathless) 根 layout"
     owner: openbot-ui
     test_id: T-ROUTE-0001
     migration_rule: "preserve: ThemeProvider/TooltipProvider 两个 provider 由 openbot_ui::theme + primitives::Tooltip 承接；主题的 system 第三态是新增，登记在 parity/ui.yaml 不在本表"
-    status: todo
+    status: done
+    done_evidence: "Batch65具名RootLayout在Router内、认证边界外唯一包住sign与全部authenticated route；host首帧<html>主题/locale替代上游ThemeProvider，Tooltip仍由每实例compound provider承担400ms/focus/Escape。CSS机械断言width100%+min-height100dvh；release浏览器未登录/channel/new→sign实得root1/app0/main1/nav0、1280×800下root/body高度800、外层X/Y overflow0、logs0。UI156、WASM/Clippy/fmt/gates绿。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/__root.tsx 得 createRootRouteWithContext<RouterContext>()"
     notes: "模板 n/a（layout，非页面）。journey：任何页面渲染前先套上主题与 tooltip 上下文，min-h-dvh 全屏容器。权限：无守卫，sign 页也在其下——它是唯一在登录边界之外的 layout。"
   - id: authed-guard-layout
@@ -68,11 +69,12 @@ entries:
   - id: app-shell-layout
     upstream: app/src/routes/_authed/_app.tsx
     label: parity
-    target: "openbot_ui::shell::layout::app -> (pathless) 主应用壳 layout"
+    target: "openbot_ui::shell::layout::AppLayout -> (pathless) 主应用壳 layout"
     owner: openbot-ui
     test_id: T-ROUTE-0003
     migration_rule: "preserve: 侧栏 + 主区结构保留；--sidebar-width 340px 改为设计系统 §5.1 的 240px/48px rail（尺寸是新增契约，登记在 parity/ui.yaml）"
-    status: todo
+    status: done
+    done_evidence: "Batch65具名AppLayout只在AuthenticatedBoundary成功后构造，拥有唯一SidebarProvider/AppSidebar/topbar/main与边界内偏好context；CSS固定app height100dvh+overflow hidden、stage/main min-height0、main overflow auto。release浏览器1280×800实得root/app/main/nav各1、app800/main756/body800/x0；最小支持1024×640实得app640/main596/body640/x0、duplicate/nested/logs0，截图只作视觉QA。UI156、WASM/Clippy/fmt/gates绿。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app.tsx 得 createFileRoute(\"/_authed/_app\")；同文件渲染 SidebarProvider + AppSidebar + main"
     notes: "模板 n/a（layout，非页面）。journey：一屏不滚动、内部各窗格自己滚；左侧 AppSidebar 常驻（channel 列表与分页在 components/app-sidebar/app-sidebar.tsx 的 useInfiniteQuery(channelListQueryOptions())，不在任何 route 文件里）。权限：已登录即可见。"
   - id: admin-shell-layout
