@@ -13,8 +13,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use deadpool_postgres::Pool;
+use openbot_application::tenant::package::{TenantPackageAudienceContext, TenantPackageError};
 use openbot_contracts::auth::{AuthContext, AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
+
+use super::initialize_canonical_principal;
+use crate::db::InfraError;
 
 const FILE_NAME: &str = "desktop-instance-v1";
 const FILE_HEADER: &str = "openbot-desktop-instance-v1";
@@ -26,6 +31,12 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Desktop Local's only actor inside its per-user, per-instance deployment.
 pub const DESKTOP_LOCAL_ACTOR_ID: &str = "desktop-local-user";
+
+/// Canonical non-routable profile email for the per-instance local principal.
+pub const DESKTOP_LOCAL_EMAIL: &str = "desktop-local@localhost.invalid";
+
+/// Canonical profile name; it does not claim to be the OS account's display name.
+pub const DESKTOP_LOCAL_NAME: &str = "Desktop Local User";
 
 /// Stable failure classes; paths, OS usernames and file contents never enter the error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -100,6 +111,24 @@ impl DesktopLocalAuthority {
     #[must_use]
     pub fn into_auth_context(self) -> AuthContext {
         self.auth
+    }
+
+    /// Atomically provision/repair the canonical PostgreSQL user and sole admin role.
+    pub async fn provision_postgres(&self, pool: &Pool) -> Result<(), InfraError> {
+        initialize_canonical_principal(
+            pool,
+            DESKTOP_LOCAL_ACTOR_ID,
+            DESKTOP_LOCAL_EMAIL,
+            DESKTOP_LOCAL_NAME,
+        )
+        .await
+    }
+
+    /// Build the exact single-user audience context used by Tenant Package synchronization.
+    pub fn tenant_package_audience_context(
+        &self,
+    ) -> Result<TenantPackageAudienceContext, TenantPackageError> {
+        TenantPackageAudienceContext::single_user(self.auth.actor().clone())
     }
 }
 
@@ -415,6 +444,13 @@ mod tests {
         assert_eq!(auth.actor().as_str(), DESKTOP_LOCAL_ACTOR_ID);
         assert_eq!(auth.deployment().as_str(), auth.tenant().as_str());
         assert!(auth.deployment().as_str().ends_with(first.instance_id()));
+        assert_eq!(
+            first
+                .tenant_package_audience_context()
+                .unwrap()
+                .single_user_principal(),
+            Some(auth.actor())
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;

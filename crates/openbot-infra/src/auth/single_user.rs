@@ -41,6 +41,22 @@ pub async fn initialize_single_user(pool: &Pool, enabled: bool) -> Result<bool, 
         return Ok(false);
     }
 
+    initialize_canonical_principal(
+        pool,
+        SINGLE_USER_ACTOR_ID,
+        SINGLE_USER_EMAIL,
+        SINGLE_USER_NAME,
+    )
+    .await?;
+    Ok(true)
+}
+
+pub(super) async fn initialize_canonical_principal(
+    pool: &Pool,
+    actor_id: &str,
+    email: &str,
+    name: &str,
+) -> Result<(), InfraError> {
     let mut client = pool
         .get()
         .await
@@ -56,7 +72,7 @@ pub async fn initialize_single_user(pool: &Pool, enabled: bool) -> Result<bool, 
              VALUES($1,$2,$3,false,'{}'::text[],0) \
              ON CONFLICT(id) DO UPDATE SET \
                email=EXCLUDED.email,name=EXCLUDED.name,updated_at=clock_timestamp()",
-            &[&SINGLE_USER_ACTOR_ID, &SINGLE_USER_EMAIL, &SINGLE_USER_NAME],
+            &[&actor_id, &email, &name],
         )
         .await
         .map_err(|error| InfraError::query("恢复单用户 canonical identity", error))?;
@@ -66,7 +82,7 @@ pub async fn initialize_single_user(pool: &Pool, enabled: bool) -> Result<bool, 
         ));
     }
 
-    let actor = ActorId::new(SINGLE_USER_ACTOR_ID);
+    let actor = ActorId::new(actor_id);
     // §6.1 直接裁决单用户唯一 principal 是 admin；多用户新身份才由 seed_role 判 floor。
     apply_role_plan(&transaction, &plan_set_role(&actor, Role::Admin)).await?;
 
@@ -74,5 +90,5 @@ pub async fn initialize_single_user(pool: &Pool, enabled: bool) -> Result<bool, 
         .commit()
         .await
         .map_err(|error| InfraError::query("提交单用户初始化事务", error))?;
-    Ok(true)
+    Ok(())
 }
