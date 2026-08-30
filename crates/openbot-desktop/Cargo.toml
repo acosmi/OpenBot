@@ -56,6 +56,11 @@ serde_json = { workspace = true, optional = true }
 sys-locale = { workspace = true, optional = true }
 tauri = { workspace = true, optional = true }
 
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dev-dependencies]
+# Enables only Tauri's dependency-free MockRuntime module for native lifecycle tests. Production
+# still receives `tauri` exclusively through the opt-in `tauri-host` feature above.
+tauri = { workspace = true, features = ["test"] }
+
 # ---------------------------------------------------------------------------
 # 刻意**没有**的依赖，每一条都是一次裁决：
 #

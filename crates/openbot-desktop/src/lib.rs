@@ -55,7 +55,9 @@
 //! 立即回host subscription id并后台pump，close只能关闭调用Webview自己的id；Batch74让同一release
 //! WASM按`window.isTauri`选择该桥并完成callback ordering/cleanup；Batch75把同一actual Webview的全部
 //! internal stream收口到共享256 event-ref permit与256 live/in-flight subscription上限。可发布window
-//! assembly与runtime journey仍未落，SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。
+//! assembly与runtime journey仍未落；Batch76只补品牌无关的verified-authority→actual Webview build、
+//! closed navigation/new-window/download与`Destroyed` exact unbind primitive，不虚构`tauri.conf`、session
+//! source或发行identity。SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。
 //! 许可/RustSec/cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
 //!
 //! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
@@ -123,6 +125,12 @@ pub mod structured_events;
     feature = "tauri-host",
     any(target_os = "macos", target_os = "windows")
 ))]
+pub mod tauri_lifecycle;
+
+#[cfg(all(
+    feature = "tauri-host",
+    any(target_os = "macos", target_os = "windows")
+))]
 pub mod tauri_host;
 
 #[cfg(any(test, feature = "testkit"))]
@@ -158,6 +166,15 @@ pub use structured_events::{
     DesktopStructuredPumpExit, DesktopStructuredSequenceGap, DesktopStructuredStreamKind,
     DesktopStructuredSubscription, DesktopStructuredTerminalReason,
     MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW, pump_tauri_structured_events,
+};
+
+#[cfg(all(
+    feature = "tauri-host",
+    any(target_os = "macos", target_os = "windows")
+))]
+pub use tauri_lifecycle::{
+    DesktopWindowLifecycle, DesktopWindowLifecycleError, VerifiedDesktopWindowAuthority,
+    register_tauri_window_lifecycle,
 };
 
 #[cfg(all(

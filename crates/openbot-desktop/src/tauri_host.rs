@@ -40,8 +40,9 @@ use tauri::{Builder, State, Webview};
 
 use crate::{
     CancellationToken, DesktopStructuredEventBridge, DesktopStructuredOpenError,
-    DesktopStructuredPumpExit, DesktopStructuredSubscription, InProcessTransport, OpenSessionError,
-    WindowLabel, pump_tauri_structured_events,
+    DesktopStructuredPumpExit, DesktopStructuredSubscription, DesktopWindowLifecycle,
+    InProcessTransport, OpenSessionError, WindowLabel, pump_tauri_structured_events,
+    register_tauri_window_lifecycle,
 };
 
 const INDEX_MAX_BYTES: u64 = 1024 * 1024;
@@ -386,6 +387,22 @@ impl DesktopTauriProtocol {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// Whether this exact host window label currently owns verified authority.
+    pub fn is_window_bound(&self, label: &str) -> Result<bool, TauriHostError> {
+        self.windows
+            .read()
+            .map(|windows| windows.contains_key(label))
+            .map_err(|_| TauriHostError::AuthorityUnavailable)
+    }
+
+    /// Number of host window labels currently carrying verified authority.
+    pub fn bound_window_count(&self) -> Result<usize, TauriHostError> {
+        self.windows
+            .read()
+            .map(|windows| windows.len())
+            .map_err(|_| TauriHostError::AuthorityUnavailable)
     }
 
     /// Open one structured stream using only the authority bound by the native host.
@@ -1739,7 +1756,11 @@ pub fn register_tauri_protocol(
         return Err(TauriHostError::InvalidScheme);
     }
     let scheme = scheme.to_owned();
-    let builder = builder
+    let lifecycle = Arc::new(
+        DesktopWindowLifecycle::new(&scheme, Arc::clone(&protocol))
+            .map_err(|_| TauriHostError::InvalidScheme)?,
+    );
+    let builder = register_tauri_window_lifecycle(builder, lifecycle)
         .manage(Arc::clone(&protocol))
         .invoke_handler(tauri::generate_handler![
             openbot_structured_events_open,
@@ -1962,7 +1983,7 @@ fn content_type(path: &Path) -> &'static str {
     }
 }
 
-fn valid_scheme(scheme: &str) -> bool {
+pub(crate) fn valid_scheme(scheme: &str) -> bool {
     let mut bytes = scheme.bytes();
     let Some(first) = bytes.next() else {
         return false;
