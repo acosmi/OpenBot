@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 670
+    expect: 663
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -1927,71 +1927,78 @@ entries:
   - id: "app-tests-bot-thread--botthreadkey--is-the-same-key-for-the-same-agent-every-time"
     upstream: "app/tests/bot-thread.test.ts::botThreadKey"
     label: 替代
-    target: "openbot_ui::features::threads::bot_thread::tests::is_the_same_key_for_the_same_agent_every_time"
+    target: "openbot_ui::shell::bot::bot_thread::tests::is_the_same_key_for_the_same_agent_every_time"
     owner: openbot-ui
     test_id: T-TEST-0173
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch66 bot_thread_key同一Agent逐字相等；UI完整suite中同名Rust测试通过，164/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[209]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.2：botThreadKey 是 query key（换机制）；threadToUse 的线程选择判据逐条移植。上游用例标题：「is the same key for the same agent every time」。"
   - id: "app-tests-bot-thread--botthreadkey--is-namespaced-rather-than-the-bare-agent-id"
     upstream: "app/tests/bot-thread.test.ts::botThreadKey"
     label: 替代
-    target: "openbot_ui::features::threads::bot_thread::tests::is_namespaced_rather_than_the_bare_agent_id"
+    target: "openbot_ui::shell::bot::bot_thread::tests::is_namespaced_rather_than_the_bare_agent_id"
     owner: openbot-ui
     test_id: T-TEST-0174
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch66 key固定openbot.bot-thread命名空间、非裸Agent ID且包含Agent identity；同名Rust测试通过。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[210]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.2：botThreadKey 是 query key（换机制）；threadToUse 的线程选择判据逐条移植。上游用例标题：「is namespaced rather than the bare agent id」。"
   - id: "app-tests-bot-thread--botthreadkey--two-agents-never-collide"
     upstream: "app/tests/bot-thread.test.ts::botThreadKey"
     label: 替代
-    target: "openbot_ui::features::threads::bot_thread::tests::two_agents_never_collide"
+    target: "openbot_ui::shell::bot::bot_thread::tests::two_agents_never_collide"
     owner: openbot-ui
     test_id: T-TEST-0175
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch66两个不同Agent生成不同key；release浏览器又实得fixture-owned-private与fixture-explore-public两个独立storage key/thread；同名Rust测试通过。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[211]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.2：botThreadKey 是 query key（换机制）；threadToUse 的线程选择判据逐条移植。上游用例标题：「two agents never collide」。"
   - id: "app-tests-bot-thread--threadtouse--a-remembered-thread-intelligence-confirms-it-has-is-kept"
     upstream: "app/tests/bot-thread.test.ts::threadToUse"
     label: 替代
-    target: "openbot_ui::features::threads::bot_thread::tests::a_remembered_thread_intelligence_confirms_it_has_is_kept"
+    target: "openbot_ui::shell::bot::bot_thread::tests::a_remembered_thread_intelligence_confirms_it_has_is_kept"
     owner: openbot-ui
     test_id: T-TEST-0176
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch66 typed status known=true唯一落Remembered；release hard reload statusChecks=1、mintCalls仍1且同thread两条历史各1；同名Rust测试通过。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[213]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.2：botThreadKey 是 query key（换机制）；threadToUse 的线程选择判据逐条移植。上游用例标题：「a remembered thread Intelligence confirms it has is kept」。"
   - id: "app-tests-bot-thread--threadtouse--a-remembered-thread-intelligence-says-it-does-not-have-i"
     upstream: "app/tests/bot-thread.test.ts::threadToUse"
     label: 替代
-    target: "openbot_ui::features::threads::bot_thread::tests::a_remembered_thread_intelligence_says_it_does_not_have_i"
+    target: "openbot_ui::shell::bot::bot_thread::tests::a_remembered_thread_intelligence_says_it_does_not_have_i"
     owner: openbot-ui
     test_id: T-TEST-0177
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch66 remembered+known=false唯一落Fresh并只接受Server mint；同名Rust测试通过，PG scope-aware status suite另证未知thread不靠UUID形状伪装known。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[214]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.2：botThreadKey 是 query key（换机制）；threadToUse 的线程选择判据逐条移植。上游用例标题：「a remembered thread Intelligence says it does not have is replaced」。"
   - id: "app-tests-bot-thread--threadtouse--a-remembered-thread-is-kept-when-the-check-itself-could"
     upstream: "app/tests/bot-thread.test.ts::threadToUse"
     label: 替代
-    target: "openbot_ui::features::threads::bot_thread::tests::a_remembered_thread_is_kept_when_the_check_itself_could"
+    target: "openbot_ui::shell::bot::bot_thread::tests::a_remembered_thread_is_kept_when_the_check_itself_could"
     owner: openbot-ui
     test_id: T-TEST-0178
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch66 remembered+inconclusive(None)保持Remembered，controller另投影history unavailable而不丢local identity；同名Rust测试通过。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[215]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.2：botThreadKey 是 query key（换机制）；threadToUse 的线程选择判据逐条移植。上游用例标题：「a remembered thread is kept when the check itself could not be completed」。"
   - id: "app-tests-bot-thread--threadtouse--with-nothing-remembered-every-outcome-of-the-check-start"
     upstream: "app/tests/bot-thread.test.ts::threadToUse"
     label: 替代
-    target: "openbot_ui::features::threads::bot_thread::tests::with_nothing_remembered_every_outcome_of_the_check_start"
+    target: "openbot_ui::shell::bot::bot_thread::tests::with_nothing_remembered_every_outcome_of_the_check_start"
     owner: openbot-ui
     test_id: T-TEST-0179
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch66 remembered=None在known true/false/None三输入下都Fresh；release干净浏览器零status check直接mint且首run前conversationReads=0；同名Rust测试通过。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[216]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §13.2：botThreadKey 是 query key（换机制）；threadToUse 的线程选择判据逐条移植。上游用例标题：「with nothing remembered, every outcome of the check starts fresh」。"
   # ---------------------------------------------------------------------------

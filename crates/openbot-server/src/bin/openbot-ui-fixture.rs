@@ -1,6 +1,6 @@
 //! Local-only deterministic GUI fixture host required by the GUI first-source golden workflow.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::error::Error;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -36,8 +36,8 @@ use openbot_contracts::auth::{
 use openbot_contracts::command::{
     AppEvent, ChannelActivityEvent, ChannelDetail, ChannelSummary, ThreadConversationSnapshot,
     ThreadForegroundRunState, ThreadHistory, ThreadHistoryMessage, ThreadHistoryRole,
-    ThreadRunCancellation, ThreadRunCancellationState, ThreadRunEvent, ThreadRunEventKind,
-    ThreadRunStarted,
+    ThreadRunAnchor, ThreadRunCancellation, ThreadRunCancellationState, ThreadRunEvent,
+    ThreadRunEventKind, ThreadRunStarted,
 };
 use openbot_contracts::components::{
     ASK_APPROVAL_COMPONENT_NAME, ASK_CHOICE_COMPONENT_NAME, BOT_ACTIVITY_FUNCTION_NAME,
@@ -1767,7 +1767,18 @@ struct FixtureThreadsInner {
     subscribers: Mutex<HashMap<String, Vec<tokio::sync::mpsc::Sender<AppEvent>>>>,
     receipts: Mutex<HashMap<String, ThreadRunStarted>>,
     cancelled_runs: Mutex<HashSet<String>>,
+    direct_runs: Mutex<Vec<FixtureDirectRunFact>>,
+    mint_calls: AtomicU64,
+    status_checks: AtomicU64,
+    conversation_reads: AtomicU64,
     fail_activity_follow_up_once: AtomicBool,
+}
+
+#[derive(Clone)]
+struct FixtureDirectRunFact {
+    thread_id: String,
+    run_id: String,
+    bot_id: String,
 }
 
 impl FixtureThreads {
@@ -1989,10 +2000,41 @@ impl FixtureThreads {
                 subscribers: Mutex::new(HashMap::new()),
                 receipts: Mutex::new(HashMap::new()),
                 cancelled_runs: Mutex::new(HashSet::new()),
+                direct_runs: Mutex::new(Vec::new()),
+                mint_calls: AtomicU64::new(0),
+                status_checks: AtomicU64::new(0),
+                conversation_reads: AtomicU64::new(0),
                 fail_activity_follow_up_once: AtomicBool::new(true),
             }),
             channels,
         }
+    }
+
+    fn proof(&self) -> Result<serde_json::Value, ()> {
+        let runs = self.inner.direct_runs.lock().map_err(|_| ())?;
+        let snapshots = self.inner.snapshots.lock().map_err(|_| ())?;
+        let direct_threads = runs
+            .iter()
+            .map(|run| run.thread_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let last = runs.last();
+        let last_snapshot = last.and_then(|run| snapshots.get(&run.thread_id));
+        Ok(serde_json::json!({
+            "mintCalls": self.inner.mint_calls.load(Ordering::SeqCst),
+            "statusChecks": self.inner.status_checks.load(Ordering::SeqCst),
+            "conversationReads": self.inner.conversation_reads.load(Ordering::SeqCst),
+            "directRuns": runs.len(),
+            "directThreads": direct_threads.len(),
+            "persistedDirectThreads": direct_threads
+                .iter()
+                .filter(|thread| snapshots.contains_key(**thread))
+                .count(),
+            "lastThreadId": last.map(|run| run.thread_id.clone()),
+            "lastRunId": last.map(|run| run.run_id.clone()),
+            "lastBotId": last.map(|run| run.bot_id.clone()),
+            "lastMessages": last_snapshot.map(|snapshot| snapshot.messages.len()),
+            "lastActive": last_snapshot.and_then(|snapshot| snapshot.active_run_id.as_ref()).is_some(),
+        }))
     }
 
     fn publish(&self, thread: &ThreadId, event: ThreadRunEvent) {
@@ -2097,6 +2139,7 @@ impl ThreadDirectory for FixtureThreads {
         &self,
         _deployment: &DeploymentId,
     ) -> Result<ThreadId, ThreadDirectoryError> {
+        self.inner.mint_calls.fetch_add(1, Ordering::SeqCst);
         Ok(ThreadId::new(uuid::Uuid::now_v7().to_string()))
     }
 
@@ -2107,6 +2150,7 @@ impl ThreadDirectory for FixtureThreads {
         _actor: &ActorId,
         thread: &ThreadId,
     ) -> Result<bool, ThreadDirectoryError> {
+        self.inner.status_checks.fetch_add(1, Ordering::SeqCst);
         Ok(self
             .inner
             .snapshots
@@ -2196,6 +2240,17 @@ impl ThreadDirectory for FixtureThreads {
             .lock()
             .map_err(|_| ThreadDirectoryError::Unavailable)?
             .insert(run.as_str().to_owned(), started.clone());
+        if matches!(&request.command.anchor, ThreadRunAnchor::DirectBot) {
+            self.inner
+                .direct_runs
+                .lock()
+                .map_err(|_| ThreadDirectoryError::Unavailable)?
+                .push(FixtureDirectRunFact {
+                    thread_id: thread.as_str().to_owned(),
+                    run_id: run.as_str().to_owned(),
+                    bot_id: bot.as_str().to_owned(),
+                });
+        }
         self.publish(
             &thread,
             ThreadRunEvent {
@@ -2407,14 +2462,14 @@ impl ThreadDirectory for FixtureThreads {
         &self,
         request: ThreadConversationRequest,
     ) -> Result<ThreadConversationSnapshot, ThreadDirectoryError> {
-        Ok(self
-            .inner
+        self.inner.conversation_reads.fetch_add(1, Ordering::SeqCst);
+        self.inner
             .snapshots
             .lock()
             .map_err(|_| ThreadDirectoryError::Unavailable)?
             .get(request.thread.as_str())
             .cloned()
-            .unwrap_or_default())
+            .ok_or(ThreadDirectoryError::NotVisible)
     }
 
     async fn subscribe_thread_events(
@@ -3298,6 +3353,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let channels = FixtureChannels::new(now);
     let home_channel_probe = channels.clone();
     let threads = FixtureThreads::new(channels.clone());
+    let bot_thread_probe = threads.clone();
     let memory = FixtureMemory::new(tenant, actor.clone(), now);
     let connections = FixtureConnections::new(actor, port, now);
     let components = FixtureComponents::new(now, threads.clone());
@@ -3392,6 +3448,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
             async move { fixture_home_probe(channels, routing).await }
         }),
     );
+    router = router.route(
+        "/api/__fixture/bot-proof",
+        axum::routing::get(move || {
+            let threads = bot_thread_probe.clone();
+            async move {
+                threads
+                    .proof()
+                    .map(axum::Json)
+                    .map_err(|()| axum::http::StatusCode::SERVICE_UNAVAILABLE)
+            }
+        }),
+    );
     let identity_provider_http = IdentityProviderHttpProbe::default();
     let identity_provider_http_route = identity_provider_http.clone();
     router = router.route(
@@ -3451,6 +3519,59 @@ mod approval_pg_tests {
     use super::*;
     use openbot_domain::policy::{ActionPolicy, PolicyMode};
     use openbot_domain::routing::RoutingReasonCode;
+
+    #[tokio::test]
+    async fn direct_bot_fixture_distinguishes_minted_from_persisted_threads() {
+        let threads = FixtureThreads::new(FixtureChannels::new(OffsetDateTime::now_utc()));
+        let deployment = DeploymentId::new(FIXTURE_DEPLOYMENT);
+        let tenant = TenantId::new(FIXTURE_TENANT);
+        let actor = ActorId::new(FIXTURE_ACTOR);
+        let thread = threads.mint_thread_id(&deployment).await.unwrap();
+        assert!(
+            !threads
+                .thread_known(&deployment, &tenant, &actor, &thread)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            threads
+                .thread_conversation(ThreadConversationRequest {
+                    deployment: deployment.clone(),
+                    tenant: tenant.clone(),
+                    actor: actor.clone(),
+                    thread: thread.clone(),
+                })
+                .await,
+            Err(ThreadDirectoryError::NotVisible)
+        );
+
+        threads
+            .begin_thread_run(BeginThreadRunRequest {
+                deployment,
+                tenant,
+                actor,
+                command: openbot_contracts::command::BeginThreadRun {
+                    thread_id: thread,
+                    run_id: RunId::new("fixture-direct-run"),
+                    bot_id: BotId::new("fixture-owned-private"),
+                    anchor: ThreadRunAnchor::DirectBot,
+                    message: "fixture direct message".to_owned(),
+                },
+            })
+            .await
+            .unwrap();
+        let proof = threads.proof().unwrap();
+        assert_eq!(proof["mintCalls"], 1);
+        assert_eq!(proof["statusChecks"], 1);
+        assert_eq!(proof["conversationReads"], 1);
+        assert_eq!(proof["directRuns"], 1);
+        assert_eq!(proof["directThreads"], 1);
+        assert_eq!(proof["persistedDirectThreads"], 1);
+        assert_eq!(proof["lastBotId"], "fixture-owned-private");
+        assert_eq!(proof["lastMessages"], 1);
+        assert_eq!(proof["lastActive"], true);
+        assert!(!proof.to_string().contains("fixture direct message"));
+    }
 
     #[tokio::test]
     async fn home_routing_fixture_records_closed_facts_and_can_force_one_audit_failure() {

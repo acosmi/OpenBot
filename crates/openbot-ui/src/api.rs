@@ -21,11 +21,11 @@ use openbot_contracts::command::MAX_CHANNEL_ROUTING_REASON_CODE_POINTS;
 use openbot_contracts::command::ThreadRunCancellationState;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::command::{
-    BeginThreadRunBody, CreateChannelRequest, RouteChannelRequest, ThreadMinted, ThreadRunAnchor,
+    BeginThreadRunBody, CreateChannelRequest, RouteChannelRequest, ThreadMinted, ThreadStatus,
 };
 use openbot_contracts::command::{
     ChannelDetail, ChannelPage, ChannelRoutingDecision, MAX_THREAD_MESSAGE_BYTES,
-    ThreadConversationSnapshot, ThreadRunCancellation, ThreadRunStarted,
+    ThreadConversationSnapshot, ThreadRunAnchor, ThreadRunCancellation, ThreadRunStarted,
 };
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::components::{
@@ -796,16 +796,18 @@ fn validate_routing_decision(
     }
 }
 
-/// Begin the first durable native run for a channel-created thread.
-pub async fn begin_channel_run(
+/// Begin one durable native run against an exact channel or direct-Bot anchor.
+pub async fn begin_thread_run(
     thread_id: &ThreadId,
-    channel_id: &ChannelId,
     agent_id: &BotId,
     run_id: &RunId,
+    anchor: ThreadRunAnchor,
     message: &str,
 ) -> Result<ThreadRunStarted, ApiError> {
-    validate_channel_id(channel_id.as_str())?;
     validate_agent_id(agent_id.as_str())?;
+    if let ThreadRunAnchor::Channel { channel_id } = &anchor {
+        validate_channel_id(channel_id.as_str())?;
+    }
     #[cfg(target_arch = "wasm32")]
     {
         use gloo_net::http::Request;
@@ -819,9 +821,7 @@ pub async fn begin_channel_run(
             .json(&BeginThreadRunBody {
                 run_id: run_id.clone(),
                 bot_id: agent_id.clone(),
-                anchor: ThreadRunAnchor::Channel {
-                    channel_id: channel_id.clone(),
-                },
+                anchor,
                 message: message.to_owned(),
             })
             .map_err(|_| ApiError::InvalidResponse)?;
@@ -844,9 +844,29 @@ pub async fn begin_channel_run(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (thread_id, channel_id, agent_id, run_id, message);
+        let _ = (thread_id, agent_id, run_id, anchor, message);
         Err(ApiError::Unavailable)
     }
+}
+
+/// Begin the first durable native run for a channel-created thread.
+pub async fn begin_channel_run(
+    thread_id: &ThreadId,
+    channel_id: &ChannelId,
+    agent_id: &BotId,
+    run_id: &RunId,
+    message: &str,
+) -> Result<ThreadRunStarted, ApiError> {
+    begin_thread_run(
+        thread_id,
+        agent_id,
+        run_id,
+        ThreadRunAnchor::Channel {
+            channel_id: channel_id.clone(),
+        },
+        message,
+    )
+    .await
 }
 
 /// Persist cancellation for the exact active native run; terminal still arrives via snapshot/SSE.
@@ -926,6 +946,37 @@ pub async fn mint_thread_id() -> Result<ThreadId, ApiError> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Recheck whether one remembered native thread is still known to the current authoritative scope.
+pub async fn load_thread_status(thread_id: &ThreadId) -> Result<bool, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let path = thread_status_path(thread_id.as_str())?;
+        let response = Request::get(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<ThreadStatus>()
+            .await
+            .map(|status| status.known)
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = thread_id;
         Err(ApiError::Unavailable)
     }
 }
@@ -2866,6 +2917,12 @@ fn thread_run_path(thread_id: &str) -> Result<String, ApiError> {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+fn thread_status_path(thread_id: &str) -> Result<String, ApiError> {
+    validate_thread_id(thread_id)?;
+    Ok(format!("/api/threads/{}", encode_url_component(thread_id)))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn thread_cancel_path(thread_id: &str, run_id: &str) -> Result<String, ApiError> {
     validate_thread_id(thread_id)?;
     validate_run_id(run_id)?;
@@ -2936,6 +2993,12 @@ pub fn channel_new_href(agent_id: &str) -> Result<String, ApiError> {
         "/channel/new?agent={}",
         encode_url_component(agent_id)
     ))
+}
+
+/// Build the URL-owned direct-Bot chat route for one selected Agent.
+pub fn bot_chat_href(agent_id: &str) -> Result<String, ApiError> {
+    validate_agent_id(agent_id)?;
+    Ok(format!("/bot?agent={}", encode_url_component(agent_id)))
 }
 
 fn validate_channel_id(channel_id: &str) -> Result<(), ApiError> {
@@ -3406,12 +3469,20 @@ mod tests {
             "/api/channels?limit=50&cursor=opaque%2B%2F%3D"
         );
         assert_eq!(
+            bot_chat_href("bot/one?x=1").unwrap(),
+            "/bot?agent=bot%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
             channel_detail_path("").unwrap_err(),
             ApiError::InvalidResponse
         );
         assert_eq!(
             thread_run_path("thread/one?x=1").unwrap(),
             "/api/threads/thread%2Fone%3Fx%3D1/runs"
+        );
+        assert_eq!(
+            thread_status_path("thread/one?x=1").unwrap(),
+            "/api/threads/thread%2Fone%3Fx%3D1"
         );
         assert_eq!(
             thread_conversation_path("thread/one?x=1").unwrap(),
