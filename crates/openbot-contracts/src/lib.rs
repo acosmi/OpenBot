@@ -35,6 +35,7 @@
 //! | [`auth`] | [`auth::AuthContext`]、[`auth::AuthGeneration`]、[`auth::Role`]、受限构造入口 | §5.3 / §5.2 / R47 |
 //! | [`error`] | [`error::AppError`]、稳定 code、HTTP status、audit 类型 | §15.3 |
 //! | [`command`] | [`command::AppCommand`] / `AppReply` / `SubscriptionRequest` / `AppEvent`，含 R64 thread mint/status | §5.2 / §4.1 |
+//! | [`desktop`] | Desktop structured stream command names、closed frame 与 open/close receipt | §13.2–§13.4 / R146–R147 |
 //! | [`people`] | current user / admin status / people page 与 person 公开 DTO | §6.2 / R40 |
 //! | [`audit`] | 管理员 audit event/page DTO 与 JavaScript 毫秒时间 wire | §8.6 / R56 |
 //! | [`tool`] | Agent tool invocation 与脱敏结果；没有 actor/policy/target 自报字段 | §8.1 |
@@ -75,6 +76,7 @@ pub mod audit;
 pub mod auth;
 pub mod command;
 pub mod components;
+pub mod desktop;
 pub mod engine;
 pub mod error;
 pub mod identity_provider;

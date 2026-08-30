@@ -51,9 +51,10 @@
 //! Batch 16 已落 opt-in Tauri 2.11.5 custom-protocol adapter、本地偏好原子文件与首帧改写，
 //! Batch69–71又依次接Agent lifecycle/callback与channel/thread unary framing；Batch72补
 //! `DesktopSession`→真实`tauri::ipc::Channel`的host bridge、window unbind与stale-binding
-//! fencing。实际`#[tauri::command]`注册、WASM host选择、可发布window assembly与runtime journey
-//! 仍未落，SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。许可/RustSec/cargo-vet delta
-//! 仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
+//! fencing。Batch73再把closed wire上收到`openbot-contracts`，注册exact open/close command：open
+//! 立即回host subscription id并后台pump，close只能关闭调用Webview自己的id。WASM host选择、可发布
+//! window assembly与runtime journey仍未落，SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。
+//! 许可/RustSec/cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
 //!
 //! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
 //!
@@ -73,9 +74,10 @@
 //!
 //! 1. `tauri::Builder::setup` 里构造一次 [`InProcessTransport`] 与`DesktopTauriProtocol`；
 //! 2. 每个`WebviewWindow`起来时，由host把它的真实`label()`绑定到已验证`AuthContext`；
-//! 3. command wrapper只把host观察到的label、closed`SubscriptionRequest`与
-//!    `tauri::ipc::Channel`交给`DesktopTauriProtocol::pump_structured_events`；renderer不能自报
-//!    actor/tenant/auth generation/internal label/subscription id；
+//! 3. actual open command只把host观察到的label、closed`SubscriptionRequest`与
+//!    `tauri::ipc::Channel`交给`DesktopTauriProtocol`，立即返回host-minted id并后台pump；actual
+//!    close command只接受该receipt且仍以host-observed label收窄；renderer不能自报actor/tenant/
+//!    auth generation/internal label；
 //! 4. bridge逐帧执行sequence/gap与stream/thread闭集校验后写Channel；画面另走loopback binary
 //!    WebSocket。window unbind会同步摘除它的全部host-owned route，await中的旧binding也不能附着
 //!    到同label的新窗口；
@@ -160,5 +162,6 @@ pub use structured_events::{
     any(target_os = "macos", target_os = "windows")
 ))]
 pub use tauri_host::{
-    DesktopTauriProtocol, TauriHostError, detect_os_locale, register_tauri_protocol,
+    DESKTOP_TAURI_COMMANDS, DesktopTauriProtocol, TauriHostError, detect_os_locale,
+    register_tauri_protocol,
 };
