@@ -2138,6 +2138,11 @@ mod tests {
             data_plane.auth_context().tenant(),
             installation.authority().auth_context().tenant()
         );
+        let listener_database = data_plane.thread_listener_database().unwrap();
+        assert_eq!(
+            format!("{listener_database:?}"),
+            "ThreadListenerDatabase(<redacted>)"
+        );
         let client = data_plane.pool().get().await.unwrap();
         let row = client
             .query_one(

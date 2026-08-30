@@ -81,6 +81,8 @@ pub mod agent_audit;
 pub mod agent_callback;
 #[cfg(feature = "server-runtime")]
 pub mod agent_tools;
+#[cfg(feature = "server-runtime")]
+pub mod application_assembly;
 pub mod auth;
 #[cfg(feature = "server-runtime")]
 mod channel_activity;
@@ -129,6 +131,8 @@ pub mod tenant;
 pub mod thread_directory;
 #[cfg(feature = "server-runtime")]
 pub mod thread_id;
+#[cfg(any(feature = "server-runtime", feature = "desktop-local"))]
+pub mod thread_listener;
 #[cfg(feature = "server-runtime")]
 pub mod tool_approval;
 #[cfg(feature = "server-runtime")]
