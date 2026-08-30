@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–30 实施裁决 R126–R154，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–30 实施裁决 R126–R155，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -377,10 +377,10 @@ crates/
 ├── openbot-ui              # Leptos CSR/WASM
 ├── openbot-desktop         # Tauri、window ACL、in-process、sidecar/update
 ├── openbot-testkit         # golden trace、fault injection、fake provider、xtask
-└── openbot-windows-sandbox # R127：唯一 Win32 unsafe Engine 安全边界；非 parity owner
+└── openbot-windows-sandbox # R127/R155：唯一 Win32 unsafe 边界（Engine confinement + Credential Manager）；非 parity owner
 ```
 
-前十个仍是业务/parity 核心 workspace；R127 的第十一个 crate 同时命中“独立安全边界”与“明显不同 feature graph”，是唯一允许 Win32 `unsafe` FFI 的窄例外，不进入 parity `owner` 域。拆分规则固定为：只有独立安全边界、独立发布单元、明显不同的 feature graph 或可单独复用的纯协议才建 crate；其余以 module 组织。原补充方案的 17 个以上细粒度 crate 会放大编译、循环依赖和跨 crate 重构成本，不进入首版。
+前十个仍是业务/parity核心workspace；R127的第十一个crate同时命中“独立安全边界”与“明显不同feature graph”，是唯一允许Win32 `unsafe` FFI的窄例外，不进入parity `owner`域；R155只把同一unsafe边界扩到current-user Credential Manager，不建第十二个crate，也不允许第二处Win32 FFI。拆分规则固定为：只有独立安全边界、独立发布单元、明显不同的feature graph或可单独复用的纯协议才建crate；其余以module组织。原补充方案的17个以上细粒度crate会放大编译、循环依赖和跨crate重构成本，不进入首版。
 
 ### 5.2 Hexagonal ownership
 
@@ -1347,6 +1347,7 @@ cargo vet
 OSV scan（Electron shim/packaged assets）
 cargo xtask engine verify（engine-pins sha256 / --version / fuses / ASAR integrity / release epoch）
 cargo xtask postgres verify-source（PGDG 17.11 source size / sha256 / tar root / COPYRIGHT / runtime常量join；R154）
+bash tools/check-postgres-key-store-dependencies.sh（Keychain/Credential Manager exact版本/checksum/build.rs/target/唯一consumer；R155）
 cargo xtask electron-shim-check（文件 allowlist / LOC ≤ 600 / API allowlist / forbidden import / 协议 hash）
 cargo xtask grok-inventory --check（inventory/grok/files.yaml 与参考树同步）
 仓内 package.json 恰一个且零 dependencies/scripts 的反向 grep
@@ -1902,8 +1903,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     Batch78把同一authority原子provision为PG canonical principal/admin role并经Tenant Package sync物化membership；
     Batch79再把PG17 data-dir固定为asserted app-data root的instance-bound私有直接子目录，并在任何schema/
     principal/package写入前向活库反查data_directory/major/numeric-loopback/HBA SCRAM；Batch80再钉PGDG 17.11
-    source size/SHA/tar结构、signed-core manifest digest+全文件inventory与create_new/nonce/0600/fsync启动锁。
-    sidecar OS key store/process/ready/shutdown、真实`AppHandle::path().app_data_dir()` lifecycle setup、可发布binary、真实Wry native runtime、
+    source size/SHA/tar结构、signed-core manifest digest+全文件inventory与create_new/nonce/0600/fsync启动锁；
+    Batch81再要求持锁owner经`SecretBytes`从macOS Keychain/Windows Credential Manager load-or-create 256-bit SCRAM secret并回读CT核验。
+    sidecar process/ready/shutdown、Windows key-store真机、真实`AppHandle::path().app_data_dir()` lifecycle setup、可发布binary、真实Wry native runtime、
     Windows真机与T-UI-0126 formal golden仍todo；
   - [x] create-time routing provider：production main复用package model/每请求PostgreSQL credential/Vault/
     SafeDialer并固定OpenAI Chat Completions；模型只建议权威roster内ID，缺credential/transport/坏JSON/
@@ -1962,8 +1964,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     create/rollback/Destroyed lifecycle接入production registration；Batch77补Desktop Local authority source
     的closed持久化与AuthContext；Batch78再闭合PG principal repair与single-user package membership；
     Batch79补instance-bound PG17 data-dir与活库scope/SCRAM attestation、共享DB初始化和pre-window bootstrap；
-    Batch80补PGDG source pin、release manifest全文件校验与fail-closed single-instance start lock。
-    T-UI-0126 formal golden、sidecar binary build/sign、OS key store/process/ready/shutdown与Tauri setup接线、Desktop Remote session、真实Wry
+    Batch80补PGDG source pin、release manifest全文件校验与fail-closed single-instance start lock；
+    Batch81补macOS Keychain真读写与Windows唯一unsafe Credential Manager边界、secret shape/zeroize/readback reconciliation。
+    T-UI-0126 formal golden、sidecar binary build/sign、process/ready/shutdown/Windows key-store真机与Tauri setup接线、Desktop Remote session、真实Wry
     native-window journey与Windows runtime仍todo；
   - [x] `/channel/new`真实首发route：static route先于dynamic channel id；无recipient发送禁用且刷新零
     channel；URL可恢复hidden但有权的Agent，RecipientField复用Combobox键盘模型；首发只按
@@ -2015,7 +2018,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     Connected accounts/gallery因production route未实现而构造性不画断链；两route点击/硬刷新/返回app、
     1440/1024/900双列与600单列均overflow0、duplicate/alerts/console0；其余settings route仍todo；
   - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及AppSidebar总项+其余32业务组件/9 route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
-  - [ ] Tauri target-aware bans/sources 已绿；macOS/Windows 各仍有 5 个 MPL-2.0、5 个 runtime UNIC unmaintained（无 patched 版），Cargo Vet 为 macOS **270** / Windows **269** unvetted（既有 target 基线 181，净增 89/88）；未改 license/advisory/vet policy，故供应链与 G6 整关均不勾。
+  - [ ] Tauri target-aware bans/sources 已绿；macOS/Windows 各仍有 5 个 MPL-2.0、5 个 runtime UNIC unmaintained（无 patched 版）；Batch81 macOS-only Keychain两包使Cargo Vet为macOS **272** / Windows **269** unvetted（Batch16为270/269），config/exemption仍0改，故供应链与G6整关均不勾。
 - [ ] **G7**：本地 `ControlService` 的 HumanLease actor/auth/computer/tab/generation/epoch fencing 与 poisoned exhaustion 已有 9/0/0 单测；ScreenHub/viewer ticket、真 engine input、fps/latency/backpressure、coordinates/drag/IME 与跨 scope 矩阵仍未实施完成，故整关不勾。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
@@ -2336,6 +2339,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R153 | §5.1–§5.3 / §6.1、§6.5 / §13.1–§13.3 / §14.1 / §15.3 / §16.2 / §24 G2、G6（2026-08-30 Batch79：Desktop Local instance-bound PG17 bootstrap） | R152仍接受caller给任意`Pool`；固定actor若连到另一app instance的库会继承其thread/memory/membership。Server的fresh/legacy/native初始化又住在`openbot-server` transport，Desktop若复制便形成第二schema真源。仓内尚无PostgreSQL发行pin/supervisor与reviewed Desktop package/binary，不能靠假`.setup`掩盖。 | 只检查“计划传给`initdb`的path”不能证明活库实际`data_directory`；只看`password_encryption`不能证明HBA host规则走SCRAM；接受`localhost`还会把答案交给hosts解析。sidecar目录若是symlink/非目录/宽权限必须在启动前拒绝。package tenant若不等于随机instance tenant，也不能先写库再报错。真实Tauri `app_data_dir()`、启动锁、Keychain/Credential Manager secret、graceful supervisor仍是不同未闭合面。 | 新增`DesktopLocalInstallation`：在host已断言的app-data root下只派生直接子目录`postgresql-17-<256-bit instance>`；新建0700，既有symlink/非目录或Unix group/other权限拒绝，Debug/错误不带path。连接任何业务SQL前向PG反查并要求canonical `data_directory`精确等于该目录、`server_version_num` major=17、`listen_addresses`只含数值loopback/空、当前server addr为loopback/Unix、`password_encryption=scram-sha-256`、`pg_hba_file_rules`所有host规则均SCRAM且零解析错误；package tenant先与authority exact相等。Server初始化实现上收到`openbot-infra::db::initialization`，Server只re-export；Desktop顺序固定为attest→shared fresh/legacy/native init→canonical principal→single-user package sync，窗口仍必须在后续Tauri setup最后创建。 | implementation `9e1600dca21a815f7c4bfd71ec7635cb711c5a0c`。文件/纯attestation定向=`8/0/0`；自包含PG17.11 TCP SCRAM/HBA真纵向=`1/0/0`，由production authority先铸目录，再在该目录`initdb`：first=Fresh+membership1、restart=RustManaged+grant0，第二instance连同库在写前精确报data-dir mismatch；同库逐字段复核T-TEST-0912两列。sandbox首次`initdb`因SysV shm EPERM不计通过；宿主首次暴露Unix socket 103-byte上限，修短runtime socket；再暴露`inet::text`的`/32`，改用`host()`；HBA收紧后Clippy首跑too-many-arguments红，改closed attestation record后最终绿。完整infra=`319/0/0`、Server=`216/0/0`，all-target/all-feature Clippy绿；全部临时data/socket目录0。parity=`813/881/1694`、diff required revalidate=1且已闭合、0违反、overlay=`1444/242/2/6`、strict=`159/0/0`；Grok/Cargo.lock/workflow/依赖/单package/零npm不变。测试口令明确test-only，不是OS key-store证据；Windows、sidecar pin/supervisor/start-lock/OS key store、真实Tauri app-data/setup/window、reviewed动态tenant package与发行binary均未跑/未落；无新T-ID/UI/Trunk/Browser/Engine/golden/CI/Actions；详见Batch79文档 |
 
 | R154 | §5.1 / §13.1 / §14.1 / §16.2–§16.3 / §23.4 / §24 G2、G6（2026-08-30 Batch80：PostgreSQL source pin、bundle attestation与start lock） | R153能拒绝错data-dir的活PG，却没有可信binary来源：provenance仍只写major17，PATH/Homebrew/测试binary都可能被误接；没有release-owned manifest，source SHA也会被错误拿来冒充平台binary SHA。并发两个Desktop进程又能同时穿过attestation前的sidecar启动。 | 平台binary hash取决于可复算build/依赖/签名产物，不能从source tar推导；manifest若只校自己声明的hash，攻击者可同时改manifest和文件，必须由signed outer core另给manifest digest。只列三个program会漏未登记DLL/dylib/share文件；symlink/path traversal/额外文件都应拒绝。启动锁若只写PID会遇PID reuse，自动删“stale”又可能双启动；Drop若无界读或直接删path还能被replacement欺骗。外部signing identity尚未裁决，不能硬编码禁用品牌。 | 新增独立`tools/postgres-pins.toml`：PGDG 17.11官方tar.gz exact URL/28,397,423 bytes/SHA-256与官方checksum copy；`cargo xtask postgres fetch-source|verify-source`只作release build输入，HTTPS下载后校size/SHA、唯一source root、单个bounded PAX global header、COPYRIGHT与server/initdb/pg_ctl关键源码，应用首次运行零下载。`openbot-desktop`显式`postgres-sidecar` feature新增`VerifiedPostgresBundle`：caller必须给signed-core manifest digest与host断言的reviewed signing identity；manifest再锁schema/version、platform、aarch64|x86_64、PG17.11 source SHA、与Engine相同release epoch、minimum core、三个exact program及最多8192文件/2GiB完整inventory，manifest外额外文件、symlink、非普通文件、非lowercase SHA或hash漂移全拒。`PostgresStartLock`只在私有absolute app-data root以`create_new`创建instance+manifest-bound、CSPRNG nonce、0600、file+dir fsync的closed lock；并发/崩溃残留fail-closed，Drop只bounded比较自己的nonce字节后删除，被替换则保留。尚不spawn、不接OS key store。 | implementation `c6a6fde8415e2e61694c1e69110a4f58638068cf`。PGDG官方checksum=`5367f6fb…9a7e`；sandbox首次fetch因DNS拒绝不计通过，宿主下载size/SHA通过后校验器先真实暴露隐藏`pax_global_header`与猜错的`src/backend/postgres.c`，分别收成exact bounded PAX与实树`src/backend/tcop/postgres.c`后，fetch reuse与verify最终均绿。Desktop all-feature=`113/0/0`（postgres子集4），xtask=`95/0/0`（postgres pin子集2）；两边all-target/all-feature/bin Clippy `-D warnings`绿，Tauri dependency guard绿。Windows all-feature compile绿；Linux feature-only compile绿并只保留既有budget/transport dead-code两warning，不冒充Linux Clippy/runtime。Cargo.lock只给Desktop增加既有getrandom0.4.3/sha2-0.10.9直接边，package=`823→823`。parity=`813/881/1694`、required revalidate0、overlay=`1444/242/2/6`；strict=`159/0/0`，Grok/workflow/单package/零npm不变。未实现/未跑平台PG binary build/hash/sign、Keychain/Credential Manager/Secret Service、process/initdb/ready/graceful/orphan recovery、真实Tauri setup/window/Windows runtime/golden；无新T-ID/UI/CI/Actions；详见Batch80文档 |
+
+| R155 | §5.1 / §6.4 / §13.1 / §14.1 / §16.2–§16.3 / §23.4 / §24 G2、G6（2026-08-30 Batch81：Desktop PostgreSQL SCRAM OS key store） | R154已有可信bundle/start lock，但sidecar仍无跨重启可信口令；继续用env、app-data文件、argv或测试常量都会违反§6.4。macOS/Windows key store API属于不同平台安全边界；直接在Desktop写Win32 unsafe又违反R127唯一unsafe crate。 | 两进程若先各自读none再生成/upsert不同值，会让initdb口令与后续连接分裂，所以secret操作必须持有instance start lock且新建后立即回读核验。existing corrupt不能“修复”覆盖；未知写结果不能继续。明文若以普通Vec/String跨API、derive Debug/Clone/Serialize或Windows OS blob不清理会扩大副本。Windows generic TargetName大小写不敏感而macOS service/account按键，service identity必须跨平台canonical。Keychain API阻塞，不能未来在Tauri UI线程调用。 | 新增显式`postgres-key-store` feature与`ReviewedPostgresKeyStoreService`：只收3–128位canonical lowercase ASCII `[a-z0-9._:-]`且拒§23.4 mark；actual值仍由reviewed release提供，不硬编码品牌。`PostgresStartLock::load_or_create_scram_secret`是唯一主路径：account=`postgresql-17-<instance>`；existing必须恰64 lowercase hex，否则fail-closed且写0；none时OS CSPRNG生成32bytes，由临时`SecretBytes`转64hex，store写后立即读回并用`SecretBytes::ct_eq`，missing/different报reconciliation。所有store读取先进入无Clone/Serialize、Debug redacted的`PostgresStoredSecret`，最终`PostgresScramSecret`同样只显式`expose`。macOS adapter用`security-framework 3.7.0`/sys2.17 default generic password；测试用独立private Keychain。Windows仍由`openbot-windows-sandbox`唯一unsafe crate封装`CredReadW/WriteW/DeleteW/Free`，`CRED_TYPE_GENERIC`、current token、`CRED_PERSIST_LOCAL_MACHINE`、blob1–128B；OS返回blob复制后volatile逐字节清零再CredFree，public wrapper Drop zeroize/显式into_bytes移交。target/dependency guard锁mac有、Windows/Linux/Server无泄漏及两crate零build.rs。 | implementation `b11f7b3d179275d5c680cbfdd1ec965f6e3927bb`。Desktop all-feature=`115/0/0`（bundle/lock/key-store子集6，含private Keychain真实create→none→write→read→restart same→delete，临时keychain/lock目录0），doc-test1 ignored；共同矩阵覆盖首次64hex、restart写1、corrupt写0、write/readback mismatch reconciliation与Debug canary0。Windows Desktop+唯一unsafe crate all-target/all-feature target Clippy `-D warnings`绿，tests compile；Credential Manager真机round-trip仍ignored未跑。macOS Desktop Clippy绿；Linux feature-only compile绿且仍只有既有2 warning。依赖新增security-framework3.7.0/sys2.17.0两package，Cargo=`823→825`，exact checksum、MIT/Apache、build.rs0、target泄漏0；cargo-deny六target绿。Cargo Vet按既有口径macOS=`272`（270+2）、Windows=`269`仍红，config/exemption0改；union369只作诊断。首轮offline因新crate未缓存失败后获准下载；Keychain测试首编译暴露`delete()`返回unit；Windows Clippy首跑3建议；均修后最终绿。parity=`813/881/1694`、required revalidate0、overlay=`1444/242/2/6`，strict=`159/0/0`；Grok/workflow/单package/npm不变。未实现/未跑平台PG binary build/sign、process/initdb/ready/graceful/orphan/backup、Windows Credential Manager真机、Linux Secret Service、真实Tauri setup/window/golden；本条只闭PostgreSQL SCRAM secret，不冒充Desktop全Vault/KMS或G2/G6整关；无新T-ID/UI/CI/Actions；详见Batch81文档 |
 
 ### 28.2 复核通过、原样保留的断言
 
