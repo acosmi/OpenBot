@@ -5,6 +5,7 @@
 
 use openbot_contracts::agent::{
     AgentConnectionTestRequest, AgentConnectionVerdict, AgentMutationRequest, AgentProfile,
+    CallbackTokenIssued,
 };
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::agent::{AgentProfileResponse, AgentProfilesResponse};
@@ -1339,6 +1340,41 @@ pub async fn set_agent_hidden(agent_id: &str, hidden: bool) -> Result<(), ApiErr
 /// Soft-delete one manageable non-package Agent.
 pub async fn delete_agent(agent_id: &str) -> Result<(), ApiError> {
     let path = agent_detail_path(agent_id)?;
+    agent_empty_mutation(&path, "DELETE").await
+}
+
+/// Issue or rotate the one-time callback token for one manageable remote Agent.
+pub async fn issue_agent_callback_token(agent_id: &str) -> Result<CallbackTokenIssued, ApiError> {
+    let path = agent_callback_token_path(agent_id)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 201 {
+            return Err(status_error(response.status()));
+        }
+        response
+            .json::<CallbackTokenIssued>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = path;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Revoke the current callback token; the remote Agent remains conversational.
+pub async fn revoke_agent_callback_token(agent_id: &str) -> Result<(), ApiError> {
+    let path = agent_callback_token_path(agent_id)?;
     agent_empty_mutation(&path, "DELETE").await
 }
 
@@ -3331,6 +3367,14 @@ fn agent_detail_path(agent_id: &str) -> Result<String, ApiError> {
     Ok(format!("/api/agents/{}", encode_url_component(agent_id)))
 }
 
+fn agent_callback_token_path(agent_id: &str) -> Result<String, ApiError> {
+    validate_agent_id(agent_id)?;
+    Ok(format!(
+        "/api/agents/{}/callback-token",
+        encode_url_component(agent_id)
+    ))
+}
+
 /// Build the URL-owned profile-panel route for one validated Agent identity.
 pub fn agent_profile_href(agent_id: &str) -> Result<String, ApiError> {
     validate_agent_id(agent_id)?;
@@ -4110,6 +4154,10 @@ mod tests {
         assert_eq!(
             agent_profile_href("agent/one?x=1").unwrap(),
             "/agents?agent=agent%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
+            agent_callback_token_path("agent/one?x=1").unwrap(),
+            "/api/agents/agent%2Fone%3Fx%3D1/callback-token"
         );
         assert_eq!(
             channel_new_href("agent/one?x=1").unwrap(),

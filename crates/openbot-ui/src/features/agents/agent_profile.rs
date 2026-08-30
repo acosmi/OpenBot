@@ -9,7 +9,7 @@ use crate::api::{delete_agent, duplicate_agent, load_agent, set_agent_hidden};
 use crate::i18n::{t, t_string, use_i18n};
 use crate::primitives::{Avatar, AvatarSize, Badge, Button, ButtonSize, ButtonVariant};
 
-use super::AgentEditor;
+use super::{AgentEditor, CallbackTokenPanel};
 
 /// Load and render the selected coworker with Server-decided management controls.
 #[component]
@@ -113,7 +113,10 @@ pub fn AgentProfilePanel(
             let system_owned = current.system_owned;
             let can_manage = current.can_manage;
             let hidden = current.hidden;
+            let remote = current.endpoint.is_some();
+            let has_callback_token = current.has_callback_token;
             let start_id = current.id.clone();
+            let callback_id = current.id.clone();
             let duplicate_id = StoredValue::new(current.id.clone());
             let hide_id = StoredValue::new(current.id.clone());
             let delete_id = StoredValue::new(current.id.clone());
@@ -161,6 +164,12 @@ pub fn AgentProfilePanel(
                         </h4>
                         <p>{role_description}</p>
                     </section>
+                    <Show when=move || remote && can_manage>
+                        <CallbackTokenPanel
+                            agent_id=callback_id.clone()
+                            has_token=has_callback_token
+                        />
+                    </Show>
                     <Show when=move || action_error.get()>
                         <p class="ob-alert" role="alert">{move || t!(i18n, agents.action_error)}</p>
                     </Show>

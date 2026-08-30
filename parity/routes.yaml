@@ -117,11 +117,12 @@ entries:
   - id: agents-index
     upstream: app/src/routes/_authed/_app/agents/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::agents_index -> /agents"
+    target: "openbot_ui::features::agents::roster::AgentsPage -> /agents"
     owner: openbot-ui
     test_id: T-ROUTE-0007
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch70 release Browser闭环：/agents权威分组实得mine/hidden/explore，URL-owned create/detail均hard reload稳定；空表单3字段+总警报后逐项纠正为0（并修复get_untracked导致的陈旧警报），remote probe返回RUN_STARTED。带secret canary创建后profile/roster回显0，edit空auth路径成功且canary仍0（credential保留由R142 PG证据证明），duplicate固定private managed且callback面0，hide从mine移到hidden、hidden profile有badge与Unhide、恢复后回mine，二次确认delete后两组均0；Start channel精确交接/channel/new?agent=。callback另完成rotate/dismiss/reload/revoke/restore。中英、1024x640与600x900均main/nav/h1各1、overflow/duplicate/alert/console error=0；UI169、fixture9、Desktop83、WASM/Clippy/release gates绿。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/agents/index.tsx 得 createFileRoute(\"/_authed/_app/agents/\")；同文件 useQuery(agentListQueryOptions()) 与两个分组标题 \"Your agents\" / \"Explore agents\""
     notes: "模板 List。journey：浏览「我的 coworker」与「可探索的公开 coworker」两组卡片，从这里创建 / 编辑 / 复制 / 隐藏 / 恢复 / 软删除 / 启动（v3 §3.1 条 3；创建与编辑在上游是本页内的对话框，不是独立 route）。权限：已登录即可见；私有 coworker 只对 owner/admin 可见，无权访问按 v3 §3.2 走 404。"
   - id: bot-chat

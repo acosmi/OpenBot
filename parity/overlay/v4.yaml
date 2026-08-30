@@ -759,3 +759,19 @@ entries:
     disposition: split
     scope: web
     notes: "MessageChannel is Web-only; Desktop host communication is the closed engine pipe protocol."
+  # Batch70 closes and reruns the fixed-upstream Agent route/component targets with release Browser evidence.
+  - id: T-ROUTE-0007
+    disposition: revalidate
+    notes: "Batch70 reruns the complete /agents create/edit/duplicate/hide/recover/delete/start journey in the release Browser bundle."
+  - id: T-UI-0031
+    disposition: revalidate
+    notes: "Batch70 reruns shared Agent fields, reactive validation, connection probe, and write-only auth behavior."
+  - id: T-UI-0032
+    disposition: revalidate
+    notes: "Batch70 reruns Agent profile authority controls, lifecycle actions, URL ownership, and hard reload."
+  - id: T-UI-0033
+    disposition: revalidate
+    notes: "Batch70 reruns callback issue/rotate/dismiss/reload/revoke behavior in Desktop tests and the release Browser."
+  - id: T-UI-0034
+    disposition: revalidate
+    notes: "Batch70 reruns the in-page new-Agent create mode through a real typed Server fixture."
