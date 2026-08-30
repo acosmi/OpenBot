@@ -1,6 +1,7 @@
 //! Remote Agent administration wire types.
 
 use core::fmt;
+use std::sync::Arc;
 
 use serde::de::Error as _;
 use serde::ser::SerializeStruct as _;
@@ -9,6 +10,17 @@ use subtle::ConstantTimeEq as _;
 use zeroize::Zeroizing;
 
 use crate::ids::BotId;
+
+/// Fixed upstream Agent form limits. Application repeats them for typed in-process callers.
+pub const MAX_AGENT_NAME_BYTES: usize = 80;
+/// Maximum short title size.
+pub const MAX_AGENT_TITLE_BYTES: usize = 120;
+/// Maximum standing-role description size.
+pub const MAX_AGENT_ROLE_DESCRIPTION_BYTES: usize = 1_000;
+/// Maximum remote AG-UI endpoint size.
+pub const MAX_AGENT_ENDPOINT_BYTES: usize = 8 * 1_024;
+/// Maximum write-only remote Agent authorization value size.
+pub const MAX_AGENT_AUTH_BYTES: usize = 16 * 1_024;
 
 /// Browser-visible coworker visibility.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +78,245 @@ pub struct AgentProfilesResponse {
 pub struct AgentProfileResponse {
     /// Visible profile.
     pub agent: AgentProfile,
+}
+
+/// Write-only customer Agent authorization. Clone shares one zeroizing allocation and Debug never
+/// renders either the endpoint credential or a prefix that could be tested offline.
+#[derive(Clone)]
+pub struct AgentAuthInput {
+    header: String,
+    value: Arc<Zeroizing<String>>,
+}
+
+impl AgentAuthInput {
+    /// Validate the closed remote-Agent authentication channel.
+    ///
+    /// The fixed product form sends `Authorization`; arbitrary header names would require a second
+    /// redirect-stripping policy in the unique SafeDialer, so they are rejected rather than stored
+    /// and silently ignored.
+    pub fn new(header: String, mut value: String) -> Result<Self, AgentWireError> {
+        let header = header.trim();
+        let start = value.len().saturating_sub(value.trim_start().len());
+        let trimmed_len = value.trim().len();
+        if start > 0 {
+            value.drain(..start);
+        }
+        value.truncate(trimmed_len);
+        if !header.eq_ignore_ascii_case("authorization") {
+            return Err(AgentWireError::InvalidAuthHeader);
+        }
+        if value.is_empty()
+            || value.len() > MAX_AGENT_AUTH_BYTES
+            || value.as_bytes().contains(&0)
+            || value
+                .chars()
+                .any(|character| matches!(character, '\r' | '\n'))
+        {
+            return Err(AgentWireError::InvalidAuthValue);
+        }
+        Ok(Self {
+            header: "Authorization".to_owned(),
+            value: Arc::new(Zeroizing::new(value)),
+        })
+    }
+
+    /// Canonical header name.
+    #[must_use]
+    pub fn header(&self) -> &str {
+        &self.header
+    }
+
+    /// Explicit secret exposure for Vault sealing or one SafeDialer request.
+    #[must_use]
+    pub fn expose_value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl fmt::Debug for AgentAuthInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AgentAuthInput")
+            .field("header", &self.header)
+            .field("value", &"[redacted]")
+            .finish()
+    }
+}
+
+impl PartialEq for AgentAuthInput {
+    fn eq(&self, other: &Self) -> bool {
+        self.header == other.header
+            && bool::from(self.value.as_bytes().ct_eq(other.value.as_bytes()))
+    }
+}
+
+impl Eq for AgentAuthInput {}
+
+impl Serialize for AgentAuthInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("AgentAuthInput", 2)?;
+        state.serialize_field("header", self.header())?;
+        state.serialize_field("value", self.expose_value())?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentAuthInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            header: String,
+            value: String,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Self::new(wire.header, wire.value).map_err(D::Error::custom)
+    }
+}
+
+/// Full create/update Agent form. Server-owned id/owner/avatar/package/deletion fields cannot fit.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentMutationRequest {
+    /// Display name.
+    pub name: String,
+    /// Short title.
+    pub title: String,
+    /// Standing role applied to every channel.
+    pub role_description: String,
+    /// Public/private visibility.
+    pub visibility: AgentVisibility,
+    /// Remote AG-UI endpoint; absent/blank selects the managed built-in slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    /// Optional replacement credential. Absence preserves an existing remote credential on update.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AgentAuthInput>,
+}
+
+impl fmt::Debug for AgentMutationRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AgentMutationRequest")
+            .field("name_bytes", &self.name.len())
+            .field("title_bytes", &self.title.len())
+            .field("role_description_bytes", &self.role_description.len())
+            .field("visibility", &self.visibility)
+            .field("endpoint_present", &self.endpoint.is_some())
+            .field("auth_present", &self.auth.is_some())
+            .finish()
+    }
+}
+
+/// Connection probe input after HTTP framing has canonicalized the Authorization header.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentConnectionTestRequest {
+    /// Candidate remote AG-UI endpoint.
+    pub endpoint: String,
+    /// Unsaved write-only Authorization value, if supplied by the form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AgentAuthInput>,
+}
+
+impl fmt::Debug for AgentConnectionTestRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AgentConnectionTestRequest")
+            .field("endpoint_present", &!self.endpoint.is_empty())
+            .field("auth_present", &self.auth.is_some())
+            .finish()
+    }
+}
+
+/// Stable, localizable reason a connection probe did not prove an AG-UI endpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentConnectionFailure {
+    /// URL/scheme/destination failed before a request.
+    DestinationRejected,
+    /// DNS/connect/TLS failed before the request became commit-unknown.
+    Unreachable,
+    /// Endpoint rejected the supplied key.
+    Authentication,
+    /// Endpoint answered but did not provide a valid AG-UI event.
+    Protocol,
+    /// Request may have arrived but no bounded verdict was available.
+    Inconclusive,
+}
+
+/// Connection-test result. Natural-language vendor/server payload never crosses this boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentConnectionVerdict {
+    /// True only after at least one bounded AG-UI event type was decoded.
+    pub ok: bool,
+    /// Stable event type names, ordered and duplicate-free; empty on refusal.
+    pub events: Vec<String>,
+    /// Closed failure reason; absent on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<AgentConnectionFailure>,
+}
+
+impl AgentConnectionVerdict {
+    /// Construct a positive bounded verdict.
+    #[must_use]
+    pub fn working(events: Vec<String>) -> Self {
+        Self {
+            ok: true,
+            events,
+            reason: None,
+        }
+    }
+
+    /// Construct a fail-closed verdict.
+    #[must_use]
+    pub fn rejected(reason: AgentConnectionFailure) -> Self {
+        Self {
+            ok: false,
+            events: Vec::new(),
+            reason: Some(reason),
+        }
+    }
+}
+
+/// Non-profile lifecycle state committed by a hide/unhide/delete command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLifecycleState {
+    /// Hidden only for the current actor.
+    Hidden,
+    /// Returned to the current actor's default roster.
+    Visible,
+    /// Soft-deleted and no longer visible/runnable.
+    Deleted,
+}
+
+/// Authoritative lifecycle acknowledgement used by in-process transports.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentLifecycleReceipt {
+    /// Server-owned Agent identity.
+    pub agent_id: BotId,
+    /// Committed lifecycle state.
+    pub state: AgentLifecycleState,
+}
+
+/// Agent lifecycle wire validation failure without echoing the rejected value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum AgentWireError {
+    /// Only the closed Authorization channel is accepted.
+    #[error("agent_auth_header_invalid")]
+    InvalidAuthHeader,
+    /// Secret is empty, oversized, NUL/CR/LF-bearing, or otherwise unsafe for a header.
+    #[error("agent_auth_value_invalid")]
+    InvalidAuthValue,
 }
 
 /// One-time callback credential response.
@@ -225,5 +476,73 @@ mod tests {
         let round_trip: CallbackTokenIssued =
             serde_json::from_str(r#"{"token":"obot_agt_secret-value"}"#).unwrap();
         assert_eq!(round_trip, token);
+    }
+
+    #[test]
+    fn lifecycle_wire_is_closed_and_write_only_auth_is_redacted() {
+        let auth = AgentAuthInput::new(
+            " authorization ".to_owned(),
+            "  Bearer customer-secret  ".to_owned(),
+        )
+        .unwrap();
+        assert_eq!(auth.header(), "Authorization");
+        assert_eq!(auth.expose_value(), "Bearer customer-secret");
+        assert!(!format!("{auth:?}").contains("customer-secret"));
+        let request = AgentMutationRequest {
+            name: "Remote".to_owned(),
+            title: "Research".to_owned(),
+            role_description: "Find facts.".to_owned(),
+            visibility: AgentVisibility::Private,
+            endpoint: Some("https://agent.example/ag-ui".to_owned()),
+            auth: Some(auth),
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["auth"]["header"], "Authorization");
+        assert_eq!(value["auth"]["value"], "Bearer customer-secret");
+        assert_eq!(
+            serde_json::from_value::<AgentMutationRequest>(value).unwrap(),
+            request
+        );
+        assert!(
+            serde_json::from_value::<AgentMutationRequest>(serde_json::json!({
+                "name":"Remote","title":"Research","roleDescription":"Find facts.",
+                "visibility":"private","ownerUserId":"forged"
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            AgentAuthInput::new("Authorization".to_owned(), "   ".to_owned()),
+            Err(AgentWireError::InvalidAuthValue)
+        );
+        assert_eq!(
+            AgentAuthInput::new("X-Injected".to_owned(), "secret".to_owned()),
+            Err(AgentWireError::InvalidAuthHeader)
+        );
+    }
+
+    #[test]
+    fn connection_and_lifecycle_receipts_have_closed_stable_shapes() {
+        assert_eq!(
+            serde_json::to_value(AgentConnectionVerdict::working(vec![
+                "RUN_STARTED".to_owned()
+            ]))
+            .unwrap(),
+            serde_json::json!({"ok":true,"events":["RUN_STARTED"]})
+        );
+        assert_eq!(
+            serde_json::to_value(AgentConnectionVerdict::rejected(
+                AgentConnectionFailure::Authentication
+            ))
+            .unwrap(),
+            serde_json::json!({"ok":false,"events":[],"reason":"authentication"})
+        );
+        assert_eq!(
+            serde_json::to_value(AgentLifecycleReceipt {
+                agent_id: BotId::new("agent-1"),
+                state: AgentLifecycleState::Hidden,
+            })
+            .unwrap(),
+            serde_json::json!({"agentId":"agent-1","state":"hidden"})
+        );
     }
 }

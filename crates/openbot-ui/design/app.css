@@ -1912,6 +1912,13 @@ textarea:focus-visible,
   margin-inline: auto;
 }
 
+.ob-agent-roster-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 4);
+}
+
 .ob-agent-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, calc(var(--size-sidebar-rail) * 3));
@@ -2054,6 +2061,69 @@ textarea:focus-visible,
   padding: calc(var(--spacing) * 4);
   color: var(--danger);
   font-size: var(--text-sm);
+}
+
+.ob-agent-profile-actions,
+.ob-agent-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 2);
+}
+
+.ob-agent-profile-actions {
+  flex-direction: column;
+}
+
+.ob-agent-delete-confirm {
+  display: grid;
+  gap: calc(var(--spacing) * 2);
+  padding-block-start: calc(var(--spacing) * 2);
+  border-block-start: 1px solid var(--border);
+}
+
+.ob-agent-delete-confirm p,
+.ob-agent-editor h3,
+.ob-agent-editor-intro,
+.ob-agent-connection-status {
+  margin: 0;
+}
+
+.ob-agent-editor {
+  display: grid;
+  gap: calc(var(--spacing) * 4);
+  padding: calc(var(--spacing) * 4);
+}
+
+.ob-agent-editor h3 {
+  font-size: var(--text-xl);
+  line-height: var(--text-xl--line-height);
+}
+
+.ob-agent-editor-intro,
+.ob-agent-connection-status {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+}
+
+.ob-agent-editor-fields {
+  display: grid;
+  gap: calc(var(--spacing) * 4);
+}
+
+.ob-agent-connection-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+
+.ob-agent-connection-status[data-state="working"] {
+  color: var(--success);
+}
+
+.ob-agent-connection-status[data-state="rejected"] {
+  color: var(--danger);
 }
 
 .ob-row-mark {

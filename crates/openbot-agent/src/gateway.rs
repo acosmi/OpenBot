@@ -219,6 +219,8 @@ impl AgentToolGateway {
                 | AppReply::ChannelRouting(_)
                 | AppReply::Agents(_)
                 | AppReply::Agent(_)
+                | AppReply::AgentLifecycle(_)
+                | AppReply::AgentConnectionVerdict(_)
                 | AppReply::Components(_)
                 | AppReply::ComponentCatalogueAdded(_)
                 | AppReply::ComponentGovernanceUpdated(_)

@@ -98,6 +98,56 @@ impl fmt::Display for AuditIdentifier {
     }
 }
 
+/// Canonical remote Agent endpoint origin recorded without path, query, userinfo, or fragment.
+///
+/// This is separate from [`AuditIdentifier`]: a valid DNS host may consume 253 bytes before the
+/// scheme and optional port are added. The constructor accepts only the exact origin shape
+/// produced by a URL parser, so an entire customer URL cannot be placed here.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AuditEndpointOrigin(String);
+
+impl AuditEndpointOrigin {
+    /// `https://` + maximum DNS host + `:` + five-digit port, with conservative headroom.
+    pub const MAX_BYTES: usize = 320;
+
+    /// Validate one already-canonicalized HTTP(S) origin.
+    ///
+    /// # Errors
+    ///
+    /// Empty, oversized, non-HTTP(S), whitespace/control-bearing, userinfo, path, query, or
+    /// fragment-bearing values are rejected.
+    pub fn new(value: impl Into<String>) -> Result<Self, AuditFieldError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(AuditFieldError::Empty);
+        }
+        if value.len() > Self::MAX_BYTES {
+            return Err(AuditFieldError::TooLong { found: value.len() });
+        }
+        if value.chars().any(char::is_whitespace) || value.chars().any(char::is_control) {
+            return Err(AuditFieldError::ControlCharacter);
+        }
+        let authority = value
+            .strip_prefix("https://")
+            .or_else(|| value.strip_prefix("http://"))
+            .ok_or(AuditFieldError::InvalidOrigin)?;
+        if authority.is_empty()
+            || authority
+                .chars()
+                .any(|character| matches!(character, '/' | '?' | '#' | '@'))
+        {
+            return Err(AuditFieldError::InvalidOrigin);
+        }
+        Ok(Self(value))
+    }
+
+    /// Borrow the canonical origin.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Bounded ordered identifier list used for routing candidates, never content.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuditIdentifierList(Vec<AuditIdentifier>);
@@ -181,6 +231,9 @@ pub enum AuditFieldError {
         /// Actual item count; values themselves are never echoed.
         found: usize,
     },
+    /// Endpoint audit data was not a canonical HTTP(S) origin.
+    #[error("audit_field_invalid_origin")]
+    InvalidOrigin,
 }
 
 /// 人工接管的三个阶段。
@@ -230,6 +283,8 @@ pub enum AuditFact {
     ComponentRevision(u64),
     /// 该次工具调用的权威 Bot；绝不取自模型或 callback body。
     Bot(AuditIdentifier),
+    /// Canonical remote Agent origin; path, query, fragment, userinfo, and credential are absent.
+    AgentEndpointOrigin(AuditEndpointOrigin),
     /// 该次调用的 effect 分类结果。
     EffectClass(AuditLabel),
     /// 该分类是否由"无法识别的 effect 字符串"降级而来（§8.2）。
@@ -336,6 +391,7 @@ impl AuditFact {
             Self::ComponentKind(_) => "component_kind",
             Self::ComponentRevision(_) => "component_revision",
             Self::Bot(_) => "bot",
+            Self::AgentEndpointOrigin(_) => "agent_endpoint_origin",
             Self::EffectClass(_) => "effect_class",
             Self::EffectDowngraded(_) => "effect_downgraded",
             Self::CanonicalArgsHash(_) => "canonical_args_hash",
@@ -389,6 +445,7 @@ impl AuditFact {
             | Self::PolicyVersion(value)
             | Self::RefusedByRule(value)
             | Self::CredentialOwner(value) => Value::String(value.as_str().to_owned()),
+            Self::AgentEndpointOrigin(value) => Value::String(value.as_str().to_owned()),
             Self::EffectClass(label)
             | Self::ComponentReads(label)
             | Self::ComponentKind(label)
@@ -471,6 +528,7 @@ impl AuditFact {
             | Self::PolicyVersion(value)
             | Self::RefusedByRule(value)
             | Self::CredentialOwner(value) => writer.str(value.as_str()),
+            Self::AgentEndpointOrigin(value) => writer.str(value.as_str()),
             Self::EffectClass(label)
             | Self::ComponentReads(label)
             | Self::ComponentKind(label)
@@ -536,6 +594,7 @@ pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "component_kind",
     "component_revision",
     "bot",
+    "agent_endpoint_origin",
     "effect_class",
     "effect_downgraded",
     "canonical_args_hash",
@@ -681,6 +740,28 @@ mod tests {
         AuditIdentifier::new(value).expect("测试用标识符应当合法")
     }
 
+    #[test]
+    fn endpoint_origin_cannot_carry_customer_url_or_credentials() {
+        assert_eq!(
+            AuditEndpointOrigin::new("https://agent.example:8443")
+                .unwrap()
+                .as_str(),
+            "https://agent.example:8443"
+        );
+        for invalid in [
+            "ftp://agent.example",
+            "https://user@agent.example",
+            "https://agent.example/ag-ui",
+            "https://agent.example?token=secret",
+            "https://agent.example#fragment",
+        ] {
+            assert_eq!(
+                AuditEndpointOrigin::new(invalid),
+                Err(AuditFieldError::InvalidOrigin)
+            );
+        }
+    }
+
     /// 全部变体的样例 —— 新增变体必须同 PR 加进这里，否则下面两条台账测试会红。
     fn every_variant() -> Vec<AuditFact> {
         vec![
@@ -690,6 +771,9 @@ mod tests {
             AuditFact::ComponentKind(AuditLabel::new("sandboxed")),
             AuditFact::ComponentRevision(7),
             AuditFact::Bot(identifier("bot-1")),
+            AuditFact::AgentEndpointOrigin(
+                AuditEndpointOrigin::new("https://agent.example:8443").unwrap(),
+            ),
             AuditFact::EffectClass(AuditLabel::new("execute")),
             AuditFact::EffectDowngraded(true),
             AuditFact::CanonicalArgsHash(Sha256Digest::of(b"args")),

@@ -492,8 +492,26 @@ pub fn router(state: ServerState) -> Router {
         .route("/api/channels/events", get(channels::events))
         .route("/api/channels/{channel_id}", get(channels::get))
         .route("/api/route", post(routing::choose))
-        .route("/api/agents", get(agents::list_get))
-        .route("/api/agents/{agent_id}", get(agents::get))
+        .route(
+            "/api/agents",
+            get(agents::list_get).post(agents::create_post),
+        )
+        .route(
+            "/api/agents/test-connection",
+            post(agents::test_connection_post),
+        )
+        .route(
+            "/api/agents/{agent_id}",
+            get(agents::get)
+                .patch(agents::update_patch)
+                .delete(agents::delete_agent),
+        )
+        .route(
+            "/api/agents/{agent_id}/duplicate",
+            post(agents::duplicate_post),
+        )
+        .route("/api/agents/{agent_id}/hide", post(agents::hide_post))
+        .route("/api/agents/{agent_id}/unhide", post(agents::unhide_post))
         .route("/api/components", get(components::list_get))
         .route(
             "/api/components/catalogue",

@@ -77,7 +77,7 @@ recount:
     expect: 234
   - command: "python3 -c 'import io,json,sys,yaml;files=set(json.loads(sys.argv[1]));doc=yaml.safe_load(io.open(\"parity/tests.yaml\",encoding=\"utf-8\"));entries=[e for e in doc[\"entries\"] if e[\"upstream\"].split(\"::\",1)[0] in files];print(\"done=%d todo=%d in_progress=%d total=%d\"%(sum(e[\"status\"]==\"done\" for e in entries),sum(e[\"status\"]==\"todo\" for e in entries),sum(e[\"status\"]==\"in_progress\" for e in entries),len(entries)))' '[\"agent-computer/tests/shell.test.ts\",\"app/tests/tool-name.test.ts\",\"app/tests/tool-result.test.ts\",\"server/tests/audit.test.ts\",\"server/tests/bot-lifecycle-audit.test.ts\",\"server/tests/computer-gateway.test.ts\",\"server/tests/computer-policy-route.test.ts\",\"server/tests/computer-policy.test.ts\",\"server/tests/dev-actor.integration.test.ts\",\"server/tests/encrypt-sso-config.test.ts\",\"server/tests/entra-profile.test.ts\",\"server/tests/human-input-end-to-end.test.ts\",\"server/tests/people-paging.integration.test.ts\",\"server/tests/plugin-user-credential.integration.test.ts\",\"server/tests/policy-durability.integration.test.ts\",\"server/tests/policy-fanout.integration.test.ts\",\"server/tests/roles.test.ts\",\"server/tests/server-side-tools.integration.test.ts\",\"server/tests/single-user.test.ts\",\"server/tests/tenant-package.test.ts\",\"tests/fintech-package.test.ts\"]'"
     cwd: repo
-    expect: done=155 todo=79 in_progress=0 total=234
+    expect: done=165 todo=69 in_progress=0 total=234
   - command: "jq '[.nodes[] | select(.kind == \"describe\")] | length' fixtures/tests/upstream-ast-inventory.json"
     cwd: repo
     expect: 229
@@ -95,10 +95,10 @@ recount:
     expect: 105
   - command: "grep -c '^    label: parity$' parity/tests.yaml"
     cwd: repo
-    expect: 768
+    expect: 766
   - command: "grep -c '^    label: 替代$' parity/tests.yaml"
     cwd: repo
-    expect: 279
+    expect: 281
   - command: "grep -c '^    label: 新增$' parity/tests.yaml"
     cwd: repo
     expect: 0
@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 652
+    expect: 590
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -2982,71 +2982,78 @@ entries:
   - id: "server-tests-agent-connection-live--registering-an-agent-that-really-answers--an-agent-speaking-real-ag-ui-is-reported-as-working-with"
     upstream: "server/tests/agent-connection-live.test.ts::registering an agent that really answers"
     label: parity
-    target: "openbot_agent::registry::connection_probe::tests::an_agent_speaking_real_ag_ui_is_reported_as_working_with"
+    target: "openbot_infra::repo::agents::lifecycle::tests + openbot_infra::remote_agui::tests"
     owner: openbot-agent
     test_id: T-TEST-0269
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：production SafeRemoteAgui 与 lifecycle probe 4/0/0；真实 loopback SSE/Authorization、metadata preflight、closed allowlisted port，以及 RUN_STARTED/RUN_ERROR/TOOL_CALL_START 和四类稳定失败均由本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[327]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：注册时的真实连通性探测（答得好 / 答得坏）判据逐条移植。上游用例标题：「an agent speaking real AG-UI is reported as working, with what it sent」。"
   - id: "server-tests-agent-connection-live--registering-an-agent-that-really-answers--the-address-is-still-checked-before-anything-is-dialled"
     upstream: "server/tests/agent-connection-live.test.ts::registering an agent that really answers"
     label: parity
-    target: "openbot_agent::registry::connection_probe::tests::the_address_is_still_checked_before_anything_is_dialled"
+    target: "openbot_infra::repo::agents::lifecycle::tests + openbot_infra::remote_agui::tests"
     owner: openbot-agent
     test_id: T-TEST-0270
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：production SafeRemoteAgui 与 lifecycle probe 4/0/0；真实 loopback SSE/Authorization、metadata preflight、closed allowlisted port，以及 RUN_STARTED/RUN_ERROR/TOOL_CALL_START 和四类稳定失败均由本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[328]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：注册时的真实连通性探测（答得好 / 答得坏）判据逐条移植。上游用例标题：「the address is still checked before anything is dialled」。"
   - id: "server-tests-agent-connection-live--registering-an-agent-that-really-answers--a-port-with-nothing-on-it-reports-the-direction-of-the-c"
     upstream: "server/tests/agent-connection-live.test.ts::registering an agent that really answers"
     label: parity
-    target: "openbot_agent::registry::connection_probe::tests::a_port_with_nothing_on_it_reports_the_direction_of_the_c"
+    target: "openbot_infra::repo::agents::lifecycle::tests + openbot_infra::remote_agui::tests"
     owner: openbot-agent
     test_id: T-TEST-0271
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：production SafeRemoteAgui 与 lifecycle probe 4/0/0；真实 loopback SSE/Authorization、metadata preflight、closed allowlisted port，以及 RUN_STARTED/RUN_ERROR/TOOL_CALL_START 和四类稳定失败均由本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[329]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：注册时的真实连通性探测（答得好 / 答得坏）判据逐条移植。上游用例标题：「a port with nothing on it reports the direction of the connection」。"
   - id: "server-tests-agent-connection-live--registering-an-agent-that-answers-badly--an-agent-that-starts-a-run-and-never-finishes-is-still-r"
     upstream: "server/tests/agent-connection-live.test.ts::registering an agent that answers badly"
     label: parity
-    target: "openbot_agent::registry::connection_probe::tests::an_agent_that_starts_a_run_and_never_finishes_is_still_r"
+    target: "openbot_infra::repo::agents::lifecycle::tests + openbot_infra::remote_agui::tests"
     owner: openbot-agent
     test_id: T-TEST-0272
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：production SafeRemoteAgui 与 lifecycle probe 4/0/0；真实 loopback SSE/Authorization、metadata preflight、closed allowlisted port，以及 RUN_STARTED/RUN_ERROR/TOOL_CALL_START 和四类稳定失败均由本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[331]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：注册时的真实连通性探测（答得好 / 答得坏）判据逐条移植。上游用例标题：「an agent that starts a run and never finishes is still reported as working」。"
   - id: "server-tests-agent-connection-live--registering-an-agent-that-answers-badly--an-agent-that-reports-its-own-error-still-counts-as-spea"
     upstream: "server/tests/agent-connection-live.test.ts::registering an agent that answers badly"
     label: parity
-    target: "openbot_agent::registry::connection_probe::tests::an_agent_that_reports_its_own_error_still_counts_as_spea"
+    target: "openbot_infra::repo::agents::lifecycle::tests + openbot_infra::remote_agui::tests"
     owner: openbot-agent
     test_id: T-TEST-0273
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：production SafeRemoteAgui 与 lifecycle probe 4/0/0；真实 loopback SSE/Authorization、metadata preflight、closed allowlisted port，以及 RUN_STARTED/RUN_ERROR/TOOL_CALL_START 和四类稳定失败均由本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[332]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：注册时的真实连通性探测（答得好 / 答得坏）判据逐条移植。上游用例标题：「an agent that reports its own error still counts as speaking the protocol」。"
   - id: "server-tests-agent-connection-live--registering-an-agent-that-answers-badly--a-tool-call-in-the-stream-is-reported-because-that-is-wh"
     upstream: "server/tests/agent-connection-live.test.ts::registering an agent that answers badly"
     label: parity
-    target: "openbot_agent::registry::connection_probe::tests::a_tool_call_in_the_stream_is_reported_because_that_is_wh"
+    target: "openbot_infra::repo::agents::lifecycle::tests + openbot_infra::remote_agui::tests"
     owner: openbot-agent
     test_id: T-TEST-0274
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：production SafeRemoteAgui 与 lifecycle probe 4/0/0；真实 loopback SSE/Authorization、metadata preflight、closed allowlisted port，以及 RUN_STARTED/RUN_ERROR/TOOL_CALL_START 和四类稳定失败均由本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[333]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：注册时的真实连通性探测（答得好 / 答得坏）判据逐条移植。上游用例标题：「a tool call in the stream is reported, because that is what a governed Bot does」。"
   - id: "server-tests-agent-connection-live--registering-an-agent-that-answers-badly--nothing-listening-is-a-refusal-a-person-can-act-on"
     upstream: "server/tests/agent-connection-live.test.ts::registering an agent that answers badly"
     label: parity
-    target: "openbot_agent::registry::connection_probe::tests::nothing_listening_is_a_refusal_a_person_can_act_on"
+    target: "openbot_infra::repo::agents::lifecycle::tests + openbot_infra::remote_agui::tests"
     owner: openbot-agent
     test_id: T-TEST-0275
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：production SafeRemoteAgui 与 lifecycle probe 4/0/0；真实 loopback SSE/Authorization、metadata preflight、closed allowlisted port，以及 RUN_STARTED/RUN_ERROR/TOOL_CALL_START 和四类稳定失败均由本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[334]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §7.5 Remote AG-UI：注册时的真实连通性探测（答得好 / 答得坏）判据逐条移植。上游用例标题：「nothing listening is a refusal a person can act on」。"
   # ---------------------------------------------------------------------------
@@ -3055,221 +3062,243 @@ entries:
   - id: "server-tests-agent-endpoint--what-may-be-registered-as-an-agent--an-ordinary-https-endpoint-is-allowed"
     upstream: "server/tests/agent-endpoint.test.ts::what may be registered as an agent"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::an_ordinary_https_endpoint_is_allowed"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0276
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[336]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「an ordinary https endpoint is allowed」。"
   - id: "server-tests-agent-endpoint--what-may-be-registered-as-an-agent--cloud-metadata-is-refused-even-with-private-hosts-allowe"
     upstream: "server/tests/agent-endpoint.test.ts::what may be registered as an agent"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::cloud_metadata_is_refused_even_with_private_hosts_allowe"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0277
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[337]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「cloud metadata is refused even with private hosts allowed」。"
   - id: "server-tests-agent-endpoint--what-may-be-registered-as-an-agent--a-private-address-is-refused-when-private-hosts-are-not"
     upstream: "server/tests/agent-endpoint.test.ts::what may be registered as an agent"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::a_private_address_is_refused_when_private_hosts_are_not"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0278
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[338]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「a private address is refused when private hosts are not allowed」。"
   - id: "server-tests-agent-endpoint--what-may-be-registered-as-an-agent--localhost-is-allowed-only-where-the-deployment-opted-in"
     upstream: "server/tests/agent-endpoint.test.ts::what may be registered as an agent"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::localhost_is_allowed_only_where_the_deployment_opted_in"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0279
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[339]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「localhost is allowed only where the deployment opted in」。"
   - id: "server-tests-agent-endpoint--what-may-be-registered-as-an-agent--non-web-schemes-are-refused"
     upstream: "server/tests/agent-endpoint.test.ts::what may be registered as an agent"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::non_web_schemes_are_refused"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0280
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[340]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「non-web schemes are refused」。"
   - id: "server-tests-agent-endpoint--what-may-be-registered-as-an-agent--junk-is-refused-rather-than-stored"
     upstream: "server/tests/agent-endpoint.test.ts::what may be registered as an agent"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::junk_is_refused_rather_than_stored"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0281
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[341]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「junk is refused rather than stored」。"
   - id: "server-tests-agent-endpoint--the-agent-form--an-agent-with-no-endpoint-is-valid-and-runs-on-the-bot-i"
     upstream: "server/tests/agent-endpoint.test.ts::the agent form"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::an_agent_with_no_endpoint_is_valid_and_runs_on_the_bot_i"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0282
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[343]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「an agent with no endpoint is valid, and runs on the Bot in the box」。"
   - id: "server-tests-agent-endpoint--the-agent-form--an-endpoint-is-carried-through-when-it-is-allowed"
     upstream: "server/tests/agent-endpoint.test.ts::the agent form"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::an_endpoint_is_carried_through_when_it_is_allowed"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0283
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[344]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「an endpoint is carried through when it is allowed」。"
   - id: "server-tests-agent-endpoint--the-agent-form--a-refused-endpoint-fails-the-whole-form-rather-than-bein"
     upstream: "server/tests/agent-endpoint.test.ts::the agent form"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::a_refused_endpoint_fails_the_whole_form_rather_than_bein"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0284
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[345]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「a refused endpoint fails the whole form rather than being dropped」。"
   - id: "server-tests-agent-endpoint--the-agent-form--an-empty-endpoint-means-the-default-not-an-error"
     upstream: "server/tests/agent-endpoint.test.ts::the agent form"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::an_empty_endpoint_means_the_default_not_an_error"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0285
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[346]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「an empty endpoint means the default, not an error」。"
   - id: "server-tests-agent-endpoint--the-connection-test--an-ag-ui-stream-is-reported-as-working-with-what-came-ba"
     upstream: "server/tests/agent-endpoint.test.ts::the connection test"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::an_ag_ui_stream_is_reported_as_working_with_what_came_ba"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0286
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[348]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「an AG-UI stream is reported as working, with what came back」。"
   - id: "server-tests-agent-endpoint--the-connection-test--a-reachable-address-that-is-not-an-agent-says-so-and-say"
     upstream: "server/tests/agent-endpoint.test.ts::the connection test"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::a_reachable_address_that_is_not_an_agent_says_so_and_say"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0287
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[349]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「a reachable address that is not an agent says so, and says what it sent」。"
   - id: "server-tests-agent-endpoint--the-connection-test--an-authentication-failure-suggests-the-fix-rather-than-t"
     upstream: "server/tests/agent-endpoint.test.ts::the connection test"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::an_authentication_failure_suggests_the_fix_rather_than_t"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0288
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[350]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「an authentication failure suggests the fix rather than the status code」。"
   - id: "server-tests-agent-endpoint--the-connection-test--an-unreachable-address-explains-the-direction-of-the-con"
     upstream: "server/tests/agent-endpoint.test.ts::the connection test"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::an_unreachable_address_explains_the_direction_of_the_con"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0289
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[351]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「an unreachable address explains the direction of the connection」。"
   - id: "server-tests-agent-endpoint--the-connection-test--the-test-refuses-the-addresses-registration-would-refuse"
     upstream: "server/tests/agent-endpoint.test.ts::the connection test"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::the_test_refuses_the_addresses_registration_would_refuse"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0290
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[352]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「the test refuses the addresses registration would refuse」。"
   - id: "server-tests-agent-endpoint--the-connection-test--headers-are-sent-so-an-agent-behind-a-key-can-be-tested"
     upstream: "server/tests/agent-endpoint.test.ts::the connection test"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::headers_are_sent_so_an_agent_behind_a_key_can_be_tested"
+    target: "openbot_infra::net::safe_http::tests + openbot_infra::repo::agents::lifecycle::tests"
     owner: openbot-agent
     test_id: T-TEST-0291
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：SafeDialer 与 lifecycle probe 本轮覆盖 HTTPS/HTTP policy、默认 private/metadata 拒绝、exact CIDR loopback opt-in、非 Web/junk 拒绝、注册与测试同策略、无事件/认证/不可达稳定 verdict；host tests 4/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[353]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「headers are sent, so an agent behind a key can be tested」。"
   - id: "server-tests-agent-endpoint--the-key-a-customer-s-agent-sits-behind--it-goes-to-the-vault-and-only-a-reference-comes-back"
     upstream: "server/tests/agent-endpoint.test.ts::the key a customer's agent sits behind"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::it_goes_to_the_vault_and_only_a_reference_comes_back"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-agent
     test_id: T-TEST-0292
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 证明 remote auth 仅存 Vault v2 密文引用、运行时 fresh 取值、轮换旧撤新活、空 auth 保留、撤销后 Stale 且不 fallback；cleartext/audit/config canary=0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[355]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「it goes to the vault, and only a reference comes back」。"
   - id: "server-tests-agent-endpoint--the-key-a-customer-s-agent-sits-behind--the-value-is-encrypted-at-rest-not-stored-in-the-clear"
     upstream: "server/tests/agent-endpoint.test.ts::the key a customer's agent sits behind"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::the_value_is_encrypted_at_rest_not_stored_in_the_clear"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-agent
     test_id: T-TEST-0293
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 证明 remote auth 仅存 Vault v2 密文引用、运行时 fresh 取值、轮换旧撤新活、空 auth 保留、撤销后 Stale 且不 fallback；cleartext/audit/config canary=0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[356]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「the value is encrypted at rest, not stored in the clear」。"
   - id: "server-tests-agent-endpoint--the-key-a-customer-s-agent-sits-behind--a-revoked-key-sends-nothing-rather-than-falling-back-to"
     upstream: "server/tests/agent-endpoint.test.ts::the key a customer's agent sits behind"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::a_revoked_key_sends_nothing_rather_than_falling_back_to"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-agent
     test_id: T-TEST-0294
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 证明 remote auth 仅存 Vault v2 密文引用、运行时 fresh 取值、轮换旧撤新活、空 auth 保留、撤销后 Stale 且不 fallback；cleartext/audit/config canary=0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[357]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「a revoked key sends nothing rather than falling back to no auth silently」。"
   - id: "server-tests-agent-endpoint--the-key-a-customer-s-agent-sits-behind--an-agent-with-no-key-sends-no-headers-at-all"
     upstream: "server/tests/agent-endpoint.test.ts::the key a customer's agent sits behind"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::an_agent_with_no_key_sends_no_headers_at_all"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-agent
     test_id: T-TEST-0295
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 证明 remote auth 仅存 Vault v2 密文引用、运行时 fresh 取值、轮换旧撤新活、空 auth 保留、撤销后 Stale 且不 fallback；cleartext/audit/config canary=0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[358]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「an agent with no key sends no headers at all」。"
   - id: "server-tests-agent-endpoint--the-key-a-customer-s-agent-sits-behind--the-form-refuses-a-header-name-that-is-not-a-header-name"
     upstream: "server/tests/agent-endpoint.test.ts::the key a customer's agent sits behind"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::the_form_refuses_a_header_name_that_is_not_a_header_name"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-agent
     test_id: T-TEST-0296
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 证明 remote auth 仅存 Vault v2 密文引用、运行时 fresh 取值、轮换旧撤新活、空 auth 保留、撤销后 Stale 且不 fallback；cleartext/audit/config canary=0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[359]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「the form refuses a header name that is not a header name」。"
   - id: "server-tests-agent-endpoint--the-key-a-customer-s-agent-sits-behind--an-empty-key-is-not-a-key-so-saving-an-edit-does-not-wip"
     upstream: "server/tests/agent-endpoint.test.ts::the key a customer's agent sits behind"
     label: 替代
-    target: "openbot_agent::registry::endpoint::tests::an_empty_key_is_not_a_key_so_saving_an_edit_does_not_wip"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-agent
     test_id: T-TEST-0297
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 证明 remote auth 仅存 Vault v2 密文引用、运行时 fresh 取值、轮换旧撤新活、空 auth 保留、撤销后 Stale 且不 fallback；cleartext/audit/config canary=0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[360]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 1 行（上游 issue #36：agent endpoint 30x 可绕过初始 URL 检查、DNS rebinding 未解决）明写不得照译 —— Rust 版每一跳重新做 scheme/host/IP policy 且固定已校验 IP 与 TLS SNI，故 endpoint 校验语义换了一个；表单与密钥保管判据逐条移植。上游用例标题：「an empty key is not a key, so saving an edit does not wipe one」。"
   # ---------------------------------------------------------------------------
@@ -3347,11 +3376,12 @@ entries:
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--refuses-to-create-a-coworker-with-no-endpoint-when-this"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::refuses_to_create_a_coworker_with_no_endpoint_when_this"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0304
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[369]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「refuses to create a coworker with no endpoint when this deployment has no managed Bot」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--lets-an-owner-and-admin-get-and-list-a-private-profile-b"
@@ -3368,11 +3398,12 @@ entries:
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--stores-hiding-per-user-and-moves-the-caller-between-defa"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::stores_hiding_per_user_and_moves_the_caller_between_defa"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0306
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[371]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「stores hiding per user and moves the caller between default and hidden lists」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--takes-the-endpoint-and-ignores-every-field-a-caller-must"
@@ -3388,111 +3419,122 @@ entries:
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--rejects-public-non-owner-mutation-as-unmanageable-and-in"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::rejects_public_non_owner_mutation_as_unmanageable_and_in"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0308
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[373]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「rejects public non-owner mutation as unmanageable and inaccessible private mutation as absent」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--rejects-update-and-soft-delete-for-a-package-backed-prof"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::rejects_update_and_soft_delete_for_a_package_backed_prof"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0309
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[374]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「rejects update and soft delete for a package-backed profile」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--serializes-update-authorization-against-concurrent-packa"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::serializes_update_authorization_against_concurrent_packa"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0310
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[375]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「serializes update authorization against concurrent package attachment」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--serializes-soft-delete-authorization-against-concurrent"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::serializes_soft_delete_authorization_against_concurrent"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0311
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[376]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「serializes soft-delete authorization against concurrent package attachment」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--allows-an-admin-to-update-and-soft-delete-a-user-owned-p"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::allows_an_admin_to_update_and_soft_delete_a_user_owned_p"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0312
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[377]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「allows an admin to update and soft delete a user-owned profile」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--duplicates-a-profile-as-a-caller-owned-private-agent-wit"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::duplicates_a_profile_as_a_caller_owned_private_agent_wit"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0313
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[378]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「duplicates a profile as a caller-owned private agent with copied presentation fields」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--duplicates-no-channel-membership-or-intelligence-mapping"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::duplicates_no_channel_membership_or_intelligence_mapping"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0314
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[379]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「duplicates no channel membership or Intelligence mapping from the source」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--soft-deletes-a-profile-from-reads-and-lists-while-retain"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::soft_deletes_a_profile_from_reads_and_lists_while_retain"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0315
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[380]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「soft deletes a profile from reads and lists while retaining its raw rows」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--rolls-back-canonical-creation-when-the-profile-insert-fa"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::rolls_back_canonical_creation_when_the_profile_insert_fa"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0316
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[381]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「rolls back canonical creation when the profile insert fails」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--mints-its-own-id-rather-than-taking-one-for-a-create-and"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::mints_its_own_id_rather_than_taking_one_for_a_create_and"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0317
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[382]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「mints its own id rather than taking one, for a create and for a copy」。"
   - id: "server-tests-agent-profile-store-integration--agent-profile-store-integration--creates-a-caller-owned-remote-ag-ui-profile-with-the-req"
     upstream: "server/tests/agent-profile-store.integration.test.ts::agent profile store integration"
     label: parity
-    target: "openbot_infra::store::agent_profile::tests::creates_a_caller_owned_remote_ag_ui_profile_with_the_req"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-infra
     test_id: T-TEST-0318
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 覆盖 managed slot 拒绝、actor-scoped hide、owner/admin/package权限、真实 package-attachment update/delete 竞态、private无credential/membership复制、软删留行且不可读/运行、失败全事务回滚与自铸 ID。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[383]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §14.1 单数据库裁决：agent profile 的持久化往返判据逐条移植到 PostgreSQL 后端。上游用例标题：「creates a caller-owned remote AG-UI profile with the requested visibility」。"
   # ---------------------------------------------------------------------------
@@ -3524,31 +3566,34 @@ entries:
   - id: "server-tests-agent-routes--agent-input-parser--rejects-a-non-object-root-p"
     upstream: "server/tests/agent-routes.test.ts::agent input parser"
     label: parity
-    target: "openbot_server::routes::agents::tests::rejects_a_non_object_root_p"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0321
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[387]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「rejects a non-object root: %p」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-agent-routes--agent-input-parser--rejects-invalid-s-values"
     upstream: "server/tests/agent-routes.test.ts::agent input parser"
     label: parity
-    target: "openbot_server::routes::agents::tests::rejects_invalid_s_values"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0322
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[388]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「rejects invalid %s values」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-agent-routes--agent-input-parser--accepts-and-trims-boundary-s-values"
     upstream: "server/tests/agent-routes.test.ts::agent input parser"
     label: parity
-    target: "openbot_server::routes::agents::tests::accepts_and_trims_boundary_s_values"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0323
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[389]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「accepts and trims boundary %s values」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-agent-routes--agent-input-parser--trims-every-accepted-field-and-ignores-forged-fields"
@@ -3564,31 +3609,34 @@ entries:
   - id: "server-tests-agent-routes--agent-lifecycle-routes--attaches-authentication-middleware-to-every-route-before"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
     label: parity
-    target: "openbot_server::routes::agents::tests::attaches_authentication_middleware_to_every_route_before"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0325
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[392]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「attaches authentication middleware to every route before calling the store」。"
   - id: "server-tests-agent-routes--agent-lifecycle-routes--uses-only-the-authenticated-context-actor-and-parses-hid"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
     label: parity
-    target: "openbot_server::routes::agents::tests::uses_only_the_authenticated_context_actor_and_parses_hid"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0326
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[393]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「uses only the authenticated context actor and parses hidden as exact true」。"
   - id: "server-tests-agent-routes--agent-lifecycle-routes--serves-every-lifecycle-route-with-its-contract-status-an"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
     label: parity
-    target: "openbot_server::routes::agents::tests::serves_every_lifecycle_route_with_its_contract_status_an"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0327
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[394]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「serves every lifecycle route with its contract status and store operation」。"
   - id: "server-tests-agent-routes--agent-lifecycle-routes--projects-exact-dto-fields-and-computes-permissions-for-t"
@@ -3616,21 +3664,23 @@ entries:
   - id: "server-tests-agent-routes--agent-lifecycle-routes--never-forwards-forged-create-or-update-fields"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
     label: parity
-    target: "openbot_server::routes::agents::tests::never_forwards_forged_create_or_update_fields"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0330
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[397]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「never forwards forged create or update fields」。"
   - id: "server-tests-agent-routes--agent-lifecycle-routes--requires-a-valid-full-json-object-for-s-s"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
     label: parity
-    target: "openbot_server::routes::agents::tests::requires_a_valid_full_json_object_for_s_s"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0331
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[398]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「requires a valid full JSON object for %s %s」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-agent-routes--agent-lifecycle-routes--returns-404-when-get-returns-null"
@@ -3647,11 +3697,12 @@ entries:
   - id: "server-tests-agent-routes--agent-lifecycle-routes--maps-known-store-errors"
     upstream: "server/tests/agent-routes.test.ts::agent lifecycle routes"
     label: parity
-    target: "openbot_server::routes::agents::tests::maps_known_store_errors"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0333
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[400]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「maps known store errors」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-agent-routes--agent-lifecycle-routes--rethrows-unexpected-errors-to-the-outer-hono-error-handl"
@@ -3667,11 +3718,12 @@ entries:
   - id: "server-tests-agent-routes--agent-route-composition--mounts-the-store-behind-createapp-authentication-with-th"
     upstream: "server/tests/agent-routes.test.ts::agent route composition"
     label: parity
-    target: "openbot_server::routes::agents::tests::mounts_the_store_behind_createapp_authentication_with_th"
+    target: "openbot_contracts::agent::tests + openbot_application::use_cases::agents::tests + openbot_server::http::agents::tests"
     owner: openbot-server
     test_id: T-TEST-0335
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：contracts/application/Server Agent 定向分别 4/0/0、4/0/0、6/0/0；closed JSON、ECMAScript trim、forged/缺字段400且port零调用、fresh Origin/auth先行、七写面状态/DTO、closed error映射与默认adapter 503均本轮复跑。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[403]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §15.1 Canonical inventory + §21.1 条 1（每个 route 覆盖 happy/401/403/404/400/dependency failure）：agent 路由的输入解析与生命周期判据逐条移植。上游用例标题：「mounts the store behind createApp authentication with the derived actor」。"
   - id: "server-tests-agent-routes--agent-route-composition--leaves-agent-routes-unmounted-when-createapp-has-no-stor"
@@ -4054,32 +4106,35 @@ entries:
   # ---------------------------------------------------------------------------
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--creating-one-records-the-endpoint-it-was-pointed-at"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::what a Bot is, on the trail"
-    label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::creating_one_records_the_endpoint_it_was_pointed_at"
+    label: 替代
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0372
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: v4 §8.6 只记录 canonical endpoint origin，完整 path/query 与 credential 不进入 audit"
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[450]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「creating one records the endpoint it was pointed at」。"
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--repointing-one-records-where-to"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::what a Bot is, on the trail"
-    label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::repointing_one_records_where_to"
+    label: 替代
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0373
-    migration_rule: "preserve: ported"
-    status: todo
+    migration_rule: "rename: v4 §8.6 只记录 canonical endpoint origin，完整 path/query 与 credential 不进入 audit"
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[451]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「repointing one records where to」。"
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--a-replaced-key-is-noted-and-never-recorded"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::what a Bot is, on the trail"
     label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::a_replaced_key_is_noted_and_never_recorded"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0374
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[452]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「a replaced key is noted and never recorded」。"
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--issuing-a-callback-token-records-that-never-the-token"
@@ -4096,31 +4151,34 @@ entries:
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--s-writes-s"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::what a Bot is, on the trail"
     label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::s_writes_s"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0376
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[454]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「%s writes %s」。AST 标记：each（表驱动，一条声明展开成多个运行期用例）。"
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--duplicating-records-the-copy-and-names-the-original"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::what a Bot is, on the trail"
     label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::duplicating_records_the_copy_and_names_the_original"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0377
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[455]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「duplicating records the copy and names the original」。"
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--a-refused-change-writes-nothing"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::what a Bot is, on the trail"
     label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::a_refused_change_writes_nothing"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0378
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[456]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「a refused change writes nothing」。"
   - id: "server-tests-bot-lifecycle-audit--what-a-bot-is-on-the-trail--a-trail-that-is-down-does-not-fail-the-change"
@@ -4136,41 +4194,45 @@ entries:
   - id: "server-tests-bot-lifecycle-audit--retiring-the-key-an-edit-replaced--revokes-the-one-that-was-replaced"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::retiring the key an edit replaced"
     label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::revokes_the_one_that_was_replaced"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0380
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[459]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「revokes the one that was replaced」。"
   - id: "server-tests-bot-lifecycle-audit--retiring-the-key-an-edit-replaced--never-revokes-the-one-just-stored"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::retiring the key an edit replaced"
     label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::never_revokes_the_one_just_stored"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0381
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[460]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「never revokes the one just stored」。"
   - id: "server-tests-bot-lifecycle-audit--retiring-the-key-an-edit-replaced--does-nothing-when-there-was-no-key-before"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::retiring the key an edit replaced"
     label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::does_nothing_when_there_was_no_key_before"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0382
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[461]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「does nothing when there was no key before」。"
   - id: "server-tests-bot-lifecycle-audit--retiring-the-key-an-edit-replaced--retires-the-key-when-a-bot-is-removed-entirely"
     upstream: "server/tests/bot-lifecycle-audit.test.ts::retiring the key an edit replaced"
     label: parity
-    target: "openbot_application::bot::lifecycle_audit::tests::retires_the_key_when_a_bot_is_removed_entirely"
+    target: "openbot_infra::tests::agent_lifecycle::lifecycle_is_atomic_secret_free_runnable_and_permission_scoped"
     owner: openbot-application
     test_id: T-TEST-0383
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch68：PG17.11 SCRAM lifecycle 1/0/0 逐类实得 bot.created=4/updated=3/duplicated=1/hidden=1/unhidden=1/deleted=2，credential created/rotated/revoked各1；endpoint只记origin、duplicate记原ID、secret canary=0、拒绝/竞态/强制audit失败均零残留。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[462]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §8.6 Audit：Bot 隐藏/恢复等生命周期动作在审计上留下什么，判据逐条移植。上游用例标题：「retires the key when a Bot is removed entirely」。"
   - id: "server-tests-bot-lifecycle-audit--retiring-the-key-an-edit-replaced--a-vault-that-refuses-does-not-fail-the-edit"

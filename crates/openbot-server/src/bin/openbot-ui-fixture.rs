@@ -12,8 +12,9 @@ use axum::response::IntoResponse as _;
 use futures_core::Stream;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
-    AgentDirectory, AgentReachability, AgentReadScope, AppEventStream, ApplicationService,
-    AuditPageRequest, AuditReadError, AuditReader, BeginThreadRunRequest, CancelThreadRunRequest,
+    AgentAdministration, AgentAdministrationError, AgentAdministrationScope, AgentDirectory,
+    AgentReachability, AgentReadScope, AppEventStream, ApplicationService, AuditPageRequest,
+    AuditReadError, AuditReader, BeginThreadRunRequest, CancelThreadRunRequest,
     ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
     ChannelReader, ChannelRoutingBackend, ChannelRoutingBackendError, ComponentAdministration,
     ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
@@ -27,7 +28,10 @@ use openbot_application::{
     ToolApprovalAdministrationError, ToolApprovalPresentation, ToolApprovalRequest,
     UiPreferenceAdministration, UiPreferenceAdministrationError, UpdateMemoryControlRequest,
 };
-use openbot_contracts::agent::{AgentProfile, AgentVisibility};
+use openbot_contracts::agent::{
+    AgentConnectionTestRequest, AgentConnectionVerdict, AgentLifecycleReceipt, AgentLifecycleState,
+    AgentMutationRequest, AgentProfile, AgentVisibility,
+};
 use openbot_contracts::audit::{AuditEventView, AuditPage};
 use openbot_contracts::auth::{
     ApplicationRuntimeMode, AuthContext, AuthGeneration, AuthProviderId,
@@ -316,13 +320,14 @@ impl ChannelAdministration for FixtureChannels {
 
 #[derive(Clone)]
 struct FixtureAgents {
-    rows: Arc<Vec<AgentProfile>>,
+    rows: Arc<Mutex<Vec<AgentProfile>>>,
+    next: Arc<AtomicU64>,
 }
 
 impl FixtureAgents {
     fn new() -> Self {
         Self {
-            rows: Arc::new(vec![
+            rows: Arc::new(Mutex::new(vec![
                 AgentProfile {
                     id: BotId::new("fixture-owned-private"),
                     name: "Research Partner".to_owned(),
@@ -398,7 +403,8 @@ impl FixtureAgents {
                     can_manage: true,
                     mine: true,
                 },
-            ]),
+            ])),
+            next: Arc::new(AtomicU64::new(1)),
         }
     }
 }
@@ -412,6 +418,10 @@ impl AgentDirectory for FixtureAgents {
     ) -> Result<Vec<AgentProfile>, PortError> {
         Ok(self
             .rows
+            .lock()
+            .map_err(|_| PortError::Unavailable {
+                dependency: "fixture_agents",
+            })?
             .iter()
             .filter(|profile| profile.hidden == hidden)
             .cloned()
@@ -425,9 +435,174 @@ impl AgentDirectory for FixtureAgents {
     ) -> Result<Option<AgentProfile>, PortError> {
         Ok(self
             .rows
+            .lock()
+            .map_err(|_| PortError::Unavailable {
+                dependency: "fixture_agents",
+            })?
             .iter()
             .find(|profile| &profile.id == agent_id)
             .cloned())
+    }
+}
+
+#[async_trait]
+impl AgentAdministration for FixtureAgents {
+    async fn create_agent(
+        &self,
+        _scope: &AgentAdministrationScope,
+        request: AgentMutationRequest,
+    ) -> Result<AgentProfile, AgentAdministrationError> {
+        let sequence = self.next.fetch_add(1, Ordering::SeqCst);
+        let profile = AgentProfile {
+            id: BotId::new(format!("fixture-user-agent-{sequence}")),
+            name: request.name,
+            title: request.title,
+            role_description: request.role_description,
+            avatar_seed: format!("fixture-user-agent-{sequence}"),
+            visibility: request.visibility,
+            endpoint: request.endpoint,
+            has_auth: request.auth.is_some(),
+            has_callback_token: false,
+            hidden: false,
+            system_owned: false,
+            can_manage: true,
+            mine: true,
+        };
+        self.rows
+            .lock()
+            .map_err(|_| AgentAdministrationError::Unavailable)?
+            .push(profile.clone());
+        Ok(profile)
+    }
+
+    async fn update_agent(
+        &self,
+        _scope: &AgentAdministrationScope,
+        agent_id: &BotId,
+        request: AgentMutationRequest,
+    ) -> Result<AgentProfile, AgentAdministrationError> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| AgentAdministrationError::Unavailable)?;
+        let profile = rows
+            .iter_mut()
+            .find(|profile| &profile.id == agent_id)
+            .ok_or(AgentAdministrationError::NotVisible)?;
+        if profile.system_owned {
+            return Err(AgentAdministrationError::Protected);
+        }
+        if !profile.can_manage {
+            return Err(AgentAdministrationError::Forbidden);
+        }
+        profile.name = request.name;
+        profile.title = request.title;
+        profile.role_description = request.role_description;
+        profile.visibility = request.visibility;
+        profile.endpoint = request.endpoint;
+        if request.auth.is_some() {
+            profile.has_auth = true;
+        }
+        if profile.endpoint.is_none() {
+            profile.has_auth = false;
+            profile.has_callback_token = false;
+        }
+        Ok(profile.clone())
+    }
+
+    async fn duplicate_agent(
+        &self,
+        _scope: &AgentAdministrationScope,
+        agent_id: &BotId,
+    ) -> Result<AgentProfile, AgentAdministrationError> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| AgentAdministrationError::Unavailable)?;
+        let source = rows
+            .iter()
+            .find(|profile| &profile.id == agent_id)
+            .cloned()
+            .ok_or(AgentAdministrationError::NotVisible)?;
+        let sequence = self.next.fetch_add(1, Ordering::SeqCst);
+        let copy = AgentProfile {
+            id: BotId::new(format!("fixture-user-agent-{sequence}")),
+            name: source.name,
+            title: source.title,
+            role_description: source.role_description,
+            avatar_seed: source.avatar_seed,
+            visibility: AgentVisibility::Private,
+            endpoint: None,
+            has_auth: false,
+            has_callback_token: false,
+            hidden: false,
+            system_owned: false,
+            can_manage: true,
+            mine: true,
+        };
+        rows.push(copy.clone());
+        Ok(copy)
+    }
+
+    async fn set_agent_hidden(
+        &self,
+        _scope: &AgentAdministrationScope,
+        agent_id: &BotId,
+        hidden: bool,
+    ) -> Result<AgentLifecycleReceipt, AgentAdministrationError> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| AgentAdministrationError::Unavailable)?;
+        let profile = rows
+            .iter_mut()
+            .find(|profile| &profile.id == agent_id)
+            .ok_or(AgentAdministrationError::NotVisible)?;
+        profile.hidden = hidden;
+        Ok(AgentLifecycleReceipt {
+            agent_id: agent_id.clone(),
+            state: if hidden {
+                AgentLifecycleState::Hidden
+            } else {
+                AgentLifecycleState::Visible
+            },
+        })
+    }
+
+    async fn delete_agent(
+        &self,
+        _scope: &AgentAdministrationScope,
+        agent_id: &BotId,
+    ) -> Result<AgentLifecycleReceipt, AgentAdministrationError> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| AgentAdministrationError::Unavailable)?;
+        let index = rows
+            .iter()
+            .position(|profile| &profile.id == agent_id)
+            .ok_or(AgentAdministrationError::NotVisible)?;
+        if rows[index].system_owned {
+            return Err(AgentAdministrationError::Protected);
+        }
+        if !rows[index].can_manage {
+            return Err(AgentAdministrationError::Forbidden);
+        }
+        rows.remove(index);
+        Ok(AgentLifecycleReceipt {
+            agent_id: agent_id.clone(),
+            state: AgentLifecycleState::Deleted,
+        })
+    }
+
+    async fn test_agent_connection(
+        &self,
+        _scope: &AgentAdministrationScope,
+        _request: AgentConnectionTestRequest,
+    ) -> Result<AgentConnectionVerdict, AgentAdministrationError> {
+        Ok(AgentConnectionVerdict::working(vec![
+            "RUN_STARTED".to_owned(),
+        ]))
     }
 }
 
@@ -3444,11 +3619,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sandboxed = FixtureSandboxed::new(now);
     let routing = FixtureRouting::new();
     let routing_probe = routing.probe();
+    let agents = Arc::new(FixtureAgents::new());
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
             .with_audit(FixtureAudit::new(now))
-            .with_agent_directory(Arc::new(FixtureAgents::new()))
+            .with_agent_directory(agents.clone())
+            .with_agent_administration(agents)
             .with_channel_routing(Arc::new(routing))
             .with_component_administration(Arc::new(components))
             .with_sandboxed_component_administration(Arc::new(sandboxed))

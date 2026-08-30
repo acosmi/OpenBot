@@ -22,12 +22,16 @@ async fn provision(pool: &deadpool_postgres::Pool) -> Result<(), String> {
     client
         .batch_execute(
             "INSERT INTO public.users(id,email) VALUES
-               ('actor-a','a@example.test'),('actor-b','b@example.test');
+               ('actor-a','a@example.test'),('actor-b','b@example.test'),
+               ('actor-admin','admin@example.test');
+             INSERT INTO public.user_roles(user_id,role) VALUES('actor-admin','admin');
              INSERT INTO public.agents(id,name,type,configuration)
-               VALUES('bot-1','Bot 1','built_in','{}'::jsonb);
+               VALUES('bot-1','Bot 1','built_in','{}'::jsonb),
+                     ('bot-private','Private Bot','built_in','{}'::jsonb);
              INSERT INTO public.agent_profiles(
                agent_id,owner_user_id,title,role_description,avatar_seed,visibility,deleted_at
-             ) VALUES('bot-1',NULL,'Bot 1','test role','seed','public',NULL);",
+             ) VALUES('bot-1',NULL,'Bot 1','test role','seed','public',NULL),
+                     ('bot-private','actor-b','Private Bot','private role','private-seed','private',NULL);",
         )
         .await
         .map_err(|error| error.to_string())?;
@@ -202,6 +206,30 @@ async fn begin_commits_every_surface_and_exact_replay_writes_nothing() {
             if directory.begin_thread_run(request).await != Err(ThreadDirectoryError::NotVisible) {
                 return Err("deleted thread 的精确 replay 也不得伪装成重新开始".to_owned());
             }
+
+            let mut refused = crate::request(
+                &deployment,
+                "actor-a",
+                11,
+                "run-private-refused",
+                "must not run private",
+            );
+            refused.command.bot_id = BotId::new("bot-private");
+            if directory.begin_thread_run(refused).await != Err(ThreadDirectoryError::NotVisible) {
+                return Err("non-owner must not run a private Agent".to_owned());
+            }
+            let mut admin = crate::request(
+                &deployment,
+                "actor-admin",
+                12,
+                "run-private-admin",
+                "admin may run private",
+            );
+            admin.command.bot_id = BotId::new("bot-private");
+            directory
+                .begin_thread_run(admin)
+                .await
+                .map_err(|error| format!("admin private Agent run failed: {error}"))?;
             Ok(())
         }
         .await;

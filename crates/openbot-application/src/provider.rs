@@ -3,7 +3,9 @@
 use async_trait::async_trait;
 use core::time::Duration;
 use openbot_contracts::auth::AuthContext;
+use openbot_domain::vault::SecretBytes;
 use serde_json::Value;
+use std::sync::Arc;
 
 use crate::RunExecutionLease;
 
@@ -40,6 +42,7 @@ pub struct RemoteAguiRoute {
     run_id: String,
     bot_id: String,
     run_assertion: Option<String>,
+    authorization: Option<RemoteAguiAuthorization>,
 }
 
 impl RemoteAguiRoute {
@@ -68,7 +71,15 @@ impl RemoteAguiRoute {
             run_id,
             bot_id,
             run_assertion,
+            authorization: None,
         })
+    }
+
+    /// Attach a Vault-opened Authorization value. The route shares the one zeroizing allocation.
+    #[must_use]
+    pub fn with_authorization(mut self, authorization: RemoteAguiAuthorization) -> Self {
+        self.authorization = Some(authorization);
+        self
     }
 
     /// Endpoint. Debug never renders it.
@@ -100,6 +111,12 @@ impl RemoteAguiRoute {
     pub fn run_assertion(&self) -> Option<&str> {
         self.run_assertion.as_deref()
     }
+
+    /// Optional write-only customer Agent Authorization value.
+    #[must_use]
+    pub const fn authorization(&self) -> Option<&RemoteAguiAuthorization> {
+        self.authorization.as_ref()
+    }
 }
 
 impl core::fmt::Debug for RemoteAguiRoute {
@@ -110,9 +127,51 @@ impl core::fmt::Debug for RemoteAguiRoute {
             .field("run_id", &self.run_id)
             .field("bot_id", &self.bot_id)
             .field("has_run_assertion", &self.run_assertion.is_some())
+            .field("has_authorization", &self.authorization.is_some())
             .finish()
     }
 }
+
+/// Vault-opened remote Agent Authorization value. It is never serde/displayable.
+#[derive(Clone)]
+pub struct RemoteAguiAuthorization(Arc<SecretBytes>);
+
+impl RemoteAguiAuthorization {
+    /// Take ownership of one already validated non-empty header value.
+    pub fn new(value: SecretBytes) -> Result<Self, AgentContextError> {
+        if value.is_empty()
+            || value.len() > 16 * 1_024
+            || value.expose().contains(&0)
+            || core::str::from_utf8(value.expose()).is_err()
+        {
+            return Err(AgentContextError::Corrupt {
+                field: "remote_authorization",
+            });
+        }
+        Ok(Self(Arc::new(value)))
+    }
+
+    /// Explicitly expose UTF-8 only at the SafeDialer request boundary.
+    pub fn expose(&self) -> Result<&str, AgentContextError> {
+        core::str::from_utf8(self.0.expose()).map_err(|_| AgentContextError::Corrupt {
+            field: "remote_authorization",
+        })
+    }
+}
+
+impl core::fmt::Debug for RemoteAguiAuthorization {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("[redacted]")
+    }
+}
+
+impl PartialEq for RemoteAguiAuthorization {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ct_eq(&other.0)
+    }
+}
+
+impl Eq for RemoteAguiAuthorization {}
 
 /// Authoritative provider routing class loaded with the Bot row；不是 model 自报字段。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,6 +187,9 @@ pub enum ProviderRoute {
 /// SafeDialer/SSE transport failure without remote body text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RemoteAguiTransportError {
+    /// URL, scheme, or destination policy rejected the request before any socket was opened.
+    #[error("remote_agui_destination_rejected")]
+    DestinationRejected,
     /// DNS/connect/TLS failed before the request became commit-unknown.
     #[error("remote_agui_unavailable")]
     Unavailable,
@@ -161,10 +223,17 @@ pub trait RemoteAguiEventStream: Send {
 /// Raw HTTP/SSE port. Semantic decoding remains in `openbot-agent`.
 #[async_trait]
 pub trait RemoteAguiTransport: Send + Sync {
+    /// Resolve and apply current scheme/egress policy without sending a request. Runtime still
+    /// repeats the same decision immediately before every connection and redirect.
+    async fn validate_endpoint(&self, _endpoint: &str) -> Result<(), RemoteAguiTransportError> {
+        Err(RemoteAguiTransportError::Unavailable)
+    }
+
     /// POST one encoded RunAgentInput to a trusted endpoint.
     async fn start(
         &self,
         endpoint: &str,
+        authorization: Option<&RemoteAguiAuthorization>,
         body: Vec<u8>,
     ) -> Result<Box<dyn RemoteAguiEventStream>, RemoteAguiTransportError>;
 }
