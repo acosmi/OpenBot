@@ -17,8 +17,9 @@ use crate::transport::{InProcessTransport, OpenSessionError};
 use crate::window::{ThreadSubscriptions, WindowLabel};
 
 pub use openbot_contracts::desktop::{
-    DesktopStructuredDeliveryClass, DesktopStructuredEventFrame, DesktopStructuredGapCause,
-    DesktopStructuredSequenceGap, DesktopStructuredStreamKind, DesktopStructuredTerminalReason,
+    DESKTOP_STRUCTURED_SUBSCRIPTION_ID_EXCLUSIVE_LIMIT, DesktopStructuredDeliveryClass,
+    DesktopStructuredEventFrame, DesktopStructuredGapCause, DesktopStructuredSequenceGap,
+    DesktopStructuredStreamKind, DesktopStructuredTerminalReason,
 };
 
 type ActiveSubscriptions = BTreeMap<WindowLabel, BTreeMap<u64, WindowLabel>>;
@@ -90,7 +91,9 @@ impl DesktopStructuredEventBridge {
         let subscription_id = self
             .next_subscription_id
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-                current.checked_add(1)
+                current
+                    .checked_add(1)
+                    .filter(|next| *next <= DESKTOP_STRUCTURED_SUBSCRIPTION_ID_EXCLUSIVE_LIMIT)
             })
             .map_err(|_| DesktopStructuredOpenError::CounterExhausted)?;
         let stream = DesktopStructuredStreamKind::from_request(&request);
@@ -259,7 +262,7 @@ fn remove_registration(
 /// Pump one typed subscription into an actual Tauri IPC Channel.
 pub async fn pump_tauri_structured_events(
     mut subscription: DesktopStructuredSubscription,
-    channel: Channel<DesktopStructuredEventFrame>,
+    channel: Channel<String>,
 ) -> DesktopStructuredPumpExit {
     loop {
         let frame = match subscription.next_frame().await {
@@ -276,6 +279,9 @@ pub async fn pump_tauri_structured_events(
             }
         };
         let terminal = frame.terminal_reason();
+        let Ok(frame) = serde_json::to_string(&frame) else {
+            return DesktopStructuredPumpExit::IntegrityViolation;
+        };
         if channel.send(frame).is_err() {
             return DesktopStructuredPumpExit::SinkClosed;
         }
@@ -498,14 +504,16 @@ mod tests {
         }
     }
 
-    fn collecting_channel(
-        frames: Arc<Mutex<Vec<DesktopStructuredEventFrame>>>,
-    ) -> Channel<DesktopStructuredEventFrame> {
+    fn collecting_channel(frames: Arc<Mutex<Vec<DesktopStructuredEventFrame>>>) -> Channel<String> {
         Channel::new(move |body| {
             let InvokeResponseBody::Json(json) = body else {
                 panic!("structured frame must use the JSON IPC lane");
             };
-            frames.lock().unwrap().push(serde_json::from_str(&json)?);
+            let frame_json = serde_json::from_str::<String>(&json)?;
+            frames
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(&frame_json)?);
             Ok(())
         })
     }
@@ -514,9 +522,10 @@ mod tests {
     async fn subscription_identity_exhaustion_fails_before_opening_a_route() {
         let transport = Arc::new(InProcessTransport::new(Arc::new(PendingService)));
         let bridge = DesktopStructuredEventBridge::new(Arc::clone(&transport));
-        bridge
-            .next_subscription_id
-            .store(u64::MAX, Ordering::SeqCst);
+        bridge.next_subscription_id.store(
+            DESKTOP_STRUCTURED_SUBSCRIPTION_ID_EXCLUSIVE_LIMIT,
+            Ordering::SeqCst,
+        );
 
         assert!(matches!(
             bridge

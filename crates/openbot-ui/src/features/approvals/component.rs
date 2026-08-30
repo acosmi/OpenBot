@@ -4,6 +4,8 @@ use std::collections::BTreeSet;
 
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
+use openbot_contracts::command::{AppEvent, SubscriptionRequest};
+#[cfg(target_arch = "wasm32")]
 use openbot_contracts::tool::MAX_PENDING_TOOL_APPROVALS;
 use openbot_contracts::tool::{ToolApprovalClass, ToolApprovalDecision, ToolApprovalEffect};
 use time::format_description::well_known::Rfc3339;
@@ -12,6 +14,10 @@ use super::ApprovalCardView;
 use crate::api::ApiError;
 #[cfg(target_arch = "wasm32")]
 use crate::api::decide_tool_approval;
+#[cfg(target_arch = "wasm32")]
+use crate::api::desktop_transport::{
+    DesktopStructuredHandlers, is_tauri_host, open_desktop_structured,
+};
 #[cfg(target_arch = "wasm32")]
 use crate::api::list_pending_tool_approvals;
 use crate::features::layout::{PageHeader, PageShell, PageTopbar, PageWidth};
@@ -451,6 +457,44 @@ fn install_approval_socket(refresh: ApprovalRefresh) {
         loop {
             // The socket has no replay cursor. Refetch before every connection/reconnection.
             refresh.request();
+            if is_tauri_host() {
+                let handlers = DesktopStructuredHandlers::new(
+                    move |event| match event {
+                        AppEvent::ToolApprovalActivity(event)
+                            if event.pending_count <= MAX_PENDING_TOOL_APPROVALS =>
+                        {
+                            refresh.request();
+                            true
+                        }
+                        AppEvent::ToolApprovalActivity(_)
+                        | AppEvent::ToolApprovalStreamError { .. } => {
+                            refresh.request();
+                            false
+                        }
+                        AppEvent::Heartbeat { .. }
+                        | AppEvent::ThreadRunEvent(_)
+                        | AppEvent::ThreadStreamError { .. }
+                        | AppEvent::ChannelActivity(_)
+                        | AppEvent::ChannelStreamError { .. } => false,
+                    },
+                    move |_| refresh.request(),
+                    move || refresh.request(),
+                );
+                match open_desktop_structured(SubscriptionRequest::ToolApprovalActivity, handlers) {
+                    Ok(connection) => {
+                        retry = FIRST_RETRY_MS;
+                        connection.finished().await;
+                    }
+                    Err(()) => {
+                        delay_ms(retry).await;
+                        retry = next_retry(retry);
+                        continue;
+                    }
+                }
+                delay_ms(retry).await;
+                retry = next_retry(retry);
+                continue;
+            }
             let Some(url) = approval_socket_url() else {
                 delay_ms(retry).await;
                 retry = next_retry(retry);

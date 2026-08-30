@@ -11,9 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use leptos::prelude::*;
 use openbot_contracts::agent::AgentProfile;
 #[cfg(target_arch = "wasm32")]
-use openbot_contracts::command::AppEvent;
-#[cfg(target_arch = "wasm32")]
-use openbot_contracts::command::ThreadRunCancellationState;
+use openbot_contracts::command::{AppEvent, SubscriptionRequest, ThreadRunCancellationState};
 use openbot_contracts::command::{
     ChannelDetail, ThreadConversationSnapshot, ThreadForegroundRunState, ThreadHistoryMessage,
     ThreadHistoryRole, ThreadRunAnchor, ThreadRunEvent, ThreadRunEventKind,
@@ -27,6 +25,10 @@ use openbot_contracts::sandboxed::is_sandboxed_component_name;
 use openbot_contracts::text::trim_ecmascript;
 use sha2::{Digest, Sha256};
 
+#[cfg(target_arch = "wasm32")]
+use crate::api::desktop_transport::{
+    DesktopStructuredConnection, DesktopStructuredHandlers, is_tauri_host, open_desktop_structured,
+};
 use crate::api::mint_run_id;
 #[cfg(target_arch = "wasm32")]
 use crate::api::{
@@ -1331,10 +1333,14 @@ fn install_conversation_sync(
     #[cfg(target_arch = "wasm32")]
     {
         let connection = StoredValue::new_local(None::<EventConnection>);
+        let desktop_connection = StoredValue::new_local(None::<DesktopStructuredConnection>);
         Effect::new(move |_| {
             let current_generation = generation.get();
             let current_thread = thread_id.get();
             connection.update_value(|current| {
+                _ = current.take();
+            });
+            desktop_connection.update_value(|current| {
                 _ = current.take();
             });
             snapshot_error.set(false);
@@ -1368,6 +1374,51 @@ fn install_conversation_sync(
                 let cursor = snapshot.last_event_sequence;
                 state.update(|state| state.install_snapshot(snapshot));
                 loading.set(false);
+                if is_tauri_host() {
+                    let expected_thread = thread.clone();
+                    let handlers = DesktopStructuredHandlers::new(
+                        move |event| match apply_thread_stream_event(event, &expected_thread, state)
+                        {
+                            ThreadStreamOutcome::Keep => true,
+                            ThreadStreamOutcome::Reload => false,
+                            ThreadStreamOutcome::Error => {
+                                stream_error.set(true);
+                                false
+                            }
+                        },
+                        move |_| stream_error.set(true),
+                        move || stream_error.set(true),
+                    );
+                    match open_desktop_structured(
+                        SubscriptionRequest::ThreadEvents {
+                            thread_id: thread.clone(),
+                            after_event_sequence: cursor,
+                        },
+                        handlers,
+                    ) {
+                        Ok(opened) => {
+                            stream_error.set(false);
+                            let finished = opened.finished_promise();
+                            if generation.get_untracked() != current_generation
+                                || thread_id.get_untracked().as_ref() != Some(&thread)
+                            {
+                                return;
+                            }
+                            desktop_connection.set_value(Some(opened));
+                            _ = wasm_bindgen_futures::JsFuture::from(finished).await;
+                        }
+                        Err(()) => stream_error.set(true),
+                    }
+                    if generation.get_untracked() == current_generation
+                        && thread_id.get_untracked().as_ref() == Some(&thread)
+                    {
+                        thread_reconnect_delay().await;
+                        if generation.get_untracked() == current_generation {
+                            generation.update(|value| *value = value.saturating_add(1));
+                        }
+                    }
+                    return;
+                }
                 match open_event_source(&thread, cursor, state, stream_error, generation) {
                     Ok(opened) => {
                         if generation.get_untracked() == current_generation {
@@ -1382,6 +1433,9 @@ fn install_conversation_sync(
             connection.update_value(|current| {
                 _ = current.take();
             });
+            desktop_connection.update_value(|current| {
+                _ = current.take();
+            });
         });
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -1394,6 +1448,48 @@ fn install_conversation_sync(
         generation,
         allow_missing_snapshot,
     );
+}
+
+#[cfg(target_arch = "wasm32")]
+enum ThreadStreamOutcome {
+    Keep,
+    Reload,
+    Error,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn apply_thread_stream_event(
+    event: AppEvent,
+    expected_thread: &ThreadId,
+    state: RwSignal<ConversationState>,
+) -> ThreadStreamOutcome {
+    match event {
+        AppEvent::ThreadRunEvent(event) => {
+            let effect = state.try_update(|state| apply_live_event(state, expected_thread, &event));
+            match effect {
+                Some(Ok(LiveEffect::ReloadSnapshot)) | Some(Err(())) => ThreadStreamOutcome::Reload,
+                Some(Ok(LiveEffect::None)) => ThreadStreamOutcome::Keep,
+                None => ThreadStreamOutcome::Error,
+            }
+        }
+        AppEvent::ThreadStreamError { .. }
+        | AppEvent::Heartbeat { .. }
+        | AppEvent::ChannelActivity(_)
+        | AppEvent::ChannelStreamError { .. }
+        | AppEvent::ToolApprovalActivity(_)
+        | AppEvent::ToolApprovalStreamError { .. } => ThreadStreamOutcome::Error,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn thread_reconnect_delay() {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        web_sys::window()
+            .expect("CSR Desktop thread reconnect requires Window")
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 500)
+            .expect("browser rejected Desktop thread reconnect timer");
+    });
+    _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1419,26 +1515,12 @@ fn open_event_source(
             event_source.close();
             return;
         };
-        match event {
-            AppEvent::ThreadRunEvent(event) => {
-                let effect =
-                    state.try_update(|state| apply_live_event(state, &expected_thread, &event));
-                match effect {
-                    Some(Ok(LiveEffect::ReloadSnapshot)) | Some(Err(())) | None => {
-                        generation.update(|value| *value = value.saturating_add(1));
-                    }
-                    Some(Ok(LiveEffect::None)) => {}
-                }
+        match apply_thread_stream_event(event, &expected_thread, state) {
+            ThreadStreamOutcome::Keep => {}
+            ThreadStreamOutcome::Reload => {
+                generation.update(|value| *value = value.saturating_add(1));
             }
-            AppEvent::ThreadStreamError { .. } => {
-                stream_error.set(true);
-                event_source.close();
-            }
-            AppEvent::Heartbeat { .. }
-            | AppEvent::ChannelActivity(_)
-            | AppEvent::ChannelStreamError { .. }
-            | AppEvent::ToolApprovalActivity(_)
-            | AppEvent::ToolApprovalStreamError { .. } => {
+            ThreadStreamOutcome::Error => {
                 stream_error.set(true);
                 event_source.close();
             }

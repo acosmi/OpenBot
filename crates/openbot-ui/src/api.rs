@@ -3,6 +3,9 @@
 //! This module only performs HTTP framing. Approval binding, actor resolution and the durable
 //! decision remain behind `ApplicationService` on the Server.
 
+#[path = "desktop_transport.rs"]
+pub(crate) mod desktop_transport;
+
 use openbot_contracts::agent::{
     AgentConnectionTestRequest, AgentConnectionVerdict, AgentMutationRequest, AgentProfile,
     CallbackTokenIssued,

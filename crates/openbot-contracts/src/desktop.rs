@@ -15,6 +15,11 @@ pub const DESKTOP_STRUCTURED_OPEN_COMMAND: &str = "openbot_structured_events_ope
 /// Tauri invoke 中关闭本 window 某条 structured stream 的固定命令名。
 pub const DESKTOP_STRUCTURED_CLOSE_COMMAND: &str = "openbot_structured_events_close";
 
+/// JavaScript 可逐整数精确表示的 subscription counter 排他上界（`2^53 - 1`）。
+///
+/// host 只铸造小于本值的 ID；到界后 fail-closed，不能让 JSON Number round-trip 改写身份。
+pub const DESKTOP_STRUCTURED_SUBSCRIPTION_ID_EXCLUSIVE_LIMIT: u64 = 9_007_199_254_740_991;
+
 /// 每帧携带的封闭 stream 家族。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -173,6 +178,31 @@ impl DesktopStructuredEventFrame {
         }
     }
 
+    /// 本 subscription 的 delivery sequence。
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        match self {
+            Self::Event { sequence, .. } | Self::Terminal { sequence, .. } => *sequence,
+        }
+    }
+
+    /// 紧邻本帧之前的已知缺失区间。
+    #[must_use]
+    pub const fn skipped(&self) -> Option<DesktopStructuredSequenceGap> {
+        match self {
+            Self::Event { skipped, .. } | Self::Terminal { skipped, .. } => *skipped,
+        }
+    }
+
+    /// typed application event；terminal frame 返回 `None`。
+    #[must_use]
+    pub const fn event(&self) -> Option<&AppEvent> {
+        match self {
+            Self::Event { event, .. } => Some(event),
+            Self::Terminal { .. } => None,
+        }
+    }
+
     /// terminal 原因；event frame 返回 `None`。
     #[must_use]
     pub const fn terminal_reason(&self) -> Option<DesktopStructuredTerminalReason> {
@@ -212,6 +242,10 @@ mod tests {
         assert_eq!(
             DESKTOP_STRUCTURED_CLOSE_COMMAND,
             "openbot_structured_events_close"
+        );
+        assert_eq!(
+            DESKTOP_STRUCTURED_SUBSCRIPTION_ID_EXCLUSIVE_LIMIT,
+            (1_u64 << 53) - 1
         );
         let opened = DesktopStructuredSubscriptionOpened {
             subscription_id: 41,
@@ -269,5 +303,22 @@ mod tests {
                 "authority field leaked: {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn frame_json_text_preserves_u64_beyond_javascript_number_precision() {
+        let frame = DesktopStructuredEventFrame::Event {
+            subscription_id: 7,
+            stream: DesktopStructuredStreamKind::Health,
+            sequence: u64::MAX,
+            skipped: None,
+            event: AppEvent::Heartbeat { seq: u64::MAX },
+        };
+        let json = serde_json::to_string(&frame).unwrap();
+        assert!(json.matches("18446744073709551615").count() >= 2);
+        assert_eq!(
+            serde_json::from_str::<DesktopStructuredEventFrame>(&json).unwrap(),
+            frame
+        );
     }
 }

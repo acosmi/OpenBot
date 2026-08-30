@@ -39,9 +39,9 @@ use tauri::ipc::Channel;
 use tauri::{Builder, State, Webview};
 
 use crate::{
-    DesktopStructuredEventBridge, DesktopStructuredEventFrame, DesktopStructuredOpenError,
-    DesktopStructuredPumpExit, DesktopStructuredSubscription, InProcessTransport, OpenSessionError,
-    WindowLabel, pump_tauri_structured_events,
+    DesktopStructuredEventBridge, DesktopStructuredOpenError, DesktopStructuredPumpExit,
+    DesktopStructuredSubscription, InProcessTransport, OpenSessionError, WindowLabel,
+    pump_tauri_structured_events,
 };
 
 const INDEX_MAX_BYTES: u64 = 1024 * 1024;
@@ -436,7 +436,7 @@ impl DesktopTauriProtocol {
         &self,
         label: &str,
         request: SubscriptionRequest,
-        channel: Channel<DesktopStructuredEventFrame>,
+        channel: Channel<String>,
     ) -> Result<DesktopStructuredPumpExit, TauriHostError> {
         let subscription = self.open_structured_subscription(label, request).await?;
         Ok(pump_tauri_structured_events(subscription, channel).await)
@@ -1654,7 +1654,7 @@ async fn openbot_structured_events_open(
     webview: Webview,
     protocol: State<'_, Arc<DesktopTauriProtocol>>,
     request: SubscriptionRequest,
-    channel: Channel<DesktopStructuredEventFrame>,
+    channel: Channel<String>,
 ) -> Result<DesktopStructuredSubscriptionOpened, String> {
     let label = webview.label().to_owned();
     let protocol = Arc::clone(protocol.inner());
@@ -2043,6 +2043,7 @@ const fn hex(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DesktopStructuredEventFrame;
     use async_trait::async_trait;
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
@@ -3407,7 +3408,10 @@ mod tests {
             let InvokeResponseBody::Json(json) = body else {
                 panic!("structured frame must use Tauri's JSON IPC lane");
             };
-            sink.lock().unwrap().push(serde_json::from_str(&json)?);
+            let frame_json = serde_json::from_str::<String>(&json)?;
+            sink.lock()
+                .unwrap()
+                .push(serde_json::from_str(&frame_json)?);
             Ok(())
         });
         let running = Arc::clone(&protocol);
