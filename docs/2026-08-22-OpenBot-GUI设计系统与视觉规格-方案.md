@@ -625,7 +625,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（截至 2026-08-30，Batch 15–74；条目内历史计数按注明批次）
+### 15.1 当前实施勾选（截至 2026-08-30，Batch 15–75；条目内历史计数按注明批次）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -633,12 +633,13 @@ G6 重写后的文本（替换 v3 原四条）：
   UI startup read/serialized partial write/reload persistence；
 - [x] Tauri 2.11.5 production custom-protocol adapter：window-label authority、typed in-process、
   本地首帧/CSP/canonical asset；依赖只进入 macOS/Windows Desktop target；
-- [x] Batch72–74 Desktop structured realtime代码闭环：host-owned closed wire与真实Tauri Channel、
+- [x] Batch72–75 Desktop structured realtime代码闭环：host-owned closed wire与真实Tauri Channel、
   actual open/close command、同一release WASM按`window.isTauri`选择typed bridge；callback index有界重排、
-  terminal+end、u64 JSON string保真与Drop/integrity failure exact close均已定向实跑。普通Web仍走原
-  WebSocket/EventSource且有release浏览器回归；本批无视觉/CSS/locale变化，不冒充native-window证据；
-- [ ] actual Tauri binary/window/session bind-unbind、单Webview聚合256预算、Windows WebView2 runtime、
-  Desktop formal golden/AX仍未闭合；
+  terminal+end、u64 JSON string保真与Drop/integrity failure exact close均已定向实跑；同一actual Webview
+  的全部internal stream再共享256 queued event-ref permit，live+pending subscription第257条在
+  ApplicationService前拒绝，window close取消pending且不影响另一window。普通Web仍走原
+  WebSocket/EventSource且有Batch74 release浏览器回归；Batch75无视觉/CSS/locale变化，不冒充native-window证据；
+- [ ] actual Tauri binary/window/session bind-unbind、Windows WebView2 runtime、Desktop formal golden/AX仍未闭合；
 - [x] 截至 Batch23，27条 primitive 子账全 done：Batch18前20条 + Dialog/Sheet +
   Menu + MessageScroller + Combobox/Select + Sidebar，当时 UI=`27/125/152`；
   Batch24又以三向 join 关闭46条 Lucide 映射，当时 UI=`73/79/152`；
