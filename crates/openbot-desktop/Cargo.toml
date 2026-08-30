@@ -19,6 +19,9 @@ testkit = ["openbot-contracts/testkit"]
 # Real Tauri custom-protocol adapter. Kept opt-in until a reviewed external product identity and
 # tauri.conf capability set are available; the adapter itself is production code, not a fake host.
 tauri-host = ["dep:http", "dep:serde", "dep:serde_json", "dep:sys-locale", "dep:tauri"]
+# Release-side PostgreSQL provenance, full bundle-tree verification and single-instance start lock.
+# This does not spawn PostgreSQL or provide an OS key-store adapter yet.
+postgres-sidecar = ["dep:getrandom", "dep:serde", "dep:serde_json", "dep:sha2"]
 
 [dependencies]
 # 唯一业务入口。transport 只穿过它，不实现任何业务规则（v3 §5.2）。
@@ -45,14 +48,20 @@ tracing.workspace = true
 # introduced: the file format is a closed three-line host format and in-process commands stay typed.
 async-trait.workspace = true
 
-# GUI first source §10.1 has Desktop goldens only for macOS arm64 and Windows x64. Linux is the
-# Server/Web capture platform, not a Desktop release, so GTK/WebKitGTK must not enter the Linux
-# Server graph merely because the workspace has an opt-in Tauri feature. All five dependencies are
-# used exclusively by tauri_host.rs, so the complete host framing edge is target-scoped together.
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-http = { workspace = true, optional = true }
+# Both optional host features need closed manifest/wire decoding. Keeping them optional preserves
+# the default codec-free typed in-process graph; PostgreSQL bundle verification itself is portable
+# and therefore cannot live in the macOS/Windows Tauri target block below.
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
+
+# GUI first source §10.1 has Desktop goldens only for macOS arm64 and Windows x64. Linux is the
+# Server/Web capture platform, not a Desktop release, so GTK/WebKitGTK must not enter the Linux
+# Server graph merely because the workspace has an opt-in Tauri feature. These OS WebView
+# dependencies are used exclusively by tauri_host.rs, so that framing edge stays target-scoped.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+http = { workspace = true, optional = true }
 sys-locale = { workspace = true, optional = true }
 tauri = { workspace = true, optional = true }
 
@@ -64,9 +73,9 @@ tauri = { workspace = true, features = ["test"] }
 # ---------------------------------------------------------------------------
 # 刻意**没有**的依赖，每一条都是一次裁决：
 #
-# - 默认 typed in-process 路径不开 Tauri / `serde` / `serde_json`；它们只属于 macOS/Windows
-#   opt-in `tauri-host` 的 WebView HTTP framing。`transport` 测试扫生产模块源码与 optional
-#   feature 声明，防止 codec 渗进 typed lane。
+# - 默认 typed in-process 路径不开 Tauri / `serde` / `serde_json`；codec 只属于显式
+#   `tauri-host` WebView HTTP framing 或 `postgres-sidecar` release manifest。`transport` 测试扫
+#   生产模块源码与 optional feature 声明，防止 codec 渗进 typed lane。
 # - `tokio-util`：只为一个 `CancellationToken` 引一棵新依赖树。它此刻虽在 `Cargo.lock`
 #   里，但那是 `tokio-postgres` 的实现细节，不是本 crate 可以依赖的事实。等价语义由
 #   `cancel::CancellationToken`（`tokio::sync::watch`）承担。

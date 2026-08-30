@@ -17,6 +17,7 @@
 //! - `tools`        —— 获取并校验 GUI 构建期钉版二进制。
 //! - `grok-inventory`—— 机械生成或核对 tier-1 文件级参考树 inventory。
 //! - `engine`       —— 获取并校验当前平台的钉版 Electron 官方 zip。
+//! - `postgres`     —— 获取并校验 PGDG 17.11 官方 source archive；不作首次运行下载。
 //! - `electron-shim-check` —— 在 P1 写 shim 前先锁定文件、LOC 与 API allowlist。
 //! - `ci`           —— 按 v3 §16.3 的固定顺序跑本机可执行的那一段闸门。
 //!
@@ -78,6 +79,9 @@ mod grok_inventory;
 
 #[path = "../xtask/parity_overlay.rs"]
 mod parity_overlay;
+
+#[path = "../xtask/postgres_source.rs"]
+mod postgres_source;
 
 // ---------------------------------------------------------------------------
 // 契约常量
@@ -238,6 +242,9 @@ fn main() -> ExitCode {
             workspace_root().and_then(|root| grok_inventory::run(&root, &args[1..]))
         }
         Some("engine") => workspace_root().and_then(|root| engine::run(&root, &args[1..])),
+        Some("postgres") => {
+            workspace_root().and_then(|root| postgres_source::run(&root, &args[1..]))
+        }
         Some("electron-shim-check") => {
             workspace_root().and_then(|root| electron_shim::run(&root, &args[1..]))
         }
@@ -295,6 +302,8 @@ xtask —— OpenBot 仓库闸门驱动器
   cargo xtask engine protocol [--check]
                                       从 contracts descriptor 生成/核对 shim protocol 与 hash
   cargo xtask engine bundle          Rust-only 组装 ASAR、fuses、rebrand、integrity 与 manifest
+  cargo xtask postgres fetch-source|verify-source
+                                      获取/校验PGDG 17.11官方source；只作release build输入
   cargo xtask electron-shim-check    校验 shim 文件/LOC/API allowlist；P1 代码未落时校验规则与空目录
   cargo xtask ci                      按 v3 §16.3 顺序跑本机可执行的闸门段
   cargo xtask help                    打印本帮助
