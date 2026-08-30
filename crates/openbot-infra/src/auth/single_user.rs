@@ -3,6 +3,12 @@
 //! 固定 actor id 不能随重写改名：上游用它把 thread/memory 归到同一个人，换 id 会把旧数据
 //! 变成孤儿。初始化只在显式启用时访问数据库；启用后以一个事务恢复 canonical user 字段并
 //! 通过领域 [`plan_set_role`] 把角色集合收敛为唯一 admin。
+//!
+//! 这段固定兼容键只属于Server `OPENBOT_SINGLE_USER`。Desktop Local按v4 §6.1绑定当前OS用户的
+//! app-data namespace与本地app instance，走嵌套的[`desktop_local`]，不得复用Server部署身份。
+
+#[path = "desktop_local.rs"]
+pub mod desktop_local;
 
 use deadpool_postgres::Pool;
 use openbot_contracts::auth::Role;
