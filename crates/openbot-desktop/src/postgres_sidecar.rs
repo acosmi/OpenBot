@@ -13,6 +13,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use openbot_contracts::engine::ENGINE_RELEASE_EPOCH;
+#[cfg(feature = "postgres-key-store")]
+use openbot_domain::vault::SecretBytes;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
@@ -226,6 +228,7 @@ impl VerifiedPostgresBundle {
 pub struct PostgresStartLock {
     path: PathBuf,
     bytes: Vec<u8>,
+    instance_id: Arc<str>,
     _file: File,
 }
 
@@ -296,8 +299,38 @@ impl PostgresStartLock {
         Ok(Self {
             path,
             bytes,
+            instance_id: Arc::from(instance_id),
             _file: file,
         })
+    }
+}
+
+#[cfg(feature = "postgres-key-store")]
+impl PostgresStartLock {
+    /// Load or create the only PostgreSQL SCRAM secret while this instance lock is live.
+    ///
+    /// A newly generated value is written to the OS store and immediately read back; a missing or
+    /// different read-back fails reconciliation rather than using an in-memory value that future
+    /// restarts cannot recover.
+    pub fn load_or_create_scram_secret<S: PostgresSecretStore + ?Sized>(
+        &self,
+        store: &S,
+        service: &ReviewedPostgresKeyStoreService,
+    ) -> Result<PostgresScramSecret, PostgresSecretStoreError> {
+        let account = format!("postgresql-17-{}", self.instance_id);
+        if let Some(stored) = store.read(service.as_str(), &account)? {
+            return PostgresScramSecret::from_stored(stored);
+        }
+        let generated = PostgresScramSecret::generate()?;
+        store.write(service.as_str(), &account, generated.expose())?;
+        let persisted = store
+            .read(service.as_str(), &account)?
+            .ok_or(PostgresSecretStoreError::ReconciliationRequired)
+            .and_then(PostgresScramSecret::from_stored)?;
+        if !generated.0.ct_eq(&persisted.0) {
+            return Err(PostgresSecretStoreError::ReconciliationRequired);
+        }
+        Ok(persisted)
     }
 }
 
@@ -309,6 +342,244 @@ impl Drop for PostgresStartLock {
                 let _ = sync_directory(parent);
             }
         }
+    }
+}
+
+/// Stable OS key-store failures; no service/account/secret or platform prose is retained.
+#[cfg(feature = "postgres-key-store")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum PostgresSecretStoreError {
+    /// Reviewed external key-store service identity was malformed or prohibited.
+    #[error("postgres_key_store_identity_invalid")]
+    IdentityInvalid,
+    /// OS key store or CSPRNG was unavailable.
+    #[error("postgres_key_store_unavailable")]
+    Unavailable,
+    /// Existing bytes were not the exact closed PostgreSQL SCRAM secret shape.
+    #[error("postgres_key_store_secret_corrupt")]
+    Corrupt,
+    /// Write succeeded ambiguously or immediate read-back did not equal the generated value.
+    #[error("postgres_key_store_reconciliation_required")]
+    ReconciliationRequired,
+}
+
+/// Host assertion that this external key-store service identifier passed product review.
+#[cfg(feature = "postgres-key-store")]
+#[derive(Clone, PartialEq, Eq)]
+pub struct ReviewedPostgresKeyStoreService(Arc<str>);
+
+#[cfg(feature = "postgres-key-store")]
+impl ReviewedPostgresKeyStoreService {
+    /// Wrap a reviewed ASCII service identifier with no prohibited source mark.
+    pub fn from_reviewed_release(
+        value: impl Into<String>,
+    ) -> Result<Self, PostgresSecretStoreError> {
+        let value = value.into();
+        let lower = value.to_ascii_lowercase();
+        if value.len() < 3
+            || value.len() > 128
+            || value != lower
+            || !value.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':')
+            })
+            || ["openbot", "copilotkit", "codex", "openai", "grok", "xai"]
+                .iter()
+                .any(|mark| lower.contains(mark))
+        {
+            return Err(PostgresSecretStoreError::IdentityInvalid);
+        }
+        Ok(Self(Arc::from(value)))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[cfg(feature = "postgres-key-store")]
+impl core::fmt::Debug for ReviewedPostgresKeyStoreService {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("ReviewedPostgresKeyStoreService(<reviewed>)")
+    }
+}
+
+/// Exact 256-bit random PostgreSQL password encoded as 64 lowercase hexadecimal bytes.
+#[cfg(feature = "postgres-key-store")]
+pub struct PostgresScramSecret(SecretBytes);
+
+#[cfg(feature = "postgres-key-store")]
+impl PostgresScramSecret {
+    fn generate() -> Result<Self, PostgresSecretStoreError> {
+        let mut raw = vec![0_u8; 32];
+        getrandom::fill(&mut raw).map_err(|_| PostgresSecretStoreError::Unavailable)?;
+        let raw = SecretBytes::new(raw);
+        let encoded = encode_hex(raw.expose()).into_bytes();
+        drop(raw);
+        Self::from_stored(PostgresStoredSecret::from_owned_bytes(encoded))
+    }
+
+    fn from_stored(stored: PostgresStoredSecret) -> Result<Self, PostgresSecretStoreError> {
+        if stored.0.len() != 64
+            || !stored
+                .0
+                .expose()
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+        {
+            return Err(PostgresSecretStoreError::Corrupt);
+        }
+        Ok(Self(stored.0))
+    }
+
+    /// Explicitly expose the password only to `initdb`/PostgreSQL process framing.
+    #[must_use]
+    pub fn expose(&self) -> &[u8] {
+        self.0.expose()
+    }
+}
+
+/// Owned key-store read result that zeroizes unless consumed by the closed SCRAM validator.
+#[cfg(feature = "postgres-key-store")]
+pub struct PostgresStoredSecret(SecretBytes);
+
+#[cfg(feature = "postgres-key-store")]
+impl PostgresStoredSecret {
+    /// Transfer a platform adapter's unique plaintext allocation into zeroizing ownership.
+    #[must_use]
+    pub fn from_owned_bytes(bytes: Vec<u8>) -> Self {
+        Self(SecretBytes::new(bytes))
+    }
+}
+
+#[cfg(feature = "postgres-key-store")]
+impl core::fmt::Debug for PostgresStoredSecret {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("PostgresStoredSecret([REDACTED])")
+    }
+}
+
+#[cfg(feature = "postgres-key-store")]
+impl core::fmt::Debug for PostgresScramSecret {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("PostgresScramSecret([REDACTED])")
+    }
+}
+
+/// Minimal OS secret-store port. Implementations must return owned bytes directly into
+/// [`SecretBytes`] ownership and never log service/account/secret values. Platform key-store APIs
+/// are blocking; the future supervisor must call this port off the Tauri UI thread.
+#[cfg(feature = "postgres-key-store")]
+pub trait PostgresSecretStore: Send + Sync {
+    /// Read one exact service/account entry; unknown is `None`.
+    fn read(
+        &self,
+        service: &str,
+        account: &str,
+    ) -> Result<Option<PostgresStoredSecret>, PostgresSecretStoreError>;
+
+    /// Create or replace one exact service/account entry.
+    fn write(
+        &self,
+        service: &str,
+        account: &str,
+        secret: &[u8],
+    ) -> Result<(), PostgresSecretStoreError>;
+}
+
+/// Current-user macOS Keychain generic-password adapter.
+#[cfg(all(feature = "postgres-key-store", target_os = "macos"))]
+pub struct MacOsKeychainPostgresSecretStore {
+    keychain: security_framework::os::macos::keychain::SecKeychain,
+}
+
+#[cfg(all(feature = "postgres-key-store", target_os = "macos"))]
+impl MacOsKeychainPostgresSecretStore {
+    /// Open the current OS user's default Keychain.
+    pub fn current_user_default() -> Result<Self, PostgresSecretStoreError> {
+        security_framework::os::macos::keychain::SecKeychain::default()
+            .map(|keychain| Self { keychain })
+            .map_err(|error| {
+                tracing::warn!(platform_code = error.code(), "macOS Keychain unavailable");
+                PostgresSecretStoreError::Unavailable
+            })
+    }
+
+    #[cfg(test)]
+    fn from_keychain(keychain: security_framework::os::macos::keychain::SecKeychain) -> Self {
+        Self { keychain }
+    }
+}
+
+#[cfg(all(feature = "postgres-key-store", target_os = "macos"))]
+impl PostgresSecretStore for MacOsKeychainPostgresSecretStore {
+    fn read(
+        &self,
+        service: &str,
+        account: &str,
+    ) -> Result<Option<PostgresStoredSecret>, PostgresSecretStoreError> {
+        match self.keychain.find_generic_password(service, account) {
+            Ok((password, _item)) => Ok(Some(PostgresStoredSecret::from_owned_bytes(
+                password.as_ref().to_vec(),
+            ))),
+            Err(error) if error.code() == security_framework_sys::base::errSecItemNotFound => {
+                Ok(None)
+            }
+            Err(error) => {
+                tracing::warn!(platform_code = error.code(), "macOS Keychain read failed");
+                Err(PostgresSecretStoreError::Unavailable)
+            }
+        }
+    }
+
+    fn write(
+        &self,
+        service: &str,
+        account: &str,
+        secret: &[u8],
+    ) -> Result<(), PostgresSecretStoreError> {
+        self.keychain
+            .set_generic_password(service, account, secret)
+            .map_err(|error| {
+                tracing::warn!(platform_code = error.code(), "macOS Keychain write failed");
+                PostgresSecretStoreError::Unavailable
+            })
+    }
+}
+
+/// Current-user Windows Credential Manager generic-credential adapter.
+#[cfg(all(feature = "postgres-key-store", target_os = "windows"))]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WindowsCredentialPostgresSecretStore;
+
+#[cfg(all(feature = "postgres-key-store", target_os = "windows"))]
+impl PostgresSecretStore for WindowsCredentialPostgresSecretStore {
+    fn read(
+        &self,
+        service: &str,
+        account: &str,
+    ) -> Result<Option<PostgresStoredSecret>, PostgresSecretStoreError> {
+        let target = format!("{service}:{account}");
+        openbot_windows_sandbox::read_generic_credential(&target)
+            .map(|secret| {
+                secret.map(|secret| PostgresStoredSecret::from_owned_bytes(secret.into_bytes()))
+            })
+            .map_err(|error| {
+                tracing::warn!(?error, "Windows Credential Manager read failed");
+                PostgresSecretStoreError::Unavailable
+            })
+    }
+
+    fn write(
+        &self,
+        service: &str,
+        account: &str,
+        secret: &[u8],
+    ) -> Result<(), PostgresSecretStoreError> {
+        let target = format!("{service}:{account}");
+        openbot_windows_sandbox::write_generic_credential(&target, secret).map_err(|error| {
+            tracing::warn!(?error, "Windows Credential Manager write failed");
+            PostgresSecretStoreError::Unavailable
+        })
     }
 }
 
@@ -581,6 +852,10 @@ fn sync_directory(_path: &Path) -> Result<(), PostgresSidecarError> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(feature = "postgres-key-store")]
+    use std::sync::Mutex;
+    #[cfg(feature = "postgres-key-store")]
+    use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use serde_json::{Value, json};
@@ -808,5 +1083,177 @@ mod tests {
             ));
             fs::remove_dir_all(wide).unwrap();
         }
+    }
+
+    #[cfg(feature = "postgres-key-store")]
+    struct MemorySecretStore {
+        value: Mutex<Option<Vec<u8>>>,
+        writes: AtomicUsize,
+        replace_on_write: bool,
+    }
+
+    #[cfg(feature = "postgres-key-store")]
+    impl MemorySecretStore {
+        fn empty() -> Self {
+            Self {
+                value: Mutex::new(None),
+                writes: AtomicUsize::new(0),
+                replace_on_write: false,
+            }
+        }
+
+        fn with_value(value: Vec<u8>) -> Self {
+            Self {
+                value: Mutex::new(Some(value)),
+                writes: AtomicUsize::new(0),
+                replace_on_write: false,
+            }
+        }
+
+        fn racing() -> Self {
+            Self {
+                value: Mutex::new(None),
+                writes: AtomicUsize::new(0),
+                replace_on_write: true,
+            }
+        }
+    }
+
+    #[cfg(feature = "postgres-key-store")]
+    impl PostgresSecretStore for MemorySecretStore {
+        fn read(
+            &self,
+            _service: &str,
+            _account: &str,
+        ) -> Result<Option<PostgresStoredSecret>, PostgresSecretStoreError> {
+            Ok(self
+                .value
+                .lock()
+                .unwrap()
+                .clone()
+                .map(PostgresStoredSecret::from_owned_bytes))
+        }
+
+        fn write(
+            &self,
+            _service: &str,
+            _account: &str,
+            secret: &[u8],
+        ) -> Result<(), PostgresSecretStoreError> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            *self.value.lock().unwrap() = Some(if self.replace_on_write {
+                let mut replacement = secret.to_vec();
+                replacement[0] = if replacement[0] == b'0' { b'1' } else { b'0' };
+                replacement
+            } else {
+                secret.to_vec()
+            });
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "postgres-key-store")]
+    fn secret_lock(name: &str) -> (PathBuf, PostgresStartLock) {
+        let root = root(name);
+        fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let lock =
+            PostgresStartLock::acquire(&root, &"b".repeat(64), PostgresBundleDigest([0x55; 32]))
+                .unwrap();
+        (root, lock)
+    }
+
+    #[cfg(feature = "postgres-key-store")]
+    #[test]
+    fn secret_load_create_restart_corrupt_and_reconciliation_are_closed() {
+        let service = ReviewedPostgresKeyStoreService::from_reviewed_release(
+            "com.example.product.postgresql",
+        )
+        .unwrap();
+        let (root, lock) = secret_lock("secret");
+        let store = MemorySecretStore::empty();
+        let first = lock.load_or_create_scram_secret(&store, &service).unwrap();
+        assert_eq!(first.expose().len(), 64);
+        assert!(
+            first
+                .expose()
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+        );
+        let second = lock.load_or_create_scram_secret(&store, &service).unwrap();
+        assert_eq!(first.expose(), second.expose());
+        assert_eq!(store.writes.load(Ordering::Relaxed), 1);
+        assert!(!format!("{first:?}").contains(std::str::from_utf8(first.expose()).unwrap()));
+        drop(lock);
+        fs::remove_dir_all(root).unwrap();
+
+        let (root, lock) = secret_lock("corrupt-secret");
+        let corrupt = MemorySecretStore::with_value(vec![b'Z'; 64]);
+        assert!(matches!(
+            lock.load_or_create_scram_secret(&corrupt, &service),
+            Err(PostgresSecretStoreError::Corrupt)
+        ));
+        assert_eq!(corrupt.writes.load(Ordering::Relaxed), 0);
+        drop(lock);
+        fs::remove_dir_all(root).unwrap();
+
+        let (root, lock) = secret_lock("racing-secret");
+        let racing = MemorySecretStore::racing();
+        assert!(matches!(
+            lock.load_or_create_scram_secret(&racing, &service),
+            Err(PostgresSecretStoreError::ReconciliationRequired)
+        ));
+        drop(lock);
+        fs::remove_dir_all(root).unwrap();
+
+        for rejected in [
+            "",
+            "ab",
+            "Com.Example.Product.PostgreSQL",
+            "com.example.openbot.postgresql",
+            "spaces invalid",
+        ] {
+            assert!(ReviewedPostgresKeyStoreService::from_reviewed_release(rejected).is_err());
+        }
+    }
+
+    #[cfg(all(feature = "postgres-key-store", target_os = "macos"))]
+    #[test]
+    fn macos_private_keychain_persists_one_instance_secret_without_default_keychain_state() {
+        use security_framework::os::macos::keychain::CreateOptions;
+
+        let keychain_root = root("private-keychain");
+        fs::create_dir(&keychain_root).unwrap();
+        let keychain_path = keychain_root.join("postgres-test.keychain-db");
+        let mut options = CreateOptions::new();
+        options
+            .password("test-only-private-keychain-password")
+            .prompt_user(false);
+        let keychain = options.create(&keychain_path).unwrap();
+        let store = MacOsKeychainPostgresSecretStore::from_keychain(keychain);
+        let service = ReviewedPostgresKeyStoreService::from_reviewed_release(
+            "com.example.product.postgresql.test",
+        )
+        .unwrap();
+        let (lock_root, lock) = secret_lock("private-keychain-lock");
+        let first = lock.load_or_create_scram_secret(&store, &service).unwrap();
+        let second = lock.load_or_create_scram_secret(&store, &service).unwrap();
+        assert_eq!(first.expose(), second.expose());
+        let account = format!("postgresql-17-{}", lock.instance_id);
+        let (_password, item) = store
+            .keychain
+            .find_generic_password(service.as_str(), &account)
+            .unwrap();
+        item.delete();
+        drop(first);
+        drop(second);
+        drop(lock);
+        drop(store);
+        fs::remove_dir_all(lock_root).unwrap();
+        fs::remove_dir_all(keychain_root).unwrap();
     }
 }

@@ -22,12 +22,22 @@ tauri-host = ["dep:http", "dep:serde", "dep:serde_json", "dep:sys-locale", "dep:
 # Release-side PostgreSQL provenance, full bundle-tree verification and single-instance start lock.
 # This does not spawn PostgreSQL or provide an OS key-store adapter yet.
 postgres-sidecar = ["dep:getrandom", "dep:serde", "dep:serde_json", "dep:sha2"]
+# OS-backed SCRAM secret. A live Batch80 start lock remains required before load-or-create.
+postgres-key-store = [
+    "postgres-sidecar",
+    "dep:openbot-domain",
+    "dep:openbot-windows-sandbox",
+    "dep:security-framework",
+    "dep:security-framework-sys",
+]
 
 [dependencies]
 # 唯一业务入口。transport 只穿过它，不实现任何业务规则（v3 §5.2）。
 openbot-application.workspace = true
 # AuthContext / AppCommand / AppReply / AppEvent / AppError / ID newtype / Transport label。
 openbot-contracts.workspace = true
+# SecretBytes is enabled only for the explicit PostgreSQL OS-key-store feature.
+openbot-domain = { workspace = true, optional = true }
 
 # `AppEventStream` 是 `Pin<Box<dyn Stream<Item = AppEvent> + Send>>`；把它抽干需要 `Stream`
 # trait 本身。只依赖 `futures-core`（trait 定义），不拉 `futures-util`。
@@ -64,6 +74,13 @@ getrandom = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 sys-locale = { workspace = true, optional = true }
 tauri = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { workspace = true, optional = true }
+security-framework-sys = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+openbot-windows-sandbox = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dev-dependencies]
 # Enables only Tauri's dependency-free MockRuntime module for native lifecycle tests. Production

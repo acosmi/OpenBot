@@ -1,4 +1,4 @@
-//! Narrow Windows Engine process-confinement boundary (v4 R119/R127).
+//! Narrow Windows unsafe OS boundary: Engine confinement plus Credential Manager (v4 R119/R127).
 //!
 //! This is the workspace's only crate allowed to contain Win32 `unsafe` FFI. Its public API owns
 //! every raw handle, never exposes a handle or pointer, creates the child suspended, attaches the
@@ -16,8 +16,9 @@ mod windows;
 #[cfg(windows)]
 pub use windows::{
     NamedPipeConnection, NamedPipeListener, ProcessIdentity, RestrictedChild, SpawnPolicy,
-    current_user_pipe_security_sddl, read_pe_resource, replace_pe_resource,
-    secure_engine_directory, spawn_restricted,
+    WindowsCredentialSecret, current_user_pipe_security_sddl, delete_generic_credential,
+    read_generic_credential, read_pe_resource, replace_pe_resource, secure_engine_directory,
+    spawn_restricted, write_generic_credential,
 };
 
 /// Stable failures from the Windows Engine security boundary.
