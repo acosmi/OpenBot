@@ -45,9 +45,11 @@
 //! | [`cancel`] | [`CancellationToken`] 与 [`SHUTDOWN_DEADLINE`] | §13.2 |
 //! | [`transport`] | [`InProcessTransport`]：把 `Arc<dyn ApplicationService>` 包成 in-process 通道 | §13.2 / §5.2 |
 //! | [`structured_events`] | host-owned subscription、closed wire frame、sequence/gap 校验与真实 Tauri Channel pump | §13.2–§13.4 |
+//! | [`postgres_sidecar`] | PGDG source identity、signed-manifest全文件校验与single-instance start lock | §14.1 / §16.2 |
 //!
 //! **尚未实现**（不要冒充）：可发布 Tauri binary/tauri.conf/capability 清单与真实窗口生命周期
-//! assembly（G6）、sidecar/update（§16.2）、screen loopback binary WebSocket（§13.4/G7）。
+//! assembly（G6）、PostgreSQL key-store/process/ready/shutdown/backup/update（§14.1/§16.2）、
+//! screen loopback binary WebSocket（§13.4/G7）。
 //! Batch 16 已落 opt-in Tauri 2.11.5 custom-protocol adapter、本地偏好原子文件与首帧改写，
 //! Batch69–71又依次接Agent lifecycle/callback与channel/thread unary framing；Batch72补
 //! `DesktopSession`→真实`tauri::ipc::Channel`的host bridge、window unbind与stale-binding
@@ -57,7 +59,9 @@
 //! internal stream收口到共享256 event-ref permit与256 live/in-flight subscription上限。可发布window
 //! assembly与runtime journey仍未落；Batch76只补品牌无关的verified-authority→actual Webview build、
 //! closed navigation/new-window/download与`Destroyed` exact unbind primitive，不虚构`tauri.conf`、session
-//! source或发行identity。SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。
+//! source或发行identity。Batch80再只补PGDG 17.11 source pin、release-owned manifest全树校验与
+//! crash-safe fail-closed start lock；它没有Keychain/Credential Manager或进程supervisor。SSE/WebSocket
+//! 也不能塞进custom-protocol `Vec<u8>`响应。
 //! 许可/RustSec/cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
 //!
 //! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
@@ -110,6 +114,8 @@ pub mod broker;
 pub mod budget;
 pub mod cancel;
 pub mod event;
+#[cfg(feature = "postgres-sidecar")]
+pub mod postgres_sidecar;
 pub mod preferences;
 pub mod session;
 pub mod transport;
@@ -148,6 +154,11 @@ pub use cancel::{CancellationToken, SHUTDOWN_DEADLINE};
 pub use event::{
     AppEventRef, BrokerEvent, FramePayload, GapCause, SequenceError, SequenceGap, SequenceTracker,
     TERMINAL_FRAME_RESERVE,
+};
+#[cfg(feature = "postgres-sidecar")]
+pub use postgres_sidecar::{
+    POSTGRES_SOURCE_SHA256, POSTGRES_VERSION, PostgresBundleDigest, PostgresSidecarError,
+    PostgresStartLock, ReviewedPostgresSigningIdentity, VerifiedPostgresBundle,
 };
 pub use preferences::DesktopUiPreferenceStore;
 pub use session::{DesktopSession, event_of};

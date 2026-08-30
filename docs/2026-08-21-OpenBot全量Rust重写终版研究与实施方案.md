@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–30 实施裁决 R126–R153，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–30 实施裁决 R126–R154，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -103,7 +103,7 @@ Electron/Chromium browser engine（无业务裁决权）
 | runsc | Batch55 已落只在 Ubuntu 24.04 x86_64 原生机运行的 `cargo xtask engine runsc-spike` 与容器内双 role probe；版本仍须该命令真实 PASS 后才钉入本表与 `tools/engine-pins.toml`，当前**没有 pin**。判据见 §24 G5 / R121/R128；在此之前 Server 生产 readiness 判据（§10.4）不变 |
 | Xvfb（仅runsc内部display） | R129允许的Electron Linux本地display backend；固定`:99`、1280×800×24、`-nolisten tcp`，不是VNC/Screen UI。amd64 package version与`/usr/bin/Xvfb` SHA-256须随runsc spike PASS进入Server image provenance；当前**没有pin/实测值** |
 | Rust 工具链 | `1.98.0`（2026-08-18 发布的当时最新稳定版），edition 2024。2026-08-22 由 `1.94.1` 升级，delta audit 见 `docs/2026-08-22-Rust工具链1.94.1升1.98.0-delta审计.md` |
-| PostgreSQL | 17（上游 compose 用 `pgvector/pgvector:pg17`；Rust 版不需要 pgvector，平装 `postgres:17` 即可，§14.1） |
+| PostgreSQL | major 17；Desktop sidecar build source钉PGDG 17.11 exact tar.gz/SHA（R154）；上游 compose 用 `pgvector/pgvector:pg17`，Rust版不需要pgvector，Server平装`postgres:17`，§14.1 |
 | PostgreSQL 驱动 | `tokio-postgres` `0.7.18` + `deadpool-postgres` `0.14.1` + `postgres-types` `0.2`（derive）。**刻意不用 `sqlx`**：它的 `query!` 宏要么在构建期连活库、要么把 `.sqlx` 离线元数据入库并保持同步，两条路都让 `cargo build --locked` 的答案取决于跑在哪台机器上；SQL 显式手写，由对真库的集成测试验证，构建期与数据库彻底解耦（G1 裁决 D3） |
 
 上游 oracle 运行时版本（来自固定 commit 的 `bun.lock` / 各 `package.json`，fixture 录制与 golden 对照只认这些版本）：
@@ -1346,6 +1346,7 @@ cargo audit / RustSec
 cargo vet
 OSV scan（Electron shim/packaged assets）
 cargo xtask engine verify（engine-pins sha256 / --version / fuses / ASAR integrity / release epoch）
+cargo xtask postgres verify-source（PGDG 17.11 source size / sha256 / tar root / COPYRIGHT / runtime常量join；R154）
 cargo xtask electron-shim-check（文件 allowlist / LOC ≤ 600 / API allowlist / forbidden import / 协议 hash）
 cargo xtask grok-inventory --check（inventory/grok/files.yaml 与参考树同步）
 仓内 package.json 恰一个且零 dependencies/scripts 的反向 grep
@@ -1900,8 +1901,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     以current-user app-data namespace+CSPRNG app-instance铸Desktop Local single-user admin AuthContext；
     Batch78把同一authority原子provision为PG canonical principal/admin role并经Tenant Package sync物化membership；
     Batch79再把PG17 data-dir固定为asserted app-data root的instance-bound私有直接子目录，并在任何schema/
-    principal/package写入前向活库反查data_directory/major/numeric-loopback/HBA SCRAM。sidecar supervisor、
-    启动锁/OS key store、真实`AppHandle::path().app_data_dir()` lifecycle setup、可发布binary、真实Wry native runtime、
+    principal/package写入前向活库反查data_directory/major/numeric-loopback/HBA SCRAM；Batch80再钉PGDG 17.11
+    source size/SHA/tar结构、signed-core manifest digest+全文件inventory与create_new/nonce/0600/fsync启动锁。
+    sidecar OS key store/process/ready/shutdown、真实`AppHandle::path().app_data_dir()` lifecycle setup、可发布binary、真实Wry native runtime、
     Windows真机与T-UI-0126 formal golden仍todo；
   - [x] create-time routing provider：production main复用package model/每请求PostgreSQL credential/Vault/
     SafeDialer并固定OpenAI Chat Completions；模型只建议权威roster内ID，缺credential/transport/坏JSON/
@@ -1959,8 +1961,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     ApplicationService前拒绝第257条live/in-flight subscription；Batch76把品牌无关的actual Webview
     create/rollback/Destroyed lifecycle接入production registration；Batch77补Desktop Local authority source
     的closed持久化与AuthContext；Batch78再闭合PG principal repair与single-user package membership；
-    Batch79补instance-bound PG17 data-dir与活库scope/SCRAM attestation、共享DB初始化和pre-window bootstrap。
-    T-UI-0126 formal golden、sidecar supervisor/启动锁/OS key store与Tauri setup接线、Desktop Remote session、真实Wry
+    Batch79补instance-bound PG17 data-dir与活库scope/SCRAM attestation、共享DB初始化和pre-window bootstrap；
+    Batch80补PGDG source pin、release manifest全文件校验与fail-closed single-instance start lock。
+    T-UI-0126 formal golden、sidecar binary build/sign、OS key store/process/ready/shutdown与Tauri setup接线、Desktop Remote session、真实Wry
     native-window journey与Windows runtime仍todo；
   - [x] `/channel/new`真实首发route：static route先于dynamic channel id；无recipient发送禁用且刷新零
     channel；URL可恢复hidden但有权的Agent，RecipientField复用Combobox键盘模型；首发只按
@@ -2331,6 +2334,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R152 | §5.2–§5.3 / §6.1、§6.5 / §13.1–§13.3 / §14.1 / §15.3 / §24 G2、G6（2026-08-30 Batch78：Desktop Local PG principal与package membership） | R151只能铸内存AuthContext；PostgreSQL没有`desktop-local-user`行/admin role时，channel/thread/memory/provider的权威SQL会全部拒绝。现有Server `initialize_single_user`事务逻辑正确但常量写死，复制一份Desktop SQL会让role repair/generation preservation漂移。Tenant Package已有single-user membership投影，但只有在principal先存在且startup把同一actor context传入时才生效。 | Desktop若在window加载后才provision会出现“authority已发出、DB仍拒绝”的竞态；profile repair若重置auth_generation会复活旧ticket，若不收敛role又留下额外角色。固定Server email/id不得被Desktop覆盖，反之亦然。只证明user row不等于package channel可见；必须同一真库跑package sync。sidecar DB若不与R151 app-data instance同根，固定actor会误接另一instance数据库，因此本批仍不能声称setup完成。 | 将Server单用户事务抽成parent-private canonical principal helper，原`initialize_single_user`常量/disabled-no-connect语义不变。Desktop authority提供独立non-routable canonical profile`desktop-local@localhost.invalid`/`Desktop Local User`与`provision_postgres`：单事务upsert user、保留已有generation、用既有domain role plan收敛sole admin。authority另产生exact`TenantPackageAudienceContext::single_user`；startup顺序固定为load authority→baseline/native→provision principal→Tenant Package sync→bind window。sidecar path/root与Tauri setup仍另批。 | implementation `e47932debc254a50700f644b7b88e6162b7a578c`。专用PG17.11先在sandbox `initdb`因SysV shm拒绝，宿主以POSIX shm建临时集簇；local trust只用于设置一次性密码，正式测试走127.0.0.1 SCRAM。Desktop真库=`1/0/0`：首次canonical user/admin、改email/name+generation7+额外user role后repair恢复profile/sole admin且保留7，随后同authority Tenant Package sync得到membership1与groups ignored；Server `dev_actor`完整=`3/0/0`（含disabled零连接、冲突23505全回滚）。完整infra sandbox首跑=`300/15/0`，15条全为既有loopback bind EPERM；宿主重跑=`315/0/0`。all-target/all-feature Clippy绿。临时PG fast-stop并删除。parity=`813/881/1694`、revalidate0、overlay=`1445/241/2/6`、strict=`159/0/0`；Grok/Cargo.lock/workflow/依赖/单package/零npm不变。Windows infra未跑，无T-ID/UI/Trunk/Browser/Engine/golden/CI/Actions；详见Batch78文档 |
 
 | R153 | §5.1–§5.3 / §6.1、§6.5 / §13.1–§13.3 / §14.1 / §15.3 / §16.2 / §24 G2、G6（2026-08-30 Batch79：Desktop Local instance-bound PG17 bootstrap） | R152仍接受caller给任意`Pool`；固定actor若连到另一app instance的库会继承其thread/memory/membership。Server的fresh/legacy/native初始化又住在`openbot-server` transport，Desktop若复制便形成第二schema真源。仓内尚无PostgreSQL发行pin/supervisor与reviewed Desktop package/binary，不能靠假`.setup`掩盖。 | 只检查“计划传给`initdb`的path”不能证明活库实际`data_directory`；只看`password_encryption`不能证明HBA host规则走SCRAM；接受`localhost`还会把答案交给hosts解析。sidecar目录若是symlink/非目录/宽权限必须在启动前拒绝。package tenant若不等于随机instance tenant，也不能先写库再报错。真实Tauri `app_data_dir()`、启动锁、Keychain/Credential Manager secret、graceful supervisor仍是不同未闭合面。 | 新增`DesktopLocalInstallation`：在host已断言的app-data root下只派生直接子目录`postgresql-17-<256-bit instance>`；新建0700，既有symlink/非目录或Unix group/other权限拒绝，Debug/错误不带path。连接任何业务SQL前向PG反查并要求canonical `data_directory`精确等于该目录、`server_version_num` major=17、`listen_addresses`只含数值loopback/空、当前server addr为loopback/Unix、`password_encryption=scram-sha-256`、`pg_hba_file_rules`所有host规则均SCRAM且零解析错误；package tenant先与authority exact相等。Server初始化实现上收到`openbot-infra::db::initialization`，Server只re-export；Desktop顺序固定为attest→shared fresh/legacy/native init→canonical principal→single-user package sync，窗口仍必须在后续Tauri setup最后创建。 | implementation `9e1600dca21a815f7c4bfd71ec7635cb711c5a0c`。文件/纯attestation定向=`8/0/0`；自包含PG17.11 TCP SCRAM/HBA真纵向=`1/0/0`，由production authority先铸目录，再在该目录`initdb`：first=Fresh+membership1、restart=RustManaged+grant0，第二instance连同库在写前精确报data-dir mismatch；同库逐字段复核T-TEST-0912两列。sandbox首次`initdb`因SysV shm EPERM不计通过；宿主首次暴露Unix socket 103-byte上限，修短runtime socket；再暴露`inet::text`的`/32`，改用`host()`；HBA收紧后Clippy首跑too-many-arguments红，改closed attestation record后最终绿。完整infra=`319/0/0`、Server=`216/0/0`，all-target/all-feature Clippy绿；全部临时data/socket目录0。parity=`813/881/1694`、diff required revalidate=1且已闭合、0违反、overlay=`1444/242/2/6`、strict=`159/0/0`；Grok/Cargo.lock/workflow/依赖/单package/零npm不变。测试口令明确test-only，不是OS key-store证据；Windows、sidecar pin/supervisor/start-lock/OS key store、真实Tauri app-data/setup/window、reviewed动态tenant package与发行binary均未跑/未落；无新T-ID/UI/Trunk/Browser/Engine/golden/CI/Actions；详见Batch79文档 |
+
+| R154 | §5.1 / §13.1 / §14.1 / §16.2–§16.3 / §23.4 / §24 G2、G6（2026-08-30 Batch80：PostgreSQL source pin、bundle attestation与start lock） | R153能拒绝错data-dir的活PG，却没有可信binary来源：provenance仍只写major17，PATH/Homebrew/测试binary都可能被误接；没有release-owned manifest，source SHA也会被错误拿来冒充平台binary SHA。并发两个Desktop进程又能同时穿过attestation前的sidecar启动。 | 平台binary hash取决于可复算build/依赖/签名产物，不能从source tar推导；manifest若只校自己声明的hash，攻击者可同时改manifest和文件，必须由signed outer core另给manifest digest。只列三个program会漏未登记DLL/dylib/share文件；symlink/path traversal/额外文件都应拒绝。启动锁若只写PID会遇PID reuse，自动删“stale”又可能双启动；Drop若无界读或直接删path还能被replacement欺骗。外部signing identity尚未裁决，不能硬编码禁用品牌。 | 新增独立`tools/postgres-pins.toml`：PGDG 17.11官方tar.gz exact URL/28,397,423 bytes/SHA-256与官方checksum copy；`cargo xtask postgres fetch-source|verify-source`只作release build输入，HTTPS下载后校size/SHA、唯一source root、单个bounded PAX global header、COPYRIGHT与server/initdb/pg_ctl关键源码，应用首次运行零下载。`openbot-desktop`显式`postgres-sidecar` feature新增`VerifiedPostgresBundle`：caller必须给signed-core manifest digest与host断言的reviewed signing identity；manifest再锁schema/version、platform、aarch64|x86_64、PG17.11 source SHA、与Engine相同release epoch、minimum core、三个exact program及最多8192文件/2GiB完整inventory，manifest外额外文件、symlink、非普通文件、非lowercase SHA或hash漂移全拒。`PostgresStartLock`只在私有absolute app-data root以`create_new`创建instance+manifest-bound、CSPRNG nonce、0600、file+dir fsync的closed lock；并发/崩溃残留fail-closed，Drop只bounded比较自己的nonce字节后删除，被替换则保留。尚不spawn、不接OS key store。 | implementation `c6a6fde8415e2e61694c1e69110a4f58638068cf`。PGDG官方checksum=`5367f6fb…9a7e`；sandbox首次fetch因DNS拒绝不计通过，宿主下载size/SHA通过后校验器先真实暴露隐藏`pax_global_header`与猜错的`src/backend/postgres.c`，分别收成exact bounded PAX与实树`src/backend/tcop/postgres.c`后，fetch reuse与verify最终均绿。Desktop all-feature=`113/0/0`（postgres子集4），xtask=`95/0/0`（postgres pin子集2）；两边all-target/all-feature/bin Clippy `-D warnings`绿，Tauri dependency guard绿。Windows all-feature compile绿；Linux feature-only compile绿并只保留既有budget/transport dead-code两warning，不冒充Linux Clippy/runtime。Cargo.lock只给Desktop增加既有getrandom0.4.3/sha2-0.10.9直接边，package=`823→823`。parity=`813/881/1694`、required revalidate0、overlay=`1444/242/2/6`；strict=`159/0/0`，Grok/workflow/单package/零npm不变。未实现/未跑平台PG binary build/hash/sign、Keychain/Credential Manager/Secret Service、process/initdb/ready/graceful/orphan recovery、真实Tauri setup/window/Windows runtime/golden；无新T-ID/UI/CI/Actions；详见Batch80文档 |
 
 ### 28.2 复核通过、原样保留的断言
 

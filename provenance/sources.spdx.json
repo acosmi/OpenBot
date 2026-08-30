@@ -613,18 +613,18 @@
     {
       "SPDXID": "SPDXRef-Package-postgresql",
       "name": "PostgreSQL",
-      "versionInfo": "17",
-      "downloadLocation": "https://www.postgresql.org/ftp/source/",
+      "versionInfo": "17.11",
+      "downloadLocation": "https://ftp.postgresql.org/pub/source/v17.11/postgresql-17.11.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "PostgreSQL",
       "licenseDeclared": "PostgreSQL",
       "copyrightText": "Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group; Portions Copyright (c) 1994, The Regents of the University of California",
-      "comment": "唯一数据库（v3 §14.1）。上游 compose 用 `pgvector/pgvector:pg17`；Rust 版不需要 pgvector，平装 `postgres:17` 即可。本轮证据：`raw.githubusercontent.com/postgres/postgres/REL_17_STABLE/COPYRIGHT` 取回成功，前六行逐字给出上面的 copyrightText 与 `Permission to use, copy, modify, and distribute…` 起始的许可正文（SPDX id `PostgreSQL`）。注意本条钉的是主版本 17，不是某个补丁号。",
+      "comment": "唯一数据库（v4 §14.1）。Desktop sidecar build source固定为PGDG 17.11官方tar.gz，size=28397423，SHA-256=5367f6fb2ec97efe1eb2e0c7926bb33438e51b0bd3a9733b88498056a7dc9a7e；`cargo xtask postgres verify-source`校PGDG checksum copy、单一tar root、COPYRIGHT与关键server/initdb/pg_ctl源码。上游compose用pgvector/pgvector:pg17；Rust版不需要pgvector。平台binary仍须由release build产生逐文件manifest并签名，不用source SHA冒充binary SHA。",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:generic/postgresql@17"
+          "referenceLocator": "pkg:generic/postgresql@17.11"
         }
       ],
       "primaryPackagePurpose": "APPLICATION"
