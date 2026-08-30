@@ -6,9 +6,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use openbot_contracts::auth::AuthContext;
-use openbot_contracts::command::{AppEvent, SubscriptionRequest};
+use openbot_contracts::command::SubscriptionRequest;
 use openbot_contracts::ids::ThreadId;
-use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 
 use crate::broker::DisconnectReason;
@@ -17,172 +16,12 @@ use crate::event::{AppEventRef, GapCause, SequenceError, SequenceGap, SequenceTr
 use crate::transport::{InProcessTransport, OpenSessionError};
 use crate::window::{ThreadSubscriptions, WindowLabel};
 
-/// Closed stream identity carried on every IPC frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopStructuredStreamKind {
-    /// Process heartbeat/presence.
-    Health,
-    /// One native thread's durable replay/live stream.
-    ThreadEvents,
-    /// Current actor's channel-roster invalidation stream.
-    ChannelActivity,
-    /// Current actor's approval invalidation stream.
-    ToolApprovalActivity,
-}
+pub use openbot_contracts::desktop::{
+    DesktopStructuredDeliveryClass, DesktopStructuredEventFrame, DesktopStructuredGapCause,
+    DesktopStructuredSequenceGap, DesktopStructuredStreamKind, DesktopStructuredTerminalReason,
+};
 
-impl DesktopStructuredStreamKind {
-    fn from_request(request: &SubscriptionRequest) -> Self {
-        match request {
-            SubscriptionRequest::Health => Self::Health,
-            SubscriptionRequest::ThreadEvents { .. } => Self::ThreadEvents,
-            SubscriptionRequest::ChannelActivity => Self::ChannelActivity,
-            SubscriptionRequest::ToolApprovalActivity => Self::ToolApprovalActivity,
-        }
-    }
-
-    fn accepts(self, event: &AppEvent, expected_thread: Option<&ThreadId>) -> bool {
-        match (self, event) {
-            (Self::Health, AppEvent::Heartbeat { .. })
-            | (Self::ThreadEvents, AppEvent::ThreadStreamError { .. })
-            | (Self::ChannelActivity, AppEvent::ChannelActivity(_))
-            | (Self::ChannelActivity, AppEvent::ChannelStreamError { .. })
-            | (Self::ToolApprovalActivity, AppEvent::ToolApprovalActivity(_))
-            | (Self::ToolApprovalActivity, AppEvent::ToolApprovalStreamError { .. }) => true,
-            (Self::ThreadEvents, AppEvent::ThreadRunEvent(event)) => {
-                expected_thread == Some(&event.thread_id)
-            }
-            (Self::Health, _)
-            | (Self::ThreadEvents, _)
-            | (Self::ChannelActivity, _)
-            | (Self::ToolApprovalActivity, _) => false,
-        }
-    }
-}
-
-/// Why a known sequence range will never arrive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopStructuredGapCause {
-    /// A newer latest-value frame replaced the older one.
-    Superseded,
-    /// A non-sheddable frame could not be delivered.
-    Dropped,
-}
-
-/// Closed, serializable sequence-gap projection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DesktopStructuredSequenceGap {
-    /// First missing sequence, inclusive.
-    pub from_sequence: u64,
-    /// Last missing sequence, inclusive.
-    pub through_sequence: u64,
-    /// Stable low-cardinality cause.
-    pub cause: DesktopStructuredGapCause,
-}
-
-impl From<SequenceGap> for DesktopStructuredSequenceGap {
-    fn from(gap: SequenceGap) -> Self {
-        Self {
-            from_sequence: gap.from_seq,
-            through_sequence: gap.through_seq,
-            cause: match gap.cause {
-                GapCause::Superseded => DesktopStructuredGapCause::Superseded,
-                GapCause::Dropped => DesktopStructuredGapCause::Dropped,
-            },
-        }
-    }
-}
-
-/// Closed reason for a terminal structured subscription frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopStructuredTerminalReason {
-    /// Critical/coalescable queue pressure caused explicit disconnect.
-    QueueOverflow,
-    /// Whole Desktop transport is shutting down.
-    Shutdown,
-    /// The authoritative application stream ended.
-    UpstreamEnded,
-    /// Host closed this one subscription.
-    SubscriptionClosed,
-}
-
-/// Delivery class attached only to queue-overflow terminal frames.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopStructuredDeliveryClass {
-    /// Never silently shed.
-    Critical,
-    /// Mergeable only where a lossless combiner exists.
-    Coalescable,
-    /// Latest-value presence/progress.
-    LatestValue,
-    /// Screen is forbidden on this channel.
-    Screen,
-}
-
-impl From<DeliveryClass> for DesktopStructuredDeliveryClass {
-    fn from(class: DeliveryClass) -> Self {
-        match class {
-            DeliveryClass::Critical => Self::Critical,
-            DeliveryClass::Coalescable => Self::Coalescable,
-            DeliveryClass::LatestValue => Self::LatestValue,
-            DeliveryClass::Screen => Self::Screen,
-        }
-    }
-}
-
-/// One sequence-checked frame delivered to one Tauri IPC callback.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-pub enum DesktopStructuredEventFrame {
-    /// One ACL-filtered structured application event.
-    Event {
-        /// Host-minted subscription identity; renderer cannot choose it.
-        subscription_id: u64,
-        /// Closed stream family.
-        stream: DesktopStructuredStreamKind,
-        /// Per-subscription delivery sequence.
-        sequence: u64,
-        /// Known missing range immediately before this frame.
-        skipped: Option<DesktopStructuredSequenceGap>,
-        /// Typed application event; no scope/auth fields are reintroduced here.
-        event: AppEvent,
-    },
-    /// Explicit terminal frame; no event is fabricated.
-    Terminal {
-        /// Host-minted subscription identity.
-        subscription_id: u64,
-        /// Closed stream family.
-        stream: DesktopStructuredStreamKind,
-        /// Final per-subscription delivery sequence.
-        sequence: u64,
-        /// Known missing range immediately before termination.
-        skipped: Option<DesktopStructuredSequenceGap>,
-        /// Stable terminal reason.
-        reason: DesktopStructuredTerminalReason,
-        /// Present only for queue overflow.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        overflow_class: Option<DesktopStructuredDeliveryClass>,
-    },
-}
-
-impl DesktopStructuredEventFrame {
-    /// Terminal reason, or `None` for an event frame.
-    #[must_use]
-    pub const fn terminal_reason(&self) -> Option<DesktopStructuredTerminalReason> {
-        match self {
-            Self::Event { .. } => None,
-            Self::Terminal { reason, .. } => Some(*reason),
-        }
-    }
-}
+type ActiveSubscriptions = BTreeMap<WindowLabel, BTreeMap<u64, WindowLabel>>;
 
 /// Opening a host-owned structured subscription failed.
 #[derive(Debug, thiserror::Error)]
@@ -227,7 +66,7 @@ pub enum DesktopStructuredPumpExit {
 pub struct DesktopStructuredEventBridge {
     transport: Arc<InProcessTransport>,
     next_subscription_id: Arc<AtomicU64>,
-    active: Arc<Mutex<BTreeMap<WindowLabel, BTreeMap<u64, WindowLabel>>>>,
+    active: Arc<Mutex<ActiveSubscriptions>>,
 }
 
 impl DesktopStructuredEventBridge {
@@ -316,6 +155,19 @@ impl DesktopStructuredEventBridge {
         count
     }
 
+    /// Close one exact subscription only when it belongs to the host-observed actual window.
+    ///
+    /// Returning `false` covers unknown, already-finished, and another-window identities without
+    /// revealing which case occurred.
+    pub fn close_subscription(&self, window: &WindowLabel, subscription_id: u64) -> bool {
+        let Some(internal_label) = remove_registration(&self.active, window, subscription_id)
+        else {
+            return false;
+        };
+        let _ = self.transport.close_session(&internal_label);
+        true
+    }
+
     /// Number of subscriptions still registered under actual host window labels.
     #[must_use]
     pub fn active_subscription_count(&self) -> usize {
@@ -336,7 +188,7 @@ pub struct DesktopStructuredSubscription {
     window: WindowLabel,
     internal_label: WindowLabel,
     transport: Arc<InProcessTransport>,
-    active: Arc<Mutex<BTreeMap<WindowLabel, BTreeMap<u64, WindowLabel>>>>,
+    active: Arc<Mutex<ActiveSubscriptions>>,
     session: crate::DesktopSession,
     tracker: SequenceTracker,
     terminal_seen: bool,
@@ -368,10 +220,11 @@ impl DesktopStructuredSubscription {
             .await
             .ok_or(DesktopStructuredFrameError::MissingTerminal)?;
         self.tracker.observe(&frame)?;
-        if frame
-            .event()
-            .is_some_and(|event| !self.stream.accepts(event, self.expected_thread.as_ref()))
-        {
+        if frame.event().is_some_and(|event| {
+            !self
+                .stream
+                .accepts_event(event, self.expected_thread.as_ref())
+        }) {
             return Err(DesktopStructuredFrameError::EventMismatch);
         }
         let projected = project_frame(self.subscription_id, self.stream, &frame);
@@ -382,19 +235,25 @@ impl DesktopStructuredSubscription {
 
 impl Drop for DesktopStructuredSubscription {
     fn drop(&mut self) {
-        let mut active = self
-            .active
-            .lock()
-            .expect("structured subscription registry lock must not be poisoned");
-        if let Some(registrations) = active.get_mut(&self.window) {
-            registrations.remove(&self.subscription_id);
-            if registrations.is_empty() {
-                active.remove(&self.window);
-            }
-        }
-        drop(active);
+        let _ = remove_registration(&self.active, &self.window, self.subscription_id);
         let _ = self.transport.close_session(&self.internal_label);
     }
+}
+
+fn remove_registration(
+    active: &Mutex<ActiveSubscriptions>,
+    window: &WindowLabel,
+    subscription_id: u64,
+) -> Option<WindowLabel> {
+    let mut active = active
+        .lock()
+        .expect("structured subscription registry lock must not be poisoned");
+    let registrations = active.get_mut(window)?;
+    let internal_label = registrations.remove(&subscription_id)?;
+    if registrations.is_empty() {
+        active.remove(window);
+    }
+    Some(internal_label)
 }
 
 /// Pump one typed subscription into an actual Tauri IPC Channel.
@@ -431,7 +290,7 @@ fn project_frame(
     stream: DesktopStructuredStreamKind,
     frame: &AppEventRef,
 ) -> DesktopStructuredEventFrame {
-    let skipped = frame.skipped().map(DesktopStructuredSequenceGap::from);
+    let skipped = frame.skipped().map(project_gap);
     if let Some(event) = frame.event() {
         return DesktopStructuredEventFrame::Event {
             subscription_id,
@@ -447,7 +306,7 @@ fn project_frame(
     let (reason, overflow_class) = match reason {
         DisconnectReason::QueueOverflow { class } => (
             DesktopStructuredTerminalReason::QueueOverflow,
-            Some(DesktopStructuredDeliveryClass::from(class)),
+            Some(project_delivery_class(class)),
         ),
         DisconnectReason::Shutdown => (DesktopStructuredTerminalReason::Shutdown, None),
         DisconnectReason::UpstreamEnded => (DesktopStructuredTerminalReason::UpstreamEnded, None),
@@ -465,6 +324,26 @@ fn project_frame(
     }
 }
 
+fn project_gap(gap: SequenceGap) -> DesktopStructuredSequenceGap {
+    DesktopStructuredSequenceGap {
+        from_sequence: gap.from_seq,
+        through_sequence: gap.through_seq,
+        cause: match gap.cause {
+            GapCause::Superseded => DesktopStructuredGapCause::Superseded,
+            GapCause::Dropped => DesktopStructuredGapCause::Dropped,
+        },
+    }
+}
+
+fn project_delivery_class(class: DeliveryClass) -> DesktopStructuredDeliveryClass {
+    match class {
+        DeliveryClass::Critical => DesktopStructuredDeliveryClass::Critical,
+        DeliveryClass::Coalescable => DesktopStructuredDeliveryClass::Coalescable,
+        DeliveryClass::LatestValue => DesktopStructuredDeliveryClass::LatestValue,
+        DeliveryClass::Screen => DesktopStructuredDeliveryClass::Screen,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::pin::Pin;
@@ -475,7 +354,7 @@ mod tests {
     use async_trait::async_trait;
     use openbot_application::{AppEventStream, ApplicationService};
     use openbot_contracts::command::{
-        AppCommand, AppReply, ChannelActivityEvent, HealthReport, ThreadRunEvent,
+        AppCommand, AppEvent, AppReply, ChannelActivityEvent, HealthReport, ThreadRunEvent,
         ThreadRunEventKind,
     };
     use openbot_contracts::error::AppError;
@@ -745,17 +624,14 @@ mod tests {
         let transport = Arc::new(InProcessTransport::new(Arc::new(PendingService)));
         let bridge = DesktopStructuredEventBridge::new(Arc::clone(&transport));
         let auth = auth_for("actor-1");
-        let first = bridge
-            .open(
-                WindowLabel::new("main"),
-                &auth,
-                SubscriptionRequest::ChannelActivity,
-            )
+        let main = WindowLabel::new("main");
+        let mut first = bridge
+            .open(main.clone(), &auth, SubscriptionRequest::ChannelActivity)
             .await
             .unwrap();
         let second = bridge
             .open(
-                WindowLabel::new("main"),
+                main.clone(),
                 &auth,
                 SubscriptionRequest::ToolApprovalActivity,
             )
@@ -763,6 +639,19 @@ mod tests {
             .unwrap();
         assert_eq!(transport.broker().window_count(), 2);
         assert_eq!(bridge.active_subscription_count(), 2);
+        assert!(
+            !bridge
+                .close_subscription(&WindowLabel::new("another-window"), first.subscription_id())
+        );
+        assert!(bridge.close_subscription(&main, first.subscription_id()));
+        assert!(!bridge.close_subscription(&main, first.subscription_id()));
+        let terminal = first.next_frame().await.unwrap().unwrap();
+        assert_eq!(
+            terminal.terminal_reason(),
+            Some(DesktopStructuredTerminalReason::SubscriptionClosed)
+        );
+        assert_eq!(transport.broker().window_count(), 1);
+        assert_eq!(bridge.active_subscription_count(), 1);
         drop(first);
         assert_eq!(transport.broker().window_count(), 1);
         assert_eq!(bridge.active_subscription_count(), 1);

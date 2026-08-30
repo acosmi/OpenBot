@@ -23,6 +23,10 @@ use openbot_contracts::components::{
     ComponentDraftRequest, ComponentFunctionCallRequest, ComponentFunctionGrantRequest,
     ComponentGovernanceMutation, ComponentHumanDecisionAnswer, ComponentPublicationRequest,
 };
+use openbot_contracts::desktop::{
+    DESKTOP_STRUCTURED_CLOSE_COMMAND, DESKTOP_STRUCTURED_OPEN_COMMAND,
+    DesktopStructuredSubscriptionCloseRequest, DesktopStructuredSubscriptionOpened,
+};
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::people::CurrentUserResponse;
@@ -32,12 +36,12 @@ use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme, UpdateUiPreference
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use tauri::ipc::Channel;
-use tauri::{Builder, Runtime};
+use tauri::{Builder, State, Webview};
 
 use crate::{
     DesktopStructuredEventBridge, DesktopStructuredEventFrame, DesktopStructuredOpenError,
-    DesktopStructuredPumpExit, DesktopStructuredSubscription, InProcessTransport, WindowLabel,
-    pump_tauri_structured_events,
+    DesktopStructuredPumpExit, DesktopStructuredSubscription, InProcessTransport, OpenSessionError,
+    WindowLabel, pump_tauri_structured_events,
 };
 
 const INDEX_MAX_BYTES: u64 = 1024 * 1024;
@@ -56,6 +60,12 @@ const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; sty
                    connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; \
                    object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'none'; \
                    worker-src 'none'; manifest-src 'none'; media-src 'none'";
+
+/// Exact audited custom-command allowlist registered by [`register_tauri_protocol`].
+pub const DESKTOP_TAURI_COMMANDS: [&str; 2] = [
+    DESKTOP_STRUCTURED_OPEN_COMMAND,
+    DESKTOP_STRUCTURED_CLOSE_COMMAND,
+];
 
 /// Host registration/open error without leaking filesystem content.
 #[derive(Debug, thiserror::Error)]
@@ -402,6 +412,19 @@ impl DesktopTauriProtocol {
                 Err(error)
             }
         }
+    }
+
+    /// Close one host-minted subscription only within the host-observed actual window.
+    pub fn close_structured_subscription(
+        &self,
+        label: &str,
+        subscription_id: u64,
+    ) -> Result<bool, TauriHostError> {
+        self.authority(label)?
+            .ok_or(TauriHostError::WindowUnbound)?;
+        Ok(self
+            .structured_events
+            .close_subscription(&WindowLabel::new(label.to_owned()), subscription_id))
     }
 
     /// Open and drain one structured stream into a real Tauri IPC [`Channel`].
@@ -1626,16 +1649,79 @@ impl DesktopTauriProtocol {
     }
 }
 
-/// Register one exact caller-selected custom scheme on a Tauri builder.
-pub fn register_tauri_protocol<R: Runtime>(
-    builder: Builder<R>,
+#[tauri::command]
+async fn openbot_structured_events_open(
+    webview: Webview,
+    protocol: State<'_, Arc<DesktopTauriProtocol>>,
+    request: SubscriptionRequest,
+    channel: Channel<DesktopStructuredEventFrame>,
+) -> Result<DesktopStructuredSubscriptionOpened, String> {
+    let label = webview.label().to_owned();
+    let protocol = Arc::clone(protocol.inner());
+    let subscription = protocol
+        .open_structured_subscription(&label, request)
+        .await
+        .map_err(|error| tauri_host_error_code(&error).to_owned())?;
+    let opened = DesktopStructuredSubscriptionOpened {
+        subscription_id: subscription.subscription_id(),
+    };
+    tauri::async_runtime::spawn(async move {
+        let _ = pump_tauri_structured_events(subscription, channel).await;
+    });
+    Ok(opened)
+}
+
+#[tauri::command]
+fn openbot_structured_events_close(
+    webview: Webview,
+    protocol: State<'_, Arc<DesktopTauriProtocol>>,
+    request: DesktopStructuredSubscriptionCloseRequest,
+) -> Result<bool, String> {
+    protocol
+        .close_structured_subscription(webview.label(), request.subscription_id)
+        .map_err(|error| tauri_host_error_code(&error).to_owned())
+}
+
+fn tauri_host_error_code(error: &TauriHostError) -> &'static str {
+    match error {
+        TauriHostError::InvalidBundle => "desktop_bundle_invalid",
+        TauriHostError::InvalidScheme => "desktop_scheme_invalid",
+        TauriHostError::WindowAlreadyBound => "desktop_window_already_bound",
+        TauriHostError::AuthorityUnavailable => "desktop_window_authority_unavailable",
+        TauriHostError::InvalidFreshness => "desktop_freshness_invalid",
+        TauriHostError::WindowUnbound => "desktop_window_unbound",
+        TauriHostError::WindowBindingCounterExhausted => "desktop_window_binding_counter_exhausted",
+        TauriHostError::StructuredSubscription(DesktopStructuredOpenError::CounterExhausted) => {
+            "structured_subscription_counter_exhausted"
+        }
+        TauriHostError::StructuredSubscription(DesktopStructuredOpenError::Session(
+            OpenSessionError::Application(error),
+        )) => error.code().as_str(),
+        TauriHostError::StructuredSubscription(DesktopStructuredOpenError::Session(
+            OpenSessionError::WindowAlreadyOpen(_),
+        )) => "desktop_subscription_conflict",
+        TauriHostError::StructuredSubscription(DesktopStructuredOpenError::Session(
+            OpenSessionError::ShuttingDown,
+        )) => "desktop_shutting_down",
+    }
+}
+
+/// Register the exact caller-selected custom scheme and audited structured open/close commands.
+pub fn register_tauri_protocol(
+    builder: Builder<tauri::Wry>,
     scheme: &str,
     protocol: Arc<DesktopTauriProtocol>,
-) -> Result<Builder<R>, TauriHostError> {
+) -> Result<Builder<tauri::Wry>, TauriHostError> {
     if !valid_scheme(scheme) {
         return Err(TauriHostError::InvalidScheme);
     }
     let scheme = scheme.to_owned();
+    let builder = builder
+        .manage(Arc::clone(&protocol))
+        .invoke_handler(tauri::generate_handler![
+            openbot_structured_events_open,
+            openbot_structured_events_close
+        ]);
     Ok(builder.register_asynchronous_uri_scheme_protocol(
         scheme,
         move |context, request, responder| {
@@ -3024,7 +3110,49 @@ mod tests {
     }
 
     #[test]
+    fn registration_installs_the_closed_wry_protocol_and_command_handler() {
+        let (protocol, root) = protocol();
+        let builder = Builder::<tauri::Wry>::default();
+        assert!(register_tauri_protocol(builder, "openbot", protocol).is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn command_audit_list_and_generated_handler_are_exactly_joined() {
+        let source = include_str!("tauri_host.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        assert_eq!(production.matches("#[tauri::command]").count(), 2);
+        let handler = production
+            .split("tauri::generate_handler![")
+            .nth(1)
+            .and_then(|tail| tail.split("])").next())
+            .expect("generated handler must remain explicit");
+        for command in DESKTOP_TAURI_COMMANDS {
+            assert!(
+                production.contains(&format!("fn {command}(")),
+                "missing command function {command}"
+            );
+            assert!(handler.contains(command), "handler omitted {command}");
+        }
+        assert_eq!(
+            handler
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .count(),
+            DESKTOP_TAURI_COMMANDS.len()
+        );
+    }
+
+    #[test]
     fn scheme_asset_and_percent_decoders_are_closed() {
+        assert_eq!(
+            DESKTOP_TAURI_COMMANDS,
+            [
+                "openbot_structured_events_open",
+                "openbot_structured_events_close"
+            ]
+        );
         assert!(valid_scheme("app-ui"));
         for invalid in ["", "OpenBot", "http", "tauri", "has space", "a/b"] {
             assert!(!valid_scheme(invalid), "{invalid}");
@@ -3076,6 +3204,25 @@ mod tests {
         ] {
             assert_eq!(channel_list_query(Some(invalid)), None, "{invalid}");
         }
+    }
+
+    #[test]
+    fn structured_command_errors_are_stable_and_hide_internal_labels() {
+        let duplicate = TauriHostError::StructuredSubscription(
+            DesktopStructuredOpenError::Session(OpenSessionError::WindowAlreadyOpen(
+                crate::WindowAlreadyOpen(WindowLabel::new("private-internal-label")),
+            )),
+        );
+        assert_eq!(
+            tauri_host_error_code(&duplicate),
+            "desktop_subscription_conflict"
+        );
+        assert!(!tauri_host_error_code(&duplicate).contains("private"));
+        let application =
+            TauriHostError::StructuredSubscription(DesktopStructuredOpenError::Session(
+                OpenSessionError::Application(AppError::NotVisible),
+            ));
+        assert_eq!(tauri_host_error_code(&application), "not_visible");
     }
 
     #[test]
@@ -3179,6 +3326,66 @@ mod tests {
         assert_eq!(protocol.transport.broker().window_count(), 0);
         assert_eq!(protocol.structured_events.active_subscription_count(), 0);
         assert!(protocol.unbind_window("main").unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn exact_close_is_scoped_to_the_host_observed_window() {
+        let (protocol, root) = protocol();
+        protocol.bind_window("main", auth(), None).unwrap();
+        protocol.bind_window("auxiliary", auth(), None).unwrap();
+        let mut main = protocol
+            .open_structured_subscription("main", SubscriptionRequest::Health)
+            .await
+            .unwrap();
+        let auxiliary = protocol
+            .open_structured_subscription("auxiliary", SubscriptionRequest::Health)
+            .await
+            .unwrap();
+        assert_eq!(protocol.transport.broker().window_count(), 2);
+
+        assert!(
+            !protocol
+                .close_structured_subscription("main", auxiliary.subscription_id())
+                .unwrap()
+        );
+        assert!(
+            protocol
+                .close_structured_subscription("main", main.subscription_id())
+                .unwrap()
+        );
+        assert!(
+            !protocol
+                .close_structured_subscription("main", main.subscription_id())
+                .unwrap()
+        );
+        assert!(matches!(
+            protocol.close_structured_subscription("unbound", auxiliary.subscription_id()),
+            Err(TauriHostError::WindowUnbound)
+        ));
+        assert_eq!(protocol.transport.broker().window_count(), 1);
+
+        let terminal = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let frame = main.next_frame().await.unwrap().unwrap();
+                if frame.terminal_reason().is_some() {
+                    break frame;
+                }
+            }
+        })
+        .await
+        .expect("exact close must wake the selected subscription");
+        assert_eq!(
+            terminal.terminal_reason(),
+            Some(crate::DesktopStructuredTerminalReason::SubscriptionClosed)
+        );
+        assert_eq!(protocol.structured_events.active_subscription_count(), 1);
+
+        drop(auxiliary);
+        assert_eq!(protocol.transport.broker().window_count(), 0);
+        assert_eq!(protocol.structured_events.active_subscription_count(), 0);
+        assert!(protocol.unbind_window("main").unwrap());
+        assert!(protocol.unbind_window("auxiliary").unwrap());
         std::fs::remove_dir_all(root).unwrap();
     }
 
