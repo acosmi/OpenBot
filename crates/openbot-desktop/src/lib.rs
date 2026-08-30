@@ -52,8 +52,10 @@
 //! Batch69–71又依次接Agent lifecycle/callback与channel/thread unary framing；Batch72补
 //! `DesktopSession`→真实`tauri::ipc::Channel`的host bridge、window unbind与stale-binding
 //! fencing。Batch73再把closed wire上收到`openbot-contracts`，注册exact open/close command：open
-//! 立即回host subscription id并后台pump，close只能关闭调用Webview自己的id。WASM host选择、可发布
-//! window assembly与runtime journey仍未落，SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。
+//! 立即回host subscription id并后台pump，close只能关闭调用Webview自己的id；Batch74让同一release
+//! WASM按`window.isTauri`选择该桥并完成callback ordering/cleanup；Batch75把同一actual Webview的全部
+//! internal stream收口到共享256 event-ref permit与256 live/in-flight subscription上限。可发布window
+//! assembly与runtime journey仍未落，SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。
 //! 许可/RustSec/cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
 //!
 //! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
@@ -154,7 +156,8 @@ pub use structured_events::{
     DesktopStructuredDeliveryClass, DesktopStructuredEventBridge, DesktopStructuredEventFrame,
     DesktopStructuredFrameError, DesktopStructuredGapCause, DesktopStructuredOpenError,
     DesktopStructuredPumpExit, DesktopStructuredSequenceGap, DesktopStructuredStreamKind,
-    DesktopStructuredSubscription, DesktopStructuredTerminalReason, pump_tauri_structured_events,
+    DesktopStructuredSubscription, DesktopStructuredTerminalReason,
+    MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW, pump_tauri_structured_events,
 };
 
 #[cfg(all(

@@ -19,6 +19,8 @@
 //! 唯一入口。
 
 use core::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use openbot_contracts::command::AppEvent;
 
@@ -47,6 +49,76 @@ pub const COMMAND_QUEUE_CAPACITY: usize = 256;
 /// 那一格永久留给终止帧（理由见 [`crate::event::TERMINAL_FRAME_RESERVE`]）。所以
 /// **可投递的事件帧上限逐字是 256**，与方案一致。
 pub const CRITICAL_EVENT_QUEUE_CAPACITY: usize = 256;
+
+/// One shared queued-event-ref budget.
+///
+/// Ordinary broker windows own one instance. Structured Desktop subscriptions that belong to the
+/// same actual Webview deliberately share one instance, so opening a second Tauri Channel cannot
+/// multiply §13.2's per-window 256-frame allowance.
+#[derive(Debug)]
+pub(crate) struct EventQueueBudget {
+    capacity: usize,
+    in_use: AtomicUsize,
+}
+
+impl EventQueueBudget {
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            in_use: AtomicUsize::new(0),
+        }
+    }
+
+    pub(crate) fn spec_window() -> Self {
+        Self::new(CRITICAL_EVENT_QUEUE_CAPACITY)
+    }
+
+    pub(crate) fn try_acquire(self: &Arc<Self>) -> Option<Arc<EventQueuePermit>> {
+        let mut current = self.in_use.load(Ordering::Acquire);
+        loop {
+            if current >= self.capacity {
+                return None;
+            }
+            match self.in_use.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Some(Arc::new(EventQueuePermit {
+                        budget: Arc::clone(self),
+                    }));
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    pub(crate) fn remaining(&self) -> usize {
+        self.capacity
+            .saturating_sub(self.in_use.load(Ordering::Acquire))
+    }
+}
+
+/// A queued event's share of [`EventQueueBudget`]. Clones of the enclosing frame share this guard;
+/// only the final frame clone releases the slot.
+#[derive(Debug)]
+pub(crate) struct EventQueuePermit {
+    budget: Arc<EventQueueBudget>,
+}
+
+impl Drop for EventQueuePermit {
+    fn drop(&mut self) {
+        let released =
+            self.budget
+                .in_use
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    current.checked_sub(1)
+                });
+        debug_assert!(released.is_ok(), "event queue permit underflow");
+    }
+}
 
 /// token delta 的合并时间窗。
 ///
@@ -178,6 +250,23 @@ mod tests {
         assert_eq!(TOKEN_DELTA_COALESCE_BYTES, 8 * 1024);
         // 第五个（shutdown deadline 5 秒）在 `cancel` 模块，由那边的测试钉住。
         assert_eq!(crate::cancel::SHUTDOWN_DEADLINE, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn shared_event_budget_releases_only_after_the_last_frame_clone_drops() {
+        let budget = Arc::new(EventQueueBudget::new(2));
+        let first = budget.try_acquire().expect("first slot");
+        let first_clone = Arc::clone(&first);
+        let second = budget.try_acquire().expect("second slot");
+        assert_eq!(budget.remaining(), 0);
+        assert!(budget.try_acquire().is_none());
+
+        drop(first);
+        assert_eq!(budget.remaining(), 0, "one frame clone still owns the slot");
+        drop(first_clone);
+        assert_eq!(budget.remaining(), 1);
+        drop(second);
+        assert_eq!(budget.remaining(), 2);
     }
 
     /// 心跳是 presence ⇒ latest-value。

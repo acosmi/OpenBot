@@ -39,7 +39,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 
 use crate::broker::{DeliveryOutcome, EventBroker, WindowAlreadyOpen};
-use crate::budget::COMMAND_QUEUE_CAPACITY;
+use crate::budget::{COMMAND_QUEUE_CAPACITY, EventQueueBudget};
 use crate::cancel::{CancellationToken, SHUTDOWN_DEADLINE};
 use crate::event::BrokerEvent;
 use crate::session::DesktopSession;
@@ -203,13 +203,45 @@ impl InProcessTransport {
         request: SubscriptionRequest,
         subscriptions: ThreadSubscriptions,
     ) -> Result<DesktopSession, OpenSessionError> {
+        self.open_session_inner(label, auth, request, subscriptions, None)
+            .await
+    }
+
+    /// Open an internal route that shares the caller's aggregate event-ref budget.
+    pub(crate) async fn open_session_with_budget(
+        &self,
+        label: WindowLabel,
+        auth: &AuthContext,
+        request: SubscriptionRequest,
+        subscriptions: ThreadSubscriptions,
+        queue_budget: Arc<EventQueueBudget>,
+    ) -> Result<DesktopSession, OpenSessionError> {
+        self.open_session_inner(label, auth, request, subscriptions, Some(queue_budget))
+            .await
+    }
+
+    async fn open_session_inner(
+        &self,
+        label: WindowLabel,
+        auth: &AuthContext,
+        request: SubscriptionRequest,
+        subscriptions: ThreadSubscriptions,
+        queue_budget: Option<Arc<EventQueueBudget>>,
+    ) -> Result<DesktopSession, OpenSessionError> {
         if self.shutdown_token().is_cancelled() {
             return Err(OpenSessionError::ShuttingDown);
         }
 
         let identity = WindowIdentity::bind(label, auth);
         let stream = self.service.subscribe(auth.clone(), request).await?;
-        let session = self.broker.open_window(identity.clone(), subscriptions)?;
+        let session = match queue_budget {
+            Some(queue_budget) => self.broker.open_window_with_budget(
+                identity.clone(),
+                subscriptions,
+                queue_budget,
+            )?,
+            None => self.broker.open_window(identity.clone(), subscriptions)?,
+        };
         let session_cancellation = CancellationToken::new();
 
         // 订阅流是**这个窗口自己的**，所以 scope 就是这个窗口。换成 actor scope 会让同一
