@@ -8,9 +8,15 @@ use leptos_router::hooks::use_location;
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::command::ChannelPage;
 use openbot_contracts::command::ChannelSummary;
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::command::{AppEvent, SubscriptionRequest};
 use openbot_contracts::people::CurrentUser;
 
 use crate::api::channel_route_href;
+#[cfg(target_arch = "wasm32")]
+use crate::api::desktop_transport::{
+    DesktopStructuredHandlers, is_tauri_host, open_desktop_structured,
+};
 #[cfg(target_arch = "wasm32")]
 use crate::api::{
     list_channels, load_current_user, load_session_status, require_admin_status,
@@ -453,6 +459,49 @@ fn install_channel_socket(reload_generation: RwSignal<u64>) {
         loop {
             // Refetch first: the socket is an optimisation and has no replay cursor.
             reload_generation.update(|generation| *generation = generation.saturating_add(1));
+            if is_tauri_host() {
+                let handlers = DesktopStructuredHandlers::new(
+                    move |event| match event {
+                        AppEvent::ChannelActivity(_) => {
+                            reload_generation
+                                .update(|generation| *generation = generation.saturating_add(1));
+                            true
+                        }
+                        AppEvent::ChannelStreamError { .. } => {
+                            reload_generation
+                                .update(|generation| *generation = generation.saturating_add(1));
+                            false
+                        }
+                        AppEvent::Heartbeat { .. }
+                        | AppEvent::ThreadRunEvent(_)
+                        | AppEvent::ThreadStreamError { .. }
+                        | AppEvent::ToolApprovalActivity(_)
+                        | AppEvent::ToolApprovalStreamError { .. } => false,
+                    },
+                    move |_| {
+                        reload_generation
+                            .update(|generation| *generation = generation.saturating_add(1));
+                    },
+                    move || {
+                        reload_generation
+                            .update(|generation| *generation = generation.saturating_add(1));
+                    },
+                );
+                match open_desktop_structured(SubscriptionRequest::ChannelActivity, handlers) {
+                    Ok(connection) => {
+                        retry = FIRST_RETRY_MS;
+                        connection.finished().await;
+                    }
+                    Err(()) => {
+                        wait_ms(retry).await;
+                        retry = next_retry(retry);
+                        continue;
+                    }
+                }
+                wait_ms(retry).await;
+                retry = next_retry(retry);
+                continue;
+            }
             let Some(url) = channel_socket_url() else {
                 wait_ms(retry).await;
                 retry = next_retry(retry);
