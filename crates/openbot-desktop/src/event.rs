@@ -48,7 +48,7 @@ use std::sync::Arc;
 use openbot_contracts::command::AppEvent;
 
 use crate::broker::DisconnectReason;
-use crate::budget::{DeliveryClass, delivery_class};
+use crate::budget::{DeliveryClass, EventQueuePermit, delivery_class};
 use crate::window::EventScope;
 
 /// 每窗口队列里**永久留给终止帧**的格数。
@@ -233,20 +233,38 @@ pub enum FramePayload {
 /// 某个窗口投递序列上的一帧。
 ///
 /// 名字里的 `Ref` 见模块文档：它是"序列上的一个位置 + 一个共享引用"，不是事件的副本。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct AppEventRef {
     seq: u64,
     skipped: Option<SequenceGap>,
     payload: FramePayload,
+    // Operational ownership only: it is not part of frame identity or wire semantics. Keeping the
+    // permit inside the frame makes receiver drop, send failure, and frame clones release exactly
+    // once without trying to infer how many entries a closed mpsc receiver discarded.
+    _queue_permit: Option<Arc<EventQueuePermit>>,
 }
 
 impl AppEventRef {
-    pub(crate) fn new(seq: u64, skipped: Option<SequenceGap>, payload: FramePayload) -> Self {
+    pub(crate) fn new(
+        seq: u64,
+        skipped: Option<SequenceGap>,
+        payload: FramePayload,
+        queue_permit: Option<Arc<EventQueuePermit>>,
+    ) -> Self {
         Self {
             seq,
             skipped,
             payload,
+            _queue_permit: queue_permit,
         }
+    }
+
+    /// Mark this frame as dequeued from its broker route.
+    ///
+    /// Raw receiver users that skip [`crate::DesktopSession::next_frame`] merely retain the permit
+    /// until frame drop, which is stricter but cannot exceed the aggregate bound.
+    pub(crate) fn release_queue_permit(&mut self) {
+        self._queue_permit = None;
     }
 
     /// 构造任意一帧 —— **仅测试**（`cfg(test)` 或 `testkit` feature）。
@@ -257,7 +275,7 @@ impl AppEventRef {
     #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn for_test(seq: u64, skipped: Option<SequenceGap>, payload: FramePayload) -> Self {
-        Self::new(seq, skipped, payload)
+        Self::new(seq, skipped, payload, None)
     }
 
     /// 本帧在该窗口序列中的位置。
@@ -329,6 +347,14 @@ impl AppEventRef {
         matches!(self.payload, FramePayload::Terminal(_))
     }
 }
+
+impl PartialEq for AppEventRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.seq == other.seq && self.skipped == other.skipped && self.payload == other.payload
+    }
+}
+
+impl Eq for AppEventRef {}
 
 /// 接收端的完整性自检器 —— 把"我漏了没有"变成一次 `Result`。
 ///

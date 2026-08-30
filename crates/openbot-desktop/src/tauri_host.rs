@@ -39,9 +39,9 @@ use tauri::ipc::Channel;
 use tauri::{Builder, State, Webview};
 
 use crate::{
-    DesktopStructuredEventBridge, DesktopStructuredOpenError, DesktopStructuredPumpExit,
-    DesktopStructuredSubscription, InProcessTransport, OpenSessionError, WindowLabel,
-    pump_tauri_structured_events,
+    CancellationToken, DesktopStructuredEventBridge, DesktopStructuredOpenError,
+    DesktopStructuredPumpExit, DesktopStructuredSubscription, InProcessTransport, OpenSessionError,
+    WindowLabel, pump_tauri_structured_events,
 };
 
 const INDEX_MAX_BYTES: u64 = 1024 * 1024;
@@ -102,6 +102,7 @@ struct WindowAuthority {
     auth: AuthContext,
     fresh_until: Option<Instant>,
     binding_id: u64,
+    closed: CancellationToken,
 }
 
 impl WindowAuthority {
@@ -365,6 +366,7 @@ impl DesktopTauriProtocol {
                 auth,
                 fresh_until,
                 binding_id,
+                closed: CancellationToken::new(),
             },
         );
         Ok(())
@@ -375,13 +377,15 @@ impl DesktopTauriProtocol {
         let removed = self
             .windows
             .write()
-            .map(|mut windows| windows.remove(label).is_some())
+            .map(|mut windows| windows.remove(label))
             .map_err(|_| TauriHostError::AuthorityUnavailable)?;
-        if removed {
+        if let Some(authority) = removed {
+            authority.closed.cancel();
             self.structured_events
                 .close_window(&WindowLabel::new(label.to_owned()));
+            return Ok(true);
         }
-        Ok(removed)
+        Ok(false)
     }
 
     /// Open one structured stream using only the authority bound by the native host.
@@ -396,11 +400,24 @@ impl DesktopTauriProtocol {
         let authority = self
             .authority(label)?
             .ok_or(TauriHostError::WindowUnbound)?;
-        let subscription = self
-            .structured_events
-            .open(WindowLabel::new(label.to_owned()), &authority.auth, request)
-            .await
-            .map_err(TauriHostError::from)?;
+        let binding_closed = authority.closed.clone();
+        let opened = tokio::select! {
+            result = self.structured_events.open(
+                WindowLabel::new(label.to_owned()),
+                &authority.auth,
+                request,
+            ) => result,
+            () = binding_closed.cancelled() => {
+                return Err(TauriHostError::WindowUnbound);
+            }
+        };
+        let subscription = match opened {
+            Ok(subscription) => subscription,
+            Err(DesktopStructuredOpenError::WindowClosed) => {
+                return Err(TauriHostError::WindowUnbound);
+            }
+            Err(error) => return Err(TauriHostError::from(error)),
+        };
         match self.authority(label) {
             Ok(Some(current)) if current.binding_id == authority.binding_id => Ok(subscription),
             Ok(_) => {
@@ -1693,6 +1710,12 @@ fn tauri_host_error_code(error: &TauriHostError) -> &'static str {
         TauriHostError::WindowBindingCounterExhausted => "desktop_window_binding_counter_exhausted",
         TauriHostError::StructuredSubscription(DesktopStructuredOpenError::CounterExhausted) => {
             "structured_subscription_counter_exhausted"
+        }
+        TauriHostError::StructuredSubscription(
+            DesktopStructuredOpenError::WindowBudgetExhausted,
+        ) => "structured_subscription_window_budget_exhausted",
+        TauriHostError::StructuredSubscription(DesktopStructuredOpenError::WindowClosed) => {
+            "desktop_window_unbound"
         }
         TauriHostError::StructuredSubscription(DesktopStructuredOpenError::Session(
             OpenSessionError::Application(error),
@@ -3219,6 +3242,18 @@ mod tests {
             "desktop_subscription_conflict"
         );
         assert!(!tauri_host_error_code(&duplicate).contains("private"));
+        assert_eq!(
+            tauri_host_error_code(&TauriHostError::StructuredSubscription(
+                DesktopStructuredOpenError::WindowBudgetExhausted,
+            )),
+            "structured_subscription_window_budget_exhausted"
+        );
+        assert_eq!(
+            tauri_host_error_code(&TauriHostError::StructuredSubscription(
+                DesktopStructuredOpenError::WindowClosed,
+            )),
+            "desktop_window_unbound"
+        );
         let application =
             TauriHostError::StructuredSubscription(DesktopStructuredOpenError::Session(
                 OpenSessionError::Application(AppError::NotVisible),

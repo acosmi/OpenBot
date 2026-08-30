@@ -35,7 +35,7 @@ use std::sync::Mutex;
 use openbot_contracts::telemetry::Transport;
 use tokio::sync::mpsc;
 
-use crate::budget::{CRITICAL_EVENT_QUEUE_CAPACITY, DeliveryClass};
+use crate::budget::{CRITICAL_EVENT_QUEUE_CAPACITY, DeliveryClass, EventQueueBudget};
 use crate::cancel::CancellationToken;
 use crate::event::{
     AppEventRef, BrokerEvent, FramePayload, GapCause, SequenceGap, TERMINAL_FRAME_RESERVE,
@@ -227,6 +227,7 @@ struct WindowRoute {
     identity: WindowIdentity,
     subscriptions: ThreadSubscriptions,
     tx: mpsc::Sender<AppEventRef>,
+    queue_budget: Arc<EventQueueBudget>,
     next_seq: u64,
     /// latest-value 的待发槽：队列满时最新的那一帧压在这里，等下一次有空位再送。
     pending_latest: Option<(u64, Arc<BrokerEvent>)>,
@@ -249,11 +250,13 @@ impl WindowRoute {
         identity: WindowIdentity,
         subscriptions: ThreadSubscriptions,
         tx: mpsc::Sender<AppEventRef>,
+        queue_budget: Arc<EventQueueBudget>,
     ) -> Self {
         Self {
             identity,
             subscriptions,
             tx,
+            queue_budget,
             next_seq: 0,
             pending_latest: None,
             pending_gap: None,
@@ -310,7 +313,15 @@ impl WindowRoute {
         if !reserved && !self.room_for_event() {
             return PushResult::NoRoom;
         }
-        let frame = AppEventRef::new(seq, self.pending_gap.take(), payload);
+        let queue_permit = if reserved {
+            None
+        } else {
+            let Some(permit) = self.queue_budget.try_acquire() else {
+                return PushResult::NoRoom;
+            };
+            Some(permit)
+        };
+        let frame = AppEventRef::new(seq, self.pending_gap.take(), payload, queue_permit);
         match self.tx.try_send(frame) {
             Ok(()) => PushResult::Sent,
             Err(mpsc::error::TrySendError::Full(frame)) => {
@@ -462,13 +473,37 @@ impl EventBroker {
         identity: WindowIdentity,
         subscriptions: ThreadSubscriptions,
     ) -> Result<DesktopSession, WindowAlreadyOpen> {
+        self.open_window_with_budget(
+            identity,
+            subscriptions,
+            Arc::new(EventQueueBudget::spec_window()),
+        )
+    }
+
+    /// Open one broker route using a caller-owned shared event-ref budget.
+    ///
+    /// Structured Tauri subscriptions use this path so all internal routes belonging to one actual
+    /// Webview share the same 256 permits. The physical mpsc still retains one terminal-only slot
+    /// per route; terminal delivery must remain possible even when the aggregate event budget is
+    /// exhausted.
+    pub(crate) fn open_window_with_budget(
+        &self,
+        identity: WindowIdentity,
+        subscriptions: ThreadSubscriptions,
+        queue_budget: Arc<EventQueueBudget>,
+    ) -> Result<DesktopSession, WindowAlreadyOpen> {
         let mut routes = self.routes.lock().expect("broker 路由锁不会中毒");
         if routes.iter().any(|route| route.label() == identity.label()) {
             return Err(WindowAlreadyOpen(identity.label().clone()));
         }
         // 容量 = 可用 256 + 终止帧保留格。可投递的事件帧上限逐字仍是 §13.2 的 256。
         let (tx, rx) = mpsc::channel(CRITICAL_EVENT_QUEUE_CAPACITY + TERMINAL_FRAME_RESERVE);
-        routes.push(WindowRoute::new(identity.clone(), subscriptions, tx));
+        routes.push(WindowRoute::new(
+            identity.clone(),
+            subscriptions,
+            tx,
+            queue_budget,
+        ));
         Ok(DesktopSession::new(identity, rx, self.shutdown.clone()))
     }
 
@@ -722,7 +757,8 @@ mod tests {
     /// 把一个 session 里此刻已经排好的帧全部取出来。
     fn drain(session: &mut DesktopSession) -> Vec<AppEventRef> {
         let mut frames = Vec::new();
-        while let Ok(frame) = session.events.try_recv() {
+        while let Ok(mut frame) = session.events.try_recv() {
+            frame.release_queue_permit();
             frames.push(frame);
         }
         frames

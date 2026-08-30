@@ -93,7 +93,9 @@ impl DesktopSession {
     /// }
     /// ```
     pub async fn next_frame(&mut self) -> Option<AppEventRef> {
-        self.events.recv().await
+        let mut frame = self.events.recv().await?;
+        frame.release_queue_permit();
+        Some(frame)
     }
 
     /// 本窗口的标签。

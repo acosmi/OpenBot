@@ -11,7 +11,8 @@ use openbot_contracts::ids::ThreadId;
 use tauri::ipc::Channel;
 
 use crate::broker::DisconnectReason;
-use crate::budget::DeliveryClass;
+use crate::budget::{CRITICAL_EVENT_QUEUE_CAPACITY, DeliveryClass, EventQueueBudget};
+use crate::cancel::CancellationToken;
 use crate::event::{AppEventRef, GapCause, SequenceError, SequenceGap, SequenceTracker};
 use crate::transport::{InProcessTransport, OpenSessionError};
 use crate::window::{ThreadSubscriptions, WindowLabel};
@@ -22,7 +23,90 @@ pub use openbot_contracts::desktop::{
     DesktopStructuredStreamKind, DesktopStructuredTerminalReason,
 };
 
-type ActiveSubscriptions = BTreeMap<WindowLabel, BTreeMap<u64, WindowLabel>>;
+/// Maximum live or in-flight structured subscriptions owned by one actual Webview.
+///
+/// This is a resource bound, not authority: every subscription still passes the closed request and
+/// host-observed window checks. Reusing §13.2's 256 command/event bound keeps a hostile renderer
+/// from multiplying tasks and terminal reserves while preserving the product's ordinary few-stream
+/// shape.
+pub const MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW: usize = CRITICAL_EVENT_QUEUE_CAPACITY;
+
+struct WindowAggregate {
+    token: Arc<()>,
+    queue_budget: Arc<EventQueueBudget>,
+    closed: CancellationToken,
+    pending: usize,
+    registrations: BTreeMap<u64, WindowLabel>,
+}
+
+impl WindowAggregate {
+    fn new() -> Self {
+        Self {
+            token: Arc::new(()),
+            queue_budget: Arc::new(EventQueueBudget::spec_window()),
+            closed: CancellationToken::new(),
+            pending: 0,
+            registrations: BTreeMap::new(),
+        }
+    }
+}
+
+type ActiveSubscriptions = BTreeMap<WindowLabel, WindowAggregate>;
+
+struct PendingWindowOpen {
+    active: Arc<Mutex<ActiveSubscriptions>>,
+    window: WindowLabel,
+    token: Arc<()>,
+    queue_budget: Arc<EventQueueBudget>,
+    closed: CancellationToken,
+    settled: bool,
+}
+
+impl PendingWindowOpen {
+    fn queue_budget(&self) -> Arc<EventQueueBudget> {
+        Arc::clone(&self.queue_budget)
+    }
+
+    fn closed(&self) -> CancellationToken {
+        self.closed.clone()
+    }
+
+    fn commit(mut self, subscription_id: u64, internal_label: WindowLabel) -> bool {
+        let committed = {
+            let mut active = self
+                .active
+                .lock()
+                .expect("structured subscription registry lock must not be poisoned");
+            let Some(aggregate) = active.get_mut(&self.window) else {
+                self.settled = true;
+                return false;
+            };
+            if !Arc::ptr_eq(&aggregate.token, &self.token) {
+                self.settled = true;
+                return false;
+            }
+            aggregate.pending = aggregate
+                .pending
+                .checked_sub(1)
+                .expect("committed structured open must own one pending slot");
+            aggregate
+                .registrations
+                .insert(subscription_id, internal_label);
+            true
+        };
+        self.settled = true;
+        committed
+    }
+}
+
+impl Drop for PendingWindowOpen {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        release_pending_open(&self.active, &self.window, &self.token);
+    }
+}
 
 /// Opening a host-owned structured subscription failed.
 #[derive(Debug, thiserror::Error)]
@@ -30,6 +114,12 @@ pub enum DesktopStructuredOpenError {
     /// Host subscription counter is exhausted; wrapping could collide with a live route.
     #[error("structured_subscription_counter_exhausted")]
     CounterExhausted,
+    /// One actual Webview already owns the maximum live/in-flight structured subscriptions.
+    #[error("structured_subscription_window_budget_exhausted")]
+    WindowBudgetExhausted,
+    /// The actual window was closed/replaced while its application subscription was opening.
+    #[error("structured_subscription_window_closed")]
+    WindowClosed,
     /// Application or in-process transport rejected the subscription.
     #[error(transparent)]
     Session(#[from] OpenSessionError),
@@ -88,6 +178,7 @@ impl DesktopStructuredEventBridge {
         auth: &AuthContext,
         request: SubscriptionRequest,
     ) -> Result<DesktopStructuredSubscription, DesktopStructuredOpenError> {
+        let pending_open = reserve_window_open(&self.active, window.clone())?;
         let subscription_id = self
             .next_subscription_id
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
@@ -115,16 +206,24 @@ impl DesktopStructuredEventBridge {
             window.as_str(),
             subscription_id
         ));
-        let session = self
-            .transport
-            .open_session(internal_label.clone(), auth, request, thread_subscriptions)
-            .await?;
-        self.active
-            .lock()
-            .expect("structured subscription registry lock must not be poisoned")
-            .entry(window.clone())
-            .or_default()
-            .insert(subscription_id, internal_label.clone());
+        let queue_budget = pending_open.queue_budget();
+        let window_closed = pending_open.closed();
+        let session = tokio::select! {
+            result = self.transport.open_session_with_budget(
+                internal_label.clone(),
+                auth,
+                request,
+                thread_subscriptions,
+                queue_budget,
+            ) => result?,
+            () = window_closed.cancelled() => {
+                return Err(DesktopStructuredOpenError::WindowClosed);
+            }
+        };
+        if !pending_open.commit(subscription_id, internal_label.clone()) {
+            let _ = self.transport.close_session(&internal_label);
+            return Err(DesktopStructuredOpenError::WindowClosed);
+        }
         Ok(DesktopStructuredSubscription {
             subscription_id,
             stream,
@@ -145,14 +244,17 @@ impl DesktopStructuredEventBridge {
     /// pump cannot resurrect stale ownership. The returned count is the exact number of registered
     /// subscriptions selected for cleanup.
     pub fn close_window(&self, window: &WindowLabel) -> usize {
-        let registrations = self
+        let aggregate = self
             .active
             .lock()
             .expect("structured subscription registry lock must not be poisoned")
-            .remove(window)
-            .unwrap_or_default();
-        let count = registrations.len();
-        for internal_label in registrations.into_values() {
+            .remove(window);
+        let Some(aggregate) = aggregate else {
+            return 0;
+        };
+        aggregate.closed.cancel();
+        let count = aggregate.registrations.len();
+        for internal_label in aggregate.registrations.into_values() {
             let _ = self.transport.close_session(&internal_label);
         }
         count
@@ -178,8 +280,20 @@ impl DesktopStructuredEventBridge {
             .lock()
             .expect("structured subscription registry lock must not be poisoned")
             .values()
-            .map(BTreeMap::len)
+            .map(|aggregate| aggregate.registrations.len())
             .sum()
+    }
+
+    /// Remaining queued event-ref permits for one actual Webview.
+    ///
+    /// `None` means the host has no live or in-flight structured subscription for that label.
+    #[must_use]
+    pub fn remaining_window_event_capacity(&self, window: &WindowLabel) -> Option<usize> {
+        self.active
+            .lock()
+            .expect("structured subscription registry lock must not be poisoned")
+            .get(window)
+            .map(|aggregate| aggregate.queue_budget.remaining())
     }
 }
 
@@ -243,6 +357,70 @@ impl Drop for DesktopStructuredSubscription {
     }
 }
 
+fn reserve_window_open(
+    active: &Arc<Mutex<ActiveSubscriptions>>,
+    window: WindowLabel,
+) -> Result<PendingWindowOpen, DesktopStructuredOpenError> {
+    let (token, queue_budget, closed) = {
+        let mut active = active
+            .lock()
+            .expect("structured subscription registry lock must not be poisoned");
+        let aggregate = active
+            .entry(window.clone())
+            .or_insert_with(WindowAggregate::new);
+        let total = aggregate
+            .pending
+            .checked_add(aggregate.registrations.len())
+            .ok_or(DesktopStructuredOpenError::WindowBudgetExhausted)?;
+        if total >= MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW {
+            return Err(DesktopStructuredOpenError::WindowBudgetExhausted);
+        }
+        aggregate.pending = aggregate
+            .pending
+            .checked_add(1)
+            .ok_or(DesktopStructuredOpenError::WindowBudgetExhausted)?;
+        (
+            Arc::clone(&aggregate.token),
+            Arc::clone(&aggregate.queue_budget),
+            aggregate.closed.clone(),
+        )
+    };
+    Ok(PendingWindowOpen {
+        active: Arc::clone(active),
+        window,
+        token,
+        queue_budget,
+        closed,
+        settled: false,
+    })
+}
+
+fn release_pending_open(
+    active: &Mutex<ActiveSubscriptions>,
+    window: &WindowLabel,
+    token: &Arc<()>,
+) {
+    let mut active = active
+        .lock()
+        .expect("structured subscription registry lock must not be poisoned");
+    let remove_window = if let Some(aggregate) = active.get_mut(window) {
+        if !Arc::ptr_eq(&aggregate.token, token) {
+            false
+        } else {
+            aggregate.pending = aggregate
+                .pending
+                .checked_sub(1)
+                .expect("pending structured open guard must own one slot");
+            aggregate.pending == 0 && aggregate.registrations.is_empty()
+        }
+    } else {
+        false
+    };
+    if remove_window {
+        active.remove(window);
+    }
+}
+
 fn remove_registration(
     active: &Mutex<ActiveSubscriptions>,
     window: &WindowLabel,
@@ -251,9 +429,9 @@ fn remove_registration(
     let mut active = active
         .lock()
         .expect("structured subscription registry lock must not be poisoned");
-    let registrations = active.get_mut(window)?;
-    let internal_label = registrations.remove(&subscription_id)?;
-    if registrations.is_empty() {
+    let aggregate = active.get_mut(window)?;
+    let internal_label = aggregate.registrations.remove(&subscription_id)?;
+    if aggregate.registrations.is_empty() && aggregate.pending == 0 {
         active.remove(window);
     }
     Some(internal_label)
@@ -356,6 +534,7 @@ mod tests {
     use core::task::{Context, Poll};
     use std::collections::VecDeque;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicUsizeOrdering};
 
     use async_trait::async_trait;
     use openbot_application::{AppEventStream, ApplicationService};
@@ -460,6 +639,81 @@ mod tests {
         }
     }
 
+    struct BlockingPendingService {
+        entered: Arc<AtomicUsize>,
+        release: Arc<tokio::sync::Semaphore>,
+    }
+
+    #[async_trait]
+    impl ApplicationService for BlockingPendingService {
+        async fn execute(
+            &self,
+            _auth: AuthContext,
+            _command: AppCommand,
+        ) -> Result<AppReply, AppError> {
+            Ok(AppReply::Health(HealthReport { ok: true }))
+        }
+
+        async fn subscribe(
+            &self,
+            _auth: AuthContext,
+            _request: SubscriptionRequest,
+        ) -> Result<AppEventStream, AppError> {
+            self.entered.fetch_add(1, AtomicUsizeOrdering::SeqCst);
+            self.release
+                .acquire()
+                .await
+                .expect("test gate remains open")
+                .forget();
+            Ok(Box::pin(PendingStream))
+        }
+    }
+
+    const BURST_EVENTS_PER_STREAM: usize = 200;
+
+    struct BurstService;
+
+    #[async_trait]
+    impl ApplicationService for BurstService {
+        async fn execute(
+            &self,
+            _auth: AuthContext,
+            _command: AppCommand,
+        ) -> Result<AppReply, AppError> {
+            Ok(AppReply::Health(HealthReport { ok: true }))
+        }
+
+        async fn subscribe(
+            &self,
+            _auth: AuthContext,
+            request: SubscriptionRequest,
+        ) -> Result<AppEventStream, AppError> {
+            let events = (0..BURST_EVENTS_PER_STREAM)
+                .map(|index| match &request {
+                    SubscriptionRequest::ChannelActivity => {
+                        AppEvent::ChannelActivity(ChannelActivityEvent {
+                            channel_id: ChannelId::new("channel-burst"),
+                            last_message: Some(index.to_string()),
+                            last_message_at: Some(time::OffsetDateTime::UNIX_EPOCH),
+                            last_message_agent_id: None,
+                        })
+                    }
+                    SubscriptionRequest::ToolApprovalActivity => AppEvent::ToolApprovalActivity(
+                        openbot_contracts::tool::ToolApprovalActivityEvent {
+                            pending_count: u32::try_from(index).expect("bounded test count"),
+                        },
+                    ),
+                    SubscriptionRequest::Health | SubscriptionRequest::ThreadEvents { .. } => {
+                        AppEvent::Heartbeat {
+                            seq: u64::try_from(index).expect("bounded test count"),
+                        }
+                    }
+                })
+                .collect();
+            Ok(Box::pin(FiniteStream(events)))
+        }
+    }
+
     struct MismatchedService;
 
     #[async_trait]
@@ -518,6 +772,23 @@ mod tests {
         })
     }
 
+    async fn drain_subscription(
+        subscription: &mut DesktopStructuredSubscription,
+    ) -> (usize, DesktopStructuredTerminalReason) {
+        let mut events = 0;
+        loop {
+            let frame = subscription
+                .next_frame()
+                .await
+                .expect("valid structured frame")
+                .expect("terminal must precede EOF");
+            if let Some(reason) = frame.terminal_reason() {
+                return (events, reason);
+            }
+            events += 1;
+        }
+    }
+
     #[tokio::test]
     async fn subscription_identity_exhaustion_fails_before_opening_a_route() {
         let transport = Arc::new(InProcessTransport::new(Arc::new(PendingService)));
@@ -539,6 +810,176 @@ mod tests {
         ));
         assert_eq!(transport.broker().window_count(), 0);
         assert_eq!(bridge.active_subscription_count(), 0);
+        assert_eq!(
+            bridge.remaining_window_event_capacity(&WindowLabel::new("main")),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn one_actual_webview_shares_exactly_256_queued_event_refs_across_streams() {
+        let transport = Arc::new(InProcessTransport::new(Arc::new(BurstService)));
+        let bridge = DesktopStructuredEventBridge::new(Arc::clone(&transport));
+        let auth = auth_for("actor-1");
+        let main = WindowLabel::new("main");
+        let mut channels = bridge
+            .open(main.clone(), &auth, SubscriptionRequest::ChannelActivity)
+            .await
+            .unwrap();
+        let mut approvals = bridge
+            .open(
+                main.clone(),
+                &auth,
+                SubscriptionRequest::ToolApprovalActivity,
+            )
+            .await
+            .unwrap();
+
+        tokio::time::timeout(core::time::Duration::from_secs(2), async {
+            while transport.broker().window_count() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both finite pumps must terminate");
+        assert_eq!(
+            bridge.remaining_window_event_capacity(&main),
+            Some(0),
+            "two internal routes must share one actual-window budget"
+        );
+
+        let (channel_result, approval_result) = tokio::join!(
+            drain_subscription(&mut channels),
+            drain_subscription(&mut approvals),
+        );
+        assert_eq!(
+            channel_result.0 + approval_result.0,
+            CRITICAL_EVENT_QUEUE_CAPACITY
+        );
+        assert!(
+            [channel_result.1, approval_result.1]
+                .contains(&DesktopStructuredTerminalReason::QueueOverflow),
+            "the 257th aggregate critical event must force an explicit terminal"
+        );
+        assert_eq!(
+            bridge.remaining_window_event_capacity(&main),
+            Some(CRITICAL_EVENT_QUEUE_CAPACITY),
+            "consuming every queued frame releases every shared permit"
+        );
+
+        drop(channels);
+        drop(approvals);
+        assert_eq!(bridge.remaining_window_event_capacity(&main), None);
+        assert_eq!(bridge.active_subscription_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_257th_subscription_is_rejected_per_webview_without_starving_another_window() {
+        let transport = Arc::new(InProcessTransport::new(Arc::new(PendingService)));
+        let bridge = DesktopStructuredEventBridge::new(Arc::clone(&transport));
+        let auth = auth_for("actor-1");
+        let main = WindowLabel::new("main");
+        let mut main_subscriptions = Vec::with_capacity(MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW);
+        for _ in 0..MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW {
+            main_subscriptions.push(
+                bridge
+                    .open(main.clone(), &auth, SubscriptionRequest::Health)
+                    .await
+                    .expect("first 256 subscriptions fit"),
+            );
+        }
+        assert!(matches!(
+            bridge
+                .open(main.clone(), &auth, SubscriptionRequest::Health)
+                .await,
+            Err(DesktopStructuredOpenError::WindowBudgetExhausted)
+        ));
+
+        let auxiliary = WindowLabel::new("auxiliary");
+        let auxiliary_subscription = bridge
+            .open(auxiliary.clone(), &auth, SubscriptionRequest::Health)
+            .await
+            .expect("another actual Webview owns an independent budget");
+        assert_eq!(
+            bridge.active_subscription_count(),
+            MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW + 1
+        );
+        assert_eq!(
+            bridge.remaining_window_event_capacity(&main),
+            Some(CRITICAL_EVENT_QUEUE_CAPACITY)
+        );
+        assert_eq!(
+            bridge.remaining_window_event_capacity(&auxiliary),
+            Some(CRITICAL_EVENT_QUEUE_CAPACITY)
+        );
+
+        drop(main_subscriptions);
+        drop(auxiliary_subscription);
+        assert_eq!(bridge.active_subscription_count(), 0);
+        assert_eq!(transport.broker().window_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn pending_opens_count_toward_the_limit_and_window_close_cannot_resurrect_them() {
+        let entered = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let transport = Arc::new(InProcessTransport::new(Arc::new(BlockingPendingService {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        })));
+        let bridge = DesktopStructuredEventBridge::new(Arc::clone(&transport));
+        let main = WindowLabel::new("main");
+        let mut opens = Vec::with_capacity(MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW);
+        for _ in 0..MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW {
+            let opening = bridge.clone();
+            let window = main.clone();
+            opens.push(tokio::spawn(async move {
+                opening
+                    .open(window, &auth_for("actor-1"), SubscriptionRequest::Health)
+                    .await
+            }));
+        }
+        tokio::time::timeout(core::time::Duration::from_secs(2), async {
+            while entered.load(AtomicUsizeOrdering::SeqCst)
+                != MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("all permitted opens must reach ApplicationService");
+
+        assert!(matches!(
+            bridge
+                .open(
+                    main.clone(),
+                    &auth_for("actor-1"),
+                    SubscriptionRequest::Health
+                )
+                .await,
+            Err(DesktopStructuredOpenError::WindowBudgetExhausted)
+        ));
+        assert_eq!(
+            entered.load(AtomicUsizeOrdering::SeqCst),
+            MAX_STRUCTURED_SUBSCRIPTIONS_PER_WINDOW,
+            "the rejected open must not call ApplicationService"
+        );
+        assert_eq!(bridge.close_window(&main), 0, "all opens are still pending");
+        assert_eq!(bridge.remaining_window_event_capacity(&main), None);
+
+        tokio::time::timeout(core::time::Duration::from_secs(2), async {
+            for open in opens {
+                assert!(matches!(
+                    open.await.expect("open task must finish"),
+                    Err(DesktopStructuredOpenError::WindowClosed)
+                ));
+            }
+        })
+        .await
+        .expect("window close must cancel every in-flight application subscribe");
+        assert_eq!(bridge.active_subscription_count(), 0);
+        assert_eq!(bridge.remaining_window_event_capacity(&main), None);
+        assert_eq!(transport.broker().window_count(), 0);
     }
 
     #[tokio::test]
