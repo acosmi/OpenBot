@@ -48,7 +48,9 @@
 //! **尚未实现**（不要冒充）：可发布 Tauri binary/tauri.conf/capability 清单与真实窗口生命周期
 //! assembly（G6）、sidecar/update（§16.2）、screen loopback binary WebSocket（§13.4/G7）。
 //! Batch 16 已落 opt-in Tauri 2.11.5 custom-protocol adapter、本地偏好原子文件与首帧改写，
-//! 但其许可/RustSec/cargo-vet delta 仍红，不能据此勾 Desktop/G6 整关。
+//! Batch69–71又依次接Agent lifecycle/callback与channel/thread unary framing；SSE/WebSocket仍须
+//! 走下面的structured-event session桥，不能塞进custom-protocol `Vec<u8>`响应。许可/RustSec/
+//! cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
 //!
 //! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
 //!

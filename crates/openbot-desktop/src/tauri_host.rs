@@ -12,18 +12,23 @@ use openbot_contracts::agent::{
     AgentConnectionTestRequest, AgentMutationRequest, AgentProfileResponse, AgentProfilesResponse,
 };
 use openbot_contracts::auth::AuthContext;
-use openbot_contracts::command::{AppCommand, AppReply};
+use openbot_contracts::command::{
+    AppCommand, AppReply, BeginThreadRun, BeginThreadRunBody, CancelThreadRun,
+    ChannelDetailResponse, CreateChannelRequest, MAX_THREAD_MESSAGE_BYTES, RouteChannelRequest,
+    ThreadRunCancellationState,
+};
 use openbot_contracts::components::{
     ComponentAgentGrantRequest, ComponentCatalogueRequest, ComponentDecisionRequest,
     ComponentDraftRequest, ComponentFunctionCallRequest, ComponentFunctionGrantRequest,
     ComponentGovernanceMutation, ComponentHumanDecisionAnswer, ComponentPublicationRequest,
 };
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
-use openbot_contracts::ids::BotId;
+use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::people::CurrentUserResponse;
 use openbot_contracts::sandboxed::SaveSandboxedComponentRequest;
 use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme, UpdateUiPreferences};
+use serde::de::DeserializeOwned;
 use serde_json::json;
 use tauri::{Builder, Runtime};
 
@@ -33,6 +38,9 @@ const INDEX_MAX_BYTES: u64 = 1024 * 1024;
 const ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const API_BODY_MAX_BYTES: usize = 4096;
 const AGENT_BODY_MAX_BYTES: usize = 64 * 1024;
+// Server's single request-body cap and the public message cap are both 1 MiB. Using the contracts
+// constant keeps Desktop from accepting a larger renderer-materialized body than Axum.
+const CHANNEL_THREAD_BODY_MAX_BYTES: usize = MAX_THREAD_MESSAGE_BYTES;
 const COMPONENT_CATALOGUE_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_DECISION_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_GOVERNANCE_BODY_MAX_BYTES: usize = 68 * 1024;
@@ -123,6 +131,29 @@ enum AgentBodyError {
     TooLarge,
 }
 
+#[derive(Clone, Copy)]
+enum ThreadRoute<'a> {
+    Status {
+        raw_thread_id: &'a str,
+    },
+    Conversation {
+        raw_thread_id: &'a str,
+    },
+    Runs {
+        raw_thread_id: &'a str,
+    },
+    Cancel {
+        raw_thread_id: &'a str,
+        raw_run_id: &'a str,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SensitiveBodyError {
+    Malformed,
+    TooLarge,
+}
+
 impl<'a> AgentRoute<'a> {
     fn raw_agent_id(self) -> &'a str {
         match self {
@@ -146,6 +177,49 @@ fn agent_route(path: &str) -> Option<AgentRoute<'_>> {
         [raw_agent_id, "hide"] => Some(AgentRoute::Hide { raw_agent_id }),
         [raw_agent_id, "unhide"] => Some(AgentRoute::Unhide { raw_agent_id }),
         [raw_agent_id, "callback-token"] => Some(AgentRoute::CallbackToken { raw_agent_id }),
+        _ => None,
+    }
+}
+
+fn raw_channel_id(path: &str) -> Option<&str> {
+    let raw = path.strip_prefix("/api/channels/")?;
+    (!raw.is_empty() && raw != "events" && !raw.contains('/')).then_some(raw)
+}
+
+impl<'a> ThreadRoute<'a> {
+    fn raw_thread_id(self) -> &'a str {
+        match self {
+            Self::Status { raw_thread_id }
+            | Self::Conversation { raw_thread_id }
+            | Self::Runs { raw_thread_id }
+            | Self::Cancel { raw_thread_id, .. } => raw_thread_id,
+        }
+    }
+}
+
+fn thread_route(path: &str) -> Option<ThreadRoute<'_>> {
+    let segments = path
+        .strip_prefix("/api/threads/")?
+        .split('/')
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        [raw_thread_id] if *raw_thread_id != "mint" && !raw_thread_id.is_empty() => {
+            Some(ThreadRoute::Status { raw_thread_id })
+        }
+        [raw_thread_id, "conversation"] if !raw_thread_id.is_empty() => {
+            Some(ThreadRoute::Conversation { raw_thread_id })
+        }
+        [raw_thread_id, "runs"] if !raw_thread_id.is_empty() => {
+            Some(ThreadRoute::Runs { raw_thread_id })
+        }
+        [raw_thread_id, "runs", raw_run_id, "cancel"]
+            if !raw_thread_id.is_empty() && !raw_run_id.is_empty() =>
+        {
+            Some(ThreadRoute::Cancel {
+                raw_thread_id,
+                raw_run_id,
+            })
+        }
         _ => None,
     }
 }
@@ -259,7 +333,7 @@ impl DesktopTauriProtocol {
     }
 
     /// Handle one custom-protocol request. Public for deterministic host-adapter tests.
-    pub async fn handle(&self, label: &str, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
+    pub async fn handle(&self, label: &str, mut request: Request<Vec<u8>>) -> Response<Vec<u8>> {
         let authority = match self.authority(label) {
             Ok(Some(authority)) => authority,
             Ok(None) => return error_response(AppError::Unauthenticated),
@@ -271,6 +345,23 @@ impl DesktopTauriProtocol {
         }
         if path == "/api/me/preferences" {
             return self.preferences(request, authority).await;
+        }
+        if path == "/api/channels" {
+            return self.channels(request, authority).await;
+        }
+        if let Some(raw_channel_id) = raw_channel_id(&path) {
+            return self
+                .channel_detail(request, authority, raw_channel_id)
+                .await;
+        }
+        if path == "/api/route" {
+            return self.route_channel(request, authority).await;
+        }
+        if path == "/api/threads/mint" {
+            return self.thread_mint(request, authority).await;
+        }
+        if let Some(route) = thread_route(&path) {
+            return self.thread_unary(request, authority, route).await;
         }
         if path == "/api/agents/test-connection" {
             return self.agent_test_connection(request, authority).await;
@@ -349,9 +440,11 @@ impl DesktopTauriProtocol {
             return self.approval_decision(request, authority, raw_id).await;
         }
         if path == "/api" || path.starts_with("/api/") {
+            request.body_mut().fill(0);
             return empty_response(StatusCode::NOT_FOUND);
         }
         if request.method() != Method::GET {
+            request.body_mut().fill(0);
             return empty_response(StatusCode::METHOD_NOT_ALLOWED);
         }
         if path == "/" || path == "/index.html" || is_spa_path(&path) {
@@ -414,6 +507,250 @@ impl DesktopTauriProtocol {
         };
         match self.transport.execute(authority.auth, command).await {
             Ok(AppReply::UiPreferences(preferences)) => json_response(&preferences),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn channels(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        match *request.method() {
+            Method::GET if request.body().is_empty() => {
+                let (limit, cursor) = match channel_list_query(request.uri().query()) {
+                    Some(query) => query,
+                    None => {
+                        return error_response(AppError::MalformedPayload { field: "query" });
+                    }
+                };
+                match self
+                    .transport
+                    .execute(
+                        authority.auth,
+                        AppCommand::ListVisibleChannels { limit, cursor },
+                    )
+                    .await
+                {
+                    Ok(AppReply::Channels(page)) => json_response(&page),
+                    Ok(_) => dependency_response(),
+                    Err(error) => error_response(error),
+                }
+            }
+            Method::POST => {
+                let body = match parse_sensitive_body::<CreateChannelRequest>(
+                    &mut request,
+                    CHANNEL_THREAD_BODY_MAX_BYTES,
+                ) {
+                    Ok(body) => body,
+                    Err(error) => return sensitive_body_error_response(error),
+                };
+                match self
+                    .transport
+                    .execute(
+                        authority.auth,
+                        AppCommand::CreateChannel {
+                            agent_ids: body.agent_ids,
+                        },
+                    )
+                    .await
+                {
+                    Ok(AppReply::Channel(channel)) => json_response_with_status(
+                        &ChannelDetailResponse { channel },
+                        StatusCode::CREATED,
+                    ),
+                    Ok(_) => dependency_response(),
+                    Err(error) => error_response(error),
+                }
+            }
+            _ => {
+                request.body_mut().fill(0);
+                empty_response(StatusCode::METHOD_NOT_ALLOWED)
+            }
+        }
+    }
+
+    async fn channel_detail(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_channel_id: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let channel_id = match percent_decode_segment(raw_channel_id) {
+            Some(channel_id) => ChannelId::new(channel_id),
+            None => {
+                return error_response(AppError::MalformedPayload {
+                    field: "channel_id",
+                });
+            }
+        };
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::GetVisibleChannel { channel_id })
+            .await
+        {
+            Ok(AppReply::Channel(channel)) => json_response(&ChannelDetailResponse { channel }),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn route_channel(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let body = match parse_sensitive_body::<RouteChannelRequest>(
+            &mut request,
+            CHANNEL_THREAD_BODY_MAX_BYTES,
+        ) {
+            Ok(body) => body,
+            Err(error) => return sensitive_body_error_response(error),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::RouteChannelMessage {
+                    text: body.text,
+                    agent_id: body.agent_id,
+                },
+            )
+            .await
+        {
+            Ok(AppReply::ChannelRouting(decision)) => json_response(&decision),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn thread_mint(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::MintThreadId)
+            .await
+        {
+            Ok(AppReply::ThreadMinted(minted)) => json_response(&minted),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn thread_unary(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        route: ThreadRoute<'_>,
+    ) -> Response<Vec<u8>> {
+        let supported = matches!(
+            (route, request.method()),
+            (ThreadRoute::Status { .. }, &Method::GET)
+                | (ThreadRoute::Conversation { .. }, &Method::GET)
+                | (ThreadRoute::Runs { .. }, &Method::POST)
+                | (ThreadRoute::Cancel { .. }, &Method::POST)
+        );
+        if !supported {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let thread_id = match percent_decode_segment(route.raw_thread_id()) {
+            Some(thread_id) => ThreadId::new(thread_id),
+            None => {
+                request.body_mut().fill(0);
+                return error_response(AppError::MalformedPayload { field: "thread_id" });
+            }
+        };
+        match (route, request.method()) {
+            (ThreadRoute::Status { .. }, &Method::GET) if request.body().is_empty() => {
+                self.thread_command(authority.auth, AppCommand::GetThreadStatus { thread_id })
+                    .await
+            }
+            (ThreadRoute::Conversation { .. }, &Method::GET) if request.body().is_empty() => {
+                self.thread_command(
+                    authority.auth,
+                    AppCommand::GetThreadConversation { thread_id },
+                )
+                .await
+            }
+            (ThreadRoute::Runs { .. }, &Method::POST) => {
+                let body = match parse_sensitive_body::<BeginThreadRunBody>(
+                    &mut request,
+                    CHANNEL_THREAD_BODY_MAX_BYTES,
+                ) {
+                    Ok(body) => body,
+                    Err(error) => return sensitive_body_error_response(error),
+                };
+                self.thread_command(
+                    authority.auth,
+                    AppCommand::BeginThreadRun(BeginThreadRun {
+                        thread_id,
+                        run_id: body.run_id,
+                        bot_id: body.bot_id,
+                        anchor: body.anchor,
+                        message: body.message,
+                    }),
+                )
+                .await
+            }
+            (ThreadRoute::Cancel { raw_run_id, .. }, &Method::POST)
+                if request.body().is_empty() =>
+            {
+                let run_id = match percent_decode_segment(raw_run_id) {
+                    Some(run_id) => RunId::new(run_id),
+                    None => {
+                        return error_response(AppError::MalformedPayload { field: "run_id" });
+                    }
+                };
+                self.thread_command(
+                    authority.auth,
+                    AppCommand::CancelThreadRun(CancelThreadRun { thread_id, run_id }),
+                )
+                .await
+            }
+            _ => {
+                request.body_mut().fill(0);
+                empty_response(StatusCode::METHOD_NOT_ALLOWED)
+            }
+        }
+    }
+
+    async fn thread_command(&self, auth: AuthContext, command: AppCommand) -> Response<Vec<u8>> {
+        match self.transport.execute(auth, command).await {
+            Ok(AppReply::ThreadStatus(status)) => json_response(&status),
+            Ok(AppReply::ThreadConversation(snapshot)) => json_response(&snapshot),
+            Ok(AppReply::ThreadRunStarted(started)) => {
+                let status = if started.replayed {
+                    StatusCode::OK
+                } else {
+                    StatusCode::CREATED
+                };
+                json_response_with_status(&started, status)
+            }
+            Ok(AppReply::ThreadRunCancellation(cancelled)) => {
+                let status = if cancelled.state == ThreadRunCancellationState::AlreadyTerminal {
+                    StatusCode::OK
+                } else {
+                    StatusCode::ACCEPTED
+                };
+                json_response_with_status(&cancelled, status)
+            }
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -1317,6 +1654,28 @@ fn agent_body_error_response(error: AgentBodyError) -> Response<Vec<u8>> {
     }
 }
 
+fn parse_sensitive_body<T: DeserializeOwned>(
+    request: &mut Request<Vec<u8>>,
+    maximum: usize,
+) -> Result<T, SensitiveBodyError> {
+    if request.body().len() > maximum {
+        request.body_mut().fill(0);
+        return Err(SensitiveBodyError::TooLarge);
+    }
+    let parsed = serde_json::from_slice::<T>(request.body());
+    request.body_mut().fill(0);
+    parsed.map_err(|_| SensitiveBodyError::Malformed)
+}
+
+fn sensitive_body_error_response(error: SensitiveBodyError) -> Response<Vec<u8>> {
+    match error {
+        SensitiveBodyError::Malformed => {
+            error_response(AppError::MalformedPayload { field: "body" })
+        }
+        SensitiveBodyError::TooLarge => payload_too_large(),
+    }
+}
+
 fn error_response(error: AppError) -> Response<Vec<u8>> {
     let body = serde_json::to_vec(&json!({"code": error.code().as_str()}))
         .unwrap_or_else(|_| b"{\"code\":\"dependency_unavailable\"}".to_vec());
@@ -1428,6 +1787,31 @@ fn agent_hidden_query(query: Option<&str>) -> Option<bool> {
     }
 }
 
+fn channel_list_query(query: Option<&str>) -> Option<(Option<u32>, Option<String>)> {
+    let Some(query) = query else {
+        return Some((None, None));
+    };
+    if query.is_empty() {
+        return Some((None, None));
+    }
+    if query.len() > API_BODY_MAX_BYTES {
+        return None;
+    }
+    let mut limit = None;
+    let mut cursor = None;
+    for pair in query.split('&') {
+        let (raw_key, raw_value) = pair.split_once('=')?;
+        let key = percent_decode_query_component(raw_key)?;
+        let value = percent_decode_query_component(raw_value)?;
+        match key.as_str() {
+            "limit" if limit.is_none() => limit = Some(value.parse().ok()?),
+            "cursor" if cursor.is_none() => cursor = Some(value),
+            _ => return None,
+        }
+    }
+    Some((limit, cursor))
+}
+
 fn percent_decode_segment(raw: &str) -> Option<String> {
     if raw.contains('/') {
         return None;
@@ -1449,6 +1833,31 @@ fn percent_decode_segment(raw: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
+fn percent_decode_query_component(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' => {
+                let high = *bytes.get(index + 1)?;
+                let low = *bytes.get(index + 2)?;
+                decoded.push(hex(high)? << 4 | hex(low)?);
+                index += 3;
+            }
+            b'+' => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            byte => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
 const fn hex(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
@@ -1465,20 +1874,28 @@ mod tests {
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
         AgentAdministration, AgentAdministrationError, AgentAdministrationScope,
-        AgentCallbackTokenAdministration, AgentCallbackTokenError, AgentDirectory, AgentReadScope,
-        ChannelReader, ComponentAdministration, ComponentAdministrationError,
-        ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentRuntimeScope,
-        OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
-        SandboxedComponentAdministration, SandboxedComponentAdministrationError,
-        SandboxedComponentDraft, ToolApprovalAdministration, ToolApprovalAdministrationError,
-        UiPreferenceAdministration, UiPreferenceAdministrationError,
+        AgentCallbackTokenAdministration, AgentCallbackTokenError, AgentDirectory,
+        AgentReachability, AgentReadScope, BeginThreadRunRequest, CancelThreadRunRequest,
+        ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
+        ChannelReader, ChannelRoutingBackend, ChannelRoutingBackendError, ComponentAdministration,
+        ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
+        ComponentRuntimeScope, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
+        PeoplePortError, PortError, RoutingAuditRecord, SandboxedComponentAdministration,
+        SandboxedComponentAdministrationError, SandboxedComponentDraft, ThreadConversationRequest,
+        ThreadDirectory, ThreadDirectoryError, ToolApprovalAdministration,
+        ToolApprovalAdministrationError, UiPreferenceAdministration,
+        UiPreferenceAdministrationError,
     };
     use openbot_contracts::agent::{
         AgentConnectionVerdict, AgentLifecycleReceipt, AgentLifecycleState, AgentProfile,
         AgentVisibility, CallbackTokenIssued, CallbackTokenRevoked,
     };
     use openbot_contracts::auth::{AuthGeneration, Role};
-    use openbot_contracts::command::ChannelSummary;
+    use openbot_contracts::command::{
+        ChannelDetail, ChannelPage, ChannelRoutingDecision, ChannelSummary,
+        ThreadConversationSnapshot, ThreadForegroundRunState, ThreadMinted, ThreadRunAnchor,
+        ThreadRunCancellation, ThreadRunStarted, ThreadStatus,
+    };
     use openbot_contracts::components::{
         BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, CompiledComponentManifestEntry,
         ComponentApprovalAnswer, ComponentApprovalDecision, ComponentCatalogueAdded,
@@ -1501,17 +1918,319 @@ mod tests {
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-    struct EmptyChannels;
+    #[derive(Clone)]
+    struct FakeChannelRuntime {
+        inner: Arc<FakeChannelRuntimeInner>,
+    }
+
+    struct FakeChannelRuntimeInner {
+        channels: Mutex<Vec<ChannelDetail>>,
+        threads: Mutex<Vec<ThreadId>>,
+        runs: Mutex<BTreeMap<(ThreadId, RunId), FakePersistedRun>>,
+        next_channel: AtomicU64,
+        next_thread: AtomicU64,
+    }
+
+    #[derive(Clone)]
+    struct FakePersistedRun {
+        command: BeginThreadRun,
+        receipt: ThreadRunStarted,
+        cancelled: bool,
+    }
+
+    impl FakeChannelRuntime {
+        fn new() -> Self {
+            let thread_id = ThreadId::new("550e8400-e29b-81d4-a716-446655440001");
+            Self {
+                inner: Arc::new(FakeChannelRuntimeInner {
+                    channels: Mutex::new(vec![ChannelDetail {
+                        id: ChannelId::new("channel-one"),
+                        name: "Agent One".to_owned(),
+                        agent_ids: vec![BotId::new("agent-one")],
+                        thread_id: Some(thread_id.clone()),
+                        active: true,
+                    }]),
+                    threads: Mutex::new(vec![thread_id]),
+                    runs: Mutex::new(BTreeMap::new()),
+                    next_channel: AtomicU64::new(1),
+                    next_thread: AtomicU64::new(2),
+                }),
+            }
+        }
+
+        fn authorize_scope(
+            deployment: &DeploymentId,
+            tenant: &TenantId,
+            actor: &ActorId,
+        ) -> Result<(), ThreadDirectoryError> {
+            if deployment.as_str() != "dep"
+                || tenant.as_str() != "tenant"
+                || actor.as_str() != "actor"
+            {
+                return Err(ThreadDirectoryError::NotVisible);
+            }
+            Ok(())
+        }
+
+        fn thread_id(sequence: u64) -> ThreadId {
+            ThreadId::new(format!("550e8400-e29b-81d4-a716-{sequence:012x}"))
+        }
+
+        fn summary(detail: &ChannelDetail) -> ChannelSummary {
+            ChannelSummary {
+                id: detail.id.clone(),
+                name: detail.name.clone(),
+                agent_ids: detail.agent_ids.clone(),
+                last_message: None,
+                last_message_at: None,
+                last_message_agent_id: None,
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+                thread_id: detail.thread_id.clone(),
+                active: detail.active,
+            }
+        }
+    }
 
     #[async_trait]
-    impl ChannelReader for EmptyChannels {
+    impl ChannelReader for FakeChannelRuntime {
         async fn list_visible_channels(
             &self,
-            _actor: &ActorId,
-            _limit: u32,
-            _cursor: Option<ChannelCursor>,
+            actor: &ActorId,
+            limit: u32,
+            cursor: Option<ChannelCursor>,
         ) -> Result<Vec<ChannelSummary>, PortError> {
-            Ok(Vec::new())
+            if actor.as_str() != "actor" {
+                return Err(PortError::Unavailable {
+                    dependency: "fixture_channels",
+                });
+            }
+            if cursor.is_some() {
+                return Ok(Vec::new());
+            }
+            Ok(self
+                .inner
+                .channels
+                .lock()
+                .unwrap()
+                .iter()
+                .take(limit as usize)
+                .map(Self::summary)
+                .collect())
+        }
+
+        async fn get_visible_channel(
+            &self,
+            scope: &ChannelReadScope,
+            channel_id: &ChannelId,
+        ) -> Result<Option<ChannelSummary>, PortError> {
+            if scope.deployment.as_str() != "dep"
+                || scope.tenant.as_str() != "tenant"
+                || scope.actor.as_str() != "actor"
+            {
+                return Err(PortError::Unavailable {
+                    dependency: "fixture_channels",
+                });
+            }
+            Ok(self
+                .inner
+                .channels
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|channel| &channel.id == channel_id)
+                .map(Self::summary))
+        }
+    }
+
+    #[async_trait]
+    impl ChannelAdministration for FakeChannelRuntime {
+        async fn create_channel(
+            &self,
+            request: ChannelCreateRequest,
+        ) -> Result<ChannelDetail, ChannelAdministrationError> {
+            if request.scope.deployment.as_str() != "dep"
+                || request.scope.tenant.as_str() != "tenant"
+                || request.scope.actor.as_str() != "actor"
+            {
+                return Err(ChannelAdministrationError::NotVisible);
+            }
+            let sequence = self.inner.next_channel.fetch_add(1, Ordering::SeqCst);
+            let thread_id = Self::thread_id(self.inner.next_thread.fetch_add(1, Ordering::SeqCst));
+            let channel = ChannelDetail {
+                id: ChannelId::new(format!("desktop-channel-{sequence}")),
+                name: request
+                    .agent_ids
+                    .iter()
+                    .map(BotId::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                agent_ids: request.agent_ids,
+                thread_id: Some(thread_id.clone()),
+                active: true,
+            };
+            self.inner.threads.lock().unwrap().push(thread_id);
+            self.inner.channels.lock().unwrap().push(channel.clone());
+            Ok(channel)
+        }
+    }
+
+    #[async_trait]
+    impl ThreadDirectory for FakeChannelRuntime {
+        async fn mint_thread_id(
+            &self,
+            deployment: &DeploymentId,
+        ) -> Result<ThreadId, ThreadDirectoryError> {
+            if deployment.as_str() != "dep" {
+                return Err(ThreadDirectoryError::NotVisible);
+            }
+            let thread_id = Self::thread_id(self.inner.next_thread.fetch_add(1, Ordering::SeqCst));
+            self.inner.threads.lock().unwrap().push(thread_id.clone());
+            Ok(thread_id)
+        }
+
+        async fn thread_known(
+            &self,
+            deployment: &DeploymentId,
+            tenant: &TenantId,
+            actor: &ActorId,
+            thread: &ThreadId,
+        ) -> Result<bool, ThreadDirectoryError> {
+            Self::authorize_scope(deployment, tenant, actor)?;
+            Ok(self.inner.threads.lock().unwrap().contains(thread))
+        }
+
+        async fn begin_thread_run(
+            &self,
+            request: BeginThreadRunRequest,
+        ) -> Result<ThreadRunStarted, ThreadDirectoryError> {
+            Self::authorize_scope(&request.deployment, &request.tenant, &request.actor)?;
+            if !self
+                .inner
+                .threads
+                .lock()
+                .unwrap()
+                .contains(&request.command.thread_id)
+            {
+                return Err(ThreadDirectoryError::NotVisible);
+            }
+            if let ThreadRunAnchor::Channel { channel_id } = &request.command.anchor {
+                let channel_matches = self.inner.channels.lock().unwrap().iter().any(|channel| {
+                    &channel.id == channel_id
+                        && channel.thread_id.as_ref() == Some(&request.command.thread_id)
+                        && channel.agent_ids.contains(&request.command.bot_id)
+                });
+                if !channel_matches {
+                    return Err(ThreadDirectoryError::NotVisible);
+                }
+            }
+            let key = (
+                request.command.thread_id.clone(),
+                request.command.run_id.clone(),
+            );
+            let mut runs = self.inner.runs.lock().unwrap();
+            if let Some(existing) = runs.get(&key) {
+                if existing.command != request.command {
+                    return Err(ThreadDirectoryError::RequestConflict);
+                }
+                let mut replayed = existing.receipt.clone();
+                replayed.replayed = true;
+                return Ok(replayed);
+            }
+            let receipt = ThreadRunStarted {
+                thread_id: request.command.thread_id.clone(),
+                run_id: request.command.run_id.clone(),
+                message_sequence: 1,
+                event_sequence: 1,
+                replayed: false,
+            };
+            runs.insert(
+                key,
+                FakePersistedRun {
+                    command: request.command,
+                    receipt: receipt.clone(),
+                    cancelled: false,
+                },
+            );
+            Ok(receipt)
+        }
+
+        async fn cancel_thread_run(
+            &self,
+            request: CancelThreadRunRequest,
+        ) -> Result<ThreadRunCancellation, ThreadDirectoryError> {
+            Self::authorize_scope(&request.deployment, &request.tenant, &request.actor)?;
+            let key = (
+                request.command.thread_id.clone(),
+                request.command.run_id.clone(),
+            );
+            let mut runs = self.inner.runs.lock().unwrap();
+            let run = runs.get_mut(&key).ok_or(ThreadDirectoryError::NotVisible)?;
+            let state = if run.cancelled {
+                ThreadRunCancellationState::AlreadyRequested
+            } else {
+                run.cancelled = true;
+                ThreadRunCancellationState::Requested
+            };
+            Ok(ThreadRunCancellation {
+                thread_id: request.command.thread_id,
+                run_id: request.command.run_id,
+                state,
+            })
+        }
+
+        async fn thread_conversation(
+            &self,
+            request: ThreadConversationRequest,
+        ) -> Result<ThreadConversationSnapshot, ThreadDirectoryError> {
+            Self::authorize_scope(&request.deployment, &request.tenant, &request.actor)?;
+            let runs = self.inner.runs.lock().unwrap();
+            let run = runs
+                .values()
+                .find(|run| run.command.thread_id == request.thread);
+            Ok(run.map_or_else(ThreadConversationSnapshot::default, |run| {
+                ThreadConversationSnapshot {
+                    messages: Vec::new(),
+                    active_run_id: Some(run.command.run_id.clone()),
+                    active_run_state: Some(if run.cancelled {
+                        ThreadForegroundRunState::Cancelling
+                    } else {
+                        ThreadForegroundRunState::Running
+                    }),
+                    active_run_cancellable: !run.cancelled,
+                    active_run_text: String::new(),
+                    last_event_sequence: Some(run.receipt.event_sequence),
+                }
+            }))
+        }
+    }
+
+    struct FakeRouting;
+
+    #[async_trait]
+    impl ChannelRoutingBackend for FakeRouting {
+        async fn complete(&self, _prompt: &str) -> Result<String, ChannelRoutingBackendError> {
+            Ok(r#"{"agentId":"agent-one","reason":"fixture","confidence":1.0}"#.to_owned())
+        }
+
+        async fn reachable_systems(
+            &self,
+            agents: &[BotId],
+        ) -> Result<Vec<AgentReachability>, ChannelRoutingBackendError> {
+            Ok(agents
+                .iter()
+                .cloned()
+                .map(|agent_id| AgentReachability {
+                    agent_id,
+                    systems: Vec::new(),
+                })
+                .collect())
+        }
+
+        async fn record_routing(
+            &self,
+            _record: RoutingAuditRecord,
+        ) -> Result<(), ChannelRoutingBackendError> {
+            Ok(())
         }
     }
 
@@ -2136,8 +2855,12 @@ mod tests {
             locale: Some(UiLocale::ZhCn),
         })));
         let agents = Arc::new(FakeAgents::new());
+        let channels = FakeChannelRuntime::new();
         let application = Arc::new(
-            OpenBotApplication::new(EmptyChannels)
+            OpenBotApplication::new(channels.clone())
+                .with_channel_administration(Arc::new(channels.clone()))
+                .with_channel_routing(Arc::new(FakeRouting))
+                .with_threads(channels)
                 .with_people(FakePeople)
                 .with_agent_callback_tokens(FakeCallbackTokens(agents.clone()))
                 .with_agent_directory(agents.clone())
@@ -2178,6 +2901,33 @@ mod tests {
             Some(AgentRoute::Duplicate { .. })
         ));
         assert!(agent_route("/api/agents/agent/one").is_none());
+        assert_eq!(
+            raw_channel_id("/api/channels/channel%2Done"),
+            Some("channel%2Done")
+        );
+        assert!(raw_channel_id("/api/channels/events").is_none());
+        assert!(raw_channel_id("/api/channels/channel/one").is_none());
+        assert!(matches!(
+            thread_route("/api/threads/thread%2Done/runs/run%2Done/cancel"),
+            Some(ThreadRoute::Cancel { .. })
+        ));
+        assert!(thread_route("/api/threads/mint").is_none());
+        assert!(thread_route("/api/threads/thread/one/runs").is_none());
+        assert_eq!(channel_list_query(None), Some((None, None)));
+        assert_eq!(
+            channel_list_query(Some("cursor=opaque%2B%2F%3D&limit=50")),
+            Some((Some(50), Some("opaque+/=".to_owned())))
+        );
+        for invalid in [
+            "limit=-1",
+            "limit=1&limit=2",
+            "cursor=a&cursor=b",
+            "unknown=value",
+            "limit",
+            "limit=%GG",
+        ] {
+            assert_eq!(channel_list_query(Some(invalid)), None, "{invalid}");
+        }
     }
 
     #[test]
@@ -2209,6 +2959,344 @@ mod tests {
             Err(AgentBodyError::TooLarge)
         ));
         assert!(oversized.body().iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn sensitive_body_parser_zeroes_user_text_on_every_exit() {
+        let mut valid = Request::builder()
+            .body(br#"{"text":"DESKTOP_MESSAGE_SECRET","agentId":"agent-one"}"#.to_vec())
+            .unwrap();
+        let parsed =
+            parse_sensitive_body::<RouteChannelRequest>(&mut valid, CHANNEL_THREAD_BODY_MAX_BYTES)
+                .unwrap();
+        assert_eq!(parsed.text, "DESKTOP_MESSAGE_SECRET");
+        assert!(valid.body().iter().all(|byte| *byte == 0));
+
+        let mut malformed = Request::builder()
+            .body(b"{DESKTOP_MESSAGE_SECRET".to_vec())
+            .unwrap();
+        assert!(matches!(
+            parse_sensitive_body::<RouteChannelRequest>(
+                &mut malformed,
+                CHANNEL_THREAD_BODY_MAX_BYTES,
+            ),
+            Err(SensitiveBodyError::Malformed)
+        ));
+        assert!(malformed.body().iter().all(|byte| *byte == 0));
+
+        let mut oversized = Request::builder()
+            .body(vec![b'x'; CHANNEL_THREAD_BODY_MAX_BYTES + 1])
+            .unwrap();
+        assert!(matches!(
+            parse_sensitive_body::<RouteChannelRequest>(
+                &mut oversized,
+                CHANNEL_THREAD_BODY_MAX_BYTES,
+            ),
+            Err(SensitiveBodyError::TooLarge)
+        ));
+        assert!(oversized.body().iter().all(|byte| *byte == 0));
+    }
+
+    #[tokio::test]
+    async fn channel_and_thread_unary_routes_share_typed_application_without_fake_streaming() {
+        const SECRET: &str = "DESKTOP_CHANNEL_MESSAGE_SECRET";
+        let (protocol, root) = protocol();
+        // Server uses OriginAuthenticated, not the fresh-session extractor, for these writes.
+        // The custom scheme is intrinsically same-origin, so an ordinary bound window must work.
+        protocol.bind_window("channel", auth(), None).unwrap();
+
+        let list = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .uri("/api/channels?limit=50")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        assert_eq!(list.headers()[CACHE_CONTROL], "no-store");
+        let page = serde_json::from_slice::<ChannelPage>(list.body()).unwrap();
+        assert_eq!(page.channels.len(), 1);
+        assert_eq!(page.channels[0].id.as_str(), "channel-one");
+
+        for query in ["unknown=value", "limit=-1", "limit=1&limit=2"] {
+            let rejected = protocol
+                .handle(
+                    "channel",
+                    Request::builder()
+                        .uri(format!("/api/channels?{query}"))
+                        .body(Vec::new())
+                        .unwrap(),
+                )
+                .await;
+            assert_eq!(rejected.status(), StatusCode::BAD_REQUEST, "{query}");
+        }
+
+        let created = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/channels")
+                    .body(br#"{"agentIds":["agent-one"]}"#.to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let created = serde_json::from_slice::<ChannelDetailResponse>(created.body())
+            .unwrap()
+            .channel;
+        assert_eq!(created.id.as_str(), "desktop-channel-1");
+        assert_eq!(created.agent_ids.as_slice(), [BotId::new("agent-one")]);
+        let thread_id = created.thread_id.clone().unwrap();
+
+        let detail = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .uri("/api/channels/desktop-channel-1")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(detail.status(), StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<ChannelDetailResponse>(detail.body())
+                .unwrap()
+                .channel,
+            created
+        );
+
+        let routing = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/route")
+                    .body(format!(r#"{{"text":"{SECRET}","agentId":"agent-one"}}"#).into_bytes())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(routing.status(), StatusCode::OK);
+        assert!(!String::from_utf8_lossy(routing.body()).contains(SECRET));
+        let routing = serde_json::from_slice::<ChannelRoutingDecision>(routing.body()).unwrap();
+        assert_eq!(routing.agent_id.as_str(), "agent-one");
+        assert!(routing.via_mention);
+
+        let minted = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/threads/mint")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(minted.status(), StatusCode::OK);
+        let minted = serde_json::from_slice::<ThreadMinted>(minted.body()).unwrap();
+        let status = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .uri(format!("/api/threads/{}", minted.thread_id.as_str()))
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(status.status(), StatusCode::OK);
+        assert!(
+            serde_json::from_slice::<ThreadStatus>(status.body())
+                .unwrap()
+                .known
+        );
+
+        let run_id = RunId::new("desktop-run-1");
+        let begin_body = serde_json::to_vec(&BeginThreadRunBody {
+            run_id: run_id.clone(),
+            bot_id: BotId::new("agent-one"),
+            anchor: ThreadRunAnchor::Channel {
+                channel_id: created.id.clone(),
+            },
+            message: SECRET.to_owned(),
+        })
+        .unwrap();
+        let begin_path = format!("/api/threads/{}/runs", thread_id.as_str());
+        let started = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(&begin_path)
+                    .body(begin_body.clone())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(started.status(), StatusCode::CREATED);
+        assert!(!String::from_utf8_lossy(started.body()).contains(SECRET));
+        let started = serde_json::from_slice::<ThreadRunStarted>(started.body()).unwrap();
+        assert_eq!(started.thread_id, thread_id);
+        assert_eq!(started.run_id, run_id);
+        assert!(!started.replayed);
+
+        let replayed = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(&begin_path)
+                    .body(begin_body)
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(replayed.status(), StatusCode::OK);
+        assert!(
+            serde_json::from_slice::<ThreadRunStarted>(replayed.body())
+                .unwrap()
+                .replayed
+        );
+
+        let conversation_path = format!("/api/threads/{}/conversation", started.thread_id.as_str());
+        let conversation = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .uri(&conversation_path)
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(conversation.status(), StatusCode::OK);
+        let conversation =
+            serde_json::from_slice::<ThreadConversationSnapshot>(conversation.body()).unwrap();
+        assert_eq!(conversation.active_run_id.as_ref(), Some(&run_id));
+        assert_eq!(
+            conversation.active_run_state,
+            Some(ThreadForegroundRunState::Running)
+        );
+        assert!(conversation.active_run_cancellable);
+
+        let cancel_path = format!(
+            "/api/threads/{}/runs/{}/cancel",
+            started.thread_id.as_str(),
+            run_id.as_str()
+        );
+        let cancelled = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(&cancel_path)
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(cancelled.status(), StatusCode::ACCEPTED);
+        assert_eq!(
+            serde_json::from_slice::<ThreadRunCancellation>(cancelled.body())
+                .unwrap()
+                .state,
+            ThreadRunCancellationState::Requested
+        );
+        let cancelled_again = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(&cancel_path)
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(cancelled_again.status(), StatusCode::ACCEPTED);
+        assert_eq!(
+            serde_json::from_slice::<ThreadRunCancellation>(cancelled_again.body())
+                .unwrap()
+                .state,
+            ThreadRunCancellationState::AlreadyRequested
+        );
+
+        let cancelling = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .uri(&conversation_path)
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        let cancelling =
+            serde_json::from_slice::<ThreadConversationSnapshot>(cancelling.body()).unwrap();
+        assert_eq!(
+            cancelling.active_run_state,
+            Some(ThreadForegroundRunState::Cancelling)
+        );
+        assert!(!cancelling.active_run_cancellable);
+
+        let malformed = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(&begin_path)
+                    .body(format!("{{malformed:{SECRET}").into_bytes())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        assert!(!String::from_utf8_lossy(malformed.body()).contains(SECRET));
+
+        let oversized = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/route")
+                    .body(vec![b'x'; CHANNEL_THREAD_BODY_MAX_BYTES + 1])
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let ignored_mint_body = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/threads/mint")
+                    .body(SECRET.as_bytes().to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(ignored_mint_body.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert!(!String::from_utf8_lossy(ignored_mint_body.body()).contains(SECRET));
+
+        let thread_events = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .uri(format!(
+                        "/api/threads/{}/events",
+                        started.thread_id.as_str()
+                    ))
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(thread_events.status(), StatusCode::NOT_FOUND);
+        let channel_events = protocol
+            .handle(
+                "channel",
+                Request::builder()
+                    .uri("/api/channels/events")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(channel_events.status(), StatusCode::NOT_FOUND);
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
