@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–30 实施裁决 R126–R152，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–30 实施裁决 R126–R153，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1898,8 +1898,10 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     subscription分别聚合限为256；Batch76补verified authority先绑定、实际`WebviewWindowBuilder`创建失败
     回滚、closed navigation/new-window/download与`Destroyed` exact unbind primitive；Batch77再于infra
     以current-user app-data namespace+CSPRNG app-instance铸Desktop Local single-user admin AuthContext；
-    Batch78把同一authority原子provision为PG canonical principal/admin role并经Tenant Package sync物化membership。
-    app-data与sidecar data-dir同根约束、lifecycle setup、可发布binary、真实Wry native runtime、
+    Batch78把同一authority原子provision为PG canonical principal/admin role并经Tenant Package sync物化membership；
+    Batch79再把PG17 data-dir固定为asserted app-data root的instance-bound私有直接子目录，并在任何schema/
+    principal/package写入前向活库反查data_directory/major/numeric-loopback/HBA SCRAM。sidecar supervisor、
+    启动锁/OS key store、真实`AppHandle::path().app_data_dir()` lifecycle setup、可发布binary、真实Wry native runtime、
     Windows真机与T-UI-0126 formal golden仍todo；
   - [x] create-time routing provider：production main复用package model/每请求PostgreSQL credential/Vault/
     SafeDialer并固定OpenAI Chat Completions；模型只建议权威roster内ID，缺credential/transport/坏JSON/
@@ -1956,8 +1958,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     `isTauri`选择有序Channel且Drop exact close；Batch75以同窗共享permit关闭queued refs乘法，并在
     ApplicationService前拒绝第257条live/in-flight subscription；Batch76把品牌无关的actual Webview
     create/rollback/Destroyed lifecycle接入production registration；Batch77补Desktop Local authority source
-    的closed持久化与AuthContext；Batch78再闭合PG principal repair与single-user package membership。
-    T-UI-0126 formal golden、app-data/sidecar同根与Tauri setup接线、Desktop Remote session、真实Wry
+    的closed持久化与AuthContext；Batch78再闭合PG principal repair与single-user package membership；
+    Batch79补instance-bound PG17 data-dir与活库scope/SCRAM attestation、共享DB初始化和pre-window bootstrap。
+    T-UI-0126 formal golden、sidecar supervisor/启动锁/OS key store与Tauri setup接线、Desktop Remote session、真实Wry
     native-window journey与Windows runtime仍todo；
   - [x] `/channel/new`真实首发route：static route先于dynamic channel id；无recipient发送禁用且刷新零
     channel；URL可恢复hidden但有权的Agent，RecipientField复用Combobox键盘模型；首发只按
@@ -2013,7 +2016,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G7**：本地 `ControlService` 的 HumanLease actor/auth/computer/tab/generation/epoch fencing 与 poisoned exhaustion 已有 9/0/0 单测；ScreenHub/viewer ticket、真 engine input、fps/latency/backpressure、coordinates/drag/IME 与跨 scope 矩阵仍未实施完成，故整关不勾。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账（`cargo xtask parity-check` 复算）：parity **813/1694 done（881 todo）**，fixtures **17/39 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1445/241/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账（`cargo xtask parity-check` 复算）：parity **813/1694 done（881 todo）**，fixtures **17/39 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1444/242/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -2326,6 +2329,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R151 | §5.2–§5.3 / §6.1 / §13.1–§13.3 / §15.3 / §24 G2、G6（2026-08-30 Batch77：Desktop Local app-instance authority source） | R150要求caller提供verified `AuthContext`，但仓内只有Server `OPENBOT_SINGLE_USER`固定兼容principal `dev-local-user`；它属于共享Server部署，不能冒充Desktop Local“当前OS用户+本地app instance”。若Tauri transport直接调用`AuthContextBuilder`又违反§5.2；读`USER/USERNAME`环境变量既可伪造又不等于OS peer。 | 每次启动随机ID会让thread/memory全成孤儿；普通temp→rename在双进程竞态会后写覆盖winner，使两个活进程持不同deployment。instance文件若是symlink、宽权限或半写，不能“修一修继续”；ID也不应被当credential。跨平台no-clobber不能依赖Unix-only `renameat2`。另一方面，Windows每用户DACL与Tauri app-data path尚无真机assembly，macOS权限结果不能外推；数据库user/role/package membership也不能由一个文件测试冒充。 | 在`openbot-infra::auth::single_user`下新增Desktop专属source，transport继续只消费结果。caller用`CurrentOsUserAppDataRoot::from_current_os_user_app_data`断言绝对路径来自OS/Tauri per-user API；模块不读环境。root拒symlink并在Unix收紧0700；closed v1文件存非秘密256-bit CSPRNG instance、Unix0600。candidate先create_new写满+fsync，再以同卷hard-link noclobber原子选winner；loser读完整winner，匹配的崩溃temp可回收，corrupt/symlink/宽权限fail-closed。deployment/tenant=`desktop-local-<instance>`，actor固定`desktop-local-user`，generation0、single_user=true、Admin+User；Server固定兼容键不复用。PG principal/package membership与Tauri setup接线另批。 | implementation `fcab8951ece371670307687672ccad698d6fb344`。首次新测=`3/1/0`，唯一失败是source guard命中自身禁词，分段后targeted=`4/0/0`；完整infra lib=`315/0/0`。32个独立store并发同path只得一个ID且目录唯一文件；restart字节不变，crash matching hard-link residue回收；格式/uppercase/extra/symlink/corrupt/relative-root/Unix0644负向全绿，目录/文件实得0700/0600。Clippy首跑仅固定2字节chunk API建议，改`as_chunks`后all-feature lib `-D warnings`绿。首次parity因`auth/mod.rs`粗前缀红13，改归既有single-user owner而未加overlay，最终`813/881/1694`、revalidate0、overlay=`1445/241/2/6`；strict=`159/0/0`。Grok/Cargo.lock/workflow/依赖/单package/零npm不变。Windows infra完整图按已知openssl-sys/samael限制未跑，Windows DACL/NTFS hard-link无证据；无T-ID/UI/Trunk/Browser/Engine/golden/CI/Actions；详见Batch77文档 |
 
 | R152 | §5.2–§5.3 / §6.1、§6.5 / §13.1–§13.3 / §14.1 / §15.3 / §24 G2、G6（2026-08-30 Batch78：Desktop Local PG principal与package membership） | R151只能铸内存AuthContext；PostgreSQL没有`desktop-local-user`行/admin role时，channel/thread/memory/provider的权威SQL会全部拒绝。现有Server `initialize_single_user`事务逻辑正确但常量写死，复制一份Desktop SQL会让role repair/generation preservation漂移。Tenant Package已有single-user membership投影，但只有在principal先存在且startup把同一actor context传入时才生效。 | Desktop若在window加载后才provision会出现“authority已发出、DB仍拒绝”的竞态；profile repair若重置auth_generation会复活旧ticket，若不收敛role又留下额外角色。固定Server email/id不得被Desktop覆盖，反之亦然。只证明user row不等于package channel可见；必须同一真库跑package sync。sidecar DB若不与R151 app-data instance同根，固定actor会误接另一instance数据库，因此本批仍不能声称setup完成。 | 将Server单用户事务抽成parent-private canonical principal helper，原`initialize_single_user`常量/disabled-no-connect语义不变。Desktop authority提供独立non-routable canonical profile`desktop-local@localhost.invalid`/`Desktop Local User`与`provision_postgres`：单事务upsert user、保留已有generation、用既有domain role plan收敛sole admin。authority另产生exact`TenantPackageAudienceContext::single_user`；startup顺序固定为load authority→baseline/native→provision principal→Tenant Package sync→bind window。sidecar path/root与Tauri setup仍另批。 | implementation `e47932debc254a50700f644b7b88e6162b7a578c`。专用PG17.11先在sandbox `initdb`因SysV shm拒绝，宿主以POSIX shm建临时集簇；local trust只用于设置一次性密码，正式测试走127.0.0.1 SCRAM。Desktop真库=`1/0/0`：首次canonical user/admin、改email/name+generation7+额外user role后repair恢复profile/sole admin且保留7，随后同authority Tenant Package sync得到membership1与groups ignored；Server `dev_actor`完整=`3/0/0`（含disabled零连接、冲突23505全回滚）。完整infra sandbox首跑=`300/15/0`，15条全为既有loopback bind EPERM；宿主重跑=`315/0/0`。all-target/all-feature Clippy绿。临时PG fast-stop并删除。parity=`813/881/1694`、revalidate0、overlay=`1445/241/2/6`、strict=`159/0/0`；Grok/Cargo.lock/workflow/依赖/单package/零npm不变。Windows infra未跑，无T-ID/UI/Trunk/Browser/Engine/golden/CI/Actions；详见Batch78文档 |
+
+| R153 | §5.1–§5.3 / §6.1、§6.5 / §13.1–§13.3 / §14.1 / §15.3 / §16.2 / §24 G2、G6（2026-08-30 Batch79：Desktop Local instance-bound PG17 bootstrap） | R152仍接受caller给任意`Pool`；固定actor若连到另一app instance的库会继承其thread/memory/membership。Server的fresh/legacy/native初始化又住在`openbot-server` transport，Desktop若复制便形成第二schema真源。仓内尚无PostgreSQL发行pin/supervisor与reviewed Desktop package/binary，不能靠假`.setup`掩盖。 | 只检查“计划传给`initdb`的path”不能证明活库实际`data_directory`；只看`password_encryption`不能证明HBA host规则走SCRAM；接受`localhost`还会把答案交给hosts解析。sidecar目录若是symlink/非目录/宽权限必须在启动前拒绝。package tenant若不等于随机instance tenant，也不能先写库再报错。真实Tauri `app_data_dir()`、启动锁、Keychain/Credential Manager secret、graceful supervisor仍是不同未闭合面。 | 新增`DesktopLocalInstallation`：在host已断言的app-data root下只派生直接子目录`postgresql-17-<256-bit instance>`；新建0700，既有symlink/非目录或Unix group/other权限拒绝，Debug/错误不带path。连接任何业务SQL前向PG反查并要求canonical `data_directory`精确等于该目录、`server_version_num` major=17、`listen_addresses`只含数值loopback/空、当前server addr为loopback/Unix、`password_encryption=scram-sha-256`、`pg_hba_file_rules`所有host规则均SCRAM且零解析错误；package tenant先与authority exact相等。Server初始化实现上收到`openbot-infra::db::initialization`，Server只re-export；Desktop顺序固定为attest→shared fresh/legacy/native init→canonical principal→single-user package sync，窗口仍必须在后续Tauri setup最后创建。 | implementation `9e1600dca21a815f7c4bfd71ec7635cb711c5a0c`。文件/纯attestation定向=`8/0/0`；自包含PG17.11 TCP SCRAM/HBA真纵向=`1/0/0`，由production authority先铸目录，再在该目录`initdb`：first=Fresh+membership1、restart=RustManaged+grant0，第二instance连同库在写前精确报data-dir mismatch；同库逐字段复核T-TEST-0912两列。sandbox首次`initdb`因SysV shm EPERM不计通过；宿主首次暴露Unix socket 103-byte上限，修短runtime socket；再暴露`inet::text`的`/32`，改用`host()`；HBA收紧后Clippy首跑too-many-arguments红，改closed attestation record后最终绿。完整infra=`319/0/0`、Server=`216/0/0`，all-target/all-feature Clippy绿；全部临时data/socket目录0。parity=`813/881/1694`、diff required revalidate=1且已闭合、0违反、overlay=`1444/242/2/6`、strict=`159/0/0`；Grok/Cargo.lock/workflow/依赖/单package/零npm不变。测试口令明确test-only，不是OS key-store证据；Windows、sidecar pin/supervisor/start-lock/OS key store、真实Tauri app-data/setup/window、reviewed动态tenant package与发行binary均未跑/未落；无新T-ID/UI/Trunk/Browser/Engine/golden/CI/Actions；详见Batch79文档 |
 
 ### 28.2 复核通过、原样保留的断言
 

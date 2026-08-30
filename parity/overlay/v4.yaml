@@ -775,3 +775,7 @@ entries:
   - id: T-UI-0034
     disposition: revalidate
     notes: "Batch70 reruns the in-page new-Agent create mode through a real typed Server fixture."
+  # Batch79 moves the shared database initializer from Server into infra and revalidates its schema target.
+  - id: T-TEST-0912
+    disposition: revalidate
+    notes: "Batch79 reruns Fresh/RustManaged initialization on PostgreSQL 17.11 and rechecks both nullable callback columns, with full infra and Server regressions."
