@@ -14,11 +14,15 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::windows::named_pipe::NamedPipeServer;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, FILETIME, FreeLibrary, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
-    LocalFree, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, ERROR_NOT_FOUND, FILETIME, FreeLibrary, GetLastError, HANDLE, HANDLE_FLAG_INHERIT,
+    INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+};
+use windows_sys::Win32::Security::Credentials::{
+    CRED_MAX_CREDENTIAL_BLOB_SIZE, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW,
+    CredDeleteW, CredFree, CredReadW, CredWriteW,
 };
 use windows_sys::Win32::Security::{
     CreateRestrictedToken, CreateWellKnownSid, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE,
@@ -58,12 +62,153 @@ use windows_sys::Win32::System::Threading::{
     ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
+use zeroize::Zeroize as _;
 
 use crate::WindowsSandboxError;
 use crate::command_line::{encode_command_line, filetime_ticks_to_unix_millis};
 
 const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
 const PROCESS_SYNCHRONIZE: u32 = 0x0010_0000;
+const MAX_GENERIC_CREDENTIAL_BYTES: usize = 128;
+
+/// Owned Credential Manager plaintext that zeroizes unless explicitly transferred onward.
+pub struct WindowsCredentialSecret(Vec<u8>);
+
+impl WindowsCredentialSecret {
+    /// Borrow plaintext only for immediate protocol framing or test comparison.
+    #[must_use]
+    pub fn expose(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Transfer the unique allocation into another zeroizing owner such as `SecretBytes`.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        let this = core::mem::ManuallyDrop::new(self);
+        unsafe { core::ptr::read(&this.0) }
+    }
+}
+
+impl core::fmt::Debug for WindowsCredentialSecret {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("WindowsCredentialSecret([REDACTED])")
+    }
+}
+
+impl Drop for WindowsCredentialSecret {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+/// Read one current-user generic Credential Manager blob without exposing raw Win32 pointers.
+pub fn read_generic_credential(
+    target: &str,
+) -> Result<Option<WindowsCredentialSecret>, WindowsSandboxError> {
+    let target = credential_target(target)?;
+    let mut raw = core::ptr::null_mut::<CREDENTIALW>();
+    let read = unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut raw) };
+    if read == 0 {
+        let code = unsafe { GetLastError() };
+        if code == ERROR_NOT_FOUND {
+            return Ok(None);
+        }
+        return Err(io::Error::from_raw_os_error(code as i32).into());
+    }
+    if raw.is_null() {
+        return Err(WindowsSandboxError::InvalidInput);
+    }
+    let buffer = CredentialBuffer(raw);
+    let credential = unsafe { &*buffer.0 };
+    let size = usize::try_from(credential.CredentialBlobSize)
+        .map_err(|_| WindowsSandboxError::InvalidInput)?;
+    if credential.Type != CRED_TYPE_GENERIC
+        || size == 0
+        || size > MAX_GENERIC_CREDENTIAL_BYTES
+        || credential.CredentialBlob.is_null()
+    {
+        return Err(WindowsSandboxError::InvalidInput);
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(credential.CredentialBlob, size) }.to_vec();
+    drop(buffer);
+    Ok(Some(WindowsCredentialSecret(bytes)))
+}
+
+/// Create or replace one current-user, local-machine-persistent generic credential.
+pub fn write_generic_credential(target: &str, secret: &[u8]) -> Result<(), WindowsSandboxError> {
+    let mut target = credential_target(target)?;
+    if secret.is_empty()
+        || secret.len() > MAX_GENERIC_CREDENTIAL_BYTES
+        || secret.len() > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize
+    {
+        return Err(WindowsSandboxError::InvalidInput);
+    }
+    let credential = CREDENTIALW {
+        Type: CRED_TYPE_GENERIC,
+        TargetName: target.as_mut_ptr(),
+        CredentialBlobSize: u32::try_from(secret.len())
+            .map_err(|_| WindowsSandboxError::InvalidInput)?,
+        CredentialBlob: secret.as_ptr().cast_mut(),
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+        ..CREDENTIALW::default()
+    };
+    let written = unsafe { CredWriteW(&credential, 0) };
+    if written == 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+
+/// Delete the exact current-user generic credential; unknown is an idempotent `false`.
+pub fn delete_generic_credential(target: &str) -> Result<bool, WindowsSandboxError> {
+    let target = credential_target(target)?;
+    let deleted = unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) };
+    if deleted != 0 {
+        return Ok(true);
+    }
+    let code = unsafe { GetLastError() };
+    if code == ERROR_NOT_FOUND {
+        Ok(false)
+    } else {
+        Err(io::Error::from_raw_os_error(code as i32).into())
+    }
+}
+
+fn credential_target(value: &str) -> Result<Vec<u16>, WindowsSandboxError> {
+    if value.is_empty() || value.len() > 512 || value.contains('\0') {
+        return Err(WindowsSandboxError::InvalidInput);
+    }
+    let encoded = OsStr::new(value)
+        .encode_wide()
+        .chain(core::iter::once(0))
+        .collect::<Vec<_>>();
+    if encoded.len() <= 1 || encoded.len() > 513 {
+        return Err(WindowsSandboxError::InvalidInput);
+    }
+    Ok(encoded)
+}
+
+struct CredentialBuffer(*mut CREDENTIALW);
+
+impl Drop for CredentialBuffer {
+    fn drop(&mut self) {
+        if self.0.is_null() {
+            return;
+        }
+        unsafe {
+            let credential = &mut *self.0;
+            let size = usize::try_from(credential.CredentialBlobSize).unwrap_or(0);
+            if !credential.CredentialBlob.is_null()
+                && size <= CRED_MAX_CREDENTIAL_BLOB_SIZE as usize
+            {
+                for index in 0..size {
+                    core::ptr::write_volatile(credential.CredentialBlob.add(index), 0);
+                }
+            }
+            CredFree(self.0.cast());
+        }
+    }
+}
 
 /// Exact OS identity used with PID to reject PID reuse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1164,6 +1309,34 @@ mod tests {
             payload
         );
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn credential_target_and_blob_bounds_are_closed() {
+        assert!(credential_target("Example_Product_PostgreSQL_17_instance").is_ok());
+        assert!(credential_target("").is_err());
+        assert!(credential_target("nul\0inside").is_err());
+        assert!(credential_target(&"x".repeat(513)).is_err());
+        assert!(write_generic_credential("valid-target", &[]).is_err());
+        assert!(
+            write_generic_credential("valid-target", &[0_u8; MAX_GENERIC_CREDENTIAL_BYTES + 1])
+                .is_err()
+        );
+    }
+
+    #[test]
+    #[ignore = "需要Windows当前用户Credential Manager真机读写"]
+    fn credential_manager_generic_round_trip_and_delete() {
+        let target = format!("Example_Product_PostgreSQL_Test_{}", std::process::id());
+        let _ = delete_generic_credential(&target);
+        assert!(read_generic_credential(&target).unwrap().is_none());
+        let secret = b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        write_generic_credential(&target, secret).unwrap();
+        let read = read_generic_credential(&target).unwrap().unwrap();
+        assert_eq!(read.expose(), secret);
+        assert!(!format!("{read:?}").contains(std::str::from_utf8(secret).unwrap()));
+        assert!(delete_generic_credential(&target).unwrap());
+        assert!(read_generic_credential(&target).unwrap().is_none());
     }
 
     #[test]

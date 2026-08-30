@@ -1,6 +1,6 @@
 [package]
 name = "openbot-windows-sandbox"
-description = "Narrow Win32 Engine process, Job, token, ACL, and Named Pipe security boundary"
+description = "Narrow Win32 Engine confinement and Credential Manager unsafe boundary"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 thiserror.workspace = true
 tokio.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

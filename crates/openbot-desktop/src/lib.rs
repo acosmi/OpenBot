@@ -45,10 +45,10 @@
 //! | [`cancel`] | [`CancellationToken`] 与 [`SHUTDOWN_DEADLINE`] | §13.2 |
 //! | [`transport`] | [`InProcessTransport`]：把 `Arc<dyn ApplicationService>` 包成 in-process 通道 | §13.2 / §5.2 |
 //! | [`structured_events`] | host-owned subscription、closed wire frame、sequence/gap 校验与真实 Tauri Channel pump | §13.2–§13.4 |
-//! | [`postgres_sidecar`] | PGDG source identity、signed-manifest全文件校验与single-instance start lock | §14.1 / §16.2 |
+//! | [`postgres_sidecar`] | PGDG source、signed-manifest、start lock与macOS/Windows OS key-store SCRAM secret | §14.1 / §16.2 |
 //!
 //! **尚未实现**（不要冒充）：可发布 Tauri binary/tauri.conf/capability 清单与真实窗口生命周期
-//! assembly（G6）、PostgreSQL key-store/process/ready/shutdown/backup/update（§14.1/§16.2）、
+//! assembly（G6）、PostgreSQL process/ready/shutdown/orphan/backup/update（§14.1/§16.2）、
 //! screen loopback binary WebSocket（§13.4/G7）。
 //! Batch 16 已落 opt-in Tauri 2.11.5 custom-protocol adapter、本地偏好原子文件与首帧改写，
 //! Batch69–71又依次接Agent lifecycle/callback与channel/thread unary framing；Batch72补
@@ -59,9 +59,10 @@
 //! internal stream收口到共享256 event-ref permit与256 live/in-flight subscription上限。可发布window
 //! assembly与runtime journey仍未落；Batch76只补品牌无关的verified-authority→actual Webview build、
 //! closed navigation/new-window/download与`Destroyed` exact unbind primitive，不虚构`tauri.conf`、session
-//! source或发行identity。Batch80再只补PGDG 17.11 source pin、release-owned manifest全树校验与
-//! crash-safe fail-closed start lock；它没有Keychain/Credential Manager或进程supervisor。SSE/WebSocket
-//! 也不能塞进custom-protocol `Vec<u8>`响应。
+//! source或发行identity。Batch80补PGDG 17.11 source pin、release-owned manifest全树校验与
+//! crash-safe fail-closed start lock；Batch81再让持锁owner经`SecretBytes`接macOS private/default
+//! Keychain与Windows唯一unsafe Credential Manager边界，并在新建后回读常数时间核验。平台binary
+//! build/sign与进程supervisor仍未落。SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。
 //! 许可/RustSec/cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
 //!
 //! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
@@ -160,6 +161,18 @@ pub use postgres_sidecar::{
     POSTGRES_SOURCE_SHA256, POSTGRES_VERSION, PostgresBundleDigest, PostgresSidecarError,
     PostgresStartLock, ReviewedPostgresSigningIdentity, VerifiedPostgresBundle,
 };
+
+#[cfg(feature = "postgres-key-store")]
+pub use postgres_sidecar::{
+    PostgresScramSecret, PostgresSecretStore, PostgresSecretStoreError, PostgresStoredSecret,
+    ReviewedPostgresKeyStoreService,
+};
+
+#[cfg(all(feature = "postgres-key-store", target_os = "macos"))]
+pub use postgres_sidecar::MacOsKeychainPostgresSecretStore;
+
+#[cfg(all(feature = "postgres-key-store", target_os = "windows"))]
+pub use postgres_sidecar::WindowsCredentialPostgresSecretStore;
 pub use preferences::DesktopUiPreferenceStore;
 pub use session::{DesktopSession, event_of};
 pub use transport::{InProcessTransport, OpenSessionError, ShutdownReport};
