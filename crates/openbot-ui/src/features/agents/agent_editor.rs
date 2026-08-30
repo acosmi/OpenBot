@@ -201,6 +201,8 @@ pub fn AgentEditor(
                 || value.len() > MAX_AGENT_ROLE_DESCRIPTION_BYTES
                 || value.as_bytes().contains(&0))
     });
+    let form_invalid =
+        agent_form_invalid_signal(attempted, name, title, role, visibility, endpoint, auth);
     #[cfg(not(target_arch = "wasm32"))]
     let _ = (agent_id, on_saved);
 
@@ -335,7 +337,7 @@ pub fn AgentEditor(
                     })}
                 </div>
             </div>
-            <Show when=move || attempted.get() && build().is_err()>
+            <Show when=move || form_invalid.get()>
                 <p class="ob-alert" role="alert">{move || t!(i18n, agents.form_error)}</p>
             </Show>
             <Show when=move || save_error.get()>
@@ -457,6 +459,41 @@ fn bounded_line(value: &str, maximum: usize) -> bool {
     !value.is_empty() && value.len() <= maximum && !value.chars().any(char::is_control)
 }
 
+fn agent_form_invalid_signal(
+    attempted: RwSignal<bool>,
+    name: RwSignal<String>,
+    title: RwSignal<String>,
+    role: RwSignal<String>,
+    visibility: RwSignal<Option<String>>,
+    endpoint: RwSignal<String>,
+    auth: RwSignal<String>,
+) -> Signal<bool> {
+    Signal::derive(move || {
+        attempted.get()
+            && name.with(|name| {
+                title.with(|title| {
+                    role.with(|role| {
+                        visibility.with(|visibility| {
+                            endpoint.with(|endpoint| {
+                                auth.with(|auth| {
+                                    build_agent_request(
+                                        name,
+                                        title,
+                                        role,
+                                        visibility.as_deref(),
+                                        endpoint,
+                                        auth,
+                                    )
+                                    .is_err()
+                                })
+                            })
+                        })
+                    })
+                })
+            })
+    })
+}
+
 fn advance_connection_generation(generation: RwSignal<u64>) -> Option<u64> {
     generation
         .try_update(|current| {
@@ -470,6 +507,35 @@ fn advance_connection_generation(generation: RwSignal<u64>) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attempted_form_error_reacts_to_corrected_fields_and_endpoint() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let attempted = RwSignal::new(false);
+            let name = RwSignal::new(String::new());
+            let title = RwSignal::new(String::new());
+            let role = RwSignal::new(String::new());
+            let visibility = RwSignal::new(Some("private".to_owned()));
+            let endpoint = RwSignal::new(String::new());
+            let auth = RwSignal::new(String::new());
+            let invalid =
+                agent_form_invalid_signal(attempted, name, title, role, visibility, endpoint, auth);
+
+            assert!(!invalid.get());
+            attempted.set(true);
+            assert!(invalid.get());
+            name.set("Agent".to_owned());
+            title.set("Title".to_owned());
+            role.set("Role".to_owned());
+            assert!(!invalid.get());
+
+            auth.set("Bearer test-only".to_owned());
+            assert!(invalid.get());
+            endpoint.set("https://agent.example/ag-ui".to_owned());
+            assert!(!invalid.get());
+        });
+    }
 
     #[test]
     fn form_is_full_closed_and_never_allows_auth_without_remote_endpoint() {

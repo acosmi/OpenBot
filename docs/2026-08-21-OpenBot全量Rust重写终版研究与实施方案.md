@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–30 实施裁决 R126–R143，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–30 实施裁决 R126–R144，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1792,7 +1792,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 
 任何闸门失败都只能修复后重跑，不能以“后续补齐”进入下一发布阶段。
 
-### 24.1 实施状态勾选（2026-08-28；进度证据以机器台账为准）
+### 24.1 实施状态勾选（2026-08-30；进度证据以机器台账为准）
 
 - [ ] **G0**：Phase 0 证据产物已落；仍缺 §1.1 两份输入文档原件，故整关不勾。2026-08-28 R116 后 `grok-bot/` LFS 指针 = 0、可完整检出。
   - [x] **P0-code / Batch52**：`grok-inventory --check` 对钉死 tree 的 2,110 文件逐字同步；本平台 Electron 官方 zip 与 `engine-pins.toml` / 上游 SHASUMS 副本交叉一致并实跑 `v43.3.0`；overlay、shim 规则、6 条 Engine T-ID 与 poisoned epoch 全部落地。五个 xtask 退出子命令及 `openbot-computer` 9/0/0 在 macOS arm64 本轮实跑绿；这只勾 P0-code，不替代缺失的两份输入原件，也不勾 G0 整关。
@@ -1888,20 +1888,21 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     allowlisted hash-chain audit原子提交。Authorization只以Vault v2密文+UUID引用落库，runtime每run fresh
     解封并经唯一SafeDialer发送；policy拒绝与网络不可达分型，redirect/IP/TLS仍逐跳复验。package-null
     Agent已进入provider context，private owner/admin/non-owner运行判据与domain一致；完整endpoint不进audit，
-    只记canonical origin。Web表单/隐藏恢复代码已落，但Browser URL policy未给正式journey证据，故
-    T-ROUTE-0007与T-UI-0031/0032、Desktop native-window journey/golden仍todo；Desktop custom-protocol
-    Agent list/detail与七写面已由Batch69闭合；
+    只记canonical origin。Batch70以release Browser闭合create/edit/duplicate/hide/recover/delete/start、
+    write-only Authorization与callback issue/rotate/revoke/dismiss/reload，关闭T-ROUTE-0007与
+    T-UI-0031–0034；Desktop callback POST/DELETE也已接同一ApplicationService。Desktop正式native-window、
+    channel create/run、Windows runtime与T-UI-0126 formal golden仍todo；
   - [x] create-time routing provider：production main复用package model/每请求PostgreSQL credential/Vault/
     SafeDialer并固定OpenAI Chat Completions；模型只建议权威roster内ID，缺credential/transport/坏JSON/
     低confidence均由Application成功fallback，tool output拒绝，消息与模型理由不进hash-chain audit；
-  - [ ] provider gate 要求的三家 recorded vendor trace 仍为 **0/3**，本批未使用 live vendor credential；human approval 的 Leptos/Axum可点击竖切、critical realtime、真实PG与production session resolver浏览器均已落，但真实OIDC/SAML登录、完整 thread/cancel/computer 集成仍未闭合；完整 run-wide token/cost/并发/computer budget、Desktop Local installed-app client/system browser/random loopback callback、RMCP/computer/file/shell各自的协议级cancel notification/process-tree、MCP 专用 private egress与 admin custom/通用 refresh/grant/effect 完整 UI、Agent lifecycle正式浏览器/Desktop journey、interrupt/resume 与其余事件 durable/UI projection、browser/file/shell executor 尚未闭合。Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
+  - [ ] provider gate 要求的三家 recorded vendor trace 仍为 **0/3**，本批未使用 live vendor credential；human approval 的 Leptos/Axum可点击竖切、critical realtime、真实PG与production session resolver浏览器均已落，但真实OIDC/SAML登录、完整 thread/cancel/computer 集成仍未闭合；完整 run-wide token/cost/并发/computer budget、Desktop Local installed-app client/system browser/random loopback callback、RMCP/computer/file/shell各自的协议级cancel notification/process-tree、MCP 专用 private egress与 admin custom/通用 refresh/grant/effect 完整 UI、Agent Desktop native-window/channel journey、interrupt/resume 与其余事件 durable/UI projection、browser/file/shell executor 尚未闭合。Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
   - [x] P0-code 规则与台账地基：engine fetch/verify、shim 静态 allowlist、boot/role/confinement/render/conformance T-ID、HumanLeaseEpoch checked + generation-recoverable poison 已绿。
   - [x] Batch53 macOS P1 子证据：clean-room shim 404 LOC；Rust-only ASAR/fuses/rebrand/integrity/signature/release manifest；digest-before-spawn、4 KiB stdin token、双 UDS peer PID + live child、hello/ready/command/shutdown deadline与独立 binary frame；main executable 精确继承 SBPL profile，仅四个 Electron Helper + crashpad 五个 literal 可 `with no-sandbox` 后由 Chromium renderer sandbox 接管。Browser/Component 两 role 真 Electron 各自 start→1280×800 JPEG→stop→shutdown，renderer `ProcessMetric.sandboxed=true` + creationTime，主/全部后代 TCP LISTEN 0，全部 PID/profile lock 清理 0。
   - [ ] **P1 整阶段仍未通过**：Batch54 已落 Windows 可执行探针代码（当前用户+Restricted-Code/low-label 双 Named Pipe、PID+100ns creation FILETIME、suspended `DISABLE_MAX_PRIVILEGE|LUA_TOKEN|WRITE_RESTRICTED` medium-integrity token、Job 32 processes/4 GiB/kill-on-close、profile/temp ACL、renderer Job membership、PE `Integrity/ElectronAsar` exact resource）并在 macOS 对 `x86_64-pc-windows-msvc` check/Clippy；但 Windows 真机 bundle、两个 role、ACL negative、renderer sandbox/no-listener/no-orphan **均未运行**。Batch55 又落 Ubuntu 24.04 x86_64 runsc OCI harness与容器内真实双 role probe：完整 release tarball sha、sidecar release ALWAYS + usage STRICT、network/host-UDS/FIFO none、gVisor marker、只读root/bind、零capability；R129补齐Electron Linux必需的容器内Xvfb（fixed :99/1280×800×24、`-nolisten tcp`、版本+binary hash候选），renderer要求main `Seccomp!=2`负对照、renderer `Seccomp:2` + `NoNewPrivs:1`、PID+network或user namespace layer-1、frame/listener/orphan/lock全绿后才打印pin candidate。但本机macOS只能做Linux target check/Clippy，**没有运行runsc/Xvfb、没有版本pin**；R63禁止未授权派发Actions，不能伪造两平台结论。P2/P3/P4未进入，G5A–G5F仍不勾。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
-  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 731 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
+  - [x] tokens.toml 单源生成 CSS/Rust、Inter 4.1 随包、74 项 icon manifest/SVG 双向闭合；i18n en/zh-CN 782 叶键及占位符 exact；WASM gzip/CSS/fonts 与零内联脚本预算绿；
   - [x] Axum `APP_DIST_DIR` 条件挂同一 bundle，唯一同源 external bootstrap、strict CSP/安全头、cookie/Accept-Language 首帧 `<html class lang>` Rust 改写、API/缺失 asset 不被 SPA fallback 隐藏；
   - [x] Approval 页面只展示服务端权威 effect/target/redacted arguments/change，count-only WebSocket hint只触发权威GET、连接/重连前GET、30秒fallback，fresh POST grant/deny；真实 Chromium 已验证批准后 card 消失+status与无1秒轮询，既有 APG ThemeToggle/LocaleSwitch、双视口与DOM审计保持；Batch57接真实production PostgreSQL coordinator，Batch58再以真实PostgresSessionAuthResolver证明cookie/fresh Origin与hard reload；testkit bootstrap不冒充OIDC/SAML登录；
   - [x] Admin当前八条真实route：global AppSidebar只在admin probe成功时显示Admin section link；AdminShell先过同一gate，200px secondary nav只列Overview/Boundaries/Identity Providers/Audit/People/Components/Playground。Audit/People/Boundaries/Identity Providers证据保持。Components index/detail以六条same-origin/fresh/admin endpoint写compiled component的Agent withholding、function grant、draft/publication，成功后只接纳权威receipt；PG事务把row lock、幂等grant与hash-chain audit原子闭合。sandboxed draft/publication只经Playground，Components页只允许Agent withholding且function拒绝；CSP补exact `frame-src 'self'`，Playground按完整row digest keyed，发布后不留stale draft。release浏览器证明16卡、compiled全写、sandboxed禁用矩阵、Playground draft→publish/hard reload、中英与双视口DOM/overflow/runtime零缺陷。只关闭T-ROUTE-0004/0012/0013/0014/0015/0016/0019/0020/0021，完整AdminSidebar与formal golden仍todo；
@@ -1910,8 +1911,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] UI ledger 的27条primitive子账全done；46条Tabler→Lucide经第一真源→icons.toml→ledger三向join关闭；
     layout 组 detail-panel/page-shell/row-mark/stagger 四条业务、orb/ai-core→AgentPresence两条又有生产实现与本机证据。
     ComputerPlaceholder/Art两条又共享唯一中性线稿闭合；Batch30关闭独立ChannelRow；Batch31关闭
-    abstract-avatar→统一Avatar与AgentCard；Batch32关闭RecipientField。当前UI=`87/65/152`；
-    Google Drive brand、AppSidebar总项+其余32业务/runtime/golden保持todo；
+    abstract-avatar→统一Avatar与AgentCard；Batch32关闭RecipientField；Batch70关闭AgentFields/Profile/
+    CallbackTokenPanel/NewAgent。当前UI=`91/61/152`；Google Drive brand、AppSidebar总项+其余28业务/
+    runtime/golden保持todo；
   - [x] `design-gallery` compile feature 承载 `/_design` 状态/键盘/AX 样本；production feature 关闭且 bundle gate 直接要求 WASM `_design` byte=0。真实 Chromium 已验证十条基础原语的 Enter/Space、Field ARIA、focus-within、Textarea 十行 cap、separator/skeleton AX 与 DOM 五类零缺陷；截图只作目视 QA，不冒充 golden；
   - [x] Message/Bubble compound、platform-aware Kbd、SHA-256 deterministic Avatar、5s generation-safe polite Toast、400ms hover/focus/Escape Tooltip 已过 Rust/WASM/Chromium/AX；Avatar remote image、Item/Tooltip external link 构造性拒绝，Toast 仍不冒充所有 accepted:false 业务 use case 已接线；
   - [x] Dialog/Sheet 共享唯一 modal kernel：explicit ARIA、首焦点、Tab双向环、Escape/close/backdrop、return focus、body scroll lock 与 path-sibling inert/aria-hidden；Sheet top/right/bottom/left 四值不复制安全规则；
@@ -1936,9 +1938,10 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] data-backed `/agents` surface：固定上游`mine`与`!mine && public`两组、144×180 AgentCard、
     URL-owned profile DetailPanel、同源percent-encoded id、404错误态与AppSidebar Agents destination；
     Batch68又接create/edit/duplicate/hide/unhide/delete/start-channel与可恢复hidden roster，secret输入在
-    submit/cancel/unmount清空，连接测试和profile action均用checked generation拒绝stale response。当前只关闭
-    T-UI-0029/0030与七条Server API；Batch69又接Desktop custom-protocol list/detail与七写面。Browser URL
-    policy阻断正式journey，故T-ROUTE-0007、T-UI-0031/0032、Desktop native-window journey与formal golden仍todo；
+    submit/cancel/unmount清空，连接测试和profile action均用checked generation拒绝stale response；Batch69
+    接Desktop custom-protocol list/detail与七写面。Batch70在同一release Browser闭合完整route journey与
+    callback一次明文状态，并补Desktop callback POST/DELETE，关闭T-ROUTE-0007、T-UI-0031–0034；
+    T-UI-0126 formal golden、Desktop native-window/channel journey与Windows runtime仍todo；
   - [x] `/channel/new`真实首发route：static route先于dynamic channel id；无recipient发送禁用且刷新零
     channel；URL可恢复hidden但有权的Agent，RecipientField复用Combobox键盘模型；首发只按
     create channel→native BeginThreadRun→成功navigate，begin失败复用同一channel/run-id，create响应未知
@@ -2288,6 +2291,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R142 | §3.1条3 / §3.2–§3.4 / §5.1–§5.3 / §6.4 / §7.1–§7.5 / §8.6 / §13.1–§13.3 / §15.1–§15.3 / §21.1 / §24 G4、G6（2026-08-29 Batch68：用户 Agent lifecycle/customer auth） | R94只落roster/detail读面，七条lifecycle API与固定上游62条测试仍todo；provider context又INNER JOIN package，`package_id IS NULL`用户Agent即使落库也不能运行。固定上游另有六项与v4冲突：forged字段静默忽略、可选store时卸载route、非类型异常rethrow、audit或Vault故障仍允许mutation成功、完整endpoint进入audit。 | 若endpoint在owner/admin终判前预检，非owner可触发DNS；只信fresh HTTP而不在PG事务重验AuthGeneration/revoke，会留下撤权竞态；auth明文或完整URL进configuration/audit会扩大secret面。private Agent若BeginThreadRun/provider context漏admin或non-owner复核，会让read与run判据分叉。UI测试结果与profile action若没有checked generation，改endpoint/切profile后的旧response可覆盖新状态；隐藏Agent无恢复入口会变成产品死路。 | 新增closed form/auth/verdict/receipt、`AgentAdministrationScope`与唯一Application dispatch；fresh Origin在body前，PG事务锁user generation、profile/package并把lifecycle/Vault/audit原子提交。Authorization仅存v2密文+UUID引用，runtime每run fresh解封；SafeDialer注册与运行同policy并把destination/network/commit-unknown分开。provider context允许package-null且复核private owner/admin；BeginThreadRun同domain policy。audit只记canonical origin。UI加入create/edit/copy/hide/recover/delete/start与stale-response fencing；六条冲突测试以overlay superseded并指向closed替代证据。 | implementation `70da77374b59e3ac89bd6113b06d69e85c6464c8`。九crate tests=`34/153/95/81/370+6+28/311/216+3+7+8/93/167`且0失败；PG17.11 SCRAM lifecycle/thread/directory/audit/channel=`5/0/0`，agent runtime全8=`8/0/0`；全目标Clippy、UI WASM、fmt/diff、Engine/tools/GUI gates绿。bundle=`1792687/113662/740216/1/0`；关闭T-API-0021–0026/0029与62条Agent测试，API=`80/90/170`、tests=`457/590/1047`、parity=`808/886/1694`、overlay=`1450/236/2/6`、strict=`159/0/0`。Browser URL policy阻断正式route journey，故T-ROUTE-0007/T-UI-0031/0032、Desktop Agent custom protocol与formal golden不勾；详见Batch68文档 |
 
 | R143 | §5.1–§5.3 / §6.4 / §13.1–§13.3 / §15.1–§15.3 / §21.1 / §24 G4、G6（2026-08-30 Batch69：Desktop Agent custom protocol） | R142 已闭合 Server/Application/PG/Vault/runtime 与 Web UI 代码，却明确留下 Desktop custom-protocol Agent API；同一 Leptos `/agents` 在 native WebView 中会把相对 `/api/agents` 请求落到 generic 404。若为 Desktop 另建 store/业务 DTO，会违反唯一ApplicationService；若把所有window永远视为fresh，又会绕开R142 sensitive write代际。 | custom protocol request body已经由host materialize，secret即使不进日志仍会留在普通`Vec<u8>`直到drop；stale window若先解析body又读取了本应拒绝的secret。GET query/percent segment若自由解析会接受Server拒绝的authority输入；create/update/duplicate状态码或profile envelope漂移会让同一WASM在Web/Desktop产生不同成功判据。Windows与macOS共用源码，但macOS host测试/Windows target check都不能冒充真实Windows窗口runtime。 | `DesktopTauriProtocol` 在generic API 404前显式挂 Agent list/detail/test/create/update/duplicate/hide/unhide/delete；window label先铸AuthContext，GET不要求fresh，七写面/探针在JSON前要求fresh。hidden query只接受空/true/false；路径只接受closed percent segment；Agent JSON固定64KiB。解析成功、malformed、oversize三路都覆零原始body；所有业务只经`InProcessTransport::execute`，201/200/204与Server envelope一致，AppError统一投影。 | implementation `5351ec57ec60edd2fdf4ec98cc49fe479b82a9ae`。contracts/application/Desktop tests=`95/153/83`且0失败，Desktop all-target/all-feature Clippy `-D warnings`、macOS host check、`x86_64-pc-windows-msvc` all-feature check、fmt/diff与Tauri dependency guard全绿；parity仍`808/886/1694`、overlay=`1450/236/2/6`、strict=`159/0/0`，Cargo.lock/Grok/单package零变化。正式native-window journey、callback-token panel/API、channel create/run、Windows runtime与golden仍todo，不新增/关闭T-ID；详见Batch69文档 |
+
+| R144 | §3.1条3 / §5.1–§5.3 / GUI真源§6.2、§10.5 / §6.4 / §13.1–§13.3 / §15.1–§15.3 / §21.1条2 / §24 G4、G6（2026-08-30 Batch70：Agent callback与正式Web journey） | R143后Desktop缺callback-token framing，Web虽有lifecycle代码但固定上游CallbackTokenPanel仍未实现，前次Browser URL policy又使`/agents` route/fields/profile没有正式交互证据。testkit fixture已有remote profile却未注入callback port，直接点击只会503。正式浏览器还暴露空提交后字段已纠正、`aria-invalid`已清但总警报仍残留：Show只追踪attempted，字段由`get_untracked`读取。 | callback明文若进入query cache、Clone/Display、普通String长期槽或导航后仍在DOM，会把一次响应变成长寿命凭据；Desktop若在fresh拒绝前读body或允许非空callback body，会让renderer把secret留在host缓冲。只靠curl/源码不能关闭route/UI；fixture若另写业务捷径会绕过唯一ApplicationService。响应式修复若每次验证克隆password又扩大明文副本。 | Desktop显式接POST/DELETE `/api/agents/{id}/callback-token`，host authority/fresh先行、body必须空且拒绝路覆零，只分派既有Issue/Revoke command，201 typed one-time DTO/204空体。Web API固定same-origin/no-store/redirect-error；CallbackTokenPanel只在remote&&can_manage出现，`CallbackTokenIssued`仅存component-local StoredValue，rotate先清旧值，Dismiss/unmount/navigation清槽，不进query cache。fixture以同一`FixtureAgents` typed port实现并精确校fixture authority；表单总错误改为借用追踪全部字段的Signal。release Browser完成create/edit/duplicate/hide/recover/delete/start、cancel password与callback rotate/dismiss/reload/revoke/restore；台账只据此关闭route与四组件，formal golden独立保留。 | implementation `2311aa8a62ecc77e8ce0a11495b4e372dced3e32`。Contracts/Application/Desktop/UI/fixture=`95/153/83/169/9`且0失败，相关Clippy `-D warnings`、UI WASM、macOS host与Windows target compile-only、Tauri guard全绿。release Browser中英、1024×640/600×900、secret canary/alert/console/duplicate/overflow均0；cancel后不重填profile `hasAuth=false`，显式重填为true且明文0。bundle=`1815510/114965/740216/1/0`；关闭T-ROUTE-0007、T-UI-0031–0034，routes=`24/8/32`、UI=`91/61/152`、parity=`813/881/1694`、overlay=`1445/241/2/6`、strict=`159/0/0`。Engine bundle=17,306 B、host verify与tools/shim/Grok全绿；sandbox内首次Engine `--version exit None`、宿主重跑绿。未运行CI/Actions；Desktop正式native-window/channel、Windows runtime与T-UI-0126 golden仍todo；详见Batch70文档 |
 
 ### 28.2 复核通过、原样保留的断言
 

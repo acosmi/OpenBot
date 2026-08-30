@@ -107,11 +107,13 @@ enum AgentRoute<'a> {
     Duplicate { raw_agent_id: &'a str },
     Hide { raw_agent_id: &'a str },
     Unhide { raw_agent_id: &'a str },
+    CallbackToken { raw_agent_id: &'a str },
 }
 
 #[derive(Clone, Copy)]
 enum AgentReplyKind {
     Profile(StatusCode),
+    CallbackToken,
     Empty,
 }
 
@@ -127,7 +129,8 @@ impl<'a> AgentRoute<'a> {
             Self::Detail { raw_agent_id }
             | Self::Duplicate { raw_agent_id }
             | Self::Hide { raw_agent_id }
-            | Self::Unhide { raw_agent_id } => raw_agent_id,
+            | Self::Unhide { raw_agent_id }
+            | Self::CallbackToken { raw_agent_id } => raw_agent_id,
         }
     }
 }
@@ -142,6 +145,7 @@ fn agent_route(path: &str) -> Option<AgentRoute<'_>> {
         [raw_agent_id, "duplicate"] => Some(AgentRoute::Duplicate { raw_agent_id }),
         [raw_agent_id, "hide"] => Some(AgentRoute::Hide { raw_agent_id }),
         [raw_agent_id, "unhide"] => Some(AgentRoute::Unhide { raw_agent_id }),
+        [raw_agent_id, "callback-token"] => Some(AgentRoute::CallbackToken { raw_agent_id }),
         _ => None,
     }
 }
@@ -464,7 +468,10 @@ impl DesktopTauriProtocol {
                     Err(error) => error_response(error),
                 }
             }
-            _ => empty_response(StatusCode::METHOD_NOT_ALLOWED),
+            _ => {
+                request.body_mut().fill(0);
+                empty_response(StatusCode::METHOD_NOT_ALLOWED)
+            }
         }
     }
 
@@ -474,6 +481,7 @@ impl DesktopTauriProtocol {
         authority: WindowAuthority,
     ) -> Response<Vec<u8>> {
         if request.method() != Method::POST {
+            request.body_mut().fill(0);
             return empty_response(StatusCode::METHOD_NOT_ALLOWED);
         }
         if !authority.is_fresh() {
@@ -511,8 +519,11 @@ impl DesktopTauriProtocol {
                 | (AgentRoute::Duplicate { .. }, &Method::POST)
                 | (AgentRoute::Hide { .. }, &Method::POST)
                 | (AgentRoute::Unhide { .. }, &Method::POST)
+                | (AgentRoute::CallbackToken { .. }, &Method::POST)
+                | (AgentRoute::CallbackToken { .. }, &Method::DELETE)
         );
         if !supported {
+            request.body_mut().fill(0);
             return empty_response(StatusCode::METHOD_NOT_ALLOWED);
         }
         let write = request.method() != Method::GET;
@@ -524,7 +535,10 @@ impl DesktopTauriProtocol {
         }
         let agent_id = match percent_decode_segment(route.raw_agent_id()) {
             Some(agent_id) => BotId::new(agent_id),
-            None => return error_response(AppError::MalformedPayload { field: "agent_id" }),
+            None => {
+                request.body_mut().fill(0);
+                return error_response(AppError::MalformedPayload { field: "agent_id" });
+            }
         };
         let (command, reply_kind) = match (route, request.method()) {
             (AgentRoute::Detail { .. }, &Method::GET) if request.body().is_empty() => (
@@ -565,7 +579,18 @@ impl DesktopTauriProtocol {
                 },
                 AgentReplyKind::Empty,
             ),
-            _ => return empty_response(StatusCode::METHOD_NOT_ALLOWED),
+            (AgentRoute::CallbackToken { .. }, &Method::POST) if request.body().is_empty() => (
+                AppCommand::IssueAgentCallbackToken { agent_id },
+                AgentReplyKind::CallbackToken,
+            ),
+            (AgentRoute::CallbackToken { .. }, &Method::DELETE) if request.body().is_empty() => (
+                AppCommand::RevokeAgentCallbackToken { agent_id },
+                AgentReplyKind::Empty,
+            ),
+            _ => {
+                request.body_mut().fill(0);
+                return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+            }
         };
         match (
             self.transport.execute(authority.auth, command).await,
@@ -573,6 +598,12 @@ impl DesktopTauriProtocol {
         ) {
             (Ok(AppReply::Agent(agent)), AgentReplyKind::Profile(status)) => {
                 json_response_with_status(&AgentProfileResponse { agent }, status)
+            }
+            (Ok(AppReply::AgentCallbackToken(token)), AgentReplyKind::CallbackToken) => {
+                json_response_with_status(&token, StatusCode::CREATED)
+            }
+            (Ok(AppReply::AgentCallbackTokenRevoked(_)), AgentReplyKind::Empty) => {
+                empty_response(StatusCode::NO_CONTENT)
             }
             (Ok(AppReply::AgentLifecycle(_)), AgentReplyKind::Empty) => {
                 empty_response(StatusCode::NO_CONTENT)
@@ -1433,8 +1464,9 @@ mod tests {
     use async_trait::async_trait;
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
-        AgentAdministration, AgentAdministrationError, AgentAdministrationScope, AgentDirectory,
-        AgentReadScope, ChannelReader, ComponentAdministration, ComponentAdministrationError,
+        AgentAdministration, AgentAdministrationError, AgentAdministrationScope,
+        AgentCallbackTokenAdministration, AgentCallbackTokenError, AgentDirectory, AgentReadScope,
+        ChannelReader, ComponentAdministration, ComponentAdministrationError,
         ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentRuntimeScope,
         OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
         SandboxedComponentAdministration, SandboxedComponentAdministrationError,
@@ -1443,7 +1475,7 @@ mod tests {
     };
     use openbot_contracts::agent::{
         AgentConnectionVerdict, AgentLifecycleReceipt, AgentLifecycleState, AgentProfile,
-        AgentVisibility,
+        AgentVisibility, CallbackTokenIssued, CallbackTokenRevoked,
     };
     use openbot_contracts::auth::{AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
@@ -1486,6 +1518,7 @@ mod tests {
     struct FakeAgents {
         rows: Mutex<Vec<AgentProfile>>,
         next: AtomicU64,
+        callback_sequence: AtomicU64,
     }
 
     impl FakeAgents {
@@ -1498,7 +1531,7 @@ mod tests {
                     role_description: "Existing standing role".to_owned(),
                     avatar_seed: "agent-one".to_owned(),
                     visibility: AgentVisibility::Public,
-                    endpoint: None,
+                    endpoint: Some("https://agent.example/ag-ui".to_owned()),
                     has_auth: false,
                     has_callback_token: false,
                     hidden: false,
@@ -1507,6 +1540,7 @@ mod tests {
                     mine: true,
                 }]),
                 next: AtomicU64::new(1),
+                callback_sequence: AtomicU64::new(1),
             }
         }
 
@@ -1700,6 +1734,53 @@ mod tests {
             Ok(AgentConnectionVerdict::working(vec![
                 "RUN_STARTED".to_owned(),
             ]))
+        }
+    }
+
+    struct FakeCallbackTokens(Arc<FakeAgents>);
+
+    #[async_trait]
+    impl AgentCallbackTokenAdministration for FakeCallbackTokens {
+        async fn issue(
+            &self,
+            auth: &AuthContext,
+            agent: &BotId,
+        ) -> Result<CallbackTokenIssued, AgentCallbackTokenError> {
+            if auth.tenant() != &TenantId::new("tenant")
+                || auth.actor() != &ActorId::new("actor")
+                || auth.auth_generation() != AuthGeneration::new(1)
+            {
+                return Err(AgentCallbackTokenError::NotVisible);
+            }
+            let mut rows = self.0.rows.lock().unwrap();
+            let profile = rows
+                .iter_mut()
+                .find(|profile| &profile.id == agent && profile.endpoint.is_some())
+                .ok_or(AgentCallbackTokenError::NotVisible)?;
+            profile.has_callback_token = true;
+            let sequence = self.0.callback_sequence.fetch_add(1, Ordering::SeqCst);
+            CallbackTokenIssued::new(format!("obot_agt_DESKTOP_CALLBACK_{sequence:032}"))
+                .map_err(|_| AgentCallbackTokenError::Corrupt { field: "token" })
+        }
+
+        async fn revoke(
+            &self,
+            auth: &AuthContext,
+            agent: &BotId,
+        ) -> Result<CallbackTokenRevoked, AgentCallbackTokenError> {
+            if auth.tenant() != &TenantId::new("tenant")
+                || auth.actor() != &ActorId::new("actor")
+                || auth.auth_generation() != AuthGeneration::new(1)
+            {
+                return Err(AgentCallbackTokenError::NotVisible);
+            }
+            let mut rows = self.0.rows.lock().unwrap();
+            let profile = rows
+                .iter_mut()
+                .find(|profile| &profile.id == agent && profile.endpoint.is_some())
+                .ok_or(AgentCallbackTokenError::NotVisible)?;
+            profile.has_callback_token = false;
+            Ok(CallbackTokenRevoked)
         }
     }
 
@@ -2058,6 +2139,7 @@ mod tests {
         let application = Arc::new(
             OpenBotApplication::new(EmptyChannels)
                 .with_people(FakePeople)
+                .with_agent_callback_tokens(FakeCallbackTokens(agents.clone()))
                 .with_agent_directory(agents.clone())
                 .with_agent_administration(agents)
                 .with_ui_preferences(preferences)
@@ -2186,10 +2268,115 @@ mod tests {
         assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
         assert!(!String::from_utf8_lossy(stale.body()).contains(SECRET));
 
+        let stale_callback = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents/agent-one/callback-token")
+                    .body(SECRET.as_bytes().to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(stale_callback.status(), StatusCode::UNAUTHORIZED);
+        assert!(!String::from_utf8_lossy(stale_callback.body()).contains(SECRET));
+
         assert!(protocol.unbind_window("agents").unwrap());
         protocol
             .bind_window("agents", auth(), Some(Duration::from_secs(60)))
             .unwrap();
+
+        let issued = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents/agent-one/callback-token")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(issued.status(), StatusCode::CREATED);
+        assert_eq!(issued.headers()[CACHE_CONTROL], "no-store");
+        let first_token = serde_json::from_slice::<CallbackTokenIssued>(issued.body())
+            .unwrap()
+            .expose()
+            .to_owned();
+        assert!(first_token.starts_with("obot_agt_"));
+        let issued_again = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents/agent-one/callback-token")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(issued_again.status(), StatusCode::CREATED);
+        let second_token = serde_json::from_slice::<CallbackTokenIssued>(issued_again.body())
+            .unwrap()
+            .expose()
+            .to_owned();
+        assert_ne!(first_token, second_token);
+        assert!(!String::from_utf8_lossy(issued_again.body()).contains(&first_token));
+        let callback_profile = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .uri("/api/agents/agent-one")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert!(
+            serde_json::from_slice::<AgentProfileResponse>(callback_profile.body())
+                .unwrap()
+                .agent
+                .has_callback_token
+        );
+        let callback_body_rejected = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents/agent-one/callback-token")
+                    .body(SECRET.as_bytes().to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(
+            callback_body_rejected.status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        assert!(!String::from_utf8_lossy(callback_body_rejected.body()).contains(SECRET));
+        let revoked = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/agents/agent-one/callback-token")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+        assert!(revoked.body().is_empty());
+        let revoked_profile = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .uri("/api/agents/agent-one")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert!(
+            !serde_json::from_slice::<AgentProfileResponse>(revoked_profile.body())
+                .unwrap()
+                .agent
+                .has_callback_token
+        );
 
         let bad_query = protocol
             .handle(

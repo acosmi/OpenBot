@@ -12,11 +12,12 @@ use axum::response::IntoResponse as _;
 use futures_core::Stream;
 use openbot_application::cursor::ChannelCursor;
 use openbot_application::{
-    AgentAdministration, AgentAdministrationError, AgentAdministrationScope, AgentDirectory,
-    AgentReachability, AgentReadScope, AppEventStream, ApplicationService, AuditPageRequest,
-    AuditReadError, AuditReader, BeginThreadRunRequest, CancelThreadRunRequest,
-    ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
-    ChannelReader, ChannelRoutingBackend, ChannelRoutingBackendError, ComponentAdministration,
+    AgentAdministration, AgentAdministrationError, AgentAdministrationScope,
+    AgentCallbackTokenAdministration, AgentCallbackTokenError, AgentDirectory, AgentReachability,
+    AgentReadScope, AppEventStream, ApplicationService, AuditPageRequest, AuditReadError,
+    AuditReader, BeginThreadRunRequest, CancelThreadRunRequest, ChannelAdministration,
+    ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope, ChannelReader,
+    ChannelRoutingBackend, ChannelRoutingBackendError, ComponentAdministration,
     ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
     ComponentRuntimeScope, CorrectMemoryRequest, McpConnectionAdministration, McpConnectionError,
     MemoryAdministration, MemoryAdministrationError, MemoryControlRequest, MemoryPageRequest,
@@ -30,7 +31,7 @@ use openbot_application::{
 };
 use openbot_contracts::agent::{
     AgentConnectionTestRequest, AgentConnectionVerdict, AgentLifecycleReceipt, AgentLifecycleState,
-    AgentMutationRequest, AgentProfile, AgentVisibility,
+    AgentMutationRequest, AgentProfile, AgentVisibility, CallbackTokenIssued, CallbackTokenRevoked,
 };
 use openbot_contracts::audit::{AuditEventView, AuditPage};
 use openbot_contracts::auth::{
@@ -322,6 +323,7 @@ impl ChannelAdministration for FixtureChannels {
 struct FixtureAgents {
     rows: Arc<Mutex<Vec<AgentProfile>>>,
     next: Arc<AtomicU64>,
+    callback_sequence: Arc<AtomicU64>,
 }
 
 impl FixtureAgents {
@@ -405,6 +407,7 @@ impl FixtureAgents {
                 },
             ])),
             next: Arc::new(AtomicU64::new(1)),
+            callback_sequence: Arc::new(AtomicU64::new(1)),
         }
     }
 }
@@ -604,6 +607,70 @@ impl AgentAdministration for FixtureAgents {
             "RUN_STARTED".to_owned(),
         ]))
     }
+}
+
+#[async_trait]
+impl AgentCallbackTokenAdministration for FixtureAgents {
+    async fn issue(
+        &self,
+        auth: &AuthContext,
+        agent_id: &BotId,
+    ) -> Result<CallbackTokenIssued, AgentCallbackTokenError> {
+        if !fixture_callback_authorized(auth) {
+            return Err(AgentCallbackTokenError::NotVisible);
+        }
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| AgentCallbackTokenError::Unavailable)?;
+        let profile = rows
+            .iter_mut()
+            .find(|profile| {
+                &profile.id == agent_id
+                    && profile.endpoint.is_some()
+                    && profile.can_manage
+                    && !profile.system_owned
+            })
+            .ok_or(AgentCallbackTokenError::NotVisible)?;
+        let sequence = self.callback_sequence.fetch_add(1, Ordering::SeqCst);
+        let token = CallbackTokenIssued::new(format!("obot_agt_fixture_callback_{sequence:032}"))
+            .map_err(|_| AgentCallbackTokenError::Corrupt { field: "token" })?;
+        profile.has_callback_token = true;
+        Ok(token)
+    }
+
+    async fn revoke(
+        &self,
+        auth: &AuthContext,
+        agent_id: &BotId,
+    ) -> Result<CallbackTokenRevoked, AgentCallbackTokenError> {
+        if !fixture_callback_authorized(auth) {
+            return Err(AgentCallbackTokenError::NotVisible);
+        }
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| AgentCallbackTokenError::Unavailable)?;
+        let profile = rows
+            .iter_mut()
+            .find(|profile| {
+                &profile.id == agent_id
+                    && profile.endpoint.is_some()
+                    && profile.can_manage
+                    && !profile.system_owned
+            })
+            .ok_or(AgentCallbackTokenError::NotVisible)?;
+        profile.has_callback_token = false;
+        Ok(CallbackTokenRevoked)
+    }
+}
+
+fn fixture_callback_authorized(auth: &AuthContext) -> bool {
+    auth.deployment().as_str() == FIXTURE_DEPLOYMENT
+        && auth.tenant().as_str() == FIXTURE_TENANT
+        && auth.actor().as_str() == FIXTURE_ACTOR
+        && auth.auth_generation() == AuthGeneration::new(1)
+        && auth.has_role(Role::User)
 }
 
 #[derive(Clone)]
@@ -3624,6 +3691,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
             .with_audit(FixtureAudit::new(now))
+            .with_agent_callback_tokens((*agents).clone())
             .with_agent_directory(agents.clone())
             .with_agent_administration(agents)
             .with_channel_routing(Arc::new(routing))
@@ -3780,6 +3848,63 @@ mod approval_pg_tests {
     use super::*;
     use openbot_domain::policy::{ActionPolicy, PolicyMode};
     use openbot_domain::routing::RoutingReasonCode;
+
+    #[tokio::test]
+    async fn agent_callback_fixture_rotates_and_revokes_one_time_values() {
+        let agents = FixtureAgents::new();
+        let auth = AuthContext::for_test(
+            DeploymentId::new(FIXTURE_DEPLOYMENT),
+            TenantId::new(FIXTURE_TENANT),
+            ActorId::new(FIXTURE_ACTOR),
+            [Role::User],
+            AuthGeneration::new(1),
+            false,
+        );
+        let agent_id = BotId::new("fixture-owned-private");
+
+        let first = agents.issue(&auth, &agent_id).await.unwrap();
+        let second = agents.issue(&auth, &agent_id).await.unwrap();
+        assert!(first.expose().starts_with("obot_agt_"));
+        assert_ne!(first, second);
+        assert!(
+            agents
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|profile| profile.id == agent_id)
+                .unwrap()
+                .has_callback_token
+        );
+
+        assert_eq!(
+            agents.revoke(&auth, &agent_id).await.unwrap(),
+            CallbackTokenRevoked
+        );
+        assert!(
+            !agents
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|profile| profile.id == agent_id)
+                .unwrap()
+                .has_callback_token
+        );
+
+        let wrong_actor = AuthContext::for_test(
+            DeploymentId::new(FIXTURE_DEPLOYMENT),
+            TenantId::new(FIXTURE_TENANT),
+            ActorId::new("not-the-fixture-actor"),
+            [Role::Admin],
+            AuthGeneration::new(1),
+            false,
+        );
+        assert_eq!(
+            agents.issue(&wrong_actor, &agent_id).await.unwrap_err(),
+            AgentCallbackTokenError::NotVisible
+        );
+    }
 
     #[tokio::test]
     async fn direct_bot_fixture_distinguishes_minted_from_persisted_threads() {

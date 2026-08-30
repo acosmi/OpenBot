@@ -142,16 +142,16 @@ recount:
   - command: "grep -c '    label: \"新增\"' parity/ui.yaml"
     cwd: "repo"
     expect: 7
-  # Batch48累计完成前述地基、SettingsSidebar与Decisions；AdminSidebar仍缺未实现destination
+  # Batch70累计完成91条；本批关闭Agent fields/profile/callback/new-agent四条
   - command: "grep -c '    status: \"todo\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 65
+    expect: 61
   - command: "grep -c '    status: \"done\"' parity/ui.yaml"
     cwd: "repo"
-    expect: 87
+    expect: 91
   - command: "grep -c '^    done_evidence: ' parity/ui.yaml"
     cwd: "repo"
-    expect: 87
+    expect: 91
   # 152 条 × 9 个缩进键（8 必填 + notes；第 9 个必填键 id 写在 `  - id: ` 行，由上一条数）= 1368；任何键缺失会当场对不上
   - command: "grep -cE '^    (upstream|label|target|owner|test_id|migration_rule|status|evidence|notes): ' parity/ui.yaml"
     cwd: "repo"
@@ -536,46 +536,50 @@ entries:
   - id: "biz-agents-agent-fields"
     upstream: "app/src/components/agents/agent-fields.tsx"
     label: "parity"
-    target: "openbot_ui::features::agents::agent_fields"
+    target: "openbot_ui::features::agents::agent_editor::AgentEditor (shared fields)"
     owner: "openbot-ui"
     test_id: "T-UI-0031"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `agents`（该组上游文件数 8）。同名保留；表单控件一律经 `Field`（T-UI-0006）接线 aria-describedby / aria-invalid。"
+    done_evidence: "Batch70共用AgentEditor覆盖create/edit：Name/Title/Role/Visibility/endpoint/password全部经Field与closed request；空提交实得3个aria-invalid+4个alert，纠正后0/0。Browser发现旧Show只追踪attempted、字段get_untracked导致陈旧总警报，改为借用追踪全部字段的Signal并以单测锁定空→合法→auth无endpoint红→补endpoint绿。cancel前填canary，重开不重填创建实得hasAuth=false；另一次明确重填创建hasAuth=true且DOM明文0。remote probe、UI169/WASM/Clippy均绿。"
+    notes: "§6.2 组 `agents`（该组上游文件数 8）。字段能力保留；Rust以同一AgentEditor复用create/edit，表单控件一律经Field（T-UI-0006）接线aria-describedby / aria-invalid。"
 
   - id: "biz-agents-agent-profile"
     upstream: "app/src/components/agents/agent-profile.tsx"
     label: "parity"
-    target: "openbot_ui::features::agents::agent_profile"
+    target: "openbot_ui::features::agents::agent_profile::AgentProfilePanel"
     owner: "openbot-ui"
     test_id: "T-UI-0032"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
+    done_evidence: "Batch70 release Browser以Server profile投影完成remote owner、managed owner、unmanaged remote三类可见性；edit保存、duplicate、hide/hidden badge/unhide、delete二次确认、Start channel与hard reload均走URL-owned identity。secret canary DOM=0，callback只在remote&&can_manage出现；1024x640/600x900 overflow0、main/nav/h1各1、duplicate IDs/alert/console0。"
     notes: "§6.2 组 `agents`（该组上游文件数 8）。同名保留；头像位用 Avatar（T-UI-0025），不再用 abstract-avatar。"
 
   - id: "biz-agents-callback-token-panel"
     upstream: "app/src/components/agents/callback-token-panel.tsx"
     label: "parity"
-    target: "openbot_ui::features::agents::callback_token_panel"
+    target: "openbot_ui::features::agents::callback_token_panel::CallbackTokenPanel"
     owner: "openbot-ui"
     test_id: "T-UI-0033"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `agents`（该组上游文件数 8）。同名保留；token 明文展示位需要 `eye` / `eye-off` / `copy`（属 28 个新增图标）。"
+    done_evidence: "Batch70 Server/Desktop同一Issue/Revoke command闭合201一次明文/204空体与fresh-before-body；UI token只在component-local zeroizing DTO槽，不进query cache。release Browser实得rotate两次值不同、Dismiss后DOM0、明文可选且tabindex0/user-select text/overflow-wrap anywhere，hard reload不重放；revoke后reload仍Generate，再生成值与前两次不同。built-in与unmanaged remote面板0，manageable remote恰1；中英、1024/600 token overflow0、alert/console0。"
+    notes: "§6.2 组 `agents`（该组上游文件数 8）。固定上游当前以可选择、自动换行的明文位兼容无共享剪贴板场景；只显示一次，关闭/卸载/导航即清，遗失只能轮换。"
 
   - id: "biz-agents-new-agent"
     upstream: "app/src/components/agents/new-agent.tsx"
     label: "parity"
-    target: "openbot_ui::features::agents::new_agent"
+    target: "openbot_ui::features::agents::agent_editor::AgentEditor (create mode)"
     owner: "openbot-ui"
     test_id: "T-UI-0034"
     migration_rule: "preserve"
-    status: "todo"
+    status: "done"
     evidence: "find app/src/components -name '*.tsx' -not -path 'app/src/components/ui/*' | wc -l = 45（上游 891df72f 干净克隆，本轮实跑，逐个文件名已核对进本 ledger）"
-    notes: "§6.2 组 `agents`（该组上游文件数 8）。同名保留。"
+    done_evidence: "Batch70 /agents?new=true detail panel以AgentEditor create mode保留同页创建形态。release Browser完成empty拒绝、全字段、private默认、remote connection test、write-only Authorization create201→权威profile/roster、secret canary回显0；新remote callback面初始Generate，hard reload保持。cancel canary后重开不重填的权威profile hasAuth=false，显式重填的第二profile hasAuth=true且明文0，证明取消/成功边界；UI169/fixture9/WASM/Clippy绿。"
+    notes: "§6.2 组 `agents`（该组上游文件数 8）。创建wrapper职责保留；Rust由AgentEditor create mode与edit共享字段和验证，避免两份表单规则。"
 
   - id: "biz-agents-orb-agent-orb"
     upstream: "app/src/components/agents/orb/agent-orb.tsx"
