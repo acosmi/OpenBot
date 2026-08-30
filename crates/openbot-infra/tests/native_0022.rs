@@ -36,7 +36,7 @@ async fn post_0022_is_exact_expand_only_memory_control_schema() {
             if before != facts(POST_0021) {
                 return Err("0022 prerequisite fixture drift".to_owned());
             }
-            if native::apply(&mut client)
+            if native::apply_through(&mut client, native::NATIVE_0022_VERSION)
                 .await
                 .map_err(|error| error.to_string())?
                 != ApplyOutcome::Applied

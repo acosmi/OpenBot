@@ -9,25 +9,41 @@
 //! 本层只做「SQL ↔ 类型化行」的翻译：可见性、定序、游标判据落在 SQL 里，
 //! 业务规则与编排在 application。**不接受来自 transport 的任意 query**（v3 §5.2）。
 
+#[cfg(feature = "server-runtime")]
 pub(crate) mod common;
 
+#[cfg(feature = "server-runtime")]
 pub mod agents;
 pub mod audit;
+#[cfg(feature = "server-runtime")]
 pub mod channels;
+#[cfg(feature = "server-runtime")]
 pub mod components;
+#[cfg(feature = "server-runtime")]
 pub mod computer;
+#[cfg(feature = "server-runtime")]
 pub mod import;
+#[cfg(feature = "server-runtime")]
 pub mod memory;
+#[cfg(feature = "server-runtime")]
 pub mod outbox;
+#[cfg(feature = "server-runtime")]
 pub mod people;
 pub mod people_admin;
+#[cfg(feature = "server-runtime")]
 pub mod plugins;
+#[cfg(feature = "server-runtime")]
 pub mod run;
+#[cfg(feature = "server-runtime")]
 pub mod tenant;
+#[cfg(feature = "server-runtime")]
 pub mod thread;
+#[cfg(feature = "server-runtime")]
 pub mod tools;
 
+#[cfg(feature = "server-runtime")]
 pub use agents::PostgresAgentDirectory;
+#[cfg(feature = "server-runtime")]
 pub use channels::ChannelRepo;
 
 /// 当前已有物理表的具名 repository 台账。
@@ -35,6 +51,7 @@ pub use channels::ChannelRepo;
 /// 28 个上游表各一个（`ChannelRepo` 已含 channels），0013 再加 tool_calls/tool_attempts；
 /// `audit_checkpoints` 与 audit_events 共用 `AuditEventRepo`。0016 与十张物理表同批补齐
 /// thread/message/run/outbox/memory/import 十个 repository，40 个规划落点现均指向真实类型。
+#[cfg(feature = "server-runtime")]
 pub const IMPLEMENTED_REPOSITORIES: &[&str] = &[
     "openbot-infra::repo::agents::AgentPreferenceRepo",
     "openbot-infra::repo::agents::AgentProfileRepo",
@@ -78,7 +95,7 @@ pub const IMPLEMENTED_REPOSITORIES: &[&str] = &[
     "openbot-infra::vault::CredentialRepo",
 ];
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server-runtime"))]
 mod tests {
     use super::*;
 

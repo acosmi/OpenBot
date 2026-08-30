@@ -12,6 +12,15 @@ fail() {
 grep -Fq 'security-framework = "=3.7.0"' Cargo.toml || fail "security-framework pin drift"
 grep -Fq 'security-framework-sys = "=2.17.0"' Cargo.toml || fail "security-framework-sys pin drift"
 grep -Fq '"Win32_Security_Credentials"' Cargo.toml || fail "Credential Manager windows-sys feature missing"
+grep -Fq 'openbot-infra = { path = "crates/openbot-infra", default-features = false }' Cargo.toml || fail "workspace infra defaults must stay disabled"
+grep -Fq 'default = ["server-sso"]' crates/openbot-infra/Cargo.toml || fail "infra Server SSO default drift"
+grep -Fq 'desktop-local = []' crates/openbot-infra/Cargo.toml || fail "infra Desktop Local feature missing"
+grep -Fq 'server-runtime = [' crates/openbot-infra/Cargo.toml || fail "infra Server runtime feature missing"
+grep -Fq '    "dep:rustls",' crates/openbot-infra/Cargo.toml || fail "infra Server TLS feature missing rustls"
+grep -Fq '    "dep:tokio-rustls",' crates/openbot-infra/Cargo.toml || fail "infra Server TLS feature missing tokio-rustls"
+grep -Fq 'server-sso = ["server-runtime", "dep:openssl", "dep:quick-xml", "dep:samael"]' crates/openbot-infra/Cargo.toml || fail "infra Server SSO dependency set drift"
+grep -Fq 'openbot-infra = { workspace = true, features = ["server-sso"] }' crates/openbot-server/Cargo.toml || fail "Server no longer opts into SSO"
+grep -Fq 'openbot-infra = { workspace = true, optional = true, features = ["desktop-local"] }' crates/openbot-desktop/Cargo.toml || fail "Desktop local infra edge drift"
 
 sf_block=$(awk '/^name = "security-framework"$/{show=1} show{print} show && /^$/{exit}' Cargo.lock)
 sfs_block=$(awk '/^name = "security-framework-sys"$/{show=1} show{print} show && /^$/{exit}' Cargo.lock)
@@ -37,6 +46,12 @@ grep -Fq 'openbot-windows-sandbox v' <<<"$windows_tree" || fail "Windows Desktop
 if grep -Fq 'openbot-windows-sandbox v' <<<"$mac_tree$linux_tree$server_tree"; then
   fail "Windows unsafe boundary leaked into macOS/Linux/Server graph"
 fi
+if grep -Eq '(^| )(samael|openssl-sys|ring|rustls) v' <<<"$mac_tree$windows_tree$linux_tree"; then
+  fail "Server TLS/SAML/xmlsec/OpenSSL leaked into Desktop graph"
+fi
+grep -Fq 'samael v0.0.22' <<<"$server_tree" || fail "Server graph lost pinned SAML implementation"
+grep -Fq 'openssl-sys v' <<<"$server_tree" || fail "Server graph lost reviewed xmlsec/OpenSSL edge"
+grep -Fq 'rustls v' <<<"$server_tree" || fail "Server graph lost reviewed TLS edge"
 
 keychain_consumers=$(rg -l 'security_framework(::|_sys::)' crates --glob '*.rs' | sort || true)
 [[ "$keychain_consumers" == "crates/openbot-desktop/src/postgres_sidecar.rs" ]] || fail "Security.framework consumer set drift: ${keychain_consumers:-none}"
@@ -49,4 +64,10 @@ if rg -n 'std::env::(var|var_os|vars|vars_os)|std::process::Command|PGPASSWORD|-
   fail "PostgreSQL secret path gained environment or command fallback"
 fi
 
-echo "PostgreSQL key-store dependency guard: ok (macOS security-framework 3.7.0/sys 2.17.0; Windows sole unsafe Cred*; build.rs=0; Server/Linux leakage=0)"
+desktop_bootstrap_source=$(awk '/^mod tests \{/{exit} {print}' crates/openbot-desktop/src/desktop_local_bootstrap.rs)
+infra_bootstrap_source=$(awk '/^mod tests \{/{exit} {print}' crates/openbot-infra/src/db/desktop_local.rs)
+if rg -n 'DatabaseConfig::new|std::env::(var|var_os|vars|vars_os)' <<<"$desktop_bootstrap_source$infra_bootstrap_source" >/dev/null; then
+  fail "Desktop Local bootstrap gained String config or environment fallback"
+fi
+
+echo "PostgreSQL key-store dependency guard: ok (macOS Keychain; Windows sole unsafe Cred*; Desktop TLS/SAML/OpenSSL=0; Server runtime+SSO retained; build.rs=0)"

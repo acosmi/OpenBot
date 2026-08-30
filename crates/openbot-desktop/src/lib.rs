@@ -45,10 +45,11 @@
 //! | [`cancel`] | [`CancellationToken`] 与 [`SHUTDOWN_DEADLINE`] | §13.2 |
 //! | [`transport`] | [`InProcessTransport`]：把 `Arc<dyn ApplicationService>` 包成 in-process 通道 | §13.2 / §5.2 |
 //! | [`structured_events`] | host-owned subscription、closed wire frame、sequence/gap 校验与真实 Tauri Channel pump | §13.2–§13.4 |
-//! | [`postgres_sidecar`] | PGDG source、signed-manifest、start lock与macOS/Windows OS key-store SCRAM secret | §14.1 / §16.2 |
+//! | [`postgres_sidecar`] | PGDG source、signed manifest、start lock、OS SCRAM secret与verified process lifecycle | §14.1 / §16.2 |
+//! | [`desktop_local_bootstrap`] | ready child→attestation→固定业务库→migration/principal/package的pre-window owner | §13.2 / §14.1 |
 //!
 //! **尚未实现**（不要冒充）：可发布 Tauri binary/tauri.conf/capability 清单与真实窗口生命周期
-//! assembly（G6）、PostgreSQL release binary build/sign、Batch79 schema/package组合、Windows runtime、
+//! assembly（G6）、PostgreSQL release binary build/sign、production ApplicationService组装、Windows runtime、
 //! backup/update（§14.1/§16.2）、
 //! screen loopback binary WebSocket（§13.4/G7）。
 //! Batch 16 已落 opt-in Tauri 2.11.5 custom-protocol adapter、本地偏好原子文件与首帧改写，
@@ -63,8 +64,9 @@
 //! source或发行identity。Batch80补PGDG 17.11 source pin、release-owned manifest全树校验与
 //! crash-safe fail-closed start lock；Batch81再让持锁owner经`SecretBytes`接macOS private/default
 //! Keychain与Windows唯一unsafe Credential Manager边界，并在新建后回读常数时间核验。Batch82又闭合
-//! verified version、stdin-only initdb、direct child、TCP SCRAM ready、fast shutdown与unclean stale-lock。
-//! 平台binary build/sign、Batch79 bootstrap组合与Tauri setup仍未落。SSE/WebSocket也不能塞进
+//! verified version→stdin initdb→TCP SCRAM ready→clean/unclean process lifecycle；Batch83把该child接到
+//! R153共用attestation/migration/principal/package bootstrap与固定`openbot`业务库，仍不冒充Tauri setup。
+//! 平台binary build/sign、production ApplicationService与Tauri setup仍未落。SSE/WebSocket也不能塞进
 //! custom-protocol `Vec<u8>`响应。
 //! 许可/RustSec/cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
 //!
@@ -117,6 +119,8 @@
 pub mod broker;
 pub mod budget;
 pub mod cancel;
+#[cfg(feature = "desktop-local-bootstrap")]
+pub mod desktop_local_bootstrap;
 pub mod event;
 #[cfg(feature = "postgres-sidecar")]
 pub mod postgres_sidecar;

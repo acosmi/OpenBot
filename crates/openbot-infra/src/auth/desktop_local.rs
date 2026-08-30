@@ -23,6 +23,7 @@ use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 
 use super::initialize_canonical_principal;
 use crate::db::InfraError;
+use crate::db::desktop_local::{AttestedDesktopLocalAdmin, UnattestedDesktopLocalAdmin};
 use crate::db::initialization::{
     DatabaseInitializationError, DatabaseOrigin, initialize as initialize_database,
 };
@@ -180,6 +181,34 @@ impl DesktopLocalInstallation {
         &self.sidecar_data_dir
     }
 
+    /// Consume an administrative pool only after the live server proves the exact instance data
+    /// directory, PostgreSQL 17, numeric loopback and all-host SCRAM boundary.
+    ///
+    /// The returned type is the only local adapter state that can create/reconcile the fixed
+    /// `openbot` database, making attestation-before-write a type-level startup ordering rule.
+    pub async fn attest_postgres_admin(
+        &self,
+        admin: UnattestedDesktopLocalAdmin,
+    ) -> Result<AttestedDesktopLocalAdmin, DesktopLocalBootstrapError> {
+        if let Err(error) = verify_postgres_sidecar(admin.pool(), &self.sidecar_data_dir).await {
+            admin.close();
+            return Err(error);
+        }
+        Ok(admin.into_attested())
+    }
+
+    /// Reject a Tenant Package from any other app instance before database creation or schema
+    /// mutation. [`Self::bootstrap_postgres`] repeats the same check as defense in depth.
+    pub fn validate_package_scope(
+        &self,
+        package: &LoadedTenantPackage,
+    ) -> Result<(), DesktopLocalBootstrapError> {
+        if package.package.tenant_id != self.authority.auth_context().tenant().as_str() {
+            return Err(DesktopLocalBootstrapError::TenantScopeMismatch);
+        }
+        Ok(())
+    }
+
     /// Verify the connected sidecar, initialize the shared schema, provision the principal, and
     /// materialize the same authority's Tenant Package memberships in that exact order.
     ///
@@ -193,9 +222,7 @@ impl DesktopLocalInstallation {
         pool: &Pool,
         package: &LoadedTenantPackage,
     ) -> Result<DesktopLocalBootstrapReport, DesktopLocalBootstrapError> {
-        if package.package.tenant_id != self.authority.auth_context().tenant().as_str() {
-            return Err(DesktopLocalBootstrapError::TenantScopeMismatch);
-        }
+        self.validate_package_scope(package)?;
         verify_postgres_sidecar(pool, &self.sidecar_data_dir).await?;
         let database_origin = initialize_database(pool).await?;
         self.authority
@@ -355,12 +382,14 @@ fn prepare_sidecar_data_dir(
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let mut builder = fs::DirBuilder::new();
+            let builder = fs::DirBuilder::new();
             #[cfg(unix)]
-            {
+            let builder = {
                 use std::os::unix::fs::DirBuilderExt as _;
+                let mut builder = builder;
                 builder.mode(0o700);
-            }
+                builder
+            };
             builder
                 .create(&path)
                 .map_err(|_| DesktopLocalAuthorityError::Unavailable)?;

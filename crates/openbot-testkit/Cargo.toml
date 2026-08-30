@@ -89,7 +89,7 @@ openbot-desktop = { workspace = true, features = ["tauri-host"] }
 # `AuthResolver` 就是后门，所以它默认不在生产 feature 图里。
 openbot-server = { workspace = true, features = ["testkit"] }
 openbot-agent.workspace = true
-openbot-infra.workspace = true
+openbot-infra = { workspace = true, features = ["server-sso"] }
 deadpool-postgres.workspace = true
 
 # 在测试里实现 `ChannelReader`（`#[async_trait]` 的 trait）。

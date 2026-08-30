@@ -7,6 +7,7 @@
 //! | [`tables`] | 上游 28 张表的类型化行结构与列台账 |
 //! | [`baseline`] | fresh install 的 baseline DDL（把空库直接建成 0012 终态） |
 //! | [`compat`] | 迁移边界检查：拒绝没迁到 0012 的库 |
+//! | [`desktop_local`] | exact loopback/SCRAM admin typestate、固定业务库核验与Desktop pool |
 //! | [`fresh`] | 空库 baseline + native + 自有账本的原子 bootstrap |
 //! | [`initialization`] | Server/Desktop 共用的来源识别与启动 migration 路径 |
 //! | [`native`] | 从 0012 往后施加 Rust-owned、expand-only 的自有增量 |
@@ -22,6 +23,7 @@
 
 pub mod baseline;
 pub mod compat;
+pub mod desktop_local;
 pub mod fresh;
 pub mod initialization;
 pub mod native;

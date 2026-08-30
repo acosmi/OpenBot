@@ -54,7 +54,7 @@ unsafe_code = "deny"
 openbot-contracts = { path = "crates/openbot-contracts" }
 openbot-domain = { path = "crates/openbot-domain" }
 openbot-application = { path = "crates/openbot-application" }
-openbot-infra = { path = "crates/openbot-infra" }
+openbot-infra = { path = "crates/openbot-infra", default-features = false }
 openbot-agent = { path = "crates/openbot-agent" }
 openbot-computer = { path = "crates/openbot-computer" }
 openbot-server = { path = "crates/openbot-server" }
