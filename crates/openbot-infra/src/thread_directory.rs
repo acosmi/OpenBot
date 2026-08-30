@@ -26,9 +26,9 @@ use tokio::sync::{mpsc, watch};
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{AsyncMessage, Client, Connection, NoTls, Socket, Transaction};
 
-use crate::db::pool::DatabaseConfig;
 use crate::run_runtime::{RUN_CANCEL_DESTINATION, RUN_CONTROL_TOPIC, run_cancel_outbox_id};
 use crate::thread_id::mint_thread_id;
+use crate::thread_listener::ThreadListenerDatabase;
 
 /// foreground writer lease 的新增默认值；每 30 秒失效，后续 runtime 必须在 10 秒内续租。
 ///
@@ -43,7 +43,7 @@ const THREAD_CATCH_UP_PERIOD: core::time::Duration = core::time::Duration::from_
 
 #[derive(Clone)]
 struct RuntimeLease {
-    database: DatabaseConfig,
+    database: ThreadListenerDatabase,
     owner_id: String,
     duration: Duration,
 }
@@ -72,7 +72,7 @@ impl PostgresThreadDirectory {
     /// owner 为空或 duration 非正时拒绝构造。
     pub fn with_runtime(
         pool: deadpool_postgres::Pool,
-        database: DatabaseConfig,
+        database: impl Into<ThreadListenerDatabase>,
         owner_id: String,
         duration: Duration,
     ) -> Result<Self, ThreadDirectoryError> {
@@ -84,7 +84,7 @@ impl PostgresThreadDirectory {
         Ok(Self {
             pool,
             runtime: Some(RuntimeLease {
-                database,
+                database: database.into(),
                 owner_id,
                 duration,
             }),
@@ -688,11 +688,11 @@ struct ActiveThreadListener {
 }
 
 async fn listen_thread_once(
-    database: &DatabaseConfig,
+    database: &ThreadListenerDatabase,
     mut stop: watch::Receiver<bool>,
 ) -> Result<ActiveThreadListener, ThreadDirectoryError> {
     let (client, mut connection) = database
-        .to_pg_config()
+        .config()
         .connect(NoTls)
         .await
         .map_err(|error| unavailable("建立 thread event LISTEN 连接失败", error))?;
@@ -728,7 +728,7 @@ async fn listen_thread_once(
 
 async fn supervise_thread_stream(
     pool: deadpool_postgres::Pool,
-    database: DatabaseConfig,
+    database: ThreadListenerDatabase,
     request: ThreadEventSubscription,
     sender: mpsc::Sender<AppEvent>,
     mut stop: watch::Receiver<bool>,
@@ -944,11 +944,11 @@ async fn emit_stream_error(sender: &mpsc::Sender<AppEvent>, error: ThreadDirecto
 }
 
 async fn listen_channel_once(
-    database: &DatabaseConfig,
+    database: &ThreadListenerDatabase,
     mut stop: watch::Receiver<bool>,
 ) -> Result<ActiveThreadListener, ThreadDirectoryError> {
     let (client, mut connection) = database
-        .to_pg_config()
+        .config()
         .connect(NoTls)
         .await
         .map_err(|error| unavailable("建立 channel activity LISTEN 连接失败", error))?;

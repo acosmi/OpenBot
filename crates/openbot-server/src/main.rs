@@ -15,8 +15,8 @@ use openbot_application::tenant::package::{
     TenantPackageEnvironment, synchronize_tenant_package,
 };
 use openbot_application::{
-    AgentAudit, ApplicationService, NoRunDispatchConsumer, OpenBotApplication, ProviderAdapter,
-    RunDispatchConsumer, RunRuntime, remember_provider_tool,
+    AgentAudit, NoRunDispatchConsumer, ProviderAdapter, RunDispatchConsumer, RunRuntime,
+    remember_provider_tool,
 };
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
@@ -26,11 +26,9 @@ use openbot_domain::vault::{
     ApplicationKeyPurpose, KeyVersion, SecretBytes, WrappingKey, derive_application_key,
 };
 use openbot_infra::agent_audit::PostgresAgentAudit;
-use openbot_infra::agent_callback::{
-    PostgresAgentCallbackTokens, PostgresRemoteCallbackAuthenticator,
-};
-use openbot_infra::agent_tools::{
-    PostgresAgentAuthorizationSource, PostgresAgentToolSequence, PostgresBuiltInToolControlPlane,
+use openbot_infra::agent_tools::{PostgresAgentAuthorizationSource, PostgresAgentToolSequence};
+use openbot_infra::application_assembly::{
+    ChannelRoutingProviderInput, PostgresApplicationAssemblyInput, assemble_postgres_application,
 };
 use openbot_infra::auth::config::{
     AuthConfig, BindingExposure, ExampleKeyPolicy, KeyEncryptionKey, SingleUserAdmission,
@@ -48,14 +46,7 @@ use openbot_infra::auth::sso::DynamicSsoService;
 use openbot_infra::component_catalogue::PostgresComponentAdministration;
 use openbot_infra::db::pool::DatabaseConfig;
 use openbot_infra::db::{native, pool};
-use openbot_infra::google_drive::GoogleDriveRestTransport;
-use openbot_infra::google_drive_oauth::GoogleDriveOAuthClient;
-use openbot_infra::mcp::SafeRmcpClient;
 use openbot_infra::mcp_catalog::PostgresMcpCatalog;
-use openbot_infra::mcp_connections::{McpRevocationReconciler, PostgresMcpConnections};
-use openbot_infra::mcp_credentials::PostgresMcpCredentialBroker;
-use openbot_infra::mcp_oauth::McpOAuthClient;
-use openbot_infra::memory_admin::PostgresMemoryAdministration;
 use openbot_infra::net::safe_http::{
     CidrAllowlist, EgressPolicy, SafeDialer, SafeHttpBudget, SchemePolicy,
 };
@@ -70,20 +61,9 @@ use openbot_infra::provider::openai::{
     OpenAiApiKey, OpenAiProtocol, OpenAiProvider, OpenAiProviderConfig,
 };
 use openbot_infra::remote_agui::SafeRemoteAguiTransport;
-use openbot_infra::repo::agents::PostgresAgentAdministration;
-use openbot_infra::repo::audit::PostgresAuditReader;
-use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
-use openbot_infra::repo::tools::PostgresToolJournal;
-use openbot_infra::repo::{ChannelRepo, PostgresAgentDirectory};
-use openbot_infra::routing::PostgresChannelRouting;
-use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
+use openbot_infra::run_runtime::RunRelay;
 use openbot_infra::sandboxed_components::PostgresSandboxedComponentAdministration;
-use openbot_infra::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
-use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
-use openbot_infra::thread_id::mint_thread_id;
-use openbot_infra::tool_approval::PostgresToolApprovalCoordinator;
-use openbot_infra::ui_preferences::PostgresUiPreferenceAdministration;
 use openbot_infra::vault::CredentialRecordVault;
 use openbot_server::config::{
     AgentBudgets, DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, ManagedProviderConfig,
@@ -133,16 +113,6 @@ struct BuiltInAgentAssemblyInput {
     components: Arc<PostgresComponentAdministration>,
     sandboxed_components: Arc<PostgresSandboxedComponentAdministration>,
     budgets: AgentBudgets,
-}
-
-struct ChannelRoutingAssemblyInput {
-    pool: deadpool_postgres::Pool,
-    model: String,
-    credential_key_id: String,
-    provider: PackageOpenAiProviderConfig,
-    credential_vault: CredentialRecordVault,
-    audit_key: Vec<u8>,
-    stall_timeout: Option<Duration>,
 }
 
 #[tokio::main]
@@ -258,14 +228,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         server.package_openai_provider.allow_http,
         server.agent_budgets,
     )?;
-    let agent_administration = Arc::new(PostgresAgentAdministration::new(
-        pool.clone(),
-        model_credential_vault.clone(),
-        audit_key.expose().to_vec(),
-        remote_agent_probe,
-        managed_provider_for_slot(&server).is_some(),
-    )?);
-
     initialize_single_user(&pool, single_user).await?;
 
     let (auth, sensitive, floor, oidc_login): AuthAssembly = if let Some(config) = auth_config {
@@ -345,70 +307,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "tenant package 已经由 Application use case 同步"
     );
 
-    let owned_credentials = Arc::new(PostgresOwnedCredentialRetirer::new(
-        pool.clone(),
-        audit_key.expose().to_vec(),
-    )?);
-    let people =
-        PostgresPeopleAdministration::new(pool.clone(), floor, audit_key.expose().to_vec())?
-            .with_owned_credential_retirer(owned_credentials);
-    let thread_runtime_owner = format!("runtime:{}", mint_thread_id(&deployment)?);
-    let run_runtime: Arc<dyn RunRuntime> = Arc::new(PostgresRunRuntime::new(
-        pool.clone(),
-        thread_runtime_owner.clone(),
-        DEFAULT_THREAD_LEASE_DURATION,
-        DEFAULT_DISPATCH_CLAIM_DURATION,
-    )?);
-    let thread_directory = PostgresThreadDirectory::with_runtime(
-        pool.clone(),
-        database
-            .clone()
-            .with_application_name("openbot-thread-events"),
-        thread_runtime_owner,
-        DEFAULT_THREAD_LEASE_DURATION,
-    )?;
-    let memory = PostgresMemoryAdministration::new(pool.clone());
-    // MCP defaults to public HTTPS only. Private/reserved endpoints remain fail-closed until an
-    // MCP-specific administrator CIDR configuration is added; provider CIDRs are not reused.
-    let mcp_client = SafeRmcpClient::new(
-        SafeDialer::new(EgressPolicy::default()),
-        SchemePolicy::HttpsOnly,
-        server.agent_budgets.stall_timeout,
-    );
-    let mcp_catalog = Arc::new(PostgresMcpCatalog::new(
-        pool.clone(),
-        mcp_client.clone(),
-        audit_key.expose().to_vec(),
-    )?);
-    let drive_oauth = GoogleDriveOAuthClient::new(SafeDialer::new(EgressPolicy::default()))?;
-    let drive_transport = GoogleDriveRestTransport::new(SafeDialer::new(EgressPolicy::default()))?;
-    let mcp_credentials = Arc::new(
-        PostgresMcpCredentialBroker::new(pool.clone(), model_credential_vault.clone())
-            .with_user_oauth(
-                SafeDialer::new(EgressPolicy::default()),
-                SchemePolicy::HttpsOnly,
-                audit_key.expose().to_vec(),
-            )?
-            .with_google_drive_oauth(drive_oauth.clone()),
-    );
-    match tokio::time::timeout(
-        Duration::from_secs(30),
-        mcp_catalog.refresh_startup_servers(&mcp_credentials),
-    )
-    .await
-    {
-        Ok(Ok(mcp_sweep)) => tracing::info!(
-            refreshed = mcp_sweep.refreshed,
-            failed = mcp_sweep.failed,
-            authenticated_deferred = mcp_sweep.authenticated_deferred,
-            "MCP startup catalog sweep 已完成"
-        ),
-        Ok(Err(error)) => return Err(error.into()),
-        Err(_) => tracing::warn!(
-            code = "mcp_startup_sweep_timeout",
-            "MCP startup catalog sweep 超过新增 30s 总预算；Server 继续且未刷新项保持不可见"
-        ),
-    }
+    let PackageOpenAiProviderConfig {
+        base_url: channel_base_url,
+        environment_api_key: channel_environment_api_key,
+        egress_allow_cidrs: channel_egress_allow_cidrs,
+        allow_http: channel_allow_http,
+    } = server.package_openai_provider.clone();
+    let channel_endpoint =
+        openai_endpoint(channel_base_url.as_str(), CHANNEL_ROUTING_OPENAI_PROTOCOL)?;
     let oauth_public_url = server
         .public_url
         .as_ref()
@@ -419,100 +325,42 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "MCP OAuth Server callback 要求 HTTPS public URL；connect 保持不可用"
         );
     }
-    let mcp_connections = Arc::new(
-        PostgresMcpConnections::new(
-            pool.clone(),
-            model_credential_vault.clone(),
-            McpOAuthClient::new(
-                SafeDialer::new(EgressPolicy::default()),
-                SchemePolicy::HttpsOnly,
-            ),
-            mcp_catalog.clone(),
-            deployment.clone(),
-            tenant.clone(),
-            mcp_oauth_state_key.expose().to_vec(),
-            audit_key.expose().to_vec(),
-            oauth_public_url.map(|url| url.as_str()),
-            server.app_url.as_deref(),
-            SchemePolicy::HttpsOnly,
-        )?
-        .with_google_drive_oauth(drive_oauth),
-    );
-    let tool_approvals = Arc::new(PostgresToolApprovalCoordinator::new(
-        pool.clone(),
-        deployment.clone(),
-        tenant.clone(),
-        audit_key.expose().to_vec(),
-    )?);
-    let tool_control = PostgresBuiltInToolControlPlane::new(
-        pool.clone(),
-        deployment.clone(),
-        tenant.clone(),
-        policy_store.clone(),
-        Arc::new(memory.clone()),
-    )
-    .with_mcp(mcp_catalog.clone(), mcp_client)
-    .with_google_drive(drive_transport)
-    .with_tool_approvals(tool_approvals.clone())
-    .with_mcp_credentials(mcp_credentials);
-    let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.expose().to_vec())?;
-    let callback_tokens = PostgresAgentCallbackTokens::new(
-        pool.clone(),
-        deployment.clone(),
-        tenant.clone(),
-        audit_key.expose().to_vec(),
-    )?;
-    let remote_callback_auth = Arc::new(
-        PostgresRemoteCallbackAuthenticator::new(
-            pool.clone(),
-            deployment.clone(),
-            tenant.clone(),
-            single_user,
-            remote_assertions.clone(),
-            audit_key.expose().to_vec(),
-        )?
-        .with_mcp_catalog(mcp_catalog.clone()),
-    );
-    let channel_routing = build_channel_routing(ChannelRoutingAssemblyInput {
+    let application_assembly = assemble_postgres_application(PostgresApplicationAssemblyInput {
         pool: pool.clone(),
+        listener_database: database.clone().into(),
+        deployment: deployment.clone(),
+        tenant: tenant.clone(),
+        single_user,
+        admin_floor: floor,
         model: tenant_package.package.model.default_model.clone(),
         credential_key_id: tenant_package.package.model.credential_secret_ref.clone(),
-        provider: server.package_openai_provider.clone(),
         credential_vault: model_credential_vault.clone(),
-        audit_key: audit_key.expose().to_vec(),
+        audit_key: SecretBytes::new(audit_key.expose().to_vec()),
+        remote_assertions: remote_assertions.clone(),
+        mcp_oauth_state_key: SecretBytes::new(mcp_oauth_state_key.expose().to_vec()),
+        policy_store: policy_store.clone(),
+        remote_agent_probe,
+        managed_slot_available: managed_provider_for_slot(&server).is_some(),
+        channel_routing_provider: ChannelRoutingProviderInput {
+            endpoint: channel_endpoint,
+            environment_api_key: channel_environment_api_key
+                .map(|key| SecretBytes::new(key.expose().as_bytes().to_vec())),
+            egress_allow_cidrs: channel_egress_allow_cidrs,
+            allow_http: channel_allow_http,
+        },
         stall_timeout: server.agent_budgets.stall_timeout,
-    })?;
-    let channels = ChannelRepo::new(pool.clone());
-    let components = Arc::new(
-        PostgresComponentAdministration::new(pool.clone(), audit_key.expose().to_vec())?
-            .with_policy(policy_store.clone()),
-    );
-    let sandboxed_components = Arc::new(PostgresSandboxedComponentAdministration::new(
-        pool.clone(),
-        audit_key.expose().to_vec(),
-    )?);
-    let application = OpenBotApplication::new(channels.clone())
-        .with_people(people)
-        .with_audit(PostgresAuditReader::new(pool.clone()))
-        .with_policy(policy_store)
-        .with_tools(tool_control, tool_journal)
-        .with_threads(thread_directory)
-        .with_memory(memory)
-        .with_agent_callback_tokens(callback_tokens)
-        .with_channel_administration(Arc::new(channels))
-        .with_channel_routing(Arc::new(channel_routing));
-    let application = application
-        .with_agent_directory(Arc::new(PostgresAgentDirectory::new(pool.clone())))
-        .with_agent_administration(agent_administration)
-        .with_component_administration(components.clone())
-        .with_sandboxed_component_administration(sandboxed_components.clone())
-        .with_mcp_connections(mcp_connections.clone())
-        .with_tool_approvals(tool_approvals)
-        .with_ui_preferences(Arc::new(PostgresUiPreferenceAdministration::new(
-            pool.clone(),
-        )));
-    let mcp_revocation_reconciler = McpRevocationReconciler::start(mcp_connections.clone());
-    let application: Arc<dyn ApplicationService> = Arc::new(application);
+        oauth_public_url: oauth_public_url.map(|url| url.as_str().to_owned()),
+        app_url: server.app_url.clone(),
+    })
+    .await?;
+    let application = application_assembly.application.clone();
+    let run_runtime = application_assembly.run_runtime.clone();
+    let mcp_catalog = application_assembly.mcp_catalog.clone();
+    let components = application_assembly.components.clone();
+    let sandboxed_components = application_assembly.sandboxed_components.clone();
+    let mcp_connections = application_assembly.mcp_connections.clone();
+    let remote_callback_auth = application_assembly.remote_callback_auth.clone();
+    let mcp_revocation_reconciler = application_assembly.mcp_revocation_reconciler;
     let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence(
         application.clone(),
         Arc::new(PostgresAgentAuthorizationSource::new(
@@ -734,57 +582,6 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
     .map_err(|_| startup_error("agent_runtime_config_invalid"))?;
     let consumer = agent.consumer();
     Ok((consumer, Some(agent)))
-}
-
-fn build_channel_routing(
-    input: ChannelRoutingAssemblyInput,
-) -> Result<PostgresChannelRouting, Box<dyn Error>> {
-    let ChannelRoutingAssemblyInput {
-        pool,
-        model,
-        credential_key_id,
-        provider,
-        credential_vault,
-        audit_key,
-        stall_timeout,
-    } = input;
-    let PackageOpenAiProviderConfig {
-        base_url,
-        environment_api_key,
-        egress_allow_cidrs,
-        allow_http,
-    } = provider;
-    let protocol = CHANNEL_ROUTING_OPENAI_PROTOCOL;
-    let endpoint = openai_endpoint(base_url.as_str(), protocol)?;
-    let environment_fallback = environment_api_key
-        .map(|key| OpenAiApiKey::from_bytes(key.expose().as_bytes().to_vec()))
-        .transpose()?;
-    let credentials = Arc::new(PostgresOpenAiCredentialSource::new(
-        pool.clone(),
-        credential_vault,
-        credential_key_id,
-        environment_fallback,
-    )?);
-    let egress = EgressPolicy::new(CidrAllowlist::parse_exact(
-        egress_allow_cidrs.iter().map(String::as_str),
-    )?);
-    let provider: Arc<dyn ProviderAdapter> = Arc::new(OpenAiProvider::new_with_credential_source(
-        OpenAiProviderConfig::new_with_transport_policy(
-            endpoint,
-            model,
-            protocol,
-            SafeHttpBudget::new(16 * 1024 * 1024, Duration::from_secs(10))?,
-            stall_timeout,
-            if allow_http {
-                SchemePolicy::HttpOrHttps
-            } else {
-                SchemePolicy::HttpsOnly
-            },
-        )?,
-        credentials,
-        SafeDialer::new(egress),
-    ));
-    Ok(PostgresChannelRouting::new(pool, audit_key, provider)?)
 }
 
 fn managed_provider_for_slot(server: &ServerConfig) -> Option<ManagedProviderConfig> {

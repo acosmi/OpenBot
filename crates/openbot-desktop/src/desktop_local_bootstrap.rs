@@ -19,6 +19,7 @@ use openbot_infra::db::desktop_local::{
     connect_for_attestation,
 };
 use openbot_infra::db::pool::DatabasePool;
+use openbot_infra::thread_listener::ThreadListenerDatabase;
 
 use crate::postgres_sidecar::{PostgresSidecarOrigin, RunningPostgresSidecar};
 
@@ -70,6 +71,19 @@ impl RunningDesktopLocalDataPlane {
     #[must_use]
     pub const fn bootstrap_report(&self) -> &DesktopLocalBootstrapReport {
         &self.report
+    }
+
+    /// Build a redacted dedicated LISTEN config directly from the owned SCRAM bytes, without a
+    /// password `String`. The future shared application assembly consumes this before any window.
+    pub fn thread_listener_database(
+        &self,
+    ) -> Result<ThreadListenerDatabase, DesktopLocalCompositionError> {
+        let Some(sidecar) = self.sidecar.as_ref() else {
+            return Err(DesktopLocalCompositionError::ListenerConfiguration);
+        };
+        let connection = sidecar.connection();
+        ThreadListenerDatabase::desktop_local(connection.port(), connection.expose_password())
+            .map_err(|_| DesktopLocalCompositionError::ListenerConfiguration)
     }
 
     /// Close the application pool, then stop the exact child through its verified `pg_ctl` before
@@ -125,6 +139,9 @@ pub enum DesktopLocalCompositionError {
     /// Explicit clean shutdown did not complete through verified `pg_ctl` and exact-child wait.
     #[error("desktop_local_sidecar_shutdown_failed")]
     SidecarShutdown,
+    /// Dedicated PostgreSQL LISTEN configuration could not be built from the owned sidecar.
+    #[error("desktop_local_listener_configuration_failed")]
+    ListenerConfiguration,
 }
 
 /// Consume one SCRAM-ready child and close the full Batch79 bootstrap before any window authority
