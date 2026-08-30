@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 663
+    expect: 652
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -4763,31 +4763,34 @@ entries:
   - id: "server-tests-component-store-integration--deciding-whether-a-bot-may-use-a-compone--granting-it-back-restores-it"
     upstream: "server/tests/component-store.integration.test.ts::deciding whether a Bot may use a component"
     label: parity
-    target: "openbot_infra::store::components::tests::granting_it_back_restores_it"
+    target: "openbot_infra::tests::component_catalogue::governance_mutations_are_scoped_atomic_audited_and_preserve_independent_grants"
     owner: openbot-infra
     test_id: T-TEST-0437
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67 PG17.11 SCRAM先insert withholding使showQuote排除agent-public，再grant删除exception；后续unpublish receipt withheldFrom仍可控且最终restore为空。component.granted audit与delete同事务；suite2/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[527]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「granting it back restores it」。"
   - id: "server-tests-component-store-integration--withholding--withholding-twice-does-not-move-the-date-it-was-withheld"
     upstream: "server/tests/component-store.integration.test.ts::withholding"
     label: parity
-    target: "openbot_infra::store::components::tests::withholding_twice_does_not_move_the_date_it_was_withheld"
+    target: "openbot_infra::tests::component_catalogue::governance_mutations_are_scoped_atomic_audited_and_preserve_independent_grants"
     owner: openbot-infra
     test_id: T-TEST-0438
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67同一component/Agent连续withhold两次，PG created_at逐值相等；ON CONFLICT DO NOTHING不改时间，audit仍逐accepted request记录。suite2/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[529]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「withholding twice does not move the date it was withheld」。"
   - id: "server-tests-component-store-integration--withholding--withholding-a-component-that-does-not-exist-is-an-error"
     upstream: "server/tests/component-store.integration.test.ts::withholding"
     label: parity
-    target: "openbot_infra::store::components::tests::withholding_a_component_that_does_not_exist_is_an_error"
+    target: "openbot_infra::tests::component_catalogue::governance_mutations_are_scoped_atomic_audited_and_preserve_independent_grants"
     owner: openbot-infra
     test_id: T-TEST-0439
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67对missing-component直接执行SetAgentGrant(false)，在任何exclusion/audit前由SELECT FOR UPDATE返回NotVisible；不是静默插行。suite2/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[530]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「withholding a component that does not exist is an error, not a silent row」。"
   - id: "server-tests-component-store-integration--withholding--deleting-a-bot-takes-its-withholdings-with-it"
@@ -4823,61 +4826,67 @@ entries:
   - id: "server-tests-component-store-integration--publishing--publishing-promotes-the-draft-which-is-what-changes-beha"
     upstream: "server/tests/component-store.integration.test.ts::publishing"
     label: parity
-    target: "openbot_infra::store::components::tests::publishing_promotes_the_draft_which_is_what_changes_beha"
+    target: "openbot_infra::tests::component_catalogue::governance_mutations_are_scoped_atomic_audited_and_preserve_independent_grants"
     owner: openbot-infra
     test_id: T-TEST-0443
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67先保存edited quote并证明publishedDescription仍旧、hasUnpublishedChanges=true；publish后publishedDescription逐字等于draft且hasUnpublishedChanges=false，published audit同事务。release浏览器同序再证。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[536]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「publishing promotes the draft, which is what changes behaviour」。"
   - id: "server-tests-component-store-integration--publishing--unpublishing-keeps-the-withholdings"
     upstream: "server/tests/component-store.integration.test.ts::publishing"
     label: parity
-    target: "openbot_infra::store::components::tests::unpublishing_keeps_the_withholdings"
+    target: "openbot_infra::tests::component_catalogue::governance_mutations_are_scoped_atomic_audited_and_preserve_independent_grants"
     owner: openbot-infra
     test_id: T-TEST-0444
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67 publish后重新withhold agent-public并保留botActivity grant，再unpublish；authoritative receipt精确functions=[botActivity]、withheldFrom=[agent-public]，只published=false。suite2/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[537]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「unpublishing keeps the withholdings」。"
   - id: "server-tests-component-store-integration--publishing--a-draft-that-matches-the-published-version-is-not-report"
     upstream: "server/tests/component-store.integration.test.ts::publishing"
     label: parity
-    target: "openbot_infra::store::components::tests::a_draft_that_matches_the_published_version_is_not_report"
+    target: "openbot_infra::tests::component_catalogue::governance_mutations_are_scoped_atomic_audited_and_preserve_independent_grants"
     owner: openbot-infra
     test_id: T-TEST-0445
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67 publish把current draft原子提升后receipt要求draft==published且hasUnpublishedChanges=false；Application又构造性复算该布尔，错误receipt拒绝。PG与release浏览器均绿。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[538]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「a draft that matches the published version is not reported as unpublished changes」。"
   - id: "server-tests-component-store-integration--learning-what-a-build-ships--a-component-the-deployment-has-never-seen-is-added-publi"
     upstream: "server/tests/component-store.integration.test.ts::learning what a build ships"
     label: parity
-    target: "openbot_infra::store::components::tests::a_component_the_deployment_has_never_seen_is_added_publi"
+    target: "openbot_infra::tests::component_catalogue::catalogue_sync_is_exact_additive_audited_and_list_is_closed"
     owner: openbot-infra
     test_id: T-TEST-0446
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67重跑既有PG catalogue suite：13条当前build manifest首次全部insert/published/available，added顺序逐manifest相等，component.published audit每row同事务；2/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[540]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「a component the deployment has never seen is added, published and available to every Bot」。"
   - id: "server-tests-component-store-integration--learning-what-a-build-ships--announcing-again-adds-nothing"
     upstream: "server/tests/component-store.integration.test.ts::learning what a build ships"
     label: parity
-    target: "openbot_infra::store::components::tests::announcing_again_adds_nothing"
+    target: "openbot_infra::tests::component_catalogue::catalogue_sync_is_exact_additive_audited_and_list_is_closed"
     owner: openbot-infra
     test_id: T-TEST-0447
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67同一manifest第二次sync返回added空，existing row/audit不重复；PG suite2/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[541]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「announcing again adds nothing」。"
   - id: "server-tests-component-store-integration--learning-what-a-build-ships--announcing-never-overwrites-what-the-deployment-decided"
     upstream: "server/tests/component-store.integration.test.ts::learning what a build ships"
     label: parity
-    target: "openbot_infra::store::components::tests::announcing_never_overwrites_what_the_deployment_decided"
+    target: "openbot_infra::tests::component_catalogue::catalogue_sync_is_exact_additive_audited_and_list_is_closed"
     owner: openbot-infra
     test_id: T-TEST-0448
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67 PG先把showQuote改为unpublished+admin draft，再sync exact manifest；added仍空且draft/published/updatedBy逐值保留，build不能覆盖admin治理。suite2/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[542]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「announcing NEVER overwrites what the deployment decided」。"
   - id: "server-tests-component-store-integration--learning-what-a-build-ships--two-browsers-announcing-at-once-add-it-once-and-record-i"
@@ -4933,21 +4942,23 @@ entries:
   - id: "server-tests-component-store-integration--what-a-component-may-read--granting-twice-does-not-move-the-date-it-was-granted"
     upstream: "server/tests/component-store.integration.test.ts::what a component may read"
     label: parity
-    target: "openbot_infra::store::components::tests::granting_twice_does_not_move_the_date_it_was_granted"
+    target: "openbot_infra::tests::component_catalogue::governance_mutations_are_scoped_atomic_audited_and_preserve_independent_grants"
     owner: openbot-infra
     test_id: T-TEST-0454
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67同一showQuote/botActivity连续grant两次，component_functions.created_at逐值相等；ON CONFLICT no-op，suite2/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[549]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「granting twice does not move the date it was granted」。"
   - id: "server-tests-component-store-integration--what-a-component-may-read--revoking-takes-it-away-again"
     upstream: "server/tests/component-store.integration.test.ts::what a component may read"
     label: parity
-    target: "openbot_infra::store::components::tests::revoking_takes_it_away_again"
+    target: "openbot_infra::tests::component_catalogue::governance_mutations_are_scoped_atomic_audited_and_preserve_independent_grants"
     owner: openbot-infra
     test_id: T-TEST-0455
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "Batch67 grant后DELETE exact function，权威list中functions为空且component.function_revoked audit同事务；随后regrant用于独立unpublish断言。PG与release浏览器grant→revoke均绿。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[550]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §3.3 + §21.1 条 5（每个 compiled component 具参数/render/action golden，sandboxed component 具 publish/revision/security fixture）：持久化与发布判据逐条移植。上游用例标题：「revoking takes it away again」。"
   - id: "server-tests-component-store-integration--what-a-component-may-read--deleting-a-component-takes-its-function-grants-with-it"

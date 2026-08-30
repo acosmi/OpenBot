@@ -13,10 +13,11 @@ use openbot_contracts::components::{
     AUDIT_TRAIL_READS_DESCRIPTION, BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, BotActivityRow,
     CompiledComponentKind, CompiledComponentManifestEntry, ComponentCatalogueAdded,
     ComponentDecision, ComponentDecisionRefusal, ComponentFunctionCall, ComponentFunctionData,
-    ComponentFunctionError, ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved,
-    ComponentRecord, ComponentRecords, GrantedCompiledComponent, GrantedCompiledComponents,
-    PendingComponentHumanDecision, PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME,
-    RecentRefusalRow, RecentRefusalsReport, component_data_function_manifest,
+    ComponentFunctionError, ComponentGovernanceMutation, ComponentHumanDecisionAnswer,
+    ComponentHumanDecisionResolved, ComponentRecord, ComponentRecords, GrantedCompiledComponent,
+    GrantedCompiledComponents, MAX_COMPONENT_DESCRIPTION_BYTES, PendingComponentHumanDecision,
+    PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME, RecentRefusalRow,
+    RecentRefusalsReport, component_data_function_manifest,
     validate_component_human_decision_answer,
 };
 use openbot_domain::agent::profile_policy::{AgentActor, AgentProfileFacts, can_run_agent};
@@ -301,6 +302,199 @@ impl ComponentAdministration for PostgresComponentAdministration {
             ComponentAdministrationError::CommitUnknown
         })?;
         Ok(ComponentCatalogueAdded { added })
+    }
+
+    async fn update_component_governance(
+        &self,
+        auth: &AuthContext,
+        mutation: &ComponentGovernanceMutation,
+    ) -> Result<ComponentRecord, ComponentAdministrationError> {
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await
+            .map_err(query_unavailable)?;
+        let component_name = mutation.component_name();
+        let component = transaction
+            .query_opt(
+                "SELECT kind,draft_description FROM public.components
+                  WHERE name=$1 FOR UPDATE",
+                &[&component_name],
+            )
+            .await
+            .map_err(query_unavailable)?
+            .ok_or(ComponentAdministrationError::NotVisible)?;
+        let kind = component
+            .try_get::<_, String>("kind")
+            .map_err(|_| corrupt("component_kind"))?;
+
+        let (event_type, fact) = match mutation {
+            ComponentGovernanceMutation::SetAgentGrant {
+                agent_id, granted, ..
+            } => {
+                ensure_runnable_agent(
+                    &transaction,
+                    &ComponentRuntimeScope {
+                        tenant: auth.tenant().clone(),
+                        actor: auth.actor().clone(),
+                        admin: auth.has_role(openbot_contracts::auth::Role::Admin),
+                        agent_id: agent_id.clone(),
+                    },
+                )
+                .await?;
+                if *granted {
+                    transaction
+                        .execute(
+                            "DELETE FROM public.component_exclusions
+                              WHERE component_name=$1 AND agent_id=$2",
+                            &[&component_name, &agent_id.as_str()],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                } else {
+                    transaction
+                        .execute(
+                            "INSERT INTO public.component_exclusions(
+                               component_name,agent_id,withheld_by,created_at,updated_at
+                             ) VALUES($1,$2,$3,clock_timestamp(),clock_timestamp())
+                             ON CONFLICT(component_name,agent_id) DO NOTHING",
+                            &[&component_name, &agent_id.as_str(), &auth.actor().as_str()],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                }
+                (
+                    if *granted {
+                        "component.granted"
+                    } else {
+                        "component.revoked"
+                    },
+                    Some(AuditFact::Bot(
+                        AuditIdentifier::new(agent_id.as_str().to_owned())
+                            .map_err(|_| corrupt("agent_id"))?,
+                    )),
+                )
+            }
+            ComponentGovernanceMutation::SetFunctionGrant {
+                function, granted, ..
+            } => {
+                if kind == CompiledComponentKind::Sandboxed.as_str() {
+                    return Err(ComponentAdministrationError::Conflict);
+                }
+                if !component_data_function_manifest()
+                    .iter()
+                    .any(|entry| entry.name == *function)
+                {
+                    return Err(ComponentAdministrationError::InvalidInput { field: "function" });
+                }
+                if *granted {
+                    transaction
+                        .execute(
+                            "INSERT INTO public.component_functions(
+                               component_name,function_name,granted_by,created_at,updated_at
+                             ) VALUES($1,$2,$3,clock_timestamp(),clock_timestamp())
+                             ON CONFLICT(component_name,function_name) DO NOTHING",
+                            &[&component_name, function, &auth.actor().as_str()],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                } else {
+                    transaction
+                        .execute(
+                            "DELETE FROM public.component_functions
+                              WHERE component_name=$1 AND function_name=$2",
+                            &[&component_name, function],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                }
+                (
+                    if *granted {
+                        "component.function_granted"
+                    } else {
+                        "component.function_revoked"
+                    },
+                    Some(AuditFact::ComponentFunction(
+                        AuditIdentifier::new(function.clone())
+                            .map_err(|_| corrupt("component_function"))?,
+                    )),
+                )
+            }
+            ComponentGovernanceMutation::SetPublication { published, .. } => {
+                if kind == CompiledComponentKind::Sandboxed.as_str() {
+                    return Err(ComponentAdministrationError::Conflict);
+                }
+                if *published {
+                    let draft = component
+                        .try_get::<_, String>("draft_description")
+                        .map_err(|_| corrupt("draft_description"))?;
+                    validate_description(&draft, "draft_description")?;
+                    transaction
+                        .execute(
+                            "UPDATE public.components
+                                SET published_description=draft_description,published=true,
+                                    published_at=clock_timestamp(),updated_by=$2,
+                                    updated_at=clock_timestamp()
+                              WHERE name=$1",
+                            &[&component_name, &auth.actor().as_str()],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                } else {
+                    transaction
+                        .execute(
+                            "UPDATE public.components
+                                SET published=false,updated_by=$2,updated_at=clock_timestamp()
+                              WHERE name=$1",
+                            &[&component_name, &auth.actor().as_str()],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                }
+                (
+                    if *published {
+                        "component.published"
+                    } else {
+                        "component.unpublished"
+                    },
+                    None,
+                )
+            }
+            ComponentGovernanceMutation::SaveDraft { description, .. } => {
+                if kind == CompiledComponentKind::Sandboxed.as_str() {
+                    return Err(ComponentAdministrationError::Conflict);
+                }
+                validate_description(description, "description")?;
+                transaction
+                    .execute(
+                        "UPDATE public.components
+                            SET draft_description=$2,updated_by=$3,updated_at=clock_timestamp()
+                          WHERE name=$1",
+                        &[&component_name, description, &auth.actor().as_str()],
+                    )
+                    .await
+                    .map_err(query_unavailable)?;
+                ("component.draft_saved", None)
+            }
+        };
+
+        append_component_governance_audit(
+            &transaction,
+            auth,
+            component_name,
+            event_type,
+            fact,
+            self.checkpoint_key.expose(),
+        )
+        .await?;
+        let component = load_component_record(&transaction, component_name).await?;
+        transaction.commit().await.map_err(|error| {
+            tracing::error!(error = %error, "component governance commit result unknown");
+            ComponentAdministrationError::CommitUnknown
+        })?;
+        Ok(component)
     }
 
     async fn list_components_for_agent(
@@ -1247,6 +1441,58 @@ fn validate_function_value(
     }
 }
 
+async fn load_component_record(
+    transaction: &Transaction<'_>,
+    component_name: &str,
+) -> Result<ComponentRecord, ComponentAdministrationError> {
+    let row = transaction
+        .query_one(
+            "SELECT c.name,c.title,c.kind,c.draft_description,c.published_description,
+                    c.published,c.published_at,c.updated_by,c.updated_at,
+                    coalesce((SELECT array_agg(e.agent_id ORDER BY e.agent_id)
+                                FROM public.component_exclusions e
+                               WHERE e.component_name=c.name),ARRAY[]::text[]) AS withheld_from,
+                    coalesce((SELECT array_agg(f.function_name ORDER BY f.function_name)
+                                FROM public.component_functions f
+                               WHERE f.component_name=c.name),ARRAY[]::text[]) AS functions
+               FROM public.components c WHERE c.name=$1",
+            &[&component_name],
+        )
+        .await
+        .map_err(query_unavailable)?;
+    decode_record(&row)
+}
+
+async fn append_component_governance_audit(
+    transaction: &Transaction<'_>,
+    auth: &AuthContext,
+    component_name: &str,
+    event_type: &'static str,
+    fact: Option<AuditFact>,
+    checkpoint_key: &[u8],
+) -> Result<(), ComponentAdministrationError> {
+    let payload = AuditPayload::from_facts(fact).map_err(|_| corrupt("audit_payload"))?;
+    let (id, created_at) = next_event_coordinates(transaction)
+        .await
+        .map_err(infra_unavailable)?;
+    let event = AuditEvent {
+        id,
+        actor: Some(auth.actor().clone()),
+        event_type: AuditEventType::parse(event_type).ok_or_else(|| corrupt("audit_event"))?,
+        target_kind: AuditLabel::new("component"),
+        target_id: Some(
+            AuditIdentifier::new(component_name.to_owned())
+                .map_err(|_| corrupt("component_name"))?,
+        ),
+        payload,
+        created_at,
+    };
+    append_event_in_transaction(transaction, &event, checkpoint_key)
+        .await
+        .map(|_| ())
+        .map_err(infra_unavailable)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn append_component_function_outcome(
     transaction: &Transaction<'_>,
@@ -1708,7 +1954,10 @@ fn validate_description(
     value: &str,
     field: &'static str,
 ) -> Result<(), ComponentAdministrationError> {
-    if value.is_empty() || value.len() > 64 * 1024 || value.as_bytes().contains(&0) {
+    if value.is_empty()
+        || value.len() > MAX_COMPONENT_DESCRIPTION_BYTES
+        || value.as_bytes().contains(&0)
+    {
         Err(corrupt(field))
     } else {
         Ok(())

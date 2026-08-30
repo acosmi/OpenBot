@@ -29,15 +29,21 @@ use openbot_contracts::command::{
 };
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::components::{
-    BOT_ACTIVITY_FUNCTION_NAME, ComponentDecisionRefusal, ComponentFunctionData, ComponentRecord,
-    RECENT_REFUSALS_FUNCTION_NAME, component_data_function_manifest,
-    is_component_human_decision_name, validate_component_human_decision_arguments,
+    BOT_ACTIVITY_FUNCTION_NAME, ComponentDecisionRefusal, ComponentFunctionData,
+    RECENT_REFUSALS_FUNCTION_NAME, is_component_human_decision_name,
+    validate_component_human_decision_arguments,
+};
+#[cfg(target_arch = "wasm32")]
+use openbot_contracts::components::{
+    ComponentAgentGrantRequest, ComponentDraftRequest, ComponentFunctionGrantRequest,
+    ComponentGovernanceReceipt, ComponentPublicationRequest,
 };
 use openbot_contracts::components::{
     ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
     ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
-    ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecords,
-    GrantedCompiledComponents, PendingComponentHumanDecisions, compiled_component_manifest,
+    ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecord,
+    ComponentRecords, GrantedCompiledComponents, MAX_COMPONENT_DESCRIPTION_BYTES,
+    PendingComponentHumanDecisions, compiled_component_manifest, component_data_function_manifest,
 };
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::identity_provider::{IdentityProviderRemoved, IdentityProvidersResponse};
@@ -172,6 +178,192 @@ pub async fn load_components() -> Result<ComponentRecords, ApiError> {
     {
         Err(ApiError::Unavailable)
     }
+}
+
+/// Grant or withhold one component for one Agent; success returns the authoritative row.
+pub async fn set_component_agent_grant(
+    name: &str,
+    agent_id: &str,
+    granted: bool,
+) -> Result<ComponentRecord, ApiError> {
+    validate_component_name(name)?;
+    validate_agent_id(agent_id)?;
+    let base = format!("/api/components/{}", encode_url_component(name));
+    let path = if granted {
+        format!("{base}/grants")
+    } else {
+        format!("{base}/grants/{}", encode_url_component(agent_id))
+    };
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let response = if granted {
+            Request::post(&path)
+                .cache(RequestCache::NoStore)
+                .credentials(RequestCredentials::SameOrigin)
+                .redirect(RequestRedirect::Error)
+                .json(&ComponentAgentGrantRequest {
+                    agent_id: BotId::new(agent_id),
+                })
+                .map_err(|_| ApiError::InvalidResponse)?
+                .send()
+                .await
+        } else {
+            Request::delete(&path)
+                .cache(RequestCache::NoStore)
+                .credentials(RequestCredentials::SameOrigin)
+                .redirect(RequestRedirect::Error)
+                .send()
+                .await
+        }
+        .map_err(|_| ApiError::Network)?;
+        component_governance_response(response, name).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = path;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Grant or revoke one build-owned data function for one component.
+pub async fn set_component_function_grant(
+    name: &str,
+    function: &str,
+    granted: bool,
+) -> Result<ComponentRecord, ApiError> {
+    validate_component_name(name)?;
+    validate_component_name(function)?;
+    if !component_data_function_manifest()
+        .iter()
+        .any(|entry| entry.name == function)
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    let base = format!("/api/components/{}", encode_url_component(name));
+    let path = if granted {
+        format!("{base}/functions")
+    } else {
+        format!("{base}/functions/{}", encode_url_component(function))
+    };
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let response = if granted {
+            Request::post(&path)
+                .cache(RequestCache::NoStore)
+                .credentials(RequestCredentials::SameOrigin)
+                .redirect(RequestRedirect::Error)
+                .json(&ComponentFunctionGrantRequest {
+                    function: function.to_owned(),
+                })
+                .map_err(|_| ApiError::InvalidResponse)?
+                .send()
+                .await
+        } else {
+            Request::delete(&path)
+                .cache(RequestCache::NoStore)
+                .credentials(RequestCredentials::SameOrigin)
+                .redirect(RequestRedirect::Error)
+                .send()
+                .await
+        }
+        .map_err(|_| ApiError::Network)?;
+        component_governance_response(response, name).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = path;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Publish or withdraw one compiled component.
+pub async fn set_component_publication(
+    name: &str,
+    published: bool,
+) -> Result<ComponentRecord, ApiError> {
+    validate_component_name(name)?;
+    let path = format!("/api/components/{}/publication", encode_url_component(name));
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&ComponentPublicationRequest { published })
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        component_governance_response(response, name).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, published);
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Save one compiled model-facing draft without publishing it.
+pub async fn save_component_draft(
+    name: &str,
+    description: &str,
+) -> Result<ComponentRecord, ApiError> {
+    validate_component_name(name)?;
+    let description = openbot_contracts::text::trim_ecmascript(description);
+    if description.is_empty()
+        || description.len() > MAX_COMPONENT_DESCRIPTION_BYTES
+        || description.as_bytes().contains(&0)
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    let path = format!("/api/components/{}/draft", encode_url_component(name));
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let response = Request::put(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&ComponentDraftRequest {
+                description: description.to_owned(),
+            })
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        component_governance_response(response, name).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, description);
+        Err(ApiError::Unavailable)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn component_governance_response(
+    response: gloo_net::http::Response,
+    expected_name: &str,
+) -> Result<ComponentRecord, ApiError> {
+    if response.status() != 200 {
+        return Err(status_error(response.status()));
+    }
+    let receipt = response
+        .json::<ComponentGovernanceReceipt>()
+        .await
+        .map_err(|_| ApiError::InvalidResponse)?;
+    validate_component_record(&receipt.component)?;
+    if receipt.component.name != expected_name {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(receipt.component)
 }
 
 /// Load administrator-only sandbox drafts and sample arguments.
@@ -2377,7 +2569,10 @@ fn validate_pending_component_human_decisions(
 
 #[cfg(any(target_arch = "wasm32", test))]
 fn validate_component_description(value: &str) -> Result<(), ApiError> {
-    if value.is_empty() || value.len() > 64 * 1024 || value.as_bytes().contains(&0) {
+    if value.is_empty()
+        || value.len() > MAX_COMPONENT_DESCRIPTION_BYTES
+        || value.as_bytes().contains(&0)
+    {
         Err(ApiError::InvalidResponse)
     } else {
         Ok(())
@@ -3001,6 +3196,12 @@ pub fn bot_chat_href(agent_id: &str) -> Result<String, ApiError> {
     Ok(format!("/bot?agent={}", encode_url_component(agent_id)))
 }
 
+/// Build the same-origin administrator detail route for one component identity.
+pub fn admin_component_href(name: &str) -> Result<String, ApiError> {
+    validate_component_name(name)?;
+    Ok(format!("/admin/components/{}", encode_url_component(name)))
+}
+
 fn validate_channel_id(channel_id: &str) -> Result<(), ApiError> {
     if channel_id.is_empty() || channel_id.len() > 512 || channel_id.chars().any(char::is_control) {
         Err(ApiError::InvalidResponse)
@@ -3471,6 +3672,10 @@ mod tests {
         assert_eq!(
             bot_chat_href("bot/one?x=1").unwrap(),
             "/bot?agent=bot%2Fone%3Fx%3D1"
+        );
+        assert_eq!(
+            admin_component_href("show.Quote-1").unwrap(),
+            "/admin/components/show.Quote-1"
         );
         assert_eq!(
             channel_detail_path("").unwrap_err(),

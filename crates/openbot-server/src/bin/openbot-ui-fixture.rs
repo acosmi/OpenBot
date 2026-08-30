@@ -43,10 +43,11 @@ use openbot_contracts::components::{
     ASK_APPROVAL_COMPONENT_NAME, ASK_CHOICE_COMPONENT_NAME, BOT_ACTIVITY_FUNCTION_NAME,
     BotActivityReport, BotActivityRow, CompiledComponentKind, CompiledComponentManifestEntry,
     ComponentCatalogueAdded, ComponentFunctionCall, ComponentFunctionData,
-    ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecord,
-    ComponentRecords, PendingComponentHumanDecision, PendingComponentHumanDecisions,
-    RECENT_REFUSALS_FUNCTION_NAME, RecentRefusalRow, RecentRefusalsReport,
-    SHOW_ACTIVITY_REPORT_COMPONENT_NAME, validate_component_human_decision_answer,
+    ComponentGovernanceMutation, ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved,
+    ComponentRecord, ComponentRecords, PendingComponentHumanDecision,
+    PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME, RecentRefusalRow,
+    RecentRefusalsReport, SHOW_ACTIVITY_REPORT_COMPONENT_NAME,
+    validate_component_human_decision_answer,
 };
 use openbot_contracts::error::IdentityConflictReason;
 use openbot_contracts::ids::{
@@ -755,6 +756,20 @@ impl FixtureComponents {
                     withheld_from: vec!["fixture-owned-private".to_owned()],
                     functions: vec!["readFixture".to_owned()],
                 },
+                ComponentRecord {
+                    name: "custom_delivery_eta".to_owned(),
+                    title: "Delivery ETA".to_owned(),
+                    kind: CompiledComponentKind::Sandboxed,
+                    draft_description: "Show a delivery estimate.".to_owned(),
+                    published_description: Some("Show a delivery estimate.".to_owned()),
+                    published: true,
+                    published_at: Some(now),
+                    updated_by: Some("fixture-actor".to_owned()),
+                    updated_at: now,
+                    has_unpublished_changes: false,
+                    withheld_from: Vec::new(),
+                    functions: Vec::new(),
+                },
             ])),
             decisions: Arc::new(Mutex::new(vec![
                 FixtureHumanDecision {
@@ -859,6 +874,75 @@ impl ComponentAdministration for FixtureComponents {
             added.push(entry.name.clone());
         }
         Ok(ComponentCatalogueAdded { added })
+    }
+
+    async fn update_component_governance(
+        &self,
+        auth: &AuthContext,
+        mutation: &ComponentGovernanceMutation,
+    ) -> Result<ComponentRecord, ComponentAdministrationError> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| ComponentAdministrationError::Unavailable)?;
+        let row = rows
+            .iter_mut()
+            .find(|row| row.name == mutation.component_name())
+            .ok_or(ComponentAdministrationError::NotVisible)?;
+        match mutation {
+            ComponentGovernanceMutation::SetAgentGrant {
+                agent_id, granted, ..
+            } => {
+                if *granted {
+                    row.withheld_from.retain(|value| value != agent_id.as_str());
+                } else if !row
+                    .withheld_from
+                    .iter()
+                    .any(|value| value == agent_id.as_str())
+                {
+                    row.withheld_from.push(agent_id.as_str().to_owned());
+                    row.withheld_from.sort();
+                }
+            }
+            ComponentGovernanceMutation::SetFunctionGrant {
+                function, granted, ..
+            } => {
+                if row.kind == CompiledComponentKind::Sandboxed {
+                    return Err(ComponentAdministrationError::Conflict);
+                }
+                if *granted {
+                    if !row.functions.contains(function) {
+                        row.functions.push(function.clone());
+                        row.functions.sort();
+                    }
+                } else {
+                    row.functions.retain(|value| value != function);
+                }
+            }
+            ComponentGovernanceMutation::SetPublication { published, .. } => {
+                if row.kind == CompiledComponentKind::Sandboxed {
+                    return Err(ComponentAdministrationError::Conflict);
+                }
+                row.published = *published;
+                if *published {
+                    row.published_description = Some(row.draft_description.clone());
+                    row.published_at = Some(self.now);
+                }
+                row.updated_by = Some(auth.actor().as_str().to_owned());
+                row.updated_at = self.now;
+            }
+            ComponentGovernanceMutation::SaveDraft { description, .. } => {
+                if row.kind == CompiledComponentKind::Sandboxed {
+                    return Err(ComponentAdministrationError::Conflict);
+                }
+                row.draft_description = description.clone();
+                row.updated_by = Some(auth.actor().as_str().to_owned());
+                row.updated_at = self.now;
+            }
+        }
+        row.has_unpublished_changes =
+            row.draft_description != row.published_description.as_deref().unwrap_or("");
+        Ok(row.clone())
     }
 
     async fn call_component_function(

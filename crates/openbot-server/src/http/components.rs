@@ -8,15 +8,17 @@ use http::header::CACHE_CONTROL;
 use http::{HeaderMap, HeaderValue};
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::components::{
-    ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
-    ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
-    ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecords,
+    ComponentAgentGrantRequest, ComponentCatalogueAdded, ComponentCatalogueRequest,
+    ComponentDataFunctions, ComponentDecision, ComponentDecisionRequest, ComponentDraftRequest,
+    ComponentFunctionCall, ComponentFunctionCallRequest, ComponentFunctionGrantRequest,
+    ComponentGovernanceMutation, ComponentGovernanceReceipt, ComponentHumanDecisionAnswer,
+    ComponentHumanDecisionResolved, ComponentPublicationRequest, ComponentRecords,
     GrantedCompiledComponents, PendingComponentHumanDecisions,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::BotId;
 
-use crate::auth::{Authenticated, OriginAuthenticated};
+use crate::auth::{Authenticated, OriginAuthenticated, SensitiveOriginAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
 
@@ -118,6 +120,120 @@ pub async fn functions_get(
     }
 }
 
+/// `POST /api/components/{name}/functions`; fresh admin grants one build-owned data function.
+pub async fn functions_post(
+    State(state): State<ServerState>,
+    SensitiveOriginAuthenticated(auth): SensitiveOriginAuthenticated,
+    Path(name): Path<String>,
+    body: Result<Json<ComponentFunctionGrantRequest>, JsonRejection>,
+) -> Result<(HeaderMap, Json<ComponentGovernanceReceipt>), HttpError> {
+    let Json(request) = component_body(body, "component function grant body rejected")?;
+    execute_governance(
+        &state,
+        auth,
+        ComponentGovernanceMutation::SetFunctionGrant {
+            component_name: name,
+            function: request.function,
+            granted: true,
+        },
+    )
+    .await
+}
+
+/// `DELETE /api/components/{name}/functions/{function}`; fresh admin revokes one data function.
+pub async fn functions_delete(
+    State(state): State<ServerState>,
+    SensitiveOriginAuthenticated(auth): SensitiveOriginAuthenticated,
+    Path((name, function)): Path<(String, String)>,
+) -> Result<(HeaderMap, Json<ComponentGovernanceReceipt>), HttpError> {
+    execute_governance(
+        &state,
+        auth,
+        ComponentGovernanceMutation::SetFunctionGrant {
+            component_name: name,
+            function,
+            granted: false,
+        },
+    )
+    .await
+}
+
+/// `POST /api/components/{name}/grants`; fresh admin removes one Agent withholding.
+pub async fn grants_post(
+    State(state): State<ServerState>,
+    SensitiveOriginAuthenticated(auth): SensitiveOriginAuthenticated,
+    Path(name): Path<String>,
+    body: Result<Json<ComponentAgentGrantRequest>, JsonRejection>,
+) -> Result<(HeaderMap, Json<ComponentGovernanceReceipt>), HttpError> {
+    let Json(request) = component_body(body, "component Agent grant body rejected")?;
+    execute_governance(
+        &state,
+        auth,
+        ComponentGovernanceMutation::SetAgentGrant {
+            component_name: name,
+            agent_id: request.agent_id,
+            granted: true,
+        },
+    )
+    .await
+}
+
+/// `DELETE /api/components/{name}/grants/{agent_id}`; fresh admin creates one withholding.
+pub async fn grants_delete(
+    State(state): State<ServerState>,
+    SensitiveOriginAuthenticated(auth): SensitiveOriginAuthenticated,
+    Path((name, agent_id)): Path<(String, String)>,
+) -> Result<(HeaderMap, Json<ComponentGovernanceReceipt>), HttpError> {
+    execute_governance(
+        &state,
+        auth,
+        ComponentGovernanceMutation::SetAgentGrant {
+            component_name: name,
+            agent_id: BotId::new(agent_id),
+            granted: false,
+        },
+    )
+    .await
+}
+
+/// `POST /api/components/{name}/publication`; fresh admin publishes or withdraws one compiled row.
+pub async fn publication_post(
+    State(state): State<ServerState>,
+    SensitiveOriginAuthenticated(auth): SensitiveOriginAuthenticated,
+    Path(name): Path<String>,
+    body: Result<Json<ComponentPublicationRequest>, JsonRejection>,
+) -> Result<(HeaderMap, Json<ComponentGovernanceReceipt>), HttpError> {
+    let Json(request) = component_body(body, "component publication body rejected")?;
+    execute_governance(
+        &state,
+        auth,
+        ComponentGovernanceMutation::SetPublication {
+            component_name: name,
+            published: request.published,
+        },
+    )
+    .await
+}
+
+/// `PUT /api/components/{name}/draft`; fresh admin saves a compiled description draft only.
+pub async fn draft_put(
+    State(state): State<ServerState>,
+    SensitiveOriginAuthenticated(auth): SensitiveOriginAuthenticated,
+    Path(name): Path<String>,
+    body: Result<Json<ComponentDraftRequest>, JsonRejection>,
+) -> Result<(HeaderMap, Json<ComponentGovernanceReceipt>), HttpError> {
+    let Json(request) = component_body(body, "component draft body rejected")?;
+    execute_governance(
+        &state,
+        auth,
+        ComponentGovernanceMutation::SaveDraft {
+            component_name: name,
+            description: request.description,
+        },
+    )
+    .await
+}
+
 /// `POST /api/components/{name}/call`; authorized, policy-governed component data read.
 pub async fn call_post(
     State(state): State<ServerState>,
@@ -200,6 +316,31 @@ fn no_store() -> HeaderMap {
     headers
 }
 
+fn component_body<T>(
+    body: Result<Json<T>, JsonRejection>,
+    message: &'static str,
+) -> Result<Json<T>, HttpError> {
+    body.map_err(|error| {
+        tracing::debug!(error = %error, "{message}");
+        AppError::MalformedPayload { field: "body" }.into()
+    })
+}
+
+async fn execute_governance(
+    state: &ServerState,
+    auth: openbot_contracts::auth::AuthContext,
+    mutation: ComponentGovernanceMutation,
+) -> Result<(HeaderMap, Json<ComponentGovernanceReceipt>), HttpError> {
+    match state
+        .application()
+        .execute(auth, AppCommand::UpdateComponentGovernance(mutation))
+        .await?
+    {
+        AppReply::ComponentGovernanceUpdated(receipt) => Ok((no_store(), Json(receipt))),
+        _ => Err(application_contract_error()),
+    }
+}
+
 fn application_contract_error() -> HttpError {
     tracing::error!("component command received mismatched reply");
     AppError::DependencyUnavailable {
@@ -233,12 +374,12 @@ mod tests {
         PendingComponentHumanDecisions, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
-    use openbot_domain::identity::session::TrustedOrigins;
+    use openbot_domain::identity::session::{SessionState, TrustedOrigins, evaluate_session};
     use openbot_infra::auth::config::default_session_lifetime;
     use time::OffsetDateTime;
     use tower::ServiceExt as _;
 
-    use crate::auth::{FixedAuthResolver, SensitiveWriteSecurity};
+    use crate::auth::{FixedAuthResolver, ResolvedAuth, SensitiveWriteSecurity};
     use crate::http::ServerBuilder;
 
     struct EmptyChannels;
@@ -259,6 +400,7 @@ mod tests {
     struct FakeComponents {
         syncs: Arc<Mutex<Vec<Vec<CompiledComponentManifestEntry>>>>,
         runtime: Arc<Mutex<Vec<String>>>,
+        mutations: Arc<Mutex<Vec<ComponentGovernanceMutation>>>,
     }
 
     #[async_trait]
@@ -294,6 +436,52 @@ mod tests {
             Ok(ComponentCatalogueAdded {
                 added: entries.iter().map(|entry| entry.name.clone()).collect(),
             })
+        }
+
+        async fn update_component_governance(
+            &self,
+            _auth: &AuthContext,
+            mutation: &ComponentGovernanceMutation,
+        ) -> Result<ComponentRecord, ComponentAdministrationError> {
+            self.mutations.lock().unwrap().push(mutation.clone());
+            let mut record = ComponentRecord {
+                name: mutation.component_name().to_owned(),
+                title: "Quotation".to_owned(),
+                kind: CompiledComponentKind::Card,
+                draft_description: "quote".to_owned(),
+                published_description: Some("quote".to_owned()),
+                published: true,
+                published_at: Some(OffsetDateTime::UNIX_EPOCH),
+                updated_by: Some("actor".to_owned()),
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+                has_unpublished_changes: false,
+                withheld_from: Vec::new(),
+                functions: Vec::new(),
+            };
+            match mutation {
+                ComponentGovernanceMutation::SetAgentGrant {
+                    agent_id, granted, ..
+                } => {
+                    if !granted {
+                        record.withheld_from.push(agent_id.as_str().to_owned());
+                    }
+                }
+                ComponentGovernanceMutation::SetFunctionGrant {
+                    function, granted, ..
+                } => {
+                    if *granted {
+                        record.functions.push(function.clone());
+                    }
+                }
+                ComponentGovernanceMutation::SetPublication { published, .. } => {
+                    record.published = *published;
+                }
+                ComponentGovernanceMutation::SaveDraft { description, .. } => {
+                    record.draft_description = description.clone();
+                    record.has_unpublished_changes = true;
+                }
+            }
+            Ok(record)
         }
 
         async fn list_components_for_agent(
@@ -414,6 +602,64 @@ mod tests {
         )
     }
 
+    fn admin_app(components: FakeComponents) -> axum::Router {
+        let application: Arc<dyn ApplicationService> = Arc::new(
+            OpenBotApplication::new(EmptyChannels)
+                .with_component_administration(Arc::new(components)),
+        );
+        crate::router(
+            ServerBuilder::new(
+                application,
+                Arc::new(crate::auth::SingleUserAuthResolver::new(
+                    DeploymentId::new("dep"),
+                    TenantId::new("tenant"),
+                    ActorId::new(crate::SINGLE_USER_ACTOR_ID),
+                    default_session_lifetime(),
+                )),
+            )
+            .with_sensitive_write_security(SensitiveWriteSecurity::new(
+                default_session_lifetime(),
+                TrustedOrigins::from_configured(["https://app.example.test"]).unwrap(),
+            ))
+            .build(),
+        )
+    }
+
+    fn member_app(components: FakeComponents) -> axum::Router {
+        let generation = AuthGeneration::new(1);
+        let context = AuthContext::for_test(
+            DeploymentId::new("dep"),
+            TenantId::new("tenant"),
+            ActorId::new("member"),
+            [Role::User],
+            generation,
+            true,
+        );
+        let now = OffsetDateTime::now_utc();
+        let live = evaluate_session(
+            default_session_lifetime(),
+            SessionState::rehydrate(now, now, generation),
+            generation,
+            now,
+        )
+        .unwrap();
+        let resolver = FixedAuthResolver::granting_resolved(ResolvedAuth::from_live_session(
+            context, live, None,
+        ));
+        let application: Arc<dyn ApplicationService> = Arc::new(
+            OpenBotApplication::new(EmptyChannels)
+                .with_component_administration(Arc::new(components)),
+        );
+        crate::router(
+            ServerBuilder::new(application, Arc::new(resolver))
+                .with_sensitive_write_security(SensitiveWriteSecurity::new(
+                    default_session_lifetime(),
+                    TrustedOrigins::from_configured(["https://app.example.test"]).unwrap(),
+                ))
+                .build(),
+        )
+    }
+
     async fn send(
         router: axum::Router,
         method: Method,
@@ -471,6 +717,88 @@ mod tests {
         assert_eq!(accepted.status(), StatusCode::OK);
         assert_eq!(accepted.headers()[CACHE_CONTROL], "no-store");
         assert_eq!(components.syncs.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn six_governance_routes_require_fresh_admin_origin_and_return_authoritative_rows() {
+        let components = FakeComponents::default();
+        let no_origin = send(
+            admin_app(components.clone()),
+            Method::PUT,
+            "/api/components/showQuote/draft",
+            None,
+            Body::from("{"),
+        )
+        .await;
+        assert_eq!(no_origin.status(), StatusCode::FORBIDDEN);
+        assert!(components.mutations.lock().unwrap().is_empty());
+
+        let member = send(
+            member_app(components.clone()),
+            Method::PUT,
+            "/api/components/showQuote/draft",
+            Some("https://app.example.test"),
+            Body::from(r#"{"description":"member edit"}"#),
+        )
+        .await;
+        assert_eq!(member.status(), StatusCode::FORBIDDEN);
+        assert!(components.mutations.lock().unwrap().is_empty());
+
+        let requests = [
+            (
+                Method::POST,
+                "/api/components/showQuote/functions",
+                serde_json::json!({"function":BOT_ACTIVITY_FUNCTION_NAME}),
+            ),
+            (
+                Method::DELETE,
+                "/api/components/showQuote/functions/botActivity",
+                serde_json::Value::Null,
+            ),
+            (
+                Method::POST,
+                "/api/components/showQuote/grants",
+                serde_json::json!({"agentId":"agent-one"}),
+            ),
+            (
+                Method::DELETE,
+                "/api/components/showQuote/grants/agent-one",
+                serde_json::Value::Null,
+            ),
+            (
+                Method::POST,
+                "/api/components/showQuote/publication",
+                serde_json::json!({"published":false}),
+            ),
+            (
+                Method::PUT,
+                "/api/components/showQuote/draft",
+                serde_json::json!({"description":"edited quote"}),
+            ),
+        ];
+        for (method, path, body) in requests {
+            let body = if body.is_null() {
+                Body::empty()
+            } else {
+                Body::from(serde_json::to_vec(&body).unwrap())
+            };
+            let response = send(
+                admin_app(components.clone()),
+                method,
+                path,
+                Some("https://app.example.test"),
+                body,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+            let receipt = serde_json::from_slice::<ComponentGovernanceReceipt>(
+                &to_bytes(response.into_body(), 128 * 1024).await.unwrap(),
+            )
+            .unwrap();
+            assert_eq!(receipt.component.name, SHOW_QUOTE_COMPONENT_NAME);
+        }
+        assert_eq!(components.mutations.lock().unwrap().len(), 6);
     }
 
     #[tokio::test]

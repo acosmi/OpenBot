@@ -36,8 +36,9 @@ use crate::auth::Role;
 use crate::components::{
     ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
     ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
-    ComponentHumanDecisionAnswer, ComponentHumanDecisionRequest, ComponentHumanDecisionResolved,
-    ComponentRecords, GrantedCompiledComponents, PendingComponentHumanDecisions,
+    ComponentGovernanceMutation, ComponentGovernanceReceipt, ComponentHumanDecisionAnswer,
+    ComponentHumanDecisionRequest, ComponentHumanDecisionResolved, ComponentRecords,
+    GrantedCompiledComponents, PendingComponentHumanDecisions,
 };
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::mcp::{
@@ -146,6 +147,9 @@ pub enum AppCommand {
 
     /// Add build-owned compiled-component catalogue entries without changing existing governance.
     SyncComponentCatalogue(ComponentCatalogueRequest),
+
+    /// Apply one fresh-admin compiled-component governance mutation.
+    UpdateComponentGovernance(ComponentGovernanceMutation),
 
     /// List only the published compiled components one current-actor-usable Agent actually holds.
     ListComponentsForAgent {
@@ -440,6 +444,8 @@ pub enum AppReply {
     Components(ComponentRecords),
     /// [`AppCommand::SyncComponentCatalogue`] response.
     ComponentCatalogueAdded(ComponentCatalogueAdded),
+    /// [`AppCommand::UpdateComponentGovernance`] response.
+    ComponentGovernanceUpdated(ComponentGovernanceReceipt),
     /// [`AppCommand::ListComponentsForAgent`] response.
     GrantedComponents(GrantedCompiledComponents),
     /// [`AppCommand::DecideComponent`] response.

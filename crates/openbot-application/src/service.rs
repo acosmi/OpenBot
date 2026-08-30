@@ -108,6 +108,7 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::GetVisibleAgent { .. } => "get_visible_agent",
         AppCommand::ListComponents => "list_components",
         AppCommand::SyncComponentCatalogue(_) => "sync_component_catalogue",
+        AppCommand::UpdateComponentGovernance(_) => "update_component_governance",
         AppCommand::ListComponentsForAgent { .. } => "list_components_for_agent",
         AppCommand::DecideComponent { .. } => "decide_component",
         AppCommand::ListComponentDataFunctions => "list_component_data_functions",

@@ -413,6 +413,67 @@ entries:
   - id: T-TEST-0179
     disposition: revalidate
     notes: "Batch66 runs all three no-remembered outcomes and proves zero initial status lookup in release browser."
+  # Added mechanically because Batch67 closes compiled-component administration and Playground.
+  - id: T-API-0043
+    disposition: revalidate
+    notes: "Batch67 runs fresh-admin function grant framing, atomic PG audit and Desktop parity."
+  - id: T-API-0044
+    disposition: revalidate
+    notes: "Batch67 runs exact function revoke framing and durable removal."
+  - id: T-API-0045
+    disposition: revalidate
+    notes: "Batch67 runs Agent grant restore with authoritative receipt."
+  - id: T-API-0046
+    disposition: revalidate
+    notes: "Batch67 runs per-Agent withholding, duplicate-time and audit rollback evidence."
+  - id: T-API-0047
+    disposition: revalidate
+    notes: "Batch67 runs compiled publication/unpublication and sandboxed split refusal."
+  - id: T-API-0048
+    disposition: revalidate
+    notes: "Batch67 runs bounded draft save without pre-publication model visibility."
+  - id: T-ROUTE-0015
+    disposition: revalidate
+    notes: "Batch67 runs the complete Admin Components index and secondary-nav journey."
+  - id: T-ROUTE-0016
+    disposition: revalidate
+    notes: "Batch67 runs detail mutations, unknown-name and sandboxed atomic-boundary journeys."
+  - id: T-ROUTE-0021
+    disposition: revalidate
+    notes: "Batch67 reruns Playground preview/save/publish after CSP and keyed-row fixes."
+  - id: T-TEST-0437
+    disposition: revalidate
+    notes: "Batch67 proves granting back removes one withholding exception."
+  - id: T-TEST-0438
+    disposition: revalidate
+    notes: "Batch67 proves duplicate withholding leaves created_at unchanged."
+  - id: T-TEST-0439
+    disposition: revalidate
+    notes: "Batch67 proves missing-component withholding returns NotVisible with no row."
+  - id: T-TEST-0443
+    disposition: revalidate
+    notes: "Batch67 proves publish promotes only the current draft."
+  - id: T-TEST-0444
+    disposition: revalidate
+    notes: "Batch67 proves unpublish preserves nonempty withholding and function grants."
+  - id: T-TEST-0445
+    disposition: revalidate
+    notes: "Batch67 proves equal draft/published descriptions clear the change marker."
+  - id: T-TEST-0446
+    disposition: revalidate
+    notes: "Batch67 reruns exact additive first catalogue synchronization."
+  - id: T-TEST-0447
+    disposition: revalidate
+    notes: "Batch67 reruns repeated catalogue synchronization as a no-op."
+  - id: T-TEST-0448
+    disposition: revalidate
+    notes: "Batch67 reruns catalogue synchronization without overwriting admin governance."
+  - id: T-TEST-0454
+    disposition: revalidate
+    notes: "Batch67 proves duplicate function grant leaves created_at unchanged."
+  - id: T-TEST-0455
+    disposition: revalidate
+    notes: "Batch67 proves exact function revoke removes the grant and audits it."
   - id: T-CMP-0015
     disposition: split
     scope: web

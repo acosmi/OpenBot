@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use async_trait::async_trait;
-use openbot_contracts::auth::AuthContext;
+use openbot_contracts::auth::{AuthContext, Role};
 #[cfg(test)]
 use openbot_contracts::components::ComponentDecisionRefusal;
 use openbot_contracts::components::{
@@ -12,9 +12,10 @@ use openbot_contracts::components::{
     ComponentApprovalAnswer, ComponentCatalogueAdded, ComponentCatalogueRequest,
     ComponentChoiceAnswer, ComponentDataFunctions, ComponentDecision, ComponentDecisionRequest,
     ComponentFunctionCall, ComponentFunctionCallRequest, ComponentFunctionData,
-    ComponentHumanDecisionAnswer, ComponentHumanDecisionRequest, ComponentHumanDecisionResolved,
-    ComponentRecords, GrantedCompiledComponents, PendingComponentHumanDecision,
-    PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME,
+    ComponentGovernanceMutation, ComponentGovernanceReceipt, ComponentHumanDecisionAnswer,
+    ComponentHumanDecisionRequest, ComponentHumanDecisionResolved, ComponentRecord,
+    ComponentRecords, GrantedCompiledComponents, MAX_COMPONENT_DESCRIPTION_BYTES,
+    PendingComponentHumanDecision, PendingComponentHumanDecisions, RECENT_REFUSALS_FUNCTION_NAME,
     SHOW_ACTIVITY_REPORT_COMPONENT_NAME, compiled_component_manifest,
     component_data_function_manifest, validate_component_human_decision_arguments,
 };
@@ -172,6 +173,15 @@ pub trait ComponentAdministration: Send + Sync {
         entries: &[CompiledComponentManifestEntry],
     ) -> Result<ComponentCatalogueAdded, ComponentAdministrationError>;
 
+    /// Atomically apply one administrator-owned governance change and its audit record.
+    async fn update_component_governance(
+        &self,
+        _auth: &AuthContext,
+        _mutation: &ComponentGovernanceMutation,
+    ) -> Result<ComponentRecord, ComponentAdministrationError> {
+        Err(ComponentAdministrationError::Unavailable)
+    }
+
     /// List the current build's published, non-withheld renderer grants for one runnable Agent.
     async fn list_components_for_agent(
         &self,
@@ -283,6 +293,151 @@ pub async fn sync_component_catalogue(
     port.sync_catalogue(auth, &request.components)
         .await
         .map_err(ComponentAdministrationError::into_app_error)
+}
+
+/// Validate and apply one fresh-admin component-governance mutation.
+pub async fn update_component_governance(
+    port: &dyn ComponentAdministration,
+    auth: &AuthContext,
+    mutation: ComponentGovernanceMutation,
+) -> Result<ComponentGovernanceReceipt, AppError> {
+    if !auth.has_role(Role::Admin) {
+        return Err(AppError::ForbiddenRole {
+            required: Role::Admin,
+        });
+    }
+    let mutation = normalize_governance_mutation(mutation)
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    let component = port
+        .update_component_governance(auth, &mutation)
+        .await
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    validate_governance_receipt(&mutation, &component)
+        .map_err(ComponentAdministrationError::into_app_error)?;
+    Ok(ComponentGovernanceReceipt { component })
+}
+
+fn normalize_governance_mutation(
+    mutation: ComponentGovernanceMutation,
+) -> Result<ComponentGovernanceMutation, ComponentAdministrationError> {
+    validate_component_name(mutation.component_name())?;
+    match mutation {
+        ComponentGovernanceMutation::SetAgentGrant {
+            component_name,
+            agent_id,
+            granted,
+        } => {
+            validate_runtime_identifier(agent_id.as_str(), "agent_id")?;
+            Ok(ComponentGovernanceMutation::SetAgentGrant {
+                component_name,
+                agent_id,
+                granted,
+            })
+        }
+        ComponentGovernanceMutation::SetFunctionGrant {
+            component_name,
+            function,
+            granted,
+        } => {
+            validate_component_name(&function)?;
+            if !component_data_function_manifest()
+                .iter()
+                .any(|entry| entry.name == function)
+            {
+                return Err(ComponentAdministrationError::InvalidInput { field: "function" });
+            }
+            Ok(ComponentGovernanceMutation::SetFunctionGrant {
+                component_name,
+                function,
+                granted,
+            })
+        }
+        ComponentGovernanceMutation::SetPublication {
+            component_name,
+            published,
+        } => Ok(ComponentGovernanceMutation::SetPublication {
+            component_name,
+            published,
+        }),
+        ComponentGovernanceMutation::SaveDraft {
+            component_name,
+            description,
+        } => {
+            let description = trim_ecmascript(&description);
+            if description.is_empty()
+                || description.len() > MAX_COMPONENT_DESCRIPTION_BYTES
+                || description.as_bytes().contains(&0)
+            {
+                return Err(ComponentAdministrationError::InvalidInput {
+                    field: "description",
+                });
+            }
+            Ok(ComponentGovernanceMutation::SaveDraft {
+                component_name,
+                description: description.to_owned(),
+            })
+        }
+    }
+}
+
+fn validate_governance_receipt(
+    mutation: &ComponentGovernanceMutation,
+    component: &ComponentRecord,
+) -> Result<(), ComponentAdministrationError> {
+    if component.name != mutation.component_name()
+        || component.draft_description.is_empty()
+        || component.draft_description.len() > MAX_COMPONENT_DESCRIPTION_BYTES
+        || component.draft_description.as_bytes().contains(&0)
+        || component.published
+            && (component.published_description.is_none() || component.published_at.is_none())
+        || component.has_unpublished_changes
+            != (component.draft_description
+                != component.published_description.as_deref().unwrap_or(""))
+    {
+        return Err(ComponentAdministrationError::Corrupt {
+            field: "component_governance_receipt",
+        });
+    }
+    match mutation {
+        ComponentGovernanceMutation::SetAgentGrant {
+            agent_id, granted, ..
+        } if component
+            .withheld_from
+            .iter()
+            .any(|value| value == agent_id.as_str())
+            == *granted =>
+        {
+            Err(ComponentAdministrationError::Corrupt {
+                field: "component_agent_grant",
+            })
+        }
+        ComponentGovernanceMutation::SetFunctionGrant {
+            function, granted, ..
+        } if component.functions.contains(function) != *granted => {
+            Err(ComponentAdministrationError::Corrupt {
+                field: "component_function_grant",
+            })
+        }
+        ComponentGovernanceMutation::SetPublication { published, .. }
+            if component.published != *published
+                || *published
+                    && (component.published_description.as_deref()
+                        != Some(component.draft_description.as_str())
+                        || component.has_unpublished_changes) =>
+        {
+            Err(ComponentAdministrationError::Corrupt {
+                field: "component_publication",
+            })
+        }
+        ComponentGovernanceMutation::SaveDraft { description, .. }
+            if component.draft_description != *description =>
+        {
+            Err(ComponentAdministrationError::Corrupt {
+                field: "component_draft",
+            })
+        }
+        _ => Ok(()),
+    }
 }
 
 /// List the current build's actual runtime grants for one current-actor-runnable Agent.
@@ -852,7 +1007,7 @@ fn validate_granted_components(
         if !renderers.contains(component.name.as_str())
             || previous.is_some_and(|previous| previous >= component.name.as_str())
             || component.description.is_empty()
-            || component.description.len() > 64 * 1024
+            || component.description.len() > MAX_COMPONENT_DESCRIPTION_BYTES
             || component.description.as_bytes().contains(&0)
         {
             return Err(ComponentAdministrationError::Corrupt {
@@ -941,6 +1096,7 @@ mod tests {
     #[derive(Default)]
     struct FakeComponents {
         syncs: Mutex<Vec<Vec<CompiledComponentManifestEntry>>>,
+        mutations: Mutex<Vec<ComponentGovernanceMutation>>,
         runtime_lists: Mutex<Vec<(ComponentRuntimeScope, Vec<String>)>>,
         runtime_decisions: Mutex<Vec<RuntimeDecisionCall>>,
         function_calls: Mutex<
@@ -988,6 +1144,45 @@ mod tests {
             Ok(ComponentCatalogueAdded {
                 added: entries.iter().map(|entry| entry.name.clone()).collect(),
             })
+        }
+
+        async fn update_component_governance(
+            &self,
+            _auth: &AuthContext,
+            mutation: &ComponentGovernanceMutation,
+        ) -> Result<ComponentRecord, ComponentAdministrationError> {
+            self.mutations.lock().unwrap().push(mutation.clone());
+            let mut record = ComponentRecord {
+                name: mutation.component_name().to_owned(),
+                title: "Quotation".to_owned(),
+                kind: CompiledComponentKind::Card,
+                draft_description: "quote".to_owned(),
+                published_description: Some("quote".to_owned()),
+                published: true,
+                published_at: Some(OffsetDateTime::UNIX_EPOCH),
+                updated_by: Some("actor".to_owned()),
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+                has_unpublished_changes: false,
+                withheld_from: Vec::new(),
+                functions: Vec::new(),
+            };
+            match mutation {
+                ComponentGovernanceMutation::SetAgentGrant {
+                    agent_id, granted, ..
+                } if !granted => record.withheld_from.push(agent_id.as_str().to_owned()),
+                ComponentGovernanceMutation::SetFunctionGrant {
+                    function, granted, ..
+                } if *granted => record.functions.push(function.clone()),
+                ComponentGovernanceMutation::SetPublication { published, .. } => {
+                    record.published = *published;
+                }
+                ComponentGovernanceMutation::SaveDraft { description, .. } => {
+                    record.draft_description = description.clone();
+                    record.has_unpublished_changes = true;
+                }
+                _ => {}
+            }
+            Ok(record)
         }
 
         async fn list_components_for_agent(
@@ -1142,6 +1337,17 @@ mod tests {
         )
     }
 
+    fn admin_auth() -> AuthContext {
+        AuthContext::for_test(
+            DeploymentId::new("dep"),
+            TenantId::new("tenant"),
+            ActorId::new("admin"),
+            [Role::User, Role::Admin],
+            AuthGeneration::new(1),
+            false,
+        )
+    }
+
     #[tokio::test]
     async fn any_authenticated_role_can_list_and_only_exact_manifest_reaches_the_port() {
         let port = FakeComponents::default();
@@ -1172,6 +1378,42 @@ mod tests {
             expected
         );
         assert_eq!(port.syncs.lock().unwrap().as_slice(), [manifest]);
+    }
+
+    #[tokio::test]
+    async fn governance_requires_admin_normalizes_inputs_and_validates_the_authoritative_receipt() {
+        let port = FakeComponents::default();
+        let mutation = ComponentGovernanceMutation::SaveDraft {
+            component_name: SHOW_QUOTE_COMPONENT_NAME.to_owned(),
+            description: "  edited quote\u{00a0}".to_owned(),
+        };
+        assert_eq!(
+            update_component_governance(&port, &auth(), mutation.clone()).await,
+            Err(AppError::ForbiddenRole {
+                required: Role::Admin
+            })
+        );
+        assert!(port.mutations.lock().unwrap().is_empty());
+
+        let receipt = update_component_governance(&port, &admin_auth(), mutation)
+            .await
+            .unwrap();
+        assert_eq!(receipt.component.draft_description, "edited quote");
+        assert_eq!(port.mutations.lock().unwrap().len(), 1);
+        assert_eq!(
+            update_component_governance(
+                &port,
+                &admin_auth(),
+                ComponentGovernanceMutation::SetFunctionGrant {
+                    component_name: SHOW_QUOTE_COMPONENT_NAME.to_owned(),
+                    function: "notShipped".to_owned(),
+                    granted: true,
+                },
+            )
+            .await,
+            Err(AppError::MalformedPayload { field: "function" })
+        );
+        assert_eq!(port.mutations.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

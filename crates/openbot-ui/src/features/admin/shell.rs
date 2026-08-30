@@ -15,6 +15,7 @@ use crate::primitives::{IconSize, IconView};
 const ADMIN_HOME_PATH: &str = "/admin";
 const ADMIN_AUDIT_PATH: &str = "/admin/audit";
 const ADMIN_BOUNDARIES_PATH: &str = "/admin/boundaries";
+const ADMIN_COMPONENTS_PATH: &str = "/admin/components";
 const ADMIN_IDENTITY_PROVIDERS_PATH: &str = "/admin/identity-providers";
 const ADMIN_PEOPLE_PATH: &str = "/admin/people";
 const ADMIN_PLAYGROUND_PATH: &str = "/admin/playground";
@@ -72,6 +73,7 @@ fn admin_shell_view(
     let home_location = location.clone();
     let audit_location = location.clone();
     let boundaries_location = location.clone();
+    let components_location = location.clone();
     let identity_providers_location = location.clone();
     let people_location = location.clone();
     let playground_location = location;
@@ -102,6 +104,16 @@ fn admin_shell_view(
                             })
                             icon=Icon::ShieldCheck
                             label=move || t_string!(i18n, boundaries.title).to_owned()
+                        />
+                        <AdminNavItem
+                            href=ADMIN_COMPONENTS_PATH
+                            current=Signal::derive(move || {
+                                let path = components_location.pathname.get();
+                                path == ADMIN_COMPONENTS_PATH
+                                    || path.starts_with("/admin/components/")
+                            })
+                            icon=Icon::LayoutGrid
+                            label=move || t_string!(i18n, admin.nav_components).to_owned()
                         />
                         <AdminNavItem
                             href=ADMIN_IDENTITY_PROVIDERS_PATH
@@ -215,6 +227,7 @@ mod tests {
             [
                 ADMIN_HOME_PATH,
                 ADMIN_BOUNDARIES_PATH,
+                ADMIN_COMPONENTS_PATH,
                 ADMIN_IDENTITY_PROVIDERS_PATH,
                 ADMIN_AUDIT_PATH,
                 ADMIN_PEOPLE_PATH,
@@ -223,6 +236,7 @@ mod tests {
             [
                 "/admin",
                 "/admin/boundaries",
+                "/admin/components",
                 "/admin/identity-providers",
                 "/admin/audit",
                 "/admin/people",
@@ -234,6 +248,7 @@ mod tests {
         assert!(is_exact("/admin/audit", ADMIN_AUDIT_PATH));
         assert!(!is_exact("/admin/audit-old", ADMIN_AUDIT_PATH));
         assert!(is_exact("/admin/boundaries", ADMIN_BOUNDARIES_PATH));
+        assert!(is_exact("/admin/components", ADMIN_COMPONENTS_PATH));
         assert!(is_exact(
             "/admin/identity-providers",
             ADMIN_IDENTITY_PROVIDERS_PATH

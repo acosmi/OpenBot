@@ -21,7 +21,7 @@ const HTML_ROOT_MARKER: &str = "<html lang=\"en\">";
 const UI_COOKIE_NAME: &str = "openbot-ui";
 const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
                    connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; \
-                   object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; \
+                   object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'none'; \
                    worker-src 'none'; manifest-src 'none'; media-src 'none'";
 const PERMISSIONS_POLICY: &str = "camera=(), microphone=(), geolocation=(), display-capture=(), \
                                   usb=(), hid=(), serial=(), bluetooth=(), payment=(), \

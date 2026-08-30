@@ -476,6 +476,7 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::GetVisibleAgent { .. }
         | AppCommand::ListComponents
         | AppCommand::SyncComponentCatalogue(_)
+        | AppCommand::UpdateComponentGovernance(_)
         | AppCommand::ListComponentsForAgent { .. }
         | AppCommand::DecideComponent { .. }
         | AppCommand::ListComponentDataFunctions

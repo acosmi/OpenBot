@@ -221,6 +221,7 @@ impl AgentToolGateway {
                 | AppReply::Agent(_)
                 | AppReply::Components(_)
                 | AppReply::ComponentCatalogueAdded(_)
+                | AppReply::ComponentGovernanceUpdated(_)
                 | AppReply::GrantedComponents(_)
                 | AppReply::ComponentDecision(_)
                 | AppReply::ComponentDataFunctions(_)

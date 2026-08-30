@@ -18,7 +18,10 @@ use crate::features::settings::{
     ConnectedAccountsPage, SettingsPage, SettingsShell,
 };
 use crate::i18n::{I18nContextProvider, t, use_i18n};
-use crate::shell::{AppLayout, AuthenticatedBoundary, BotChatPage, HomePage, RootLayout};
+use crate::shell::{
+    AdminComponentDetailPage, AdminComponentsPage, AppLayout, AuthenticatedBoundary, BotChatPage,
+    HomePage, RootLayout,
+};
 
 /// Single CSR application root used by both supported hosts.
 #[component]
@@ -54,6 +57,8 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/admin") view=AdminHomeRoute />
                 <Route path=path!("/admin/audit") view=AdminAuditRoute />
                 <Route path=path!("/admin/boundaries") view=AdminBoundariesRoute />
+                <Route path=path!("/admin/components/:name") view=AdminComponentDetailRoute />
+                <Route path=path!("/admin/components") view=AdminComponentsRoute />
                 <Route path=path!("/admin/identity-providers") view=AdminIdentityProvidersRoute />
                 <Route path=path!("/admin/people") view=AdminPeopleRoute />
                 <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
@@ -79,6 +84,8 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/admin") view=AdminHomeRoute />
                 <Route path=path!("/admin/audit") view=AdminAuditRoute />
                 <Route path=path!("/admin/boundaries") view=AdminBoundariesRoute />
+                <Route path=path!("/admin/components/:name") view=AdminComponentDetailRoute />
+                <Route path=path!("/admin/components") view=AdminComponentsRoute />
                 <Route path=path!("/admin/identity-providers") view=AdminIdentityProvidersRoute />
                 <Route path=path!("/admin/people") view=AdminPeopleRoute />
                 <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
@@ -108,6 +115,16 @@ fn AdminAuditRoute() -> impl IntoView {
 #[component]
 fn AdminBoundariesRoute() -> impl IntoView {
     view! { <AdminShell><AdminBoundariesPage /></AdminShell> }
+}
+
+#[component]
+fn AdminComponentsRoute() -> impl IntoView {
+    view! { <AdminShell><AdminComponentsPage /></AdminShell> }
+}
+
+#[component]
+fn AdminComponentDetailRoute() -> impl IntoView {
+    view! { <AdminShell><AdminComponentDetailPage /></AdminShell> }
 }
 
 #[component]
