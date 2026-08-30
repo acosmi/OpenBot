@@ -43,6 +43,7 @@
     "sidebar_mobile_description": "Channels and account controls",
     "nav_channels": "Channels",
     "nav_agents": "Coworkers",
+    "nav_bot": "Direct chat",
     "nav_skills": "Skills",
     "nav_computer": "Computer",
     "nav_gallery": "Gallery",
@@ -107,6 +108,18 @@
     "agents_load_error": "Could not load coworkers.",
     "mention_results": "Coworkers matching this mention",
     "mention_empty": "No coworkers match this mention."
+  },
+  "bot_chat": {
+    "title": "Browser Bot",
+    "intro": "Ask it to open a page and watch it work.",
+    "agent_label": "Bot",
+    "agent_placeholder": "Choose a Bot",
+    "agent_load_error": "Could not load Bots.",
+    "no_agents": "No Bot is available for direct chat.",
+    "new_chat": "New chat",
+    "new_chat_error": "Could not start a new chat. The current conversation is unchanged.",
+    "history_unavailable": "Earlier messages could not be verified. This conversation is being kept until the server can answer.",
+    "thread_error": "Could not prepare a conversation thread."
   },
   "channels": {
     "title": "Channels",

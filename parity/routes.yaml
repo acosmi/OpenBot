@@ -127,11 +127,12 @@ entries:
   - id: bot-chat
     upstream: app/src/routes/_authed/_app/bot.tsx
     label: parity
-    target: "openbot_ui::shell::routes::bot -> /bot?agent=<id>"
+    target: "openbot_ui::shell::bot::BotChatPage -> /bot?agent=<id>"
     owner: openbot-ui
     test_id: T-ROUTE-0008
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch66以Server roster首行作为无query部署缺省，显式?agent=先join roster、再走typed get支持可见hidden Agent，全路径零risk-analyst硬编码；RecipientField选择真实改URL。每Agent localStorage key只接受有界UUID，remembered known=true保持、false才fresh、检查失败保持并显式history unavailable；无remembered和New chat都只采用Server mint成功值，失败不覆盖当前会话。fresh thread首run前不请求snapshot/SSE，BeginRun成功即关闭empty例外并复用唯一ConversationSurface的snapshot/SSE/Stop/closed terminal状态机，anchor逐字DirectBot。release浏览器初始mint/status/conversation=1/0/0，首发后runs/threads/persisted/messages=1/1/1/2；hard reload mint不增、status=1、同thread两消息各1；New chat换storage且旧消息DOM0/旧thread仍persist，第二次发送后2/2/2；切Risk Analyst得到第二key+mint3，切回Research Partner status2且恢复第二会话。中英、1024x640/600x900、main/nav/h1各1、overflow/duplicate/nested/alert/runtime error均0。PG17.11 SCRAM thread begin/conversation/directory=3+1+1/0/0；UI164、fixture8、Server/UI Clippy、WASM/fmt/bundle闸门绿。formal golden T-UI-0127保持todo。"
     evidence: "grep -nE 'createFileRoute|createRootRoute' app/src/routes/_authed/_app/bot.tsx 得 createFileRoute(\"/_authed/_app/bot\")；同文件 validateSearch 取 search.agent、useActiveBot / useBotThread(agentId) / useStoppedTurn(agentId)，标题 \"Browser Bot\""
     notes: "模板 Chat。journey：直接与某个 Bot 对话 —— 从 ?agent= 选定 Bot、恢复历史线程、startNew 开新会话、停止中的回合可恢复（v3 §3.1 条 5）。权限：已登录即可见；上游在 search 缺省时回落到固定 agentId \"risk-analyst\"，重写时该缺省必须取自部署配置而非硬编码字面量。"
   - id: channel-detail

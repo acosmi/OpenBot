@@ -388,6 +388,31 @@ entries:
   - id: T-ROUTE-0003
     disposition: revalidate
     notes: "Batch65 reruns the one-viewport authenticated Sidebar/topbar/main shell at 1280x800 and 1024x640."
+  # Added mechanically because Batch66 closes Direct Bot and its seven remembered-thread rules.
+  - id: T-ROUTE-0008
+    disposition: revalidate
+    notes: "Batch66 reruns the URL-owned Agent selector, per-Agent thread recovery, New chat, DirectBot run and responsive browser journey."
+  - id: T-TEST-0173
+    disposition: revalidate
+    notes: "Batch66 runs the same-Agent stable thread-key test."
+  - id: T-TEST-0174
+    disposition: revalidate
+    notes: "Batch66 runs the namespaced non-bare thread-key test."
+  - id: T-TEST-0175
+    disposition: revalidate
+    notes: "Batch66 runs the two-Agent non-collision test and browser storage isolation journey."
+  - id: T-TEST-0176
+    disposition: revalidate
+    notes: "Batch66 runs known=true preservation and hard-reload recovery."
+  - id: T-TEST-0177
+    disposition: revalidate
+    notes: "Batch66 runs known=false fresh replacement against the scope-aware Server status contract."
+  - id: T-TEST-0178
+    disposition: revalidate
+    notes: "Batch66 runs inconclusive-check preservation without discarding remembered history."
+  - id: T-TEST-0179
+    disposition: revalidate
+    notes: "Batch66 runs all three no-remembered outcomes and proves zero initial status lookup in release browser."
   - id: T-CMP-0015
     disposition: split
     scope: web

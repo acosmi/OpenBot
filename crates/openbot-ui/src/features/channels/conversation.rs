@@ -9,13 +9,14 @@ use core::fmt::Write as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use leptos::prelude::*;
+use openbot_contracts::agent::AgentProfile;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::command::AppEvent;
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::command::ThreadRunCancellationState;
 use openbot_contracts::command::{
     ChannelDetail, ThreadConversationSnapshot, ThreadForegroundRunState, ThreadHistoryMessage,
-    ThreadHistoryRole, ThreadRunEvent, ThreadRunEventKind,
+    ThreadHistoryRole, ThreadRunAnchor, ThreadRunEvent, ThreadRunEventKind,
 };
 use openbot_contracts::components::{
     ComponentHumanDecisionAnswer, PendingComponentHumanDecision,
@@ -29,7 +30,7 @@ use sha2::{Digest, Sha256};
 use crate::api::mint_run_id;
 #[cfg(target_arch = "wasm32")]
 use crate::api::{
-    answer_component_human_decision, begin_channel_run, cancel_thread_run,
+    answer_component_human_decision, begin_thread_run, cancel_thread_run,
     list_pending_component_human_decisions, load_thread_conversation, mint_thread_id,
     thread_event_stream_path,
 };
@@ -409,27 +410,72 @@ struct PendingTurn {
     message: String,
 }
 
-/// Data-backed channel transcript, durable Stop and transient in-mount queue surface.
+/// Data-backed channel transcript using the shared native thread conversation surface.
 #[component]
 pub fn ChannelConversation(
     /// Current membership-authorized channel projection from the Server.
     channel: ChannelDetail,
 ) -> impl IntoView {
-    let i18n = use_i18n();
-    let channel_id = StoredValue::new(channel.id.clone());
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = channel_id;
     let selected_agent = channel.agent_ids.first().cloned();
     let agent_seed = selected_agent.as_ref().map_or_else(
         || channel.id.as_str().to_owned(),
         |id| id.as_str().to_owned(),
     );
-    let agent_id = StoredValue::new(selected_agent);
-    let agent_name = channel.name.clone();
+    view! {
+        <ConversationSurface
+            thread=channel.thread_id
+            agent_id=selected_agent
+            agent_name=channel.name
+            agent_seed
+            channel_active=channel.active
+            anchor=ThreadRunAnchor::Channel { channel_id: channel.id }
+            fresh_thread=false
+        />
+    }
+}
+
+/// Direct-Bot transcript/new-turn surface sharing the exact channel runtime state machine.
+#[component]
+pub fn DirectBotConversation(
+    /// Server-minted thread selected by the per-Agent remembered-thread controller.
+    thread: ThreadId,
+    /// Current Server-authorized runnable Agent projection.
+    agent: AgentProfile,
+    /// The Server minted this identity, but no first run has persisted it yet.
+    fresh: bool,
+) -> impl IntoView {
+    view! {
+        <ConversationSurface
+            thread=Some(thread)
+            agent_id=Some(agent.id)
+            agent_name=agent.name
+            agent_seed=agent.avatar_seed
+            channel_active=true
+            anchor=ThreadRunAnchor::DirectBot
+            fresh_thread=fresh
+        />
+    }
+}
+
+#[component]
+fn ConversationSurface(
+    thread: Option<ThreadId>,
+    agent_id: Option<BotId>,
+    agent_name: String,
+    agent_seed: String,
+    channel_active: bool,
+    anchor: ThreadRunAnchor,
+    fresh_thread: bool,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    let run_anchor = StoredValue::new(anchor);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = run_anchor;
+    let agent_id = StoredValue::new(agent_id);
     let streaming_agent_seed = StoredValue::new(agent_seed.clone());
     let streaming_agent_name = StoredValue::new(agent_name.clone());
-    let channel_active = channel.active;
-    let thread_id = RwSignal::new(channel.thread_id);
+    let thread_id = RwSignal::new(thread);
+    let allow_missing_snapshot = RwSignal::new(fresh_thread);
     let state = RwSignal::new(ConversationState::default());
     let loading = RwSignal::new(true);
     let snapshot_error = RwSignal::new(false);
@@ -442,6 +488,7 @@ pub fn ChannelConversation(
         snapshot_error,
         stream_error,
         reload_generation,
+        allow_missing_snapshot,
     );
     let human_decisions = RwSignal::new(Vec::<PendingComponentHumanDecision>::new());
     let human_decision_answers =
@@ -576,16 +623,17 @@ pub fn ChannelConversation(
                     attempt
                 }
             };
-            match begin_channel_run(
+            match begin_thread_run(
                 &attempt.thread_id,
-                &channel_id.get_value(),
                 &attempt.agent_id,
                 &attempt.run_id,
+                run_anchor.get_value(),
                 &attempt.message,
             )
             .await
             {
                 Ok(_) => {
+                    allow_missing_snapshot.set(false);
                     thread_id.set(Some(attempt.thread_id));
                     state.update(|state| {
                         state.active_run_id = Some(attempt.run_id);
@@ -1278,6 +1326,7 @@ fn install_conversation_sync(
     snapshot_error: RwSignal<bool>,
     stream_error: RwSignal<bool>,
     generation: RwSignal<u64>,
+    allow_missing_snapshot: RwSignal<bool>,
 ) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -1295,6 +1344,11 @@ fn install_conversation_sync(
                 loading.set(false);
                 return;
             };
+            if allow_missing_snapshot.get_untracked() {
+                state.set(ConversationState::default());
+                loading.set(false);
+                return;
+            }
             loading.set(true);
             leptos::task::spawn_local_scoped_with_cancellation(async move {
                 let snapshot = load_thread_conversation(&thread).await;
@@ -1338,6 +1392,7 @@ fn install_conversation_sync(
         snapshot_error,
         stream_error,
         generation,
+        allow_missing_snapshot,
     );
 }
 

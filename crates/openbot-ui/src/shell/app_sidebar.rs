@@ -128,6 +128,7 @@ pub fn AppSidebar() -> impl IntoView {
     let new_channel_location = location.clone();
     let roster_location = location.clone();
     let agents_location = location.clone();
+    let bot_location = location.clone();
     let approvals_location = location.clone();
     let memory_location = location.clone();
     let settings_location = location.clone();
@@ -235,6 +236,12 @@ pub fn AppSidebar() -> impl IntoView {
                     icon=Icon::Zap
                     label=move || t_string!(i18n, shell.nav_agents).to_owned()
                     current=Signal::derive(move || agents_location.pathname.get() == "/agents")
+                />
+                <SidebarNavLink
+                    href="/bot".to_owned()
+                    icon=Icon::Bot
+                    label=move || t_string!(i18n, shell.nav_bot).to_owned()
+                    current=Signal::derive(move || bot_location.pathname.get() == "/bot")
                 />
                 <SidebarNavLink
                     href="/approvals".to_owned()

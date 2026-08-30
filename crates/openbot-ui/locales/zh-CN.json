@@ -43,6 +43,7 @@
     "sidebar_mobile_description": "频道与账户控制",
     "nav_channels": "频道",
     "nav_agents": "同事",
+    "nav_bot": "直接对话",
     "nav_skills": "技能",
     "nav_computer": "计算机",
     "nav_gallery": "组件库",
@@ -107,6 +108,18 @@
     "agents_load_error": "无法加载同事列表。",
     "mention_results": "匹配此提及的同事",
     "mention_empty": "没有同事匹配此提及。"
+  },
+  "bot_chat": {
+    "title": "浏览器机器人",
+    "intro": "让它打开页面，并观察它如何完成任务。",
+    "agent_label": "机器人",
+    "agent_placeholder": "选择机器人",
+    "agent_load_error": "无法加载机器人。",
+    "no_agents": "当前没有可直接对话的机器人。",
+    "new_chat": "新对话",
+    "new_chat_error": "无法开始新对话，当前会话保持不变。",
+    "history_unavailable": "无法确认更早的消息是否仍可读取。在服务器给出答案前，将保留当前会话。",
+    "thread_error": "无法准备对话线程。"
   },
   "channels": {
     "title": "频道",

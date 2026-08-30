@@ -18,7 +18,7 @@ use crate::features::settings::{
     ConnectedAccountsPage, SettingsPage, SettingsShell,
 };
 use crate::i18n::{I18nContextProvider, t, use_i18n};
-use crate::shell::{AppLayout, AuthenticatedBoundary, HomePage, RootLayout};
+use crate::shell::{AppLayout, AuthenticatedBoundary, BotChatPage, HomePage, RootLayout};
 
 /// Single CSR application root used by both supported hosts.
 #[component]
@@ -50,6 +50,7 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/") view=HomePage />
                 <Route path=path!("/approvals") view=ApprovalPage />
                 <Route path=path!("/agents") view=AgentsPage />
+                <Route path=path!("/bot") view=BotChatPage />
                 <Route path=path!("/admin") view=AdminHomeRoute />
                 <Route path=path!("/admin/audit") view=AdminAuditRoute />
                 <Route path=path!("/admin/boundaries") view=AdminBoundariesRoute />
@@ -74,6 +75,7 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/") view=HomePage />
                 <Route path=path!("/approvals") view=ApprovalPage />
                 <Route path=path!("/agents") view=AgentsPage />
+                <Route path=path!("/bot") view=BotChatPage />
                 <Route path=path!("/admin") view=AdminHomeRoute />
                 <Route path=path!("/admin/audit") view=AdminAuditRoute />
                 <Route path=path!("/admin/boundaries") view=AdminBoundariesRoute />
