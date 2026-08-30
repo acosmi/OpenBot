@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hmac::{Hmac, Mac};
 use openbot_agent::{
     AgentToolInvoker, AuthorizedAgentToolGateway, BuiltInAgentConfig, BuiltInAgentRuntime,
     ProviderRouter, RemoteAgentToolInvoker, RemoteAguiProvider, RetryingProvider,
@@ -23,7 +22,9 @@ use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_domain::remote_callback::RemoteRunAssertionSigner;
-use openbot_domain::vault::{KeyVersion, WrappingKey};
+use openbot_domain::vault::{
+    ApplicationKeyPurpose, KeyVersion, SecretBytes, WrappingKey, derive_application_key,
+};
 use openbot_infra::agent_audit::PostgresAgentAudit;
 use openbot_infra::agent_callback::{
     PostgresAgentCallbackTokens, PostgresRemoteCallbackAuthenticator,
@@ -94,10 +95,8 @@ use openbot_server::{
     AuthResolver, FnReadinessProbe, PostgresSessionAuthResolver, SINGLE_USER_ACTOR_ID,
     SensitiveWriteSecurity, ServerBuilder, SingleUserAuthResolver, StaticApp, install_recorder,
 };
-use sha2::Sha256;
 use url::Url;
 
-type HmacSha256 = Hmac<Sha256>;
 const PACKAGE_OPENAI_PROTOCOL: OpenAiProtocol = OpenAiProtocol::Responses;
 const CHANNEL_ROUTING_OPENAI_PROTOCOL: OpenAiProtocol = OpenAiProtocol::ChatCompletions;
 type OidcLoginAssembly = (
@@ -214,7 +213,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     let raw_master = openbot_server::config::env::optional(&env, "KEY_ENCRYPTION_KEY")
         .ok_or_else(|| startup_error("key_encryption_key_missing"))?;
-    let audit_key = derive_audit_key(raw_master.as_bytes());
+    let application_master = SecretBytes::new(raw_master.as_bytes().to_vec());
+    let audit_key =
+        derive_application_key(&application_master, ApplicationKeyPurpose::AuditCheckpoint)?;
+    let mcp_oauth_state_key =
+        derive_application_key(&application_master, ApplicationKeyPurpose::McpOauthState)?;
+    drop(application_master);
     let remote_assertions = Arc::new(RemoteRunAssertionSigner::new(
         raw_master.as_bytes().to_vec(),
     )?);
@@ -257,7 +261,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let agent_administration = Arc::new(PostgresAgentAdministration::new(
         pool.clone(),
         model_credential_vault.clone(),
-        audit_key.to_vec(),
+        audit_key.expose().to_vec(),
         remote_agent_probe,
         managed_provider_for_slot(&server).is_some(),
     )?);
@@ -269,7 +273,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             &config,
             &pool,
             &tenant,
-            audit_key.as_slice(),
+            audit_key.expose(),
             key_encryption.into_wrapping_key(),
             server.public_transport().cookie_secure(),
         )
@@ -343,10 +347,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let owned_credentials = Arc::new(PostgresOwnedCredentialRetirer::new(
         pool.clone(),
-        audit_key.to_vec(),
+        audit_key.expose().to_vec(),
     )?);
-    let people = PostgresPeopleAdministration::new(pool.clone(), floor, audit_key.to_vec())?
-        .with_owned_credential_retirer(owned_credentials);
+    let people =
+        PostgresPeopleAdministration::new(pool.clone(), floor, audit_key.expose().to_vec())?
+            .with_owned_credential_retirer(owned_credentials);
     let thread_runtime_owner = format!("runtime:{}", mint_thread_id(&deployment)?);
     let run_runtime: Arc<dyn RunRuntime> = Arc::new(PostgresRunRuntime::new(
         pool.clone(),
@@ -373,7 +378,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mcp_catalog = Arc::new(PostgresMcpCatalog::new(
         pool.clone(),
         mcp_client.clone(),
-        audit_key.to_vec(),
+        audit_key.expose().to_vec(),
     )?);
     let drive_oauth = GoogleDriveOAuthClient::new(SafeDialer::new(EgressPolicy::default()))?;
     let drive_transport = GoogleDriveRestTransport::new(SafeDialer::new(EgressPolicy::default()))?;
@@ -382,7 +387,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_user_oauth(
                 SafeDialer::new(EgressPolicy::default()),
                 SchemePolicy::HttpsOnly,
-                audit_key.to_vec(),
+                audit_key.expose().to_vec(),
             )?
             .with_google_drive_oauth(drive_oauth.clone()),
     );
@@ -425,8 +430,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             mcp_catalog.clone(),
             deployment.clone(),
             tenant.clone(),
-            derive_mcp_oauth_state_key(raw_master.as_bytes()).to_vec(),
-            audit_key.to_vec(),
+            mcp_oauth_state_key.expose().to_vec(),
+            audit_key.expose().to_vec(),
             oauth_public_url.map(|url| url.as_str()),
             server.app_url.as_deref(),
             SchemePolicy::HttpsOnly,
@@ -437,7 +442,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pool.clone(),
         deployment.clone(),
         tenant.clone(),
-        audit_key.to_vec(),
+        audit_key.expose().to_vec(),
     )?);
     let tool_control = PostgresBuiltInToolControlPlane::new(
         pool.clone(),
@@ -450,12 +455,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .with_google_drive(drive_transport)
     .with_tool_approvals(tool_approvals.clone())
     .with_mcp_credentials(mcp_credentials);
-    let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.to_vec())?;
+    let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.expose().to_vec())?;
     let callback_tokens = PostgresAgentCallbackTokens::new(
         pool.clone(),
         deployment.clone(),
         tenant.clone(),
-        audit_key.to_vec(),
+        audit_key.expose().to_vec(),
     )?;
     let remote_callback_auth = Arc::new(
         PostgresRemoteCallbackAuthenticator::new(
@@ -464,7 +469,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             tenant.clone(),
             single_user,
             remote_assertions.clone(),
-            audit_key.to_vec(),
+            audit_key.expose().to_vec(),
         )?
         .with_mcp_catalog(mcp_catalog.clone()),
     );
@@ -474,17 +479,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         credential_key_id: tenant_package.package.model.credential_secret_ref.clone(),
         provider: server.package_openai_provider.clone(),
         credential_vault: model_credential_vault.clone(),
-        audit_key: audit_key.to_vec(),
+        audit_key: audit_key.expose().to_vec(),
         stall_timeout: server.agent_budgets.stall_timeout,
     })?;
     let channels = ChannelRepo::new(pool.clone());
     let components = Arc::new(
-        PostgresComponentAdministration::new(pool.clone(), audit_key.to_vec())?
+        PostgresComponentAdministration::new(pool.clone(), audit_key.expose().to_vec())?
             .with_policy(policy_store.clone()),
     );
     let sandboxed_components = Arc::new(PostgresSandboxedComponentAdministration::new(
         pool.clone(),
-        audit_key.to_vec(),
+        audit_key.expose().to_vec(),
     )?);
     let application = OpenBotApplication::new(channels.clone())
         .with_people(people)
@@ -521,8 +526,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let agent_tools: Arc<dyn AgentToolInvoker> = governed_tools.clone();
     let remote_callback_tools: Arc<dyn RemoteAgentToolInvoker> = governed_tools;
     let managed_provider = managed_provider_for_slot(&server);
-    let agent_audit: Arc<dyn AgentAudit> =
-        Arc::new(PostgresAgentAudit::new(pool.clone(), audit_key.to_vec())?);
+    let agent_audit: Arc<dyn AgentAudit> = Arc::new(PostgresAgentAudit::new(
+        pool.clone(),
+        audit_key.expose().to_vec(),
+    )?);
     let (run_consumer, built_in_agent) = build_built_in_agent(BuiltInAgentAssemblyInput {
         pool: pool.clone(),
         deployment: deployment.clone(),
@@ -1054,18 +1061,6 @@ fn configured_origins(
     TrustedOrigins::from_configured(entries).map_err(Into::into)
 }
 
-fn derive_audit_key(master: &[u8]) -> [u8; 32] {
-    let mut hmac = HmacSha256::new_from_slice(master).expect("HMAC 接受任意非空长度");
-    hmac.update(b"openbot:audit-checkpoint:v1");
-    hmac.finalize().into_bytes().into()
-}
-
-fn derive_mcp_oauth_state_key(master: &[u8]) -> [u8; 32] {
-    let mut hmac = HmacSha256::new_from_slice(master).expect("HMAC 接受任意非空长度");
-    hmac.update(b"openbot:mcp-oauth-state:v1");
-    hmac.finalize().into_bytes().into()
-}
-
 fn deployment_id_for_startup(value: Option<&str>, package_tenant_id: &str) -> DeploymentId {
     DeploymentId::new(value.unwrap_or(package_tenant_id))
 }
@@ -1099,15 +1094,26 @@ mod tests {
 
     #[test]
     fn audit_key_is_domain_separated_and_deterministic() {
-        let first = derive_audit_key(b"master-key");
-        let oauth = derive_mcp_oauth_state_key(b"master-key");
-        assert_eq!(first, derive_audit_key(b"master-key"));
-        assert_eq!(oauth, derive_mcp_oauth_state_key(b"master-key"));
-        assert_ne!(first, derive_audit_key(b"other-key"));
-        assert_ne!(oauth, derive_mcp_oauth_state_key(b"other-key"));
-        assert_ne!(first, oauth);
-        assert_ne!(first, [0; 32]);
-        assert_ne!(oauth, [0; 32]);
+        let master = SecretBytes::new(vec![0x42; 32]);
+        let other = SecretBytes::new(vec![0x43; 32]);
+        let first =
+            derive_application_key(&master, ApplicationKeyPurpose::AuditCheckpoint).unwrap();
+        let oauth = derive_application_key(&master, ApplicationKeyPurpose::McpOauthState).unwrap();
+        assert_eq!(
+            first.expose(),
+            derive_application_key(&master, ApplicationKeyPurpose::AuditCheckpoint)
+                .unwrap()
+                .expose()
+        );
+        assert_ne!(
+            first.expose(),
+            derive_application_key(&other, ApplicationKeyPurpose::AuditCheckpoint)
+                .unwrap()
+                .expose()
+        );
+        assert_ne!(first.expose(), oauth.expose());
+        assert_ne!(first.expose(), &[0; 32]);
+        assert_ne!(oauth.expose(), &[0; 32]);
     }
 
     #[test]

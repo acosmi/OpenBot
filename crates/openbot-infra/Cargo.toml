@@ -15,6 +15,7 @@ workspace = true
 # database/bootstrap adapters; it must not compile the Server TLS or xmlsec/OpenSSL graphs.
 default = ["server-sso"]
 desktop-local = []
+desktop-local-vault = ["desktop-local"]
 server-runtime = [
     "dep:aes-gcm",
     "dep:bytes",

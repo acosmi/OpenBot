@@ -60,6 +60,7 @@
 
 pub mod aead;
 pub mod binding;
+pub mod derivation;
 pub mod envelope;
 pub mod error;
 pub mod key;
@@ -69,6 +70,7 @@ pub mod secret;
 
 pub use aead::{decrypt_v1, open_v2, seal_v2, unwrap_data_key, wrap_data_key};
 pub use binding::{KeyVersion, RecordBinding, SecretId, SecretKind, SecretPrincipal, ServiceId};
+pub use derivation::{ApplicationKeyPurpose, derive_application_key};
 pub use envelope::{
     ColumnShape, EnvelopeV1, EnvelopeV2, V1_ENVELOPE_PREFIX, V2_ENVELOPE_PREFIX, classify_column,
 };

@@ -121,7 +121,11 @@ pub mod budget;
 pub mod cancel;
 #[cfg(feature = "desktop-local-bootstrap")]
 pub mod desktop_local_bootstrap;
+#[cfg(feature = "desktop-vault")]
+pub mod desktop_vault;
 pub mod event;
+#[cfg(feature = "os-key-store")]
+pub mod os_secret_store;
 #[cfg(feature = "postgres-sidecar")]
 pub mod postgres_sidecar;
 pub mod preferences;
@@ -159,10 +163,20 @@ pub use budget::{
     TOKEN_DELTA_COALESCE_BYTES, TOKEN_DELTA_COALESCE_WINDOW, delivery_class,
 };
 pub use cancel::{CancellationToken, SHUTDOWN_DEADLINE};
+#[cfg(feature = "desktop-vault")]
+pub use desktop_vault::{
+    DesktopApplicationKeyMaterial, DesktopVaultKeyError, ReviewedDesktopVaultKeyStoreService,
+};
 pub use event::{
     AppEventRef, BrokerEvent, FramePayload, GapCause, SequenceError, SequenceGap, SequenceTracker,
     TERMINAL_FRAME_RESERVE,
 };
+#[cfg(all(feature = "os-key-store", target_os = "macos"))]
+pub use os_secret_store::MacOsKeychainSecretStore;
+#[cfg(all(feature = "os-key-store", target_os = "windows"))]
+pub use os_secret_store::WindowsCredentialSecretStore;
+#[cfg(feature = "os-key-store")]
+pub use os_secret_store::{OsSecretStore, OsSecretStoreError};
 #[cfg(feature = "postgres-sidecar")]
 pub use postgres_sidecar::{
     POSTGRES_SOURCE_SHA256, POSTGRES_VERSION, PostgresBundleDigest, PostgresSidecarError,

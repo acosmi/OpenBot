@@ -22,19 +22,29 @@ tauri-host = ["dep:http", "dep:serde", "dep:serde_json", "dep:sys-locale", "dep:
 # Release-side PostgreSQL provenance, full bundle-tree verification and single-instance start lock.
 # This does not spawn PostgreSQL or provide an OS key-store adapter yet.
 postgres-sidecar = ["dep:getrandom", "dep:serde", "dep:serde_json", "dep:sha2"]
-# OS-backed SCRAM secret. A live Batch80 start lock remains required before load-or-create.
-postgres-key-store = [
-    "postgres-sidecar",
+# Shared current-user generic-secret platform boundary for PG and application Vault formats.
+os-key-store = [
     "dep:openbot-domain",
     "dep:openbot-windows-sandbox",
     "dep:security-framework",
     "dep:security-framework-sys",
+]
+postgres-key-store = [
+    "postgres-sidecar",
+    "os-key-store",
 ]
 # Verified process lifecycle through SCRAM-authenticated readiness and graceful pg_ctl shutdown.
 postgres-supervisor = ["postgres-key-store", "dep:tokio-postgres"]
 # Compose the verified child with the shared Batch79 PostgreSQL bootstrap. Infra defaults are
 # intentionally disabled: Desktop Local does not ship Server SAML/xmlsec/OpenSSL.
 desktop-local-bootstrap = ["postgres-supervisor", "dep:openbot-infra"]
+# Per-instance Desktop application master key and derived Vault/audit/assertion material. Loading is
+# only reachable from a running data-plane owner that still holds the sidecar start lock.
+desktop-vault = [
+    "desktop-local-bootstrap",
+    "os-key-store",
+    "openbot-infra/desktop-local-vault",
+]
 
 [dependencies]
 # 唯一业务入口。transport 只穿过它，不实现任何业务规则（v3 §5.2）。
@@ -117,3 +127,4 @@ openbot-contracts = { workspace = true, features = ["testkit"] }
 # `ChannelSummary` 里的 RFC 3339 时间戳（测试用的内存 port 要造真行）。
 # 生产侧不需要 —— 本 crate 不解释任何 DTO 内容。
 time.workspace = true
+uuid.workspace = true

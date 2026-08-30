@@ -76,8 +76,6 @@ uuid.workspace = true
 # production session resolver/main 需要墙钟与 Tokio runtime。
 time.workspace = true
 tokio.workspace = true
-hmac.workspace = true
-sha2.workspace = true
 ring.workspace = true
 zeroize.workspace = true
 
@@ -109,6 +107,7 @@ aes-gcm.workspace = true
 ed25519-dalek.workspace = true
 base64.workspace = true
 hkdf.workspace = true
+sha2.workspace = true
 
 # 注：`serde_json` 已上移到 [dependencies]（G2 起启动期要解析 `AGENT_COMPUTER_POLICY`），
 # 这里不再重复声明。它进生产依赖**不等于**放开"自由 params"：那条禁令针对的是

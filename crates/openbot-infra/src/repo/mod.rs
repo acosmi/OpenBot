@@ -9,7 +9,11 @@
 //! 本层只做「SQL ↔ 类型化行」的翻译：可见性、定序、游标判据落在 SQL 里，
 //! 业务规则与编排在 application。**不接受来自 transport 的任意 query**（v3 §5.2）。
 
-#[cfg(feature = "server-runtime")]
+#[cfg(any(feature = "server-runtime", feature = "desktop-local-vault"))]
+#[cfg_attr(
+    not(feature = "server-runtime"),
+    allow(dead_code, unused_imports, unused_macros)
+)]
 pub(crate) mod common;
 
 #[cfg(feature = "server-runtime")]
