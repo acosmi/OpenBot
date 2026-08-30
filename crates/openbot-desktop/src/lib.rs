@@ -44,13 +44,16 @@
 //! | [`session`] | [`DesktopSession`]（§13.2 给出的骨架，逐字段保留） | §13.2 |
 //! | [`cancel`] | [`CancellationToken`] 与 [`SHUTDOWN_DEADLINE`] | §13.2 |
 //! | [`transport`] | [`InProcessTransport`]：把 `Arc<dyn ApplicationService>` 包成 in-process 通道 | §13.2 / §5.2 |
+//! | [`structured_events`] | host-owned subscription、closed wire frame、sequence/gap 校验与真实 Tauri Channel pump | §13.2–§13.4 |
 //!
 //! **尚未实现**（不要冒充）：可发布 Tauri binary/tauri.conf/capability 清单与真实窗口生命周期
 //! assembly（G6）、sidecar/update（§16.2）、screen loopback binary WebSocket（§13.4/G7）。
 //! Batch 16 已落 opt-in Tauri 2.11.5 custom-protocol adapter、本地偏好原子文件与首帧改写，
-//! Batch69–71又依次接Agent lifecycle/callback与channel/thread unary framing；SSE/WebSocket仍须
-//! 走下面的structured-event session桥，不能塞进custom-protocol `Vec<u8>`响应。许可/RustSec/
-//! cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
+//! Batch69–71又依次接Agent lifecycle/callback与channel/thread unary framing；Batch72补
+//! `DesktopSession`→真实`tauri::ipc::Channel`的host bridge、window unbind与stale-binding
+//! fencing。实际`#[tauri::command]`注册、WASM host选择、可发布window assembly与runtime journey
+//! 仍未落，SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。许可/RustSec/cargo-vet delta
+//! 仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
 //!
 //! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
 //!
@@ -65,17 +68,19 @@
 //!
 //! ## G6 接 Tauri 时接在哪一层
 //!
-//! 接在 [`DesktopSession`] **之上**，本模块以下的东西一行都不用改：
+//! 主桥接边界在 [`DesktopSession`] **之上**；Batch72 只为“上游结束也必须有 terminal”与
+//! 单订阅主动关闭补了 broker/transport 生命周期，不向下层加入业务规则：
 //!
-//! 1. `tauri::Builder::setup` 里构造一次 [`InProcessTransport`]，放进 managed state；
-//! 2. 每个 `WebviewWindow` 起来时，用它的 `label()` 造 [`WindowLabel`]，调
-//!    [`InProcessTransport::open_session`] 拿到一个 [`DesktopSession`]；
-//! 3. 一个任务把 `session.events` 抽干，把每个 [`AppEventRef`] 转成一帧结构化事件写进
-//!    该窗口的 `tauri::ipc::Channel`（§13.4：Channel 只承载结构化事件，画面另走 loopback
-//!    binary WebSocket）；
-//! 4. `#[tauri::command]` 只做一件事：把 typed [`AppCommand`](openbot_contracts::command::AppCommand)
-//!    交给 [`InProcessTransport::execute`]。窗口关闭时 drop 掉 [`DesktopSession`]，
-//!    生产侧会在下一次投递时看见 [`DeliveryOutcome::ReceiverGone`] 并停下来。
+//! 1. `tauri::Builder::setup` 里构造一次 [`InProcessTransport`] 与`DesktopTauriProtocol`；
+//! 2. 每个`WebviewWindow`起来时，由host把它的真实`label()`绑定到已验证`AuthContext`；
+//! 3. command wrapper只把host观察到的label、closed`SubscriptionRequest`与
+//!    `tauri::ipc::Channel`交给`DesktopTauriProtocol::pump_structured_events`；renderer不能自报
+//!    actor/tenant/auth generation/internal label/subscription id；
+//! 4. bridge逐帧执行sequence/gap与stream/thread闭集校验后写Channel；画面另走loopback binary
+//!    WebSocket。window unbind会同步摘除它的全部host-owned route，await中的旧binding也不能附着
+//!    到同label的新窗口；
+//! 5. unary command仍只把typed [`AppCommand`](openbot_contracts::command::AppCommand)交给
+//!    [`InProcessTransport::execute`]，不复制业务规则。
 //!
 //! 也就是说，Tauri 在这条链路上只提供**窗口与 IPC 载体**；ACL、有界队列、序号、丢帧
 //! 可见性、关停 deadline 全部在 Tauri 之下已经完成。这正是「过滤不能由前端自行完成」
@@ -108,6 +113,12 @@ pub mod window;
     feature = "tauri-host",
     any(target_os = "macos", target_os = "windows")
 ))]
+pub mod structured_events;
+
+#[cfg(all(
+    feature = "tauri-host",
+    any(target_os = "macos", target_os = "windows")
+))]
 pub mod tauri_host;
 
 #[cfg(any(test, feature = "testkit"))]
@@ -131,6 +142,17 @@ pub use session::{DesktopSession, event_of};
 pub use transport::{InProcessTransport, OpenSessionError, ShutdownReport};
 pub use window::{
     EventScope, FilterReason, ScopeTarget, ThreadSubscriptions, WindowIdentity, WindowLabel,
+};
+
+#[cfg(all(
+    feature = "tauri-host",
+    any(target_os = "macos", target_os = "windows")
+))]
+pub use structured_events::{
+    DesktopStructuredDeliveryClass, DesktopStructuredEventBridge, DesktopStructuredEventFrame,
+    DesktopStructuredFrameError, DesktopStructuredGapCause, DesktopStructuredOpenError,
+    DesktopStructuredPumpExit, DesktopStructuredSequenceGap, DesktopStructuredStreamKind,
+    DesktopStructuredSubscription, DesktopStructuredTerminalReason, pump_tauri_structured_events,
 };
 
 #[cfg(all(

@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64 as HostAtomicU64, Ordering as HostAtomicOrdering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -15,7 +16,7 @@ use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{
     AppCommand, AppReply, BeginThreadRun, BeginThreadRunBody, CancelThreadRun,
     ChannelDetailResponse, CreateChannelRequest, MAX_THREAD_MESSAGE_BYTES, RouteChannelRequest,
-    ThreadRunCancellationState,
+    SubscriptionRequest, ThreadRunCancellationState,
 };
 use openbot_contracts::components::{
     ComponentAgentGrantRequest, ComponentCatalogueRequest, ComponentDecisionRequest,
@@ -30,9 +31,14 @@ use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme, UpdateUiPreferences};
 use serde::de::DeserializeOwned;
 use serde_json::json;
+use tauri::ipc::Channel;
 use tauri::{Builder, Runtime};
 
-use crate::InProcessTransport;
+use crate::{
+    DesktopStructuredEventBridge, DesktopStructuredEventFrame, DesktopStructuredOpenError,
+    DesktopStructuredPumpExit, DesktopStructuredSubscription, InProcessTransport, WindowLabel,
+    pump_tauri_structured_events,
+};
 
 const INDEX_MAX_BYTES: u64 = 1024 * 1024;
 const ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
@@ -69,6 +75,15 @@ pub enum TauriHostError {
     /// Fresh-session duration cannot be represented by the monotonic clock.
     #[error("desktop_freshness_invalid")]
     InvalidFreshness,
+    /// No verified authority is bound to the requesting native window.
+    #[error("desktop_window_unbound")]
+    WindowUnbound,
+    /// Typed application subscription or Desktop transport rejected the stream.
+    #[error(transparent)]
+    StructuredSubscription(#[from] DesktopStructuredOpenError),
+    /// Host window-binding counter is exhausted; wrapping could attach work to a new window.
+    #[error("desktop_window_binding_counter_exhausted")]
+    WindowBindingCounterExhausted,
 }
 
 /// Host-verified authority for one webview label. The renderer cannot construct this type.
@@ -76,6 +91,7 @@ pub enum TauriHostError {
 struct WindowAuthority {
     auth: AuthContext,
     fresh_until: Option<Instant>,
+    binding_id: u64,
 }
 
 impl WindowAuthority {
@@ -264,6 +280,8 @@ pub struct DesktopTauriProtocol {
     root: PathBuf,
     index: Arc<str>,
     transport: Arc<InProcessTransport>,
+    structured_events: DesktopStructuredEventBridge,
+    next_window_binding_id: HostAtomicU64,
     windows: RwLock<BTreeMap<String, WindowAuthority>>,
     os_locale: UiLocale,
 }
@@ -289,10 +307,13 @@ impl DesktopTauriProtocol {
         }
         let index = fs::read_to_string(index_path).map_err(|_| TauriHostError::InvalidBundle)?;
         validate_index(&index)?;
+        let structured_events = DesktopStructuredEventBridge::new(Arc::clone(&transport));
         Ok(Self {
             root,
             index: Arc::from(index),
             transport,
+            structured_events,
+            next_window_binding_id: HostAtomicU64::new(0),
             windows: RwLock::new(BTreeMap::new()),
             os_locale: detect_os_locale(),
         })
@@ -313,6 +334,14 @@ impl DesktopTauriProtocol {
         if windows.contains_key(&label) {
             return Err(TauriHostError::WindowAlreadyBound);
         }
+        let binding_id = self
+            .next_window_binding_id
+            .fetch_update(
+                HostAtomicOrdering::SeqCst,
+                HostAtomicOrdering::SeqCst,
+                |current| current.checked_add(1),
+            )
+            .map_err(|_| TauriHostError::WindowBindingCounterExhausted)?;
         let fresh_until = fresh_for
             .map(|duration| {
                 Instant::now()
@@ -320,16 +349,74 @@ impl DesktopTauriProtocol {
                     .ok_or(TauriHostError::InvalidFreshness)
             })
             .transpose()?;
-        windows.insert(label, WindowAuthority { auth, fresh_until });
+        windows.insert(
+            label,
+            WindowAuthority {
+                auth,
+                fresh_until,
+                binding_id,
+            },
+        );
         Ok(())
     }
 
     /// Remove one closed window's authority immediately.
     pub fn unbind_window(&self, label: &str) -> Result<bool, TauriHostError> {
-        self.windows
+        let removed = self
+            .windows
             .write()
             .map(|mut windows| windows.remove(label).is_some())
-            .map_err(|_| TauriHostError::AuthorityUnavailable)
+            .map_err(|_| TauriHostError::AuthorityUnavailable)?;
+        if removed {
+            self.structured_events
+                .close_window(&WindowLabel::new(label.to_owned()));
+        }
+        Ok(removed)
+    }
+
+    /// Open one structured stream using only the authority bound by the native host.
+    ///
+    /// The renderer may select a closed [`SubscriptionRequest`] and durable cursor, but it cannot
+    /// provide an actor, tenant, auth generation, internal broker label, or subscription identity.
+    pub async fn open_structured_subscription(
+        &self,
+        label: &str,
+        request: SubscriptionRequest,
+    ) -> Result<DesktopStructuredSubscription, TauriHostError> {
+        let authority = self
+            .authority(label)?
+            .ok_or(TauriHostError::WindowUnbound)?;
+        let subscription = self
+            .structured_events
+            .open(WindowLabel::new(label.to_owned()), &authority.auth, request)
+            .await
+            .map_err(TauriHostError::from)?;
+        match self.authority(label) {
+            Ok(Some(current)) if current.binding_id == authority.binding_id => Ok(subscription),
+            Ok(_) => {
+                drop(subscription);
+                Err(TauriHostError::WindowUnbound)
+            }
+            Err(error) => {
+                drop(subscription);
+                Err(error)
+            }
+        }
+    }
+
+    /// Open and drain one structured stream into a real Tauri IPC [`Channel`].
+    ///
+    /// A future native binary command wrapper only needs to pass its host-observed window label,
+    /// typed request, and Channel here; all ACL, sequence, gap, and terminal behavior stays below
+    /// that wrapper.
+    pub async fn pump_structured_events(
+        &self,
+        label: &str,
+        request: SubscriptionRequest,
+        channel: Channel<DesktopStructuredEventFrame>,
+    ) -> Result<DesktopStructuredPumpExit, TauriHostError> {
+        let subscription = self.open_structured_subscription(label, request).await?;
+        Ok(pump_tauri_structured_events(subscription, channel).await)
     }
 
     /// Handle one custom-protocol request. Public for deterministic host-adapter tests.
@@ -1915,8 +2002,50 @@ mod tests {
     use openbot_contracts::tool::{PendingToolApprovals, ToolApprovalResolved};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use tauri::ipc::InvokeResponseBody;
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct NeverAppStream;
+
+    impl futures_core::Stream for NeverAppStream {
+        type Item = openbot_contracts::command::AppEvent;
+
+        fn poll_next(
+            self: core::pin::Pin<&mut Self>,
+            _context: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Option<Self::Item>> {
+            core::task::Poll::Pending
+        }
+    }
+
+    struct BlockingSubscriptionService {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl openbot_application::ApplicationService for BlockingSubscriptionService {
+        async fn execute(
+            &self,
+            _auth: AuthContext,
+            _command: AppCommand,
+        ) -> Result<AppReply, AppError> {
+            Ok(AppReply::Health(openbot_contracts::command::HealthReport {
+                ok: true,
+            }))
+        }
+
+        async fn subscribe(
+            &self,
+            _auth: AuthContext,
+            _request: SubscriptionRequest,
+        ) -> Result<openbot_application::AppEventStream, AppError> {
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok(Box::pin(NeverAppStream))
+        }
+    }
 
     #[derive(Clone)]
     struct FakeChannelRuntime {
@@ -2837,7 +2966,7 @@ mod tests {
         )
     }
 
-    fn protocol() -> (Arc<DesktopTauriProtocol>, PathBuf) {
+    fn protocol_root() -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "openbot-tauri-protocol-{}-{}",
             std::process::id(),
@@ -2850,6 +2979,11 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("openbot-bootstrap.mjs"), "export {};").unwrap();
+        root
+    }
+
+    fn protocol() -> (Arc<DesktopTauriProtocol>, PathBuf) {
+        let root = protocol_root();
         let preferences = Arc::new(FakePreferences(Mutex::new(UiPreferences {
             theme: Some(UiTheme::Dark),
             locale: Some(UiLocale::ZhCn),
@@ -2873,6 +3007,20 @@ mod tests {
         let transport = Arc::new(InProcessTransport::new(application));
         let protocol = Arc::new(DesktopTauriProtocol::open(&root, transport).unwrap());
         (protocol, root)
+    }
+
+    #[test]
+    fn window_binding_identity_exhaustion_fails_without_authority() {
+        let (protocol, root) = protocol();
+        protocol
+            .next_window_binding_id
+            .store(u64::MAX, Ordering::SeqCst);
+        assert!(matches!(
+            protocol.bind_window("main", auth(), None),
+            Err(TauriHostError::WindowBindingCounterExhausted)
+        ));
+        assert!(protocol.authority("main").unwrap().is_none());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2995,6 +3143,104 @@ mod tests {
             Err(SensitiveBodyError::TooLarge)
         ));
         assert!(oversized.body().iter().all(|byte| *byte == 0));
+    }
+
+    #[tokio::test]
+    async fn an_inflight_old_binding_cannot_attach_to_a_recreated_window_label() {
+        let root = protocol_root();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let service = Arc::new(BlockingSubscriptionService {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        });
+        let transport = Arc::new(InProcessTransport::new(service));
+        let protocol = Arc::new(DesktopTauriProtocol::open(&root, transport).unwrap());
+        protocol.bind_window("main", auth(), None).unwrap();
+
+        let opening = Arc::clone(&protocol);
+        let task = tokio::spawn(async move {
+            opening
+                .open_structured_subscription("main", SubscriptionRequest::Health)
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .expect("old binding must enter application subscribe");
+        assert!(protocol.unbind_window("main").unwrap());
+        protocol.bind_window("main", admin_auth(), None).unwrap();
+        release.notify_one();
+
+        let outcome = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("stale open must finish")
+            .unwrap();
+        assert!(matches!(outcome, Err(TauriHostError::WindowUnbound)));
+        assert_eq!(protocol.transport.broker().window_count(), 0);
+        assert_eq!(protocol.structured_events.active_subscription_count(), 0);
+        assert!(protocol.unbind_window("main").unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn structured_channel_uses_bound_authority_and_unbind_closes_the_route() {
+        let (protocol, root) = protocol();
+        assert!(matches!(
+            protocol
+                .open_structured_subscription("main", SubscriptionRequest::Health)
+                .await,
+            Err(TauriHostError::WindowUnbound)
+        ));
+        assert_eq!(protocol.transport.broker().window_count(), 0);
+
+        protocol.bind_window("main", auth(), None).unwrap();
+        let frames = Arc::new(Mutex::new(Vec::<DesktopStructuredEventFrame>::new()));
+        let sink = Arc::clone(&frames);
+        let channel = Channel::new(move |body| {
+            let InvokeResponseBody::Json(json) = body else {
+                panic!("structured frame must use Tauri's JSON IPC lane");
+            };
+            sink.lock().unwrap().push(serde_json::from_str(&json)?);
+            Ok(())
+        });
+        let running = Arc::clone(&protocol);
+        let pump = tokio::spawn(async move {
+            running
+                .pump_structured_events("main", SubscriptionRequest::Health, channel)
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while protocol.transport.broker().window_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("host-owned structured route must open");
+        assert_eq!(protocol.structured_events.active_subscription_count(), 1);
+        assert!(protocol.unbind_window("main").unwrap());
+        assert_eq!(protocol.transport.broker().window_count(), 0);
+        assert_eq!(protocol.structured_events.active_subscription_count(), 0);
+
+        let exit = tokio::time::timeout(Duration::from_secs(2), pump)
+            .await
+            .expect("window close must wake a pending structured pump")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            exit,
+            DesktopStructuredPumpExit::Terminal(
+                crate::DesktopStructuredTerminalReason::SubscriptionClosed
+            )
+        );
+        assert!(matches!(
+            frames.lock().unwrap().last(),
+            Some(DesktopStructuredEventFrame::Terminal {
+                reason: crate::DesktopStructuredTerminalReason::SubscriptionClosed,
+                ..
+            })
+        ));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

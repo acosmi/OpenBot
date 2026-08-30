@@ -58,6 +58,12 @@ pub enum DisconnectReason {
 
     /// broker 关停（§13.2 的 5 秒 shutdown deadline）。
     Shutdown,
+
+    /// The application subscription ended after its final structured event.
+    UpstreamEnded,
+
+    /// The host closed this one subscription while the process remained alive.
+    SubscriptionClosed,
 }
 
 impl DisconnectReason {
@@ -67,6 +73,8 @@ impl DisconnectReason {
         match self {
             Self::QueueOverflow { .. } => "queue_overflow",
             Self::Shutdown => "shutdown",
+            Self::UpstreamEnded => "upstream_ended",
+            Self::SubscriptionClosed => "subscription_closed",
         }
     }
 }
@@ -572,6 +580,41 @@ impl EventBroker {
             }
         }
         routes.retain(|route| !route.terminated);
+    }
+
+    /// Close one exact host-owned route with an explicit terminal frame.
+    ///
+    /// Returns `false` when the route no longer exists. This is idempotent cleanup, not an error.
+    pub fn close_window(&self, label: &WindowLabel, reason: DisconnectReason) -> bool {
+        let mut routes = self.routes.lock().expect("broker 路由锁不会中毒");
+        let Some(index) = routes.iter().position(|route| route.label() == label) else {
+            return false;
+        };
+        let mut route = routes.remove(index);
+        let _ = route.flush_pending();
+        let outcome = if route.terminated {
+            DeliveryOutcome::AlreadyDisconnected
+        } else {
+            route.terminate(reason)
+        };
+        let (superseded, dropped) = route.take_shed();
+        drop(routes);
+
+        let mut delta = DeliveryMetrics {
+            superseded,
+            dropped,
+            ..DeliveryMetrics::default()
+        };
+        match outcome {
+            DeliveryOutcome::Disconnected { .. } => delta.disconnected = 1,
+            DeliveryOutcome::ReceiverGone => delta.receiver_gone = 1,
+            DeliveryOutcome::Delivered { .. }
+            | DeliveryOutcome::Filtered(_)
+            | DeliveryOutcome::Superseded { .. }
+            | DeliveryOutcome::AlreadyDisconnected => {}
+        }
+        self.merge_metrics(delta);
+        true
     }
 
     /// 关停全部窗口：先冲待发槽，再给每个窗口投一帧
@@ -1135,6 +1178,32 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
+    async fn close_window_is_exact_terminal_and_idempotent() {
+        let broker = broker();
+        let mut a = open(&broker, "a", "actor-1");
+        let mut b = open(&broker, "b", "actor-1");
+        broker.publish(to_window("a", 0)).expect("投递被接受");
+
+        assert!(broker.close_window(&WindowLabel::new("a"), DisconnectReason::SubscriptionClosed));
+        assert!(!broker.close_window(&WindowLabel::new("a"), DisconnectReason::SubscriptionClosed));
+        assert_eq!(broker.window_count(), 1);
+
+        let frames = drain(&mut a);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].event(), Some(&heartbeat(0)));
+        assert_eq!(
+            frames[1].terminal_reason(),
+            Some(DisconnectReason::SubscriptionClosed)
+        );
+        assert!(observe_all(&frames).is_ok());
+        assert!(session_is_closed(&mut a));
+
+        broker.publish(to_window("b", 1)).expect("另一窗口仍可投递");
+        assert_eq!(drain(&mut b).len(), 1);
+        assert_eq!(broker.metrics().disconnected, 1);
+    }
+
+    #[tokio::test]
     async fn close_all_gives_every_window_a_terminal_frame_then_ends_the_stream() {
         let broker = broker();
         let mut a = open(&broker, "a", "actor-1");
@@ -1259,12 +1328,21 @@ mod tests {
             "queue_overflow"
         );
         assert_eq!(DisconnectReason::Shutdown.as_str(), "shutdown");
+        assert_eq!(DisconnectReason::UpstreamEnded.as_str(), "upstream_ended");
+        assert_eq!(
+            DisconnectReason::SubscriptionClosed.as_str(),
+            "subscription_closed"
+        );
         assert_ne!(
             DisconnectReason::Shutdown.as_str(),
             DisconnectReason::QueueOverflow {
                 class: DeliveryClass::Critical
             }
             .as_str()
+        );
+        assert_ne!(
+            DisconnectReason::UpstreamEnded.as_str(),
+            DisconnectReason::SubscriptionClosed.as_str()
         );
     }
 
