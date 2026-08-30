@@ -53,7 +53,7 @@ async fn post_0021_is_exact_expand_only_ui_preference_schema() {
             if before != facts(POST_0020) {
                 return Err("0021 prerequisite fixture drift".to_owned());
             }
-            if native::apply(&mut client)
+            if native::apply_through(&mut client, native::NATIVE_0021_VERSION)
                 .await
                 .map_err(|error| error.to_string())?
                 != ApplyOutcome::Applied

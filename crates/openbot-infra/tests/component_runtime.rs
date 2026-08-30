@@ -135,7 +135,7 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
                 .iter()
                 .map(|component| component.name.as_str())
                 .collect::<Vec<_>>();
-            if initial_names.len() != 8
+            if initial_names.len() != 10
                 || initial_names.contains(&SHOW_NOTICE_COMPONENT_NAME)
                 || initial_names.contains(&SHOW_RECORD_COMPONENT_NAME)
                 || initial_names.contains(&"showMetrics")
@@ -163,7 +163,7 @@ async fn runtime_grants_recheck_agent_component_function_and_refusal_audit_atomi
             )
             .await
             .map_err(|error| error.to_string())?;
-            if admin_private.components.len() != 9 {
+            if admin_private.components.len() != 11 {
                 return Err(format!(
                     "admin private-Agent grants drifted: {admin_private:?}"
                 ));

@@ -31,7 +31,7 @@ openbot-application.workspace = true
 # G2 起启动配置要落成领域类型（retention 窗口等），而不是一堆裸字符串。
 openbot-domain.workspace = true
 # W-4 生产组装与 PostgreSQL session resolver；依赖方向 server -> infra -> application，无环。
-openbot-infra.workspace = true
+openbot-infra = { workspace = true, features = ["server-sso"] }
 openbot-agent.workspace = true
 
 # `AuthResolver` / `ReadinessProbe` 都要对象安全（state 里持的是 `dyn`），

@@ -80,6 +80,7 @@ impl FederatedIdentity {
     }
 
     /// 只给同 crate 的 SAML verifier：调用点必须先完成签名覆盖与全部 profile 判定。
+    #[cfg(feature = "server-sso")]
     pub(crate) fn from_verified_saml(
         issuer: String,
         subject: String,
@@ -96,12 +97,12 @@ impl FederatedIdentity {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server-sso"))]
     pub(crate) fn email(&self) -> &str {
         &self.email
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server-sso"))]
     pub(crate) fn subject(&self) -> &str {
         &self.subject
     }
@@ -131,6 +132,7 @@ impl FederatedProvider {
         }
     }
 
+    #[cfg(feature = "server-sso")]
     pub(crate) fn verified_saml(
         id: super::provider::ProviderId,
         issuer: String,

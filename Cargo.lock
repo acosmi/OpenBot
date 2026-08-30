@@ -4540,6 +4540,7 @@ dependencies = [
  "openbot-application",
  "openbot-contracts",
  "openbot-domain",
+ "openbot-infra",
  "openbot-windows-sandbox",
  "security-framework",
  "security-framework-sys",

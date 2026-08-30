@@ -17,6 +17,10 @@ use tokio_postgres::NoTls;
 
 use crate::db::InfraError;
 
+/// Shared PostgreSQL pool type. Startup composition owns this value; transports only receive the
+/// typed application service built from its adapters.
+pub type DatabasePool = Pool;
+
 /// 默认连接池上限。
 pub const DEFAULT_MAX_POOL_SIZE: usize = 16;
 
@@ -219,24 +223,45 @@ impl fmt::Debug for DatabaseConfig {
 ///
 /// 建池或首次取连接失败返回 [`InfraError::Connect`]。
 pub async fn connect(config: &DatabaseConfig) -> Result<Pool, InfraError> {
-    let manager = Manager::from_config(
+    connect_config(
         config.to_pg_config(),
+        config.max_pool_size,
+        config.connect_timeout,
+        format!("{} 数据库", config.dbname),
+    )
+    .await
+}
+
+/// Build and immediately probe one already-closed PostgreSQL driver configuration.
+///
+/// This is crate-private so callers cannot bypass [`DatabaseConfig`] for Server/network
+/// connections. The Desktop Local adapter uses it with a fixed numeric-loopback topology and a
+/// startup-only [`openbot_domain::vault::SecretBytes`] owner, avoiding a second public config path
+/// that owns a password `String`.
+pub(super) async fn connect_config(
+    config: tokio_postgres::Config,
+    max_pool_size: usize,
+    connect_timeout: Duration,
+    context: impl Into<String>,
+) -> Result<Pool, InfraError> {
+    let context = context.into();
+    let manager = Manager::from_config(
+        config,
         NoTls,
         ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
         },
     );
     let pool = Pool::builder(manager)
-        .max_size(config.max_pool_size)
+        .max_size(max_pool_size)
         .runtime(Runtime::Tokio1)
-        .create_timeout(Some(config.connect_timeout))
+        .create_timeout(Some(connect_timeout))
         .build()
-        .map_err(|source| {
-            InfraError::connect(format!("建立到 {} 的连接池", config.dbname), source)
-        })?;
-    let _probe = pool.get().await.map_err(|source| {
-        InfraError::connect(format!("取到 {} 的首个连接", config.dbname), source)
-    })?;
+        .map_err(|source| InfraError::connect(format!("建立{context}连接池"), source))?;
+    let _probe = pool
+        .get()
+        .await
+        .map_err(|source| InfraError::connect(format!("取{context}首个连接"), source))?;
     Ok(pool)
 }
 

@@ -32,6 +32,9 @@ postgres-key-store = [
 ]
 # Verified process lifecycle through SCRAM-authenticated readiness and graceful pg_ctl shutdown.
 postgres-supervisor = ["postgres-key-store", "dep:tokio-postgres"]
+# Compose the verified child with the shared Batch79 PostgreSQL bootstrap. Infra defaults are
+# intentionally disabled: Desktop Local does not ship Server SAML/xmlsec/OpenSSL.
+desktop-local-bootstrap = ["postgres-supervisor", "dep:openbot-infra"]
 
 [dependencies]
 # 唯一业务入口。transport 只穿过它，不实现任何业务规则（v3 §5.2）。
@@ -40,6 +43,9 @@ openbot-application.workspace = true
 openbot-contracts.workspace = true
 # SecretBytes is enabled only for the explicit PostgreSQL OS-key-store feature.
 openbot-domain = { workspace = true, optional = true }
+# Only the explicit Desktop Local composition feature crosses into PostgreSQL adapters. The
+# Server-only SSO default is disabled so supported Windows Desktop builds never acquire xmlsec.
+openbot-infra = { workspace = true, optional = true, features = ["desktop-local"] }
 
 # `AppEventStream` 是 `Pin<Box<dyn Stream<Item = AppEvent> + Send>>`；把它抽干需要 `Stream`
 # trait 本身。只依赖 `futures-core`（trait 定义），不拉 `futures-util`。

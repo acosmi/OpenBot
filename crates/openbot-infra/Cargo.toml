@@ -10,6 +10,38 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Server keeps the complete network + OIDC + SAML surface by default. Desktop Local consumes only
+# database/bootstrap adapters; it must not compile the Server TLS or xmlsec/OpenSSL graphs.
+default = ["server-sso"]
+desktop-local = []
+server-runtime = [
+    "dep:aes-gcm",
+    "dep:bytes",
+    "dep:chrono",
+    "dep:ed25519-dalek",
+    "dep:futures-core",
+    "dep:futures-util",
+    "dep:hkdf",
+    "dep:hmac",
+    "dep:http",
+    "dep:http-body-util",
+    "dep:httpdate",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:ipnet",
+    "dep:jsonschema",
+    "dep:openidconnect",
+    "dep:rmcp",
+    "dep:rustls",
+    "dep:sse-stream",
+    "dep:tokio-rustls",
+    "dep:url",
+    "dep:webpki-roots",
+    "dep:zeroize",
+]
+server-sso = ["server-runtime", "dep:openssl", "dep:quick-xml", "dep:samael"]
+
 [dependencies]
 # 端口定义。依赖箭头是 `openbot-infra -> openbot-application`：适配器依赖端口，
 # 这是六边形架构里唯一正确的方向（application 只依赖 contracts，无环）。
@@ -22,46 +54,46 @@ openbot-domain.workspace = true
 
 # OIDC 协议实现（v3 §6.2）。传输由本 crate 自己的 safe dialer 注入，见根 Cargo.toml 的
 # 依赖注释：`default-features = false` 关掉了它自带的 reqwest + rustls。
-openidconnect.workspace = true
-url.workspace = true
+openidconnect = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
 
 # W-7 唯一出网实现。协议模块只持有窄 port；socket/DNS/TLS/HTTP 全部收口在
 # `net::safe_http`，并由 `tools/check-safe-dialer-dependencies.sh` 锁死依赖图与调用面。
-bytes.workspace = true
-http.workspace = true
-httpdate.workspace = true
-http-body-util.workspace = true
-hyper.workspace = true
-hyper-util.workspace = true
-ipnet.workspace = true
-rustls.workspace = true
+bytes = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+httpdate = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+ipnet = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 tokio.workspace = true
-tokio-rustls.workspace = true
-webpki-roots.workspace = true
-samael.workspace = true
-chrono.workspace = true
-quick-xml.workspace = true
-openssl.workspace = true
-hmac.workspace = true
-hkdf.workspace = true
+tokio-rustls = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
+samael = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+quick-xml = { workspace = true, optional = true }
+openssl = { workspace = true, optional = true }
+hmac = { workspace = true, optional = true }
+hkdf = { workspace = true, optional = true }
 sha2.workspace = true
-aes-gcm.workspace = true
-ed25519-dalek.workspace = true
-zeroize.workspace = true
+aes-gcm = { workspace = true, optional = true }
+ed25519-dalek = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
 getrandom.workspace = true
 
 # `ChannelReader` 是 `#[async_trait]` trait，实现侧必须同样标注。
 async-trait.workspace = true
 # R65 的 LISTEN/replay receiver 直接实现 application 的 `Stream` 边界；只需 core trait，
 # 不为一个 `StreamExt` 拉入 futures-util。package 已在既有锁图内，新 package=0。
-futures-core.workspace = true
-futures-util.workspace = true
+futures-core = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
 
 # Pinned MCP 2026-07-28 client DTO/handshake/worker；no reqwest，HTTP 由 `SafeRmcpHttpClient`
 # 适配现有唯一 SafeDialer。sse-stream 只解析该 bounded SafeDialer body。
-rmcp.workspace = true
-sse-stream.workspace = true
-jsonschema.workspace = true
+rmcp = { workspace = true, optional = true }
+sse-stream = { workspace = true, optional = true }
+jsonschema = { workspace = true, optional = true }
 
 # `PortError` 只带静态字段（端口文档：数据库原值是不可信数据，不进错误）。
 # 真正的故障细节由实现侧自己 trace 出去 —— 只依赖 facade，不依赖 subscriber。

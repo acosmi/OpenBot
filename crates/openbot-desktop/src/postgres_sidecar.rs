@@ -16,6 +16,8 @@ use std::sync::Arc;
 #[cfg(feature = "postgres-supervisor")]
 use std::time::Duration;
 
+#[cfg(feature = "postgres-supervisor")]
+use openbot_contracts::desktop::DESKTOP_LOCAL_POSTGRES_ADMIN_USER;
 use openbot_contracts::engine::ENGINE_RELEASE_EPOCH;
 #[cfg(feature = "postgres-key-store")]
 use openbot_domain::vault::SecretBytes;
@@ -43,8 +45,6 @@ const BUNDLE_MAX_FILES: usize = 8192;
 const BUNDLE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const LOCK_HEADER: &str = "openbot-postgres-start-lock-v1";
 const LOCK_NONCE_BYTES: usize = 16;
-#[cfg(feature = "postgres-supervisor")]
-const POSTGRES_USER: &str = "desktop_admin";
 #[cfg(feature = "postgres-supervisor")]
 const VERSION_DEADLINE: Duration = Duration::from_secs(5);
 #[cfg(feature = "postgres-supervisor")]
@@ -660,7 +660,7 @@ pub struct PostgresSidecarConnection<'a> {
 }
 
 #[cfg(feature = "postgres-supervisor")]
-impl PostgresSidecarConnection<'_> {
+impl<'a> PostgresSidecarConnection<'a> {
     /// Exact numeric loopback host; hostnames and remote addresses are unrepresentable.
     #[must_use]
     pub const fn host(&self) -> &'static str {
@@ -676,12 +676,12 @@ impl PostgresSidecarConnection<'_> {
     /// Fixed local administrative role created by `initdb`.
     #[must_use]
     pub const fn user(&self) -> &'static str {
-        POSTGRES_USER
+        DESKTOP_LOCAL_POSTGRES_ADMIN_USER
     }
 
     /// Explicitly expose the password only to the later database-pool constructor.
     #[must_use]
-    pub fn expose_password(&self) -> &[u8] {
+    pub fn expose_password(&self) -> &'a [u8] {
         self.secret.expose()
     }
 }
@@ -693,7 +693,7 @@ impl core::fmt::Debug for PostgresSidecarConnection<'_> {
             .debug_struct("PostgresSidecarConnection")
             .field("host", &self.host())
             .field("port", &self.port)
-            .field("user", &POSTGRES_USER)
+            .field("user", &DESKTOP_LOCAL_POSTGRES_ADMIN_USER)
             .field("password", &"[REDACTED]")
             .finish()
     }
@@ -963,7 +963,7 @@ async fn run_initdb(
     command
         .arg("--pgdata")
         .arg(data_dir)
-        .arg(format!("--username={POSTGRES_USER}"))
+        .arg(format!("--username={DESKTOP_LOCAL_POSTGRES_ADMIN_USER}"))
         .args([
             "--pwprompt",
             "--auth-host=scram-sha-256",
@@ -1104,7 +1104,7 @@ async fn postgres_ready(port: u16, secret: &PostgresScramSecret) -> bool {
     config
         .host("127.0.0.1")
         .port(port)
-        .user(POSTGRES_USER)
+        .user(DESKTOP_LOCAL_POSTGRES_ADMIN_USER)
         .password(secret.expose())
         .dbname("postgres")
         .application_name("desktop-postgres-ready")
@@ -1460,9 +1460,23 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    use openbot_application::tenant::package::{
+        LoadedTenantPackage, TenantPackageFiles, validate_tenant_package,
+    };
+    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    use openbot_infra::auth::single_user::desktop_local::{
+        CurrentOsUserAppDataRoot, DESKTOP_LOCAL_ACTOR_ID, DesktopLocalAuthorityStore,
+    };
+    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    use openbot_infra::db::desktop_local::DesktopLocalDatabaseOrigin;
+    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    use openbot_infra::db::initialization::DatabaseOrigin;
     use serde_json::{Value, json};
 
     use super::*;
+    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    use crate::desktop_local_bootstrap::{DesktopLocalCompositionError, bootstrap_running_sidecar};
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1985,6 +1999,204 @@ mod tests {
         }
         let digest = write_manifest(&root);
         (root, digest)
+    }
+
+    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    fn loaded_desktop_package(tenant_id: &str) -> LoadedTenantPackage {
+        let files = TenantPackageFiles {
+            brand: format!("tenant: {{ id: {tenant_id}, product_name: Desktop Local }}"),
+            agents: "agents: [{ id: desktop-assistant, name: Assistant, title: Local Assistant, role_description: Help locally., type: built-in, system_prompt: Answer carefully. }]".to_owned(),
+            channels: "channels: [{ id: desktop-home, name: Home, description: Local home., permitted_agents: [desktop-assistant], allowed_groups: [all] }]".to_owned(),
+            model: "model: { provider: openai, credential_secret_ref: openai-key, default_model: gpt-4.1 }".to_owned(),
+            knowledge: "sources: []".to_owned(),
+        };
+        LoadedTenantPackage::new(
+            validate_tenant_package(files).unwrap(),
+            "/desktop-local/package".to_owned(),
+            "d".repeat(64),
+        )
+        .unwrap()
+    }
+
+    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    async fn fixed_application_database_exists(running: &RunningPostgresSidecar) -> bool {
+        let connection = running.connection();
+        let mut config = tokio_postgres::Config::new();
+        config
+            .host(connection.host())
+            .port(connection.port())
+            .user(connection.user())
+            .password(connection.expose_password())
+            .dbname("postgres");
+        let (client, driver) = config.connect(NoTls).await.unwrap();
+        let driver = tokio::spawn(driver);
+        let exists = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_database WHERE datname='openbot')",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(2), driver)
+            .await
+            .expect("probe driver close deadline")
+            .expect("probe driver task join")
+            .expect("probe driver close");
+        exists
+    }
+
+    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    #[tokio::test]
+    #[ignore = "需要本机PostgreSQL 17.11 binaries；设置OPENBOT_TEST_POSTGRES_BIN_DIR后运行"]
+    async fn verified_sidecar_composes_batch79_before_clean_shutdown() {
+        let bin_dir = PathBuf::from(std::env::var_os("OPENBOT_TEST_POSTGRES_BIN_DIR").unwrap());
+        let (bundle_root, digest) = materialize_host_postgres_bundle(&bin_dir);
+        let signing = signing_identity();
+        let service = ReviewedPostgresKeyStoreService::from_reviewed_release(
+            "com.example.product.postgresql.bootstrap-composition-test",
+        )
+        .unwrap();
+        let secret_store = MemorySecretStore::empty();
+        let app_root = root("bootstrap-composition-app");
+        let authority_store = DesktopLocalAuthorityStore::new(
+            CurrentOsUserAppDataRoot::from_current_os_user_app_data(&app_root).unwrap(),
+        );
+        let installation = authority_store.load_or_create_installation().unwrap();
+        let instance = installation.authority().instance_id().to_owned();
+        let data_dir = installation.sidecar_data_dir().to_owned();
+        let correct_package =
+            loaded_desktop_package(installation.authority().auth_context().tenant().as_str());
+        let wrong_package = loaded_desktop_package(&format!("desktop-local-{}", "f".repeat(64)));
+
+        let bundle = VerifiedPostgresBundle::open(&bundle_root, digest, &signing).unwrap();
+        let running = PostgresSidecarSupervisor::start(
+            bundle,
+            &app_root,
+            &instance,
+            &data_dir,
+            &secret_store,
+            &service,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            bootstrap_running_sidecar(installation.clone(), running, &wrong_package).await,
+            Err(DesktopLocalCompositionError::PackageScope(_))
+        ));
+        assert!(
+            !fs::read_dir(&app_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains("start-lock"))
+        );
+
+        let bundle = VerifiedPostgresBundle::open(&bundle_root, digest, &signing).unwrap();
+        let running = PostgresSidecarSupervisor::start(
+            bundle,
+            &app_root,
+            &instance,
+            &data_dir,
+            &secret_store,
+            &service,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !fixed_application_database_exists(&running).await,
+            "tenant mismatch must precede CREATE DATABASE"
+        );
+        running.shutdown().await.unwrap();
+
+        let bundle = VerifiedPostgresBundle::open(&bundle_root, digest, &signing).unwrap();
+        let running = PostgresSidecarSupervisor::start(
+            bundle,
+            &app_root,
+            &instance,
+            &data_dir,
+            &secret_store,
+            &service,
+        )
+        .await
+        .unwrap();
+        let data_plane = bootstrap_running_sidecar(installation.clone(), running, &correct_package)
+            .await
+            .unwrap();
+        assert_eq!(
+            data_plane.sidecar_origin(),
+            Some(PostgresSidecarOrigin::Existing)
+        );
+        assert_eq!(
+            data_plane.database_origin(),
+            DesktopLocalDatabaseOrigin::Created
+        );
+        assert_eq!(
+            data_plane.bootstrap_report().database_origin,
+            DatabaseOrigin::Fresh
+        );
+        assert_eq!(data_plane.bootstrap_report().package.memberships_granted, 1);
+        assert!(
+            data_plane
+                .bootstrap_report()
+                .package
+                .single_user_groups_ignored
+        );
+        assert_eq!(
+            data_plane.auth_context().tenant(),
+            installation.authority().auth_context().tenant()
+        );
+        let client = data_plane.pool().get().await.unwrap();
+        let row = client
+            .query_one(
+                "SELECT current_database(), count(*)::bigint, \
+                        EXISTS(SELECT 1 FROM public.user_roles WHERE user_id=$1 AND role='admin'), \
+                        EXISTS(SELECT 1 FROM public.channel_memberships WHERE user_id=$1 AND channel_id='desktop-home') \
+                 FROM public.users WHERE id=$1 GROUP BY current_database()",
+                &[&DESKTOP_LOCAL_ACTOR_ID],
+            )
+            .await
+            .unwrap();
+        assert_eq!(row.get::<_, String>(0), "openbot");
+        assert_eq!(row.get::<_, i64>(1), 1);
+        assert!(row.get::<_, bool>(2));
+        assert!(row.get::<_, bool>(3));
+        drop(client);
+        data_plane.shutdown().await.unwrap();
+
+        let bundle = VerifiedPostgresBundle::open(&bundle_root, digest, &signing).unwrap();
+        let running = PostgresSidecarSupervisor::start(
+            bundle,
+            &app_root,
+            &instance,
+            &data_dir,
+            &secret_store,
+            &service,
+        )
+        .await
+        .unwrap();
+        let restarted = bootstrap_running_sidecar(installation, running, &correct_package)
+            .await
+            .unwrap();
+        assert_eq!(
+            restarted.database_origin(),
+            DesktopLocalDatabaseOrigin::Existing
+        );
+        assert_eq!(
+            restarted.bootstrap_report().database_origin,
+            DatabaseOrigin::RustManaged
+        );
+        assert_eq!(restarted.bootstrap_report().package.memberships_granted, 0);
+        restarted.shutdown().await.unwrap();
+
+        assert!(
+            !fs::read_dir(&app_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains("start-lock"))
+        );
+        fs::remove_dir_all(app_root).unwrap();
+        fs::remove_dir_all(bundle_root).unwrap();
     }
 
     #[cfg(all(feature = "postgres-supervisor", unix))]

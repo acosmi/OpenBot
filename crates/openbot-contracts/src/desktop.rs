@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 use crate::command::{AppEvent, SubscriptionRequest};
 use crate::ids::ThreadId;
 
+/// Fixed non-secret administrative role created by the Desktop Local PostgreSQL `initdb` path.
+/// Process framing and infra pool assembly import this one value so a username drift fails at
+/// compile/review time rather than as a misleading SCRAM password error.
+pub const DESKTOP_LOCAL_POSTGRES_ADMIN_USER: &str = "desktop_admin";
+
 /// Tauri invoke 中打开 structured stream 的固定命令名。
 pub const DESKTOP_STRUCTURED_OPEN_COMMAND: &str = "openbot_structured_events_open";
 

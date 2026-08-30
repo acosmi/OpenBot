@@ -23,7 +23,10 @@
 //! 这样做的直接后果是：一个绕过 safe dialer 的出网路径**不可能**从这个模块里长出来 ——
 //! 它压根没有能力自己发请求。
 
+#[cfg(feature = "server-runtime")]
 pub mod config;
+#[cfg(feature = "server-runtime")]
 pub mod oidc;
 pub mod single_user;
+#[cfg(feature = "server-sso")]
 pub mod sso;

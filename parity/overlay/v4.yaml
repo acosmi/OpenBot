@@ -779,3 +779,470 @@ entries:
   - id: T-TEST-0912
     disposition: revalidate
     notes: "Batch79 reruns Fresh/RustManaged initialization on PostgreSQL 17.11 and rechecks both nullable callback columns, with full infra and Server regressions."
+  # Batch83 splits Desktop Local from the Server runtime feature graph and mechanically
+  # revalidates every done target matched by the coarse openbot-infra ownership prefix.
+  - id: T-TEST-0244
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0245
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0248
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0249
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0250
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0251
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0257
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0258
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0259
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0260
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0262
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0264
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0265
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0266
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0267
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0268
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0305
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0329
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0350
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0351
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0375
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0386
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0387
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0391
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0393
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0394
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0396
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0397
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0416
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0417
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0418
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0419
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0420
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0421
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0422
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0423
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0424
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0425
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0426
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0678
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0679
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0680
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0681
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0682
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0690
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0691
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0692
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0693
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0694
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0695
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0696
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0697
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0698
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0699
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0700
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0701
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0702
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0703
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0704
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0705
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0706
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0707
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0708
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0709
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0710
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0711
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0712
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0713
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0714
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0715
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0716
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0717
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0718
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0757
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0758
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0759
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0760
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0761
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0763
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0764
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0765
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0778
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0779
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0780
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0781
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0782
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0783
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0784
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0785
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0786
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0787
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0788
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0789
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0790
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0791
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0792
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0794
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0800
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0803
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0804
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0805
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0806
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0808
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0809
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0810
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0811
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0812
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0813
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0814
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0815
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0816
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0818
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0819
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0820
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0821
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0822
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0823
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0833
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0834
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0835
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0836
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0837
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0838
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0839
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0840
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0841
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0842
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0843
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0844
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0845
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0846
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0847
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0848
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0849
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0850
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0851
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0852
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0853
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0854
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0855
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0856
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0861
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0869
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0919
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0920
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0922
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0924
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0961
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0965
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0966
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0967
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0968
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0969
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0970
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0971
+    disposition: revalidate
+    notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
