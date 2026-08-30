@@ -633,7 +633,7 @@ G6 重写后的文本（替换 v3 原四条）：
   UI startup read/serialized partial write/reload persistence；
 - [x] Tauri 2.11.5 production custom-protocol adapter：window-label authority、typed in-process、
   本地首帧/CSP/canonical asset；依赖只进入 macOS/Windows Desktop target；
-- [x] Batch72–83 Desktop structured realtime、window lifecycle与Local authority/PG lifecycle代码闭环：host-owned closed wire与真实Tauri Channel、
+- [x] Batch72–84 Desktop structured realtime、window lifecycle与Local authority/PG/Vault前置代码闭环：host-owned closed wire与真实Tauri Channel、
   actual open/close command、同一release WASM按`window.isTauri`选择typed bridge；callback index有界重排、
   terminal+end、u64 JSON string保真与Drop/integrity failure exact close均已定向实跑；同一actual Webview
   的全部internal stream再共享256 queued event-ref permit，live+pending subscription第257条在
@@ -646,10 +646,11 @@ G6 重写后的文本（替换 v3 原四条）：
   Batch80再钉PGDG 17.11 source、signed-core manifest digest+全文件inventory与single-instance start lock；
   Batch81让持锁owner经SecretBytes接macOS Keychain与Windows唯一unsafe Credential Manager，new secret写后回读CT核验；
   Batch82再闭合verified version、stdin-only initdb、direct child、TCP SCRAM ready、fast shutdown与unclean stale-lock fencing；
-  Batch83把同一child接fixed `openbot`、pre-write live attestation、shared migration/principal/package与data-plane shutdown owner。
-  普通Web仍走原WebSocket/EventSource且有Batch74 release浏览器回归；Batch75–83无视觉/CSS/locale变化，
+  Batch83把同一child接fixed `openbot`、pre-write live attestation、shared migration/principal/package与data-plane shutdown owner；
+  Batch84再由持锁owner从共享OS key-store取得per-instance Vault master并导出application cryptographic material。
+  普通Web仍走原WebSocket/EventSource且有Batch74 release浏览器回归；Batch75–84无视觉/CSS/locale变化，
   MockRuntime与macOS文件证据不冒充真实native runtime/Windows ACL；
-- [ ] Desktop Local sidecar binary build-sign、Windows process/key-store真机、production ApplicationService及真实Tauri `app_data_dir()` setup接线、actual `tauri.conf.json`/
+- [ ] Desktop Local sidecar binary build-sign、Windows process/key-store真机、Linux Secret Service、production ApplicationService及真实Tauri `app_data_dir()` setup接线、actual `tauri.conf.json`/
   capability/binary、Desktop Remote session source、真实macOS/Windows Webview runtime、
   Desktop formal golden/AX仍未闭合；
 - [x] 截至 Batch23，27条 primitive 子账全 done：Batch18前20条 + Dialog/Sheet +

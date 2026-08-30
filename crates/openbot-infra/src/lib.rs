@@ -133,5 +133,5 @@ pub mod thread_id;
 pub mod tool_approval;
 #[cfg(feature = "server-runtime")]
 pub mod ui_preferences;
-#[cfg(feature = "server-runtime")]
+#[cfg(any(feature = "server-runtime", feature = "desktop-local-vault"))]
 pub mod vault;

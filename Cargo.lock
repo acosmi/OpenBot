@@ -4554,6 +4554,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4640,7 +4641,6 @@ dependencies = [
  "futures-core",
  "futures-util",
  "hkdf",
- "hmac 0.12.1",
  "http",
  "metrics",
  "metrics-exporter-prometheus",

@@ -30,6 +30,9 @@ use tokio::process::{Child, Command};
 #[cfg(feature = "postgres-supervisor")]
 use tokio_postgres::NoTls;
 
+#[cfg(feature = "postgres-key-store")]
+use crate::os_secret_store::OsSecretStore;
+
 /// Exact PGDG source release used to build the first PostgreSQL sidecar epoch.
 pub const POSTGRES_VERSION: &str = "17.11";
 
@@ -508,6 +511,10 @@ impl PostgresStoredSecret {
     pub fn from_owned_bytes(bytes: Vec<u8>) -> Self {
         Self(SecretBytes::new(bytes))
     }
+
+    fn from_secret_bytes(bytes: SecretBytes) -> Self {
+        Self(bytes)
+    }
 }
 
 #[cfg(feature = "postgres-key-store")]
@@ -545,49 +552,15 @@ pub trait PostgresSecretStore: Send + Sync {
     ) -> Result<(), PostgresSecretStoreError>;
 }
 
-/// Current-user macOS Keychain generic-password adapter.
-#[cfg(all(feature = "postgres-key-store", target_os = "macos"))]
-pub struct MacOsKeychainPostgresSecretStore {
-    keychain: security_framework::os::macos::keychain::SecKeychain,
-}
-
-#[cfg(all(feature = "postgres-key-store", target_os = "macos"))]
-impl MacOsKeychainPostgresSecretStore {
-    /// Open the current OS user's default Keychain.
-    pub fn current_user_default() -> Result<Self, PostgresSecretStoreError> {
-        security_framework::os::macos::keychain::SecKeychain::default()
-            .map(|keychain| Self { keychain })
-            .map_err(|error| {
-                tracing::warn!(platform_code = error.code(), "macOS Keychain unavailable");
-                PostgresSecretStoreError::Unavailable
-            })
-    }
-
-    #[cfg(test)]
-    fn from_keychain(keychain: security_framework::os::macos::keychain::SecKeychain) -> Self {
-        Self { keychain }
-    }
-}
-
-#[cfg(all(feature = "postgres-key-store", target_os = "macos"))]
-impl PostgresSecretStore for MacOsKeychainPostgresSecretStore {
+impl<T: OsSecretStore + ?Sized> PostgresSecretStore for T {
     fn read(
         &self,
         service: &str,
         account: &str,
     ) -> Result<Option<PostgresStoredSecret>, PostgresSecretStoreError> {
-        match self.keychain.find_generic_password(service, account) {
-            Ok((password, _item)) => Ok(Some(PostgresStoredSecret::from_owned_bytes(
-                password.as_ref().to_vec(),
-            ))),
-            Err(error) if error.code() == security_framework_sys::base::errSecItemNotFound => {
-                Ok(None)
-            }
-            Err(error) => {
-                tracing::warn!(platform_code = error.code(), "macOS Keychain read failed");
-                Err(PostgresSecretStoreError::Unavailable)
-            }
-        }
+        OsSecretStore::read(self, service, account)
+            .map(|secret| secret.map(PostgresStoredSecret::from_secret_bytes))
+            .map_err(|_| PostgresSecretStoreError::Unavailable)
     }
 
     fn write(
@@ -596,51 +569,19 @@ impl PostgresSecretStore for MacOsKeychainPostgresSecretStore {
         account: &str,
         secret: &[u8],
     ) -> Result<(), PostgresSecretStoreError> {
-        self.keychain
-            .set_generic_password(service, account, secret)
-            .map_err(|error| {
-                tracing::warn!(platform_code = error.code(), "macOS Keychain write failed");
-                PostgresSecretStoreError::Unavailable
-            })
+        OsSecretStore::write(self, service, account, secret)
+            .map_err(|_| PostgresSecretStoreError::Unavailable)
     }
 }
 
-/// Current-user Windows Credential Manager generic-credential adapter.
-#[cfg(all(feature = "postgres-key-store", target_os = "windows"))]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct WindowsCredentialPostgresSecretStore;
+/// Backwards-compatible PostgreSQL-facing name for the shared macOS generic-secret adapter.
+#[cfg(all(feature = "postgres-key-store", target_os = "macos"))]
+pub type MacOsKeychainPostgresSecretStore = crate::os_secret_store::MacOsKeychainSecretStore;
 
+/// Backwards-compatible PostgreSQL-facing name for the shared Windows generic-secret adapter.
 #[cfg(all(feature = "postgres-key-store", target_os = "windows"))]
-impl PostgresSecretStore for WindowsCredentialPostgresSecretStore {
-    fn read(
-        &self,
-        service: &str,
-        account: &str,
-    ) -> Result<Option<PostgresStoredSecret>, PostgresSecretStoreError> {
-        let target = format!("{service}:{account}");
-        openbot_windows_sandbox::read_generic_credential(&target)
-            .map(|secret| {
-                secret.map(|secret| PostgresStoredSecret::from_owned_bytes(secret.into_bytes()))
-            })
-            .map_err(|error| {
-                tracing::warn!(?error, "Windows Credential Manager read failed");
-                PostgresSecretStoreError::Unavailable
-            })
-    }
-
-    fn write(
-        &self,
-        service: &str,
-        account: &str,
-        secret: &[u8],
-    ) -> Result<(), PostgresSecretStoreError> {
-        let target = format!("{service}:{account}");
-        openbot_windows_sandbox::write_generic_credential(&target, secret).map_err(|error| {
-            tracing::warn!(?error, "Windows Credential Manager write failed");
-            PostgresSecretStoreError::Unavailable
-        })
-    }
-}
+pub type WindowsCredentialPostgresSecretStore =
+    crate::os_secret_store::WindowsCredentialSecretStore;
 
 /// Whether this supervisor initialized a new cluster or opened an existing PostgreSQL 17 cluster.
 #[cfg(feature = "postgres-supervisor")]
@@ -1460,23 +1401,31 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    #[cfg(all(feature = "desktop-vault", unix))]
     use openbot_application::tenant::package::{
         LoadedTenantPackage, TenantPackageFiles, validate_tenant_package,
     };
-    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    #[cfg(all(feature = "desktop-vault", unix))]
+    use openbot_domain::vault::{SecretKind, SecretPrincipal};
+    #[cfg(all(feature = "desktop-vault", unix))]
     use openbot_infra::auth::single_user::desktop_local::{
         CurrentOsUserAppDataRoot, DESKTOP_LOCAL_ACTOR_ID, DesktopLocalAuthorityStore,
     };
-    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    #[cfg(all(feature = "desktop-vault", unix))]
     use openbot_infra::db::desktop_local::DesktopLocalDatabaseOrigin;
-    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    #[cfg(all(feature = "desktop-vault", unix))]
     use openbot_infra::db::initialization::DatabaseOrigin;
     use serde_json::{Value, json};
+    #[cfg(all(feature = "desktop-vault", unix))]
+    use uuid::Uuid;
 
     use super::*;
-    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    #[cfg(all(feature = "desktop-vault", unix))]
     use crate::desktop_local_bootstrap::{DesktopLocalCompositionError, bootstrap_running_sidecar};
+    #[cfg(all(feature = "desktop-vault", unix))]
+    use crate::desktop_vault::ReviewedDesktopVaultKeyStoreService;
+    #[cfg(all(feature = "desktop-vault", unix))]
+    use crate::os_secret_store::{OsSecretStore, OsSecretStoreError};
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1834,6 +1783,44 @@ mod tests {
         }
     }
 
+    #[cfg(all(feature = "desktop-vault", unix))]
+    struct MemoryVaultStore {
+        value: Mutex<Option<Vec<u8>>>,
+        writes: AtomicUsize,
+    }
+
+    #[cfg(all(feature = "desktop-vault", unix))]
+    impl MemoryVaultStore {
+        fn empty() -> Self {
+            Self {
+                value: Mutex::new(None),
+                writes: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[cfg(all(feature = "desktop-vault", unix))]
+    impl OsSecretStore for MemoryVaultStore {
+        fn read(
+            &self,
+            _service: &str,
+            _account: &str,
+        ) -> Result<Option<SecretBytes>, OsSecretStoreError> {
+            Ok(self.value.lock().unwrap().clone().map(SecretBytes::new))
+        }
+
+        fn write(
+            &self,
+            _service: &str,
+            _account: &str,
+            secret: &[u8],
+        ) -> Result<(), OsSecretStoreError> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            *self.value.lock().unwrap() = Some(secret.to_vec());
+            Ok(())
+        }
+    }
+
     #[cfg(feature = "postgres-supervisor")]
     fn supervisor_test_paths(name: &str) -> (PathBuf, String, PathBuf) {
         let app_root = root(name);
@@ -2001,7 +1988,7 @@ mod tests {
         (root, digest)
     }
 
-    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    #[cfg(all(feature = "desktop-vault", unix))]
     fn loaded_desktop_package(tenant_id: &str) -> LoadedTenantPackage {
         let files = TenantPackageFiles {
             brand: format!("tenant: {{ id: {tenant_id}, product_name: Desktop Local }}"),
@@ -2018,7 +2005,7 @@ mod tests {
         .unwrap()
     }
 
-    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    #[cfg(all(feature = "desktop-vault", unix))]
     async fn fixed_application_database_exists(running: &RunningPostgresSidecar) -> bool {
         let connection = running.connection();
         let mut config = tokio_postgres::Config::new();
@@ -2047,7 +2034,7 @@ mod tests {
         exists
     }
 
-    #[cfg(all(feature = "desktop-local-bootstrap", unix))]
+    #[cfg(all(feature = "desktop-vault", unix))]
     #[tokio::test]
     #[ignore = "需要本机PostgreSQL 17.11 binaries；设置OPENBOT_TEST_POSTGRES_BIN_DIR后运行"]
     async fn verified_sidecar_composes_batch79_before_clean_shutdown() {
@@ -2059,6 +2046,11 @@ mod tests {
         )
         .unwrap();
         let secret_store = MemorySecretStore::empty();
+        let vault_store = MemoryVaultStore::empty();
+        let vault_service = ReviewedDesktopVaultKeyStoreService::from_reviewed_release(
+            "com.example.product.desktop-vault.composition-test",
+        )
+        .unwrap();
         let app_root = root("bootstrap-composition-app");
         let authority_store = DesktopLocalAuthorityStore::new(
             CurrentOsUserAppDataRoot::from_current_os_user_app_data(&app_root).unwrap(),
@@ -2162,6 +2154,24 @@ mod tests {
         assert!(row.get::<_, bool>(2));
         assert!(row.get::<_, bool>(3));
         drop(client);
+        let first_material = data_plane
+            .load_application_key_material(&vault_store, &vault_service)
+            .unwrap();
+        assert_eq!(vault_store.writes.load(Ordering::Relaxed), 1);
+        let credential_id = Uuid::from_u128(0x0123_4567_89ab_cdef_0123_4567_89ab_cdef);
+        let credential_plaintext = SecretBytes::new(b"composition-vault-canary".to_vec());
+        let sealed = first_material
+            .credential_vault()
+            .seal(
+                &credential_id,
+                SecretKind::Model,
+                SecretPrincipal::Deployment,
+                SecretPrincipal::Deployment,
+                &credential_plaintext,
+            )
+            .unwrap();
+        assert!(!format!("{first_material:?}").contains("composition-vault-canary"));
+        drop(first_material);
         data_plane.shutdown().await.unwrap();
 
         let bundle = VerifiedPostgresBundle::open(&bundle_root, digest, &signing).unwrap();
@@ -2187,6 +2197,26 @@ mod tests {
             DatabaseOrigin::RustManaged
         );
         assert_eq!(restarted.bootstrap_report().package.memberships_granted, 0);
+        let restarted_material = restarted
+            .load_application_key_material(&vault_store, &vault_service)
+            .unwrap();
+        assert_eq!(vault_store.writes.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            restarted_material
+                .credential_vault()
+                .open(
+                    &credential_id,
+                    SecretKind::Model,
+                    SecretPrincipal::Deployment,
+                    SecretPrincipal::Deployment,
+                    &sealed,
+                )
+                .unwrap()
+                .into_secret()
+                .expose(),
+            credential_plaintext.expose()
+        );
+        drop(restarted_material);
         restarted.shutdown().await.unwrap();
 
         assert!(
@@ -2410,6 +2440,7 @@ mod tests {
             .password("test-only-private-keychain-password")
             .prompt_user(false);
         let keychain = options.create(&keychain_path).unwrap();
+        let cleanup_keychain = keychain.clone();
         let store = MacOsKeychainPostgresSecretStore::from_keychain(keychain);
         let service = ReviewedPostgresKeyStoreService::from_reviewed_release(
             "com.example.product.postgresql.test",
@@ -2420,8 +2451,7 @@ mod tests {
         let second = lock.load_or_create_scram_secret(&store, &service).unwrap();
         assert_eq!(first.expose(), second.expose());
         let account = format!("postgresql-17-{}", lock.instance_id);
-        let (_password, item) = store
-            .keychain
+        let (_password, item) = cleanup_keychain
             .find_generic_password(service.as_str(), &account)
             .unwrap();
         item.delete();

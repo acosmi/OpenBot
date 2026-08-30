@@ -1,0 +1,112 @@
+//! Shared current-user OS generic-secret adapter for supported Desktop platforms.
+//!
+//! Product-specific modules own service/account validation and stored-byte formats. This module is
+//! deliberately narrower: read/write one opaque byte string through macOS Keychain or the sole
+//! audited Windows Credential Manager boundary, immediately transferring reads into
+//! [`SecretBytes`]. Platform calls are blocking and must run off the Tauri UI thread.
+
+use openbot_domain::vault::SecretBytes;
+
+/// Stable platform-store failures with no service, account, path, or secret payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum OsSecretStoreError {
+    /// The current-user platform store could not complete the operation.
+    #[error("desktop_os_secret_store_unavailable")]
+    Unavailable,
+}
+
+/// Opaque current-user generic-secret port. Reads transfer their unique allocation directly into
+/// zeroizing ownership; implementations never log caller-supplied identifiers or bytes.
+pub trait OsSecretStore: Send + Sync {
+    /// Read one exact service/account pair; an absent item is `None`.
+    fn read(&self, service: &str, account: &str)
+    -> Result<Option<SecretBytes>, OsSecretStoreError>;
+
+    /// Create or replace one exact service/account pair.
+    fn write(&self, service: &str, account: &str, secret: &[u8]) -> Result<(), OsSecretStoreError>;
+}
+
+/// Current-user macOS Keychain generic-password adapter.
+#[cfg(target_os = "macos")]
+pub struct MacOsKeychainSecretStore {
+    keychain: security_framework::os::macos::keychain::SecKeychain,
+}
+
+#[cfg(target_os = "macos")]
+impl MacOsKeychainSecretStore {
+    /// Open the current OS user's default Keychain.
+    pub fn current_user_default() -> Result<Self, OsSecretStoreError> {
+        security_framework::os::macos::keychain::SecKeychain::default()
+            .map(|keychain| Self { keychain })
+            .map_err(|error| {
+                tracing::warn!(platform_code = error.code(), "macOS Keychain unavailable");
+                OsSecretStoreError::Unavailable
+            })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_keychain(
+        keychain: security_framework::os::macos::keychain::SecKeychain,
+    ) -> Self {
+        Self { keychain }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl OsSecretStore for MacOsKeychainSecretStore {
+    fn read(
+        &self,
+        service: &str,
+        account: &str,
+    ) -> Result<Option<SecretBytes>, OsSecretStoreError> {
+        match self.keychain.find_generic_password(service, account) {
+            Ok((password, _item)) => Ok(Some(SecretBytes::new(password.as_ref().to_vec()))),
+            Err(error) if error.code() == security_framework_sys::base::errSecItemNotFound => {
+                Ok(None)
+            }
+            Err(error) => {
+                tracing::warn!(platform_code = error.code(), "macOS Keychain read failed");
+                Err(OsSecretStoreError::Unavailable)
+            }
+        }
+    }
+
+    fn write(&self, service: &str, account: &str, secret: &[u8]) -> Result<(), OsSecretStoreError> {
+        self.keychain
+            .set_generic_password(service, account, secret)
+            .map_err(|error| {
+                tracing::warn!(platform_code = error.code(), "macOS Keychain write failed");
+                OsSecretStoreError::Unavailable
+            })
+    }
+}
+
+/// Current-user Windows Credential Manager generic-credential adapter.
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WindowsCredentialSecretStore;
+
+#[cfg(target_os = "windows")]
+impl OsSecretStore for WindowsCredentialSecretStore {
+    fn read(
+        &self,
+        service: &str,
+        account: &str,
+    ) -> Result<Option<SecretBytes>, OsSecretStoreError> {
+        let target = format!("{service}:{account}");
+        openbot_windows_sandbox::read_generic_credential(&target)
+            .map(|secret| secret.map(|secret| SecretBytes::new(secret.into_bytes())))
+            .map_err(|error| {
+                tracing::warn!(?error, "Windows Credential Manager read failed");
+                OsSecretStoreError::Unavailable
+            })
+    }
+
+    fn write(&self, service: &str, account: &str, secret: &[u8]) -> Result<(), OsSecretStoreError> {
+        let target = format!("{service}:{account}");
+        openbot_windows_sandbox::write_generic_credential(&target, secret).map_err(|error| {
+            tracing::warn!(?error, "Windows Credential Manager write failed");
+            OsSecretStoreError::Unavailable
+        })
+    }
+}
