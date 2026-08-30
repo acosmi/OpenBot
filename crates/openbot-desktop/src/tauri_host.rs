@@ -8,6 +8,9 @@ use std::time::{Duration, Instant};
 
 use http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE};
 use http::{Method, Request, Response, StatusCode};
+use openbot_contracts::agent::{
+    AgentConnectionTestRequest, AgentMutationRequest, AgentProfileResponse, AgentProfilesResponse,
+};
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::components::{
@@ -29,6 +32,7 @@ use crate::InProcessTransport;
 const INDEX_MAX_BYTES: u64 = 1024 * 1024;
 const ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const API_BODY_MAX_BYTES: usize = 4096;
+const AGENT_BODY_MAX_BYTES: usize = 64 * 1024;
 const COMPONENT_CATALOGUE_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_DECISION_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_GOVERNANCE_BODY_MAX_BYTES: usize = 68 * 1024;
@@ -95,6 +99,51 @@ enum ComponentGovernanceRoute<'a> {
     Draft {
         raw_name: &'a str,
     },
+}
+
+#[derive(Clone, Copy)]
+enum AgentRoute<'a> {
+    Detail { raw_agent_id: &'a str },
+    Duplicate { raw_agent_id: &'a str },
+    Hide { raw_agent_id: &'a str },
+    Unhide { raw_agent_id: &'a str },
+}
+
+#[derive(Clone, Copy)]
+enum AgentReplyKind {
+    Profile(StatusCode),
+    Empty,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentBodyError {
+    Malformed,
+    TooLarge,
+}
+
+impl<'a> AgentRoute<'a> {
+    fn raw_agent_id(self) -> &'a str {
+        match self {
+            Self::Detail { raw_agent_id }
+            | Self::Duplicate { raw_agent_id }
+            | Self::Hide { raw_agent_id }
+            | Self::Unhide { raw_agent_id } => raw_agent_id,
+        }
+    }
+}
+
+fn agent_route(path: &str) -> Option<AgentRoute<'_>> {
+    let segments = path
+        .strip_prefix("/api/agents/")?
+        .split('/')
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        [raw_agent_id] => Some(AgentRoute::Detail { raw_agent_id }),
+        [raw_agent_id, "duplicate"] => Some(AgentRoute::Duplicate { raw_agent_id }),
+        [raw_agent_id, "hide"] => Some(AgentRoute::Hide { raw_agent_id }),
+        [raw_agent_id, "unhide"] => Some(AgentRoute::Unhide { raw_agent_id }),
+        _ => None,
+    }
 }
 
 impl<'a> ComponentGovernanceRoute<'a> {
@@ -218,6 +267,15 @@ impl DesktopTauriProtocol {
         }
         if path == "/api/me/preferences" {
             return self.preferences(request, authority).await;
+        }
+        if path == "/api/agents/test-connection" {
+            return self.agent_test_connection(request, authority).await;
+        }
+        if path == "/api/agents" {
+            return self.agents(request, authority).await;
+        }
+        if let Some(route) = agent_route(&path) {
+            return self.agent_detail(request, authority, route).await;
         }
         if path == "/api/tool-approvals" {
             return self.approvals(request, authority).await;
@@ -354,6 +412,173 @@ impl DesktopTauriProtocol {
             Ok(AppReply::UiPreferences(preferences)) => json_response(&preferences),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
+        }
+    }
+
+    async fn agents(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        match *request.method() {
+            Method::GET if request.body().is_empty() => {
+                let hidden = match agent_hidden_query(request.uri().query()) {
+                    Some(hidden) => hidden,
+                    None => {
+                        return error_response(AppError::MalformedPayload { field: "query" });
+                    }
+                };
+                match self
+                    .transport
+                    .execute(authority.auth, AppCommand::ListVisibleAgents { hidden })
+                    .await
+                {
+                    Ok(AppReply::Agents(agents)) => {
+                        json_response(&AgentProfilesResponse { agents })
+                    }
+                    Ok(_) => dependency_response(),
+                    Err(error) => error_response(error),
+                }
+            }
+            Method::POST => {
+                if !authority.is_fresh() {
+                    request.body_mut().fill(0);
+                    return error_response(AppError::SensitiveWriteRefused {
+                        reason: SensitiveWriteReason::SessionNotFresh,
+                    });
+                }
+                let form = match parse_agent_body::<AgentMutationRequest>(&mut request) {
+                    Ok(form) => form,
+                    Err(error) => return agent_body_error_response(error),
+                };
+                match self
+                    .transport
+                    .execute(authority.auth, AppCommand::CreateAgent(form))
+                    .await
+                {
+                    Ok(AppReply::Agent(agent)) => json_response_with_status(
+                        &AgentProfileResponse { agent },
+                        StatusCode::CREATED,
+                    ),
+                    Ok(_) => dependency_response(),
+                    Err(error) => error_response(error),
+                }
+            }
+            _ => empty_response(StatusCode::METHOD_NOT_ALLOWED),
+        }
+    }
+
+    async fn agent_test_connection(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let probe = match parse_agent_body::<AgentConnectionTestRequest>(&mut request) {
+            Ok(probe) => probe,
+            Err(error) => return agent_body_error_response(error),
+        };
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::TestAgentConnection(probe))
+            .await
+        {
+            Ok(AppReply::AgentConnectionVerdict(verdict)) => json_response(&verdict),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn agent_detail(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        route: AgentRoute<'_>,
+    ) -> Response<Vec<u8>> {
+        let supported = matches!(
+            (route, request.method()),
+            (AgentRoute::Detail { .. }, &Method::GET)
+                | (AgentRoute::Detail { .. }, &Method::PATCH)
+                | (AgentRoute::Detail { .. }, &Method::DELETE)
+                | (AgentRoute::Duplicate { .. }, &Method::POST)
+                | (AgentRoute::Hide { .. }, &Method::POST)
+                | (AgentRoute::Unhide { .. }, &Method::POST)
+        );
+        if !supported {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let write = request.method() != Method::GET;
+        if write && !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let agent_id = match percent_decode_segment(route.raw_agent_id()) {
+            Some(agent_id) => BotId::new(agent_id),
+            None => return error_response(AppError::MalformedPayload { field: "agent_id" }),
+        };
+        let (command, reply_kind) = match (route, request.method()) {
+            (AgentRoute::Detail { .. }, &Method::GET) if request.body().is_empty() => (
+                AppCommand::GetVisibleAgent { agent_id },
+                AgentReplyKind::Profile(StatusCode::OK),
+            ),
+            (AgentRoute::Detail { .. }, &Method::PATCH) => {
+                let form = match parse_agent_body::<AgentMutationRequest>(&mut request) {
+                    Ok(form) => form,
+                    Err(error) => return agent_body_error_response(error),
+                };
+                (
+                    AppCommand::UpdateAgent {
+                        agent_id,
+                        request: form,
+                    },
+                    AgentReplyKind::Profile(StatusCode::OK),
+                )
+            }
+            (AgentRoute::Detail { .. }, &Method::DELETE) if request.body().is_empty() => {
+                (AppCommand::DeleteAgent { agent_id }, AgentReplyKind::Empty)
+            }
+            (AgentRoute::Duplicate { .. }, &Method::POST) if request.body().is_empty() => (
+                AppCommand::DuplicateAgent { agent_id },
+                AgentReplyKind::Profile(StatusCode::CREATED),
+            ),
+            (AgentRoute::Hide { .. }, &Method::POST) if request.body().is_empty() => (
+                AppCommand::SetAgentHidden {
+                    agent_id,
+                    hidden: true,
+                },
+                AgentReplyKind::Empty,
+            ),
+            (AgentRoute::Unhide { .. }, &Method::POST) if request.body().is_empty() => (
+                AppCommand::SetAgentHidden {
+                    agent_id,
+                    hidden: false,
+                },
+                AgentReplyKind::Empty,
+            ),
+            _ => return empty_response(StatusCode::METHOD_NOT_ALLOWED),
+        };
+        match (
+            self.transport.execute(authority.auth, command).await,
+            reply_kind,
+        ) {
+            (Ok(AppReply::Agent(agent)), AgentReplyKind::Profile(status)) => {
+                json_response_with_status(&AgentProfileResponse { agent }, status)
+            }
+            (Ok(AppReply::AgentLifecycle(_)), AgentReplyKind::Empty) => {
+                empty_response(StatusCode::NO_CONTENT)
+            }
+            (Ok(_), _) => dependency_response(),
+            (Err(error), _) => error_response(error),
         }
     }
 
@@ -1042,6 +1267,25 @@ fn json_response_with_status<T: serde::Serialize>(
     }
 }
 
+fn parse_agent_body<T: serde::de::DeserializeOwned>(
+    request: &mut Request<Vec<u8>>,
+) -> Result<T, AgentBodyError> {
+    if request.body().len() > AGENT_BODY_MAX_BYTES {
+        request.body_mut().fill(0);
+        return Err(AgentBodyError::TooLarge);
+    }
+    let parsed = serde_json::from_slice::<T>(request.body());
+    request.body_mut().fill(0);
+    parsed.map_err(|_| AgentBodyError::Malformed)
+}
+
+fn agent_body_error_response(error: AgentBodyError) -> Response<Vec<u8>> {
+    match error {
+        AgentBodyError::Malformed => error_response(AppError::MalformedPayload { field: "body" }),
+        AgentBodyError::TooLarge => payload_too_large(),
+    }
+}
+
 fn error_response(error: AppError) -> Response<Vec<u8>> {
     let body = serde_json::to_vec(&json!({"code": error.code().as_str()}))
         .unwrap_or_else(|_| b"{\"code\":\"dependency_unavailable\"}".to_vec());
@@ -1145,6 +1389,14 @@ fn valid_scheme(scheme: &str) -> bool {
         && !matches!(scheme, "http" | "https" | "tauri" | "asset")
 }
 
+fn agent_hidden_query(query: Option<&str>) -> Option<bool> {
+    match query {
+        None | Some("") | Some("hidden=false") => Some(false),
+        Some("hidden=true") => Some(true),
+        Some(_) => None,
+    }
+}
+
 fn percent_decode_segment(raw: &str) -> Option<String> {
     if raw.contains('/') {
         return None;
@@ -1181,12 +1433,17 @@ mod tests {
     use async_trait::async_trait;
     use openbot_application::cursor::ChannelCursor;
     use openbot_application::{
-        ChannelReader, ComponentAdministration, ComponentAdministrationError,
+        AgentAdministration, AgentAdministrationError, AgentAdministrationScope, AgentDirectory,
+        AgentReadScope, ChannelReader, ComponentAdministration, ComponentAdministrationError,
         ComponentFunctionArguments, ComponentFunctionCallPlan, ComponentRuntimeScope,
         OpenBotApplication, PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
         SandboxedComponentAdministration, SandboxedComponentAdministrationError,
         SandboxedComponentDraft, ToolApprovalAdministration, ToolApprovalAdministrationError,
         UiPreferenceAdministration, UiPreferenceAdministrationError,
+    };
+    use openbot_contracts::agent::{
+        AgentConnectionVerdict, AgentLifecycleReceipt, AgentLifecycleState, AgentProfile,
+        AgentVisibility,
     };
     use openbot_contracts::auth::{AuthGeneration, Role};
     use openbot_contracts::command::ChannelSummary;
@@ -1223,6 +1480,226 @@ mod tests {
             _cursor: Option<ChannelCursor>,
         ) -> Result<Vec<ChannelSummary>, PortError> {
             Ok(Vec::new())
+        }
+    }
+
+    struct FakeAgents {
+        rows: Mutex<Vec<AgentProfile>>,
+        next: AtomicU64,
+    }
+
+    impl FakeAgents {
+        fn new() -> Self {
+            Self {
+                rows: Mutex::new(vec![AgentProfile {
+                    id: BotId::new("agent-one"),
+                    name: "Agent One".to_owned(),
+                    title: "First Agent".to_owned(),
+                    role_description: "Existing standing role".to_owned(),
+                    avatar_seed: "agent-one".to_owned(),
+                    visibility: AgentVisibility::Public,
+                    endpoint: None,
+                    has_auth: false,
+                    has_callback_token: false,
+                    hidden: false,
+                    system_owned: false,
+                    can_manage: true,
+                    mine: true,
+                }]),
+                next: AtomicU64::new(1),
+            }
+        }
+
+        fn authorize(scope: &AgentAdministrationScope) -> Result<(), AgentAdministrationError> {
+            if scope.tenant != TenantId::new("tenant")
+                || scope.actor != ActorId::new("actor")
+                || scope.auth_generation != AuthGeneration::new(1)
+            {
+                return Err(AgentAdministrationError::Forbidden);
+            }
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl AgentDirectory for FakeAgents {
+        async fn list_visible_agents(
+            &self,
+            scope: &AgentReadScope,
+            hidden: bool,
+        ) -> Result<Vec<AgentProfile>, PortError> {
+            if scope.tenant != TenantId::new("tenant") || scope.actor != ActorId::new("actor") {
+                return Err(PortError::Unavailable {
+                    dependency: "fixture_agents",
+                });
+            }
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|profile| profile.hidden == hidden)
+                .cloned()
+                .collect())
+        }
+
+        async fn get_visible_agent(
+            &self,
+            scope: &AgentReadScope,
+            agent_id: &BotId,
+        ) -> Result<Option<AgentProfile>, PortError> {
+            if scope.tenant != TenantId::new("tenant") || scope.actor != ActorId::new("actor") {
+                return Err(PortError::Unavailable {
+                    dependency: "fixture_agents",
+                });
+            }
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|profile| &profile.id == agent_id)
+                .cloned())
+        }
+    }
+
+    #[async_trait]
+    impl AgentAdministration for FakeAgents {
+        async fn create_agent(
+            &self,
+            scope: &AgentAdministrationScope,
+            request: AgentMutationRequest,
+        ) -> Result<AgentProfile, AgentAdministrationError> {
+            Self::authorize(scope)?;
+            let sequence = self.next.fetch_add(1, Ordering::SeqCst);
+            let profile = AgentProfile {
+                id: BotId::new(format!("desktop-agent-{sequence}")),
+                name: request.name,
+                title: request.title,
+                role_description: request.role_description,
+                avatar_seed: format!("desktop-agent-{sequence}"),
+                visibility: request.visibility,
+                endpoint: request.endpoint,
+                has_auth: request.auth.is_some(),
+                has_callback_token: false,
+                hidden: false,
+                system_owned: false,
+                can_manage: true,
+                mine: true,
+            };
+            self.rows.lock().unwrap().push(profile.clone());
+            Ok(profile)
+        }
+
+        async fn update_agent(
+            &self,
+            scope: &AgentAdministrationScope,
+            agent_id: &BotId,
+            request: AgentMutationRequest,
+        ) -> Result<AgentProfile, AgentAdministrationError> {
+            Self::authorize(scope)?;
+            let mut rows = self.rows.lock().unwrap();
+            let profile = rows
+                .iter_mut()
+                .find(|profile| &profile.id == agent_id)
+                .ok_or(AgentAdministrationError::NotVisible)?;
+            profile.name = request.name;
+            profile.title = request.title;
+            profile.role_description = request.role_description;
+            profile.visibility = request.visibility;
+            profile.endpoint = request.endpoint;
+            if request.auth.is_some() {
+                profile.has_auth = true;
+            }
+            if profile.endpoint.is_none() {
+                profile.has_auth = false;
+                profile.has_callback_token = false;
+            }
+            Ok(profile.clone())
+        }
+
+        async fn duplicate_agent(
+            &self,
+            scope: &AgentAdministrationScope,
+            agent_id: &BotId,
+        ) -> Result<AgentProfile, AgentAdministrationError> {
+            Self::authorize(scope)?;
+            let mut rows = self.rows.lock().unwrap();
+            let source = rows
+                .iter()
+                .find(|profile| &profile.id == agent_id)
+                .cloned()
+                .ok_or(AgentAdministrationError::NotVisible)?;
+            let sequence = self.next.fetch_add(1, Ordering::SeqCst);
+            let copy = AgentProfile {
+                id: BotId::new(format!("desktop-agent-{sequence}")),
+                name: source.name,
+                title: source.title,
+                role_description: source.role_description,
+                avatar_seed: source.avatar_seed,
+                visibility: AgentVisibility::Private,
+                endpoint: None,
+                has_auth: false,
+                has_callback_token: false,
+                hidden: false,
+                system_owned: false,
+                can_manage: true,
+                mine: true,
+            };
+            rows.push(copy.clone());
+            Ok(copy)
+        }
+
+        async fn set_agent_hidden(
+            &self,
+            scope: &AgentAdministrationScope,
+            agent_id: &BotId,
+            hidden: bool,
+        ) -> Result<AgentLifecycleReceipt, AgentAdministrationError> {
+            Self::authorize(scope)?;
+            let mut rows = self.rows.lock().unwrap();
+            let profile = rows
+                .iter_mut()
+                .find(|profile| &profile.id == agent_id)
+                .ok_or(AgentAdministrationError::NotVisible)?;
+            profile.hidden = hidden;
+            Ok(AgentLifecycleReceipt {
+                agent_id: agent_id.clone(),
+                state: if hidden {
+                    AgentLifecycleState::Hidden
+                } else {
+                    AgentLifecycleState::Visible
+                },
+            })
+        }
+
+        async fn delete_agent(
+            &self,
+            scope: &AgentAdministrationScope,
+            agent_id: &BotId,
+        ) -> Result<AgentLifecycleReceipt, AgentAdministrationError> {
+            Self::authorize(scope)?;
+            let mut rows = self.rows.lock().unwrap();
+            let index = rows
+                .iter()
+                .position(|profile| &profile.id == agent_id)
+                .ok_or(AgentAdministrationError::NotVisible)?;
+            rows.remove(index);
+            Ok(AgentLifecycleReceipt {
+                agent_id: agent_id.clone(),
+                state: AgentLifecycleState::Deleted,
+            })
+        }
+
+        async fn test_agent_connection(
+            &self,
+            scope: &AgentAdministrationScope,
+            _request: AgentConnectionTestRequest,
+        ) -> Result<AgentConnectionVerdict, AgentAdministrationError> {
+            Self::authorize(scope)?;
+            Ok(AgentConnectionVerdict::working(vec![
+                "RUN_STARTED".to_owned(),
+            ]))
         }
     }
 
@@ -1577,9 +2054,12 @@ mod tests {
             theme: Some(UiTheme::Dark),
             locale: Some(UiLocale::ZhCn),
         })));
+        let agents = Arc::new(FakeAgents::new());
         let application = Arc::new(
             OpenBotApplication::new(EmptyChannels)
                 .with_people(FakePeople)
+                .with_agent_directory(agents.clone())
+                .with_agent_administration(agents)
                 .with_ui_preferences(preferences)
                 .with_component_administration(Arc::new(FakeComponents))
                 .with_sandboxed_component_administration(Arc::new(FakeSandboxed))
@@ -1606,6 +2086,321 @@ mod tests {
         );
         assert_eq!(percent_decode_segment("bad%2"), None);
         assert_eq!(percent_decode_segment("raw/slash"), None);
+        assert_eq!(agent_hidden_query(None), Some(false));
+        assert_eq!(agent_hidden_query(Some("")), Some(false));
+        assert_eq!(agent_hidden_query(Some("hidden=false")), Some(false));
+        assert_eq!(agent_hidden_query(Some("hidden=true")), Some(true));
+        assert_eq!(agent_hidden_query(Some("hidden=1")), None);
+        assert!(matches!(
+            agent_route("/api/agents/agent%2Done/duplicate"),
+            Some(AgentRoute::Duplicate { .. })
+        ));
+        assert!(agent_route("/api/agents/agent/one").is_none());
+    }
+
+    #[test]
+    fn agent_body_parser_zeroes_success_malformed_and_oversized_buffers() {
+        let mut valid = Request::builder()
+            .body(
+                br#"{"endpoint":"https://agent.example/ag-ui","auth":{"header":"Authorization","value":"Bearer DESKTOP_SECRET"}}"#
+                    .to_vec(),
+            )
+            .unwrap();
+        let parsed = parse_agent_body::<AgentConnectionTestRequest>(&mut valid).unwrap();
+        assert!(parsed.auth.is_some());
+        assert!(valid.body().iter().all(|byte| *byte == 0));
+
+        let mut malformed = Request::builder()
+            .body(b"{DESKTOP_SECRET".to_vec())
+            .unwrap();
+        assert!(matches!(
+            parse_agent_body::<AgentConnectionTestRequest>(&mut malformed),
+            Err(AgentBodyError::Malformed)
+        ));
+        assert!(malformed.body().iter().all(|byte| *byte == 0));
+
+        let mut oversized = Request::builder()
+            .body(vec![b'x'; AGENT_BODY_MAX_BYTES + 1])
+            .unwrap();
+        assert!(matches!(
+            parse_agent_body::<AgentConnectionTestRequest>(&mut oversized),
+            Err(AgentBodyError::TooLarge)
+        ));
+        assert!(oversized.body().iter().all(|byte| *byte == 0));
+    }
+
+    #[tokio::test]
+    async fn agent_routes_share_typed_application_freshness_and_secret_free_framing() {
+        const SECRET: &str = "DESKTOP_AGENT_SECRET_CANARY";
+        let (protocol, root) = protocol();
+        protocol.bind_window("agents", auth(), None).unwrap();
+
+        let list = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .uri("/api/agents")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        assert_eq!(list.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<AgentProfilesResponse>(list.body())
+                .unwrap()
+                .agents
+                .len(),
+            1
+        );
+
+        let detail = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .uri("/api/agents/agent-one")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(detail.status(), StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<AgentProfileResponse>(detail.body())
+                .unwrap()
+                .agent
+                .id
+                .as_str(),
+            "agent-one"
+        );
+
+        let stale = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents")
+                    .body(format!("{{malformed:{SECRET}").into_bytes())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+        assert!(!String::from_utf8_lossy(stale.body()).contains(SECRET));
+
+        assert!(protocol.unbind_window("agents").unwrap());
+        protocol
+            .bind_window("agents", auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+
+        let bad_query = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .uri("/api/agents?hidden=yes")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(bad_query.status(), StatusCode::BAD_REQUEST);
+
+        let forged = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents")
+                    .body(br#"{"name":"Forged","title":"Title","roleDescription":"Role","visibility":"private","ownerUserId":"admin"}"#.to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(forged.status(), StatusCode::BAD_REQUEST);
+
+        let oversized = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents")
+                    .body(vec![b'x'; AGENT_BODY_MAX_BYTES + 1])
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let create_body = format!(
+            "{{\"name\":\"Remote\",\"title\":\"Remote title\",\"roleDescription\":\"Remote role\",\"visibility\":\"public\",\"endpoint\":\"https://agent.example/ag-ui\",\"auth\":{{\"header\":\"Authorization\",\"value\":\"Bearer {SECRET}\"}}}}"
+        );
+        let created = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents")
+                    .body(create_body.into_bytes())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        assert_eq!(created.headers()[CACHE_CONTROL], "no-store");
+        assert!(!String::from_utf8_lossy(created.body()).contains(SECRET));
+        let created = serde_json::from_slice::<AgentProfileResponse>(created.body())
+            .unwrap()
+            .agent;
+        assert_eq!(created.id.as_str(), "desktop-agent-1");
+        assert!(created.has_auth);
+
+        let probe = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents/test-connection")
+                    .body(
+                        format!(
+                            "{{\"endpoint\":\"https://agent.example/ag-ui\",\"auth\":{{\"header\":\"Authorization\",\"value\":\"Bearer {SECRET}\"}}}}"
+                        )
+                        .into_bytes(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(probe.status(), StatusCode::OK);
+        assert!(!String::from_utf8_lossy(probe.body()).contains(SECRET));
+        assert_eq!(
+            serde_json::from_slice::<AgentConnectionVerdict>(probe.body()).unwrap(),
+            AgentConnectionVerdict::working(vec!["RUN_STARTED".to_owned()])
+        );
+
+        let updated = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri("/api/agents/desktop-agent-1")
+                    .body(br#"{"name":"Remote updated","title":"Updated title","roleDescription":"Updated role","visibility":"public","endpoint":"https://agent.example/ag-ui-v2"}"#.to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(updated.status(), StatusCode::OK);
+        let updated = serde_json::from_slice::<AgentProfileResponse>(updated.body())
+            .unwrap()
+            .agent;
+        assert!(updated.has_auth);
+        assert_eq!(
+            updated.endpoint.as_deref(),
+            Some("https://agent.example/ag-ui-v2")
+        );
+
+        let duplicated = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents/desktop-agent-1/duplicate")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(duplicated.status(), StatusCode::CREATED);
+        let duplicate = serde_json::from_slice::<AgentProfileResponse>(duplicated.body())
+            .unwrap()
+            .agent;
+        assert_eq!(duplicate.visibility, AgentVisibility::Private);
+        assert!(!duplicate.has_auth);
+        assert!(duplicate.endpoint.is_none());
+
+        let hidden = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents/desktop-agent-1/hide")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(hidden.status(), StatusCode::NO_CONTENT);
+        assert!(hidden.body().is_empty());
+
+        let default_roster = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .uri("/api/agents?hidden=false")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert!(
+            serde_json::from_slice::<AgentProfilesResponse>(default_roster.body())
+                .unwrap()
+                .agents
+                .iter()
+                .all(|agent| agent.id.as_str() != "desktop-agent-1")
+        );
+        let hidden_roster = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .uri("/api/agents?hidden=true")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(
+            serde_json::from_slice::<AgentProfilesResponse>(hidden_roster.body())
+                .unwrap()
+                .agents[0]
+                .id
+                .as_str(),
+            "desktop-agent-1"
+        );
+
+        let unhidden = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/agents/desktop-agent-1/unhide")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(unhidden.status(), StatusCode::NO_CONTENT);
+
+        let deleted = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/agents/desktop-agent-1")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+        let missing = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .uri("/api/agents/desktop-agent-1")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+        let wrong_method = protocol
+            .handle(
+                "agents",
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/agents")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(wrong_method.status(), StatusCode::METHOD_NOT_ALLOWED);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
