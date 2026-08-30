@@ -1474,7 +1474,9 @@ async fn target_visible(
                     "SELECT EXISTS( \
                        SELECT 1 FROM public.agent_profiles p \
                        WHERE p.agent_id=$1 AND p.deleted_at IS NULL \
-                         AND (p.visibility='public' OR p.owner_user_id=$2) \
+                         AND (p.visibility='public' OR p.owner_user_id=$2 OR EXISTS( \
+                              SELECT 1 FROM public.user_roles ur \
+                               WHERE ur.user_id=$2 AND ur.role='admin')) \
                      )",
                     &[&command.bot_id.as_str(), &request.actor.as_str()],
                 )
@@ -1489,7 +1491,9 @@ async fn target_visible(
                        JOIN public.agent_profiles p ON p.agent_id=ca.agent_id \
                        WHERE cm.channel_id=$1 AND cm.user_id=$2 AND ca.agent_id=$3 \
                          AND p.deleted_at IS NULL \
-                         AND (p.visibility='public' OR p.owner_user_id=$2) \
+                         AND (p.visibility='public' OR p.owner_user_id=$2 OR EXISTS( \
+                              SELECT 1 FROM public.user_roles ur \
+                               WHERE ur.user_id=$2 AND ur.role='admin')) \
                      )",
                     &[
                         &channel_id.as_str(),

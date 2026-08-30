@@ -69,6 +69,7 @@ use openbot_infra::provider::openai::{
     OpenAiApiKey, OpenAiProtocol, OpenAiProvider, OpenAiProviderConfig,
 };
 use openbot_infra::remote_agui::SafeRemoteAguiTransport;
+use openbot_infra::repo::agents::PostgresAgentAdministration;
 use openbot_infra::repo::audit::PostgresAuditReader;
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_infra::repo::tools::PostgresToolJournal;
@@ -248,6 +249,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         KeyVersion::new(1),
         KeyEncryptionKey::from_env_map(&env, key_policy)?.into_wrapping_key(),
     );
+    let remote_agent_probe = build_remote_agent_transport(
+        &server.package_openai_provider.egress_allow_cidrs,
+        server.package_openai_provider.allow_http,
+        server.agent_budgets,
+    )?;
+    let agent_administration = Arc::new(PostgresAgentAdministration::new(
+        pool.clone(),
+        model_credential_vault.clone(),
+        audit_key.to_vec(),
+        remote_agent_probe,
+        managed_provider_for_slot(&server).is_some(),
+    )?);
 
     initialize_single_user(&pool, single_user).await?;
 
@@ -485,6 +498,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_channel_routing(Arc::new(channel_routing));
     let application = application
         .with_agent_directory(Arc::new(PostgresAgentDirectory::new(pool.clone())))
+        .with_agent_administration(agent_administration)
         .with_component_administration(components.clone())
         .with_sandboxed_component_administration(sandboxed_components.clone())
         .with_mcp_connections(mcp_connections.clone())
@@ -652,7 +666,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         .transpose()?;
     let credentials = Arc::new(PostgresOpenAiCredentialSource::new(
         pool.clone(),
-        credential_vault,
+        credential_vault.clone(),
         credential_key_id,
         environment_fallback,
     )?);
@@ -683,16 +697,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
     } else {
         None
     };
-    let remote_transport = Arc::new(SafeRemoteAguiTransport::new(
-        SafeDialer::new(egress_policy),
-        SafeHttpBudget::new(64 * 1024 * 1024, Duration::from_secs(30))?,
-        budgets.stall_timeout,
-        if allow_http {
-            SchemePolicy::HttpOrHttps
-        } else {
-            SchemePolicy::HttpsOnly
-        },
-    )?);
+    let remote_transport = build_remote_agent_transport(&egress_allow_cidrs, allow_http, budgets)?;
     let remote_provider: Arc<dyn ProviderAdapter> =
         Arc::new(RemoteAguiProvider::new(remote_transport));
     let provider = Arc::new(RetryingProvider::new(
@@ -705,7 +710,8 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
             .with_remote_assertions(remote_assertions)
             .with_mcp_catalog(mcp_catalog)
             .with_components(components)
-            .with_sandboxed_components(sandboxed_components),
+            .with_sandboxed_components(sandboxed_components)
+            .with_agent_credential_vault(credential_vault),
     );
     let agent = BuiltInAgentRuntime::start(
         runtime,
@@ -790,6 +796,26 @@ fn managed_provider_for_slot(server: &ServerConfig) -> Option<ManagedProviderCon
                 allow_http: package.allow_http,
             })
     })
+}
+
+fn build_remote_agent_transport(
+    egress_allow_cidrs: &[String],
+    allow_http: bool,
+    budgets: AgentBudgets,
+) -> Result<Arc<SafeRemoteAguiTransport>, Box<dyn Error>> {
+    let egress = EgressPolicy::new(CidrAllowlist::parse_exact(
+        egress_allow_cidrs.iter().map(String::as_str),
+    )?);
+    Ok(Arc::new(SafeRemoteAguiTransport::new(
+        SafeDialer::new(egress),
+        SafeHttpBudget::new(64 * 1024 * 1024, Duration::from_secs(30))?,
+        budgets.stall_timeout,
+        if allow_http {
+            SchemePolicy::HttpOrHttps
+        } else {
+            SchemePolicy::HttpsOnly
+        },
+    )?))
 }
 
 fn build_managed_provider(

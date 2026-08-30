@@ -32,7 +32,7 @@ async fn roster_and_detail_apply_access_hidden_delete_and_server_decided_flags()
                        ('tenant-other','/other','other-checksum');
                      INSERT INTO public.agents(id,name,type,configuration,package_id) VALUES
                        ('agent-public','Public','remote_ag_ui',
-                        '{\"endpoint\":\"https://agent.example.test/ag-ui\",\"auth\":{\"header\":\"Authorization\",\"credentialId\":\"cred-1\"}}',NULL),
+                        '{\"endpoint\":\"https://agent.example.test/ag-ui\",\"auth\":{\"header\":\"Authorization\",\"credentialId\":\"018f47d2-2c00-7000-8000-000000000001\"}}',NULL),
                        ('agent-private-a','Private A','built_in','{}',NULL),
                        ('agent-private-b','Private B','built_in','{}',NULL),
                        ('agent-private-admin','Private Admin','built_in','{}',NULL),

@@ -81,7 +81,11 @@ impl ProviderAdapter for RemoteAguiProvider {
         .map_err(|_| ProviderPortError::InvalidRequest {
             field: "remote_run_input",
         })?;
-        let stream = match self.transport.start(route.endpoint(), body).await {
+        let stream = match self
+            .transport
+            .start(route.endpoint(), route.authorization(), body)
+            .await
+        {
             Ok(stream) => stream,
             Err(RemoteAguiTransportError::Unavailable) => {
                 return Err(ProviderPortError::Unavailable);
@@ -174,6 +178,9 @@ impl ProviderSession for RemoteAguiSession {
                     self.fail(ProviderFailure::StreamStalled);
                 }
                 Err(RemoteAguiTransportError::InvalidResponse) => {
+                    self.fail(ProviderFailure::InvalidResponse);
+                }
+                Err(RemoteAguiTransportError::DestinationRejected) => {
                     self.fail(ProviderFailure::InvalidResponse);
                 }
                 Err(RemoteAguiTransportError::Authentication) => {
@@ -290,6 +297,7 @@ impl RemoteAguiSession {
 
 fn transport_failure(error: RemoteAguiTransportError) -> ProviderEvent {
     ProviderEvent::Failed(match error {
+        RemoteAguiTransportError::DestinationRejected => ProviderFailure::InvalidResponse,
         RemoteAguiTransportError::Authentication => ProviderFailure::Authentication,
         RemoteAguiTransportError::RateLimited => ProviderFailure::RateLimited { retry_after: None },
         RemoteAguiTransportError::ServerUnavailable | RemoteAguiTransportError::Unavailable => {
@@ -327,9 +335,14 @@ mod tests {
 
     #[async_trait]
     impl RemoteAguiTransport for FakeTransport {
+        async fn validate_endpoint(&self, _endpoint: &str) -> Result<(), RemoteAguiTransportError> {
+            Ok(())
+        }
+
         async fn start(
             &self,
             _endpoint: &str,
+            _authorization: Option<&openbot_application::RemoteAguiAuthorization>,
             body: Vec<u8>,
         ) -> Result<Box<dyn RemoteAguiEventStream>, RemoteAguiTransportError> {
             *self.body.lock().unwrap() = Some(body);

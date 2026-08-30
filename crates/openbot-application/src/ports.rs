@@ -4,9 +4,12 @@
 //! 本模块不 import 任何 I/O crate，也不出现任何 SQL —— 出现了就说明抽象漏了。
 
 use async_trait::async_trait;
-use openbot_contracts::agent::AgentProfile;
+use openbot_contracts::agent::{
+    AgentConnectionTestRequest, AgentConnectionVerdict, AgentLifecycleReceipt,
+    AgentMutationRequest, AgentProfile,
+};
 use openbot_contracts::audit::AuditPage;
-use openbot_contracts::auth::Role;
+use openbot_contracts::auth::{AuthGeneration, Role};
 use openbot_contracts::command::{
     BeginThreadRun, CancelThreadRun, ChannelDetail, ChannelSummary, ThreadHistory,
     ThreadRunCancellation, ThreadRunStarted,
@@ -356,6 +359,186 @@ pub struct AgentReadScope {
     pub actor: ActorId,
     /// Whether current verified roles include administrator.
     pub admin: bool,
+}
+
+/// Fresh authority snapshot required by every Agent lifecycle write/probe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentAdministrationScope {
+    /// Verified tenant scope.
+    pub tenant: TenantId,
+    /// Verified actor identity.
+    pub actor: ActorId,
+    /// Whether the verified role snapshot includes administrator.
+    pub admin: bool,
+    /// Session/user generation that PostgreSQL must revalidate before authority or network work.
+    pub auth_generation: AuthGeneration,
+}
+
+impl AgentAdministrationScope {
+    /// Borrow the read-policy projection without duplicating authority derivation.
+    #[must_use]
+    pub fn read_scope(&self) -> AgentReadScope {
+        AgentReadScope {
+            tenant: self.tenant.clone(),
+            actor: self.actor.clone(),
+            admin: self.admin,
+        }
+    }
+}
+
+/// Stable Agent lifecycle adapter failure without SQL, URL, credential, or remote body values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum AgentAdministrationError {
+    /// Missing, deleted, cross-tenant, or inaccessible Agent.
+    #[error("agent_administration_not_visible")]
+    NotVisible,
+    /// Visible Agent is not manageable by the current actor.
+    #[error("agent_administration_forbidden")]
+    Forbidden,
+    /// Package-backed Agent is immutable outside package sync.
+    #[error("agent_administration_protected")]
+    Protected,
+    /// Canonical input or stored endpoint cannot be accepted.
+    #[error("agent_administration_invalid field={field}")]
+    InvalidInput {
+        /// Static field only.
+        field: &'static str,
+    },
+    /// PostgreSQL, Vault, audit chain, or safe transport is unavailable.
+    #[error("agent_administration_unavailable")]
+    Unavailable,
+    /// Stored row/configuration/credential violates the closed schema.
+    #[error("agent_administration_corrupt field={field}")]
+    Corrupt {
+        /// Static field only.
+        field: &'static str,
+    },
+    /// Transaction outcome is not knowable and must be reconciled.
+    #[error("agent_administration_commit_unknown")]
+    CommitUnknown,
+}
+
+impl AgentAdministrationError {
+    /// Map lifecycle errors into the stable application taxonomy.
+    #[must_use]
+    pub const fn into_app_error(self) -> AppError {
+        match self {
+            Self::NotVisible => AppError::NotVisible,
+            Self::Forbidden | Self::Protected => AppError::ForbiddenRole {
+                required: Role::User,
+            },
+            Self::InvalidInput { field } => AppError::MalformedPayload { field },
+            Self::Unavailable | Self::Corrupt { .. } => AppError::DependencyUnavailable {
+                dependency: "agent_administration",
+            },
+            Self::CommitUnknown => AppError::ReconciliationRequired { accepted: true },
+        }
+    }
+}
+
+/// Agent create/edit/copy/preference/delete and pre-save remote connection probe port.
+#[async_trait]
+pub trait AgentAdministration: Send + Sync {
+    /// Create one caller-owned profile; ID, owner, type, avatar and configuration are authoritative.
+    async fn create_agent(
+        &self,
+        scope: &AgentAdministrationScope,
+        request: AgentMutationRequest,
+    ) -> Result<AgentProfile, AgentAdministrationError>;
+
+    /// Replace the editable profile fields and optionally rotate the write-only remote credential.
+    async fn update_agent(
+        &self,
+        scope: &AgentAdministrationScope,
+        agent_id: &BotId,
+        request: AgentMutationRequest,
+    ) -> Result<AgentProfile, AgentAdministrationError>;
+
+    /// Copy presentation into a new private managed-slot profile; no credential or membership copies.
+    async fn duplicate_agent(
+        &self,
+        scope: &AgentAdministrationScope,
+        agent_id: &BotId,
+    ) -> Result<AgentProfile, AgentAdministrationError>;
+
+    /// Set only the current actor's hidden preference.
+    async fn set_agent_hidden(
+        &self,
+        scope: &AgentAdministrationScope,
+        agent_id: &BotId,
+        hidden: bool,
+    ) -> Result<AgentLifecycleReceipt, AgentAdministrationError>;
+
+    /// Soft-delete one manageable non-package Agent and retire its credentials.
+    async fn delete_agent(
+        &self,
+        scope: &AgentAdministrationScope,
+        agent_id: &BotId,
+    ) -> Result<AgentLifecycleReceipt, AgentAdministrationError>;
+
+    /// Perform a bounded real AG-UI POST through the same SafeDialer used at runtime.
+    async fn test_agent_connection(
+        &self,
+        scope: &AgentAdministrationScope,
+        request: AgentConnectionTestRequest,
+    ) -> Result<AgentConnectionVerdict, AgentAdministrationError>;
+}
+
+/// Fail-closed lifecycle default until production assembly injects PostgreSQL/Vault/SafeDialer.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoAgentAdministration;
+
+#[async_trait]
+impl AgentAdministration for NoAgentAdministration {
+    async fn create_agent(
+        &self,
+        _scope: &AgentAdministrationScope,
+        _request: AgentMutationRequest,
+    ) -> Result<AgentProfile, AgentAdministrationError> {
+        Err(AgentAdministrationError::Unavailable)
+    }
+
+    async fn update_agent(
+        &self,
+        _scope: &AgentAdministrationScope,
+        _agent_id: &BotId,
+        _request: AgentMutationRequest,
+    ) -> Result<AgentProfile, AgentAdministrationError> {
+        Err(AgentAdministrationError::Unavailable)
+    }
+
+    async fn duplicate_agent(
+        &self,
+        _scope: &AgentAdministrationScope,
+        _agent_id: &BotId,
+    ) -> Result<AgentProfile, AgentAdministrationError> {
+        Err(AgentAdministrationError::Unavailable)
+    }
+
+    async fn set_agent_hidden(
+        &self,
+        _scope: &AgentAdministrationScope,
+        _agent_id: &BotId,
+        _hidden: bool,
+    ) -> Result<AgentLifecycleReceipt, AgentAdministrationError> {
+        Err(AgentAdministrationError::Unavailable)
+    }
+
+    async fn delete_agent(
+        &self,
+        _scope: &AgentAdministrationScope,
+        _agent_id: &BotId,
+    ) -> Result<AgentLifecycleReceipt, AgentAdministrationError> {
+        Err(AgentAdministrationError::Unavailable)
+    }
+
+    async fn test_agent_connection(
+        &self,
+        _scope: &AgentAdministrationScope,
+        _request: AgentConnectionTestRequest,
+    ) -> Result<AgentConnectionVerdict, AgentAdministrationError> {
+        Err(AgentAdministrationError::Unavailable)
+    }
 }
 
 /// Current-schema Agent roster/detail read port.

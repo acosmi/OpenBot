@@ -6,12 +6,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 use http::StatusCode;
 use http::header::CONTENT_TYPE;
-use openbot_application::{RemoteAguiEventStream, RemoteAguiTransport, RemoteAguiTransportError};
+use openbot_application::{
+    RemoteAguiAuthorization, RemoteAguiEventStream, RemoteAguiTransport, RemoteAguiTransportError,
+};
 use url::Url;
 
 use crate::net::safe_http::{
-    SafeDialer, SafeHttpBudget, SafeHttpError, SafeHttpRequest, SafeHttpStreamResponse,
-    SchemePolicy,
+    AuthorizationValue, SafeDialer, SafeHttpBudget, SafeHttpError, SafeHttpRequest,
+    SafeHttpStreamResponse, SchemePolicy,
 };
 use crate::provider::sse::SseDecoder;
 
@@ -48,17 +50,38 @@ impl SafeRemoteAguiTransport {
 
 #[async_trait]
 impl RemoteAguiTransport for SafeRemoteAguiTransport {
+    async fn validate_endpoint(&self, endpoint: &str) -> Result<(), RemoteAguiTransportError> {
+        let url =
+            Url::parse(endpoint).map_err(|_| RemoteAguiTransportError::DestinationRejected)?;
+        self.dialer
+            .validate_destination(&url, self.scheme_policy)
+            .await
+            .map_err(map_validation_error)
+    }
+
     async fn start(
         &self,
         endpoint: &str,
+        authorization: Option<&RemoteAguiAuthorization>,
         body: Vec<u8>,
     ) -> Result<Box<dyn RemoteAguiEventStream>, RemoteAguiTransportError> {
         let url = Url::parse(endpoint).map_err(|_| RemoteAguiTransportError::InvalidResponse)?;
+        let authorization = authorization
+            .map(|value| {
+                value
+                    .expose()
+                    .map_err(|_| RemoteAguiTransportError::InvalidResponse)
+                    .and_then(|value| {
+                        AuthorizationValue::parse(value)
+                            .map_err(|_| RemoteAguiTransportError::InvalidResponse)
+                    })
+            })
+            .transpose()?;
         let request = SafeHttpRequest::post_json_with_scheme(
             url,
             self.scheme_policy,
             body,
-            None,
+            authorization,
             self.budget,
         )
         .map_err(map_start_error)?;
@@ -147,21 +170,31 @@ const fn map_start_error(error: SafeHttpError) -> RemoteAguiTransportError {
         SafeHttpError::DnsUnavailable | SafeHttpError::ConnectFailed | SafeHttpError::TlsFailed => {
             RemoteAguiTransportError::Unavailable
         }
+        SafeHttpError::InvalidUrl
+        | SafeHttpError::SchemeRejected
+        | SafeHttpError::DestinationDenied => RemoteAguiTransportError::DestinationRejected,
         SafeHttpError::DeadlineExceeded
         | SafeHttpError::ProtocolFailed
         | SafeHttpError::ResponseTooLarge
         | SafeHttpError::StreamStalled => RemoteAguiTransportError::CommitUnknown,
-        SafeHttpError::InvalidUrl
-        | SafeHttpError::SchemeRejected
-        | SafeHttpError::InvalidBudget
+        SafeHttpError::InvalidBudget
         | SafeHttpError::InvalidHeader
         | SafeHttpError::InvalidAllowlist
-        | SafeHttpError::DestinationDenied
         | SafeHttpError::PeerMismatch
         | SafeHttpError::RedirectInvalid
         | SafeHttpError::RedirectLimit
         | SafeHttpError::RedirectMethodRejected
         | SafeHttpError::SensitiveRedirectRejected => RemoteAguiTransportError::InvalidResponse,
+    }
+}
+
+const fn map_validation_error(error: SafeHttpError) -> RemoteAguiTransportError {
+    match error {
+        SafeHttpError::DnsUnavailable => RemoteAguiTransportError::Unavailable,
+        SafeHttpError::InvalidUrl
+        | SafeHttpError::SchemeRejected
+        | SafeHttpError::DestinationDenied => RemoteAguiTransportError::DestinationRejected,
+        _ => RemoteAguiTransportError::InvalidResponse,
     }
 }
 
@@ -206,6 +239,7 @@ mod tests {
             let request = String::from_utf8(bytes).unwrap();
             assert!(request.starts_with("POST /agent/run "));
             assert!(request.contains("accept: text/event-stream"));
+            assert!(request.contains("authorization: Bearer remote-test-secret"));
             assert!(request.ends_with(r#"{"runId":"run-1"}"#));
             let body = concat!(
                 "data: {\"type\":\"RUN_STARTED\",\"threadId\":\"t\",\"runId\":\"r\"}\n\n",
@@ -229,9 +263,18 @@ mod tests {
             SchemePolicy::HttpOrHttps,
         )
         .unwrap();
+        transport
+            .validate_endpoint(&format!("http://{address}/agent/run"))
+            .await
+            .unwrap();
+        let authorization = RemoteAguiAuthorization::new(openbot_domain::vault::SecretBytes::new(
+            b"Bearer remote-test-secret".to_vec(),
+        ))
+        .unwrap();
         let mut stream = transport
             .start(
                 &format!("http://{address}/agent/run"),
+                Some(&authorization),
                 br#"{"runId":"run-1"}"#.to_vec(),
             )
             .await
@@ -254,5 +297,24 @@ mod tests {
         );
         assert_eq!(stream.next_data().await.unwrap(), None);
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn endpoint_preflight_rejects_metadata_without_opening_a_socket() {
+        let transport = SafeRemoteAguiTransport::new(
+            SafeDialer::new(EgressPolicy::new(
+                CidrAllowlist::parse_exact(std::iter::empty::<&str>()).unwrap(),
+            )),
+            SafeHttpBudget::new(64 * 1024, Duration::from_secs(2)).unwrap(),
+            Some(Duration::from_secs(1)),
+            SchemePolicy::HttpOrHttps,
+        )
+        .unwrap();
+        assert_eq!(
+            transport
+                .validate_endpoint("http://169.254.169.254/latest/meta-data")
+                .await,
+            Err(RemoteAguiTransportError::DestinationRejected)
+        );
     }
 }

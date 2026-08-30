@@ -24,7 +24,10 @@ pub mod policy;
 pub mod routing;
 pub mod thread;
 
-pub use agents::{get_visible_agent, list_visible_agents};
+pub use agents::{
+    create_agent, delete_agent, duplicate_agent, get_visible_agent, list_visible_agents,
+    set_agent_hidden, test_agent_connection, update_agent,
+};
 pub use audit::{DEFAULT_AUDIT_PAGE, MAX_AUDIT_PAGE, list_audit_events};
 pub use channels_create::create_channel;
 pub use health::{DEFAULT_HEARTBEAT_PERIOD, health, health_stream};

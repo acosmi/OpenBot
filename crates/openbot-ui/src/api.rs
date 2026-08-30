@@ -3,7 +3,9 @@
 //! This module only performs HTTP framing. Approval binding, actor resolution and the durable
 //! decision remain behind `ApplicationService` on the Server.
 
-use openbot_contracts::agent::AgentProfile;
+use openbot_contracts::agent::{
+    AgentConnectionTestRequest, AgentConnectionVerdict, AgentMutationRequest, AgentProfile,
+};
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::agent::{AgentProfileResponse, AgentProfilesResponse};
 #[cfg(any(target_arch = "wasm32", test))]
@@ -1281,6 +1283,175 @@ pub async fn load_agent(agent_id: &str) -> Result<AgentProfile, ApiError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = agent_id;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Create one caller-owned Agent; response is the authoritative profile.
+pub async fn create_agent(request: &AgentMutationRequest) -> Result<AgentProfile, ApiError> {
+    agent_profile_mutation("/api/agents", "POST", request).await
+}
+
+/// Update one manageable Agent; response is the authoritative profile.
+pub async fn update_agent(
+    agent_id: &str,
+    request: &AgentMutationRequest,
+) -> Result<AgentProfile, ApiError> {
+    let path = agent_detail_path(agent_id)?;
+    agent_profile_mutation(&path, "PATCH", request).await
+}
+
+/// Duplicate one visible Agent into a new private managed-slot profile.
+pub async fn duplicate_agent(agent_id: &str) -> Result<AgentProfile, ApiError> {
+    validate_agent_id(agent_id)?;
+    let path = format!("/api/agents/{}/duplicate", encode_url_component(agent_id));
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let response = Request::post(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        agent_profile_response(response).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = path;
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Hide/unhide one visible Agent for only the current actor.
+pub async fn set_agent_hidden(agent_id: &str, hidden: bool) -> Result<(), ApiError> {
+    validate_agent_id(agent_id)?;
+    let path = format!(
+        "/api/agents/{}/{}",
+        encode_url_component(agent_id),
+        if hidden { "hide" } else { "unhide" }
+    );
+    agent_empty_mutation(&path, "POST").await
+}
+
+/// Soft-delete one manageable non-package Agent.
+pub async fn delete_agent(agent_id: &str) -> Result<(), ApiError> {
+    let path = agent_detail_path(agent_id)?;
+    agent_empty_mutation(&path, "DELETE").await
+}
+
+/// Perform one uncached real remote AG-UI connection probe.
+pub async fn test_agent_connection(
+    request: &AgentConnectionTestRequest,
+) -> Result<AgentConnectionVerdict, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let response = Request::post("/api/agents/test-connection")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(request)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let verdict = response
+            .json::<AgentConnectionVerdict>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if verdict.ok != verdict.reason.is_none()
+            || (verdict.ok && verdict.events.is_empty())
+            || (!verdict.ok && !verdict.events.is_empty())
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(verdict)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = request;
+        Err(ApiError::Unavailable)
+    }
+}
+
+async fn agent_profile_mutation(
+    path: &str,
+    method: &'static str,
+    request: &AgentMutationRequest,
+) -> Result<AgentProfile, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let builder = match method {
+            "POST" => Request::post(path),
+            "PATCH" => Request::patch(path),
+            _ => return Err(ApiError::InvalidResponse),
+        };
+        let response = builder
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(request)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        agent_profile_response(response).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, method, request);
+        Err(ApiError::Unavailable)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn agent_profile_response(
+    response: gloo_net::http::Response,
+) -> Result<AgentProfile, ApiError> {
+    if !matches!(response.status(), 200 | 201) {
+        return Err(status_error(response.status()));
+    }
+    response
+        .json::<AgentProfileResponse>()
+        .await
+        .map(|response| response.agent)
+        .map_err(|_| ApiError::InvalidResponse)
+}
+
+async fn agent_empty_mutation(path: &str, method: &'static str) -> Result<(), ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let builder = match method {
+            "POST" => Request::post(path),
+            "DELETE" => Request::delete(path),
+            _ => return Err(ApiError::InvalidResponse),
+        };
+        let response = builder
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 204 {
+            return Err(status_error(response.status()));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, method);
         Err(ApiError::Unavailable)
     }
 }
@@ -3155,7 +3326,6 @@ pub fn thread_event_stream_path(
     Ok(path)
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
 fn agent_detail_path(agent_id: &str) -> Result<String, ApiError> {
     validate_agent_id(agent_id)?;
     Ok(format!("/api/agents/{}", encode_url_component(agent_id)))

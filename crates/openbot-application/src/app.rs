@@ -41,11 +41,11 @@ use crate::mcp_connections::{
     register_mcp_oauth_client,
 };
 use crate::ports::{
-    AgentDirectory, AuditReader, ChannelAdministration, ChannelReader, ChannelRoutingBackend,
-    MemoryAdministration, NoAgentDirectory, NoAuditReader, NoChannelAdministration,
-    NoChannelRoutingBackend, NoMemoryAdministration, NoPeopleAdministration,
-    NoPolicyAdministration, NoThreadDirectory, PeopleAdministration, PolicyAdministration,
-    ThreadDirectory,
+    AgentAdministration, AgentDirectory, AuditReader, ChannelAdministration, ChannelReader,
+    ChannelRoutingBackend, MemoryAdministration, NoAgentAdministration, NoAgentDirectory,
+    NoAuditReader, NoChannelAdministration, NoChannelRoutingBackend, NoMemoryAdministration,
+    NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory, PeopleAdministration,
+    PolicyAdministration, ThreadDirectory,
 };
 use crate::sandboxed_components::{
     NoSandboxedComponentAdministration, SandboxedComponentAdministration,
@@ -60,12 +60,14 @@ use crate::ui_preferences::{
 };
 use crate::use_cases::{
     DEFAULT_HEARTBEAT_PERIOD, admin_status, begin_thread_run, cancel_thread_run,
-    change_person_access, change_person_role, correct_memory, create_channel, current_user,
-    get_action_policy, get_memory_control, get_thread_conversation, get_thread_history,
-    get_thread_status, get_visible_agent, get_visible_channel, health, health_stream,
-    list_audit_events, list_memories, list_people, list_visible_agents, list_visible_channels,
-    mint_thread_id, mutate_memory, recall_memories, remember_memory, route_channel_message,
-    set_action_policy, subscribe_channel_activity, subscribe_thread_events, update_memory_control,
+    change_person_access, change_person_role, correct_memory, create_agent, create_channel,
+    current_user, delete_agent, duplicate_agent, get_action_policy, get_memory_control,
+    get_thread_conversation, get_thread_history, get_thread_status, get_visible_agent,
+    get_visible_channel, health, health_stream, list_audit_events, list_memories, list_people,
+    list_visible_agents, list_visible_channels, mint_thread_id, mutate_memory, recall_memories,
+    remember_memory, route_channel_message, set_action_policy, set_agent_hidden,
+    subscribe_channel_activity, subscribe_thread_events, test_agent_connection, update_agent,
+    update_memory_control,
 };
 
 /// [`ApplicationService`] 的生产实现。
@@ -94,6 +96,7 @@ pub struct OpenBotApplication<
     memory: M,
     callback_tokens: B,
     agents: std::sync::Arc<dyn AgentDirectory>,
+    agent_administration: std::sync::Arc<dyn AgentAdministration>,
     components: std::sync::Arc<dyn ComponentAdministration>,
     sandboxed_components: std::sync::Arc<dyn SandboxedComponentAdministration>,
     channel_administration: std::sync::Arc<dyn ChannelAdministration>,
@@ -130,6 +133,7 @@ impl<R>
             memory: NoMemoryAdministration,
             callback_tokens: NoAgentCallbackTokenAdministration,
             agents: std::sync::Arc::new(NoAgentDirectory),
+            agent_administration: std::sync::Arc::new(NoAgentAdministration),
             components: std::sync::Arc::new(NoComponentAdministration),
             sandboxed_components: std::sync::Arc::new(NoSandboxedComponentAdministration),
             channel_administration: std::sync::Arc::new(NoChannelAdministration),
@@ -157,6 +161,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            agent_administration: self.agent_administration,
             components: self.components,
             sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
@@ -182,6 +187,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            agent_administration: self.agent_administration,
             components: self.components,
             sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
@@ -207,6 +213,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            agent_administration: self.agent_administration,
             components: self.components,
             sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
@@ -236,6 +243,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            agent_administration: self.agent_administration,
             components: self.components,
             sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
@@ -261,6 +269,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            agent_administration: self.agent_administration,
             components: self.components,
             sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
@@ -286,6 +295,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory,
             callback_tokens: self.callback_tokens,
             agents: self.agents,
+            agent_administration: self.agent_administration,
             components: self.components,
             sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
@@ -314,6 +324,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             memory: self.memory,
             callback_tokens,
             agents: self.agents,
+            agent_administration: self.agent_administration,
             components: self.components,
             sandboxed_components: self.sandboxed_components,
             channel_administration: self.channel_administration,
@@ -329,6 +340,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
     #[must_use]
     pub fn with_agent_directory(mut self, agents: std::sync::Arc<dyn AgentDirectory>) -> Self {
         self.agents = agents;
+        self
+    }
+
+    /// Attach Agent lifecycle, credential, audit, and connection-probe administration.
+    #[must_use]
+    pub fn with_agent_administration(
+        mut self,
+        administration: std::sync::Arc<dyn AgentAdministration>,
+    ) -> Self {
+        self.agent_administration = administration;
         self
     }
 
@@ -461,6 +482,25 @@ where
             )),
             AppCommand::GetVisibleAgent { agent_id } => Ok(AppReply::Agent(
                 get_visible_agent(self.agents.as_ref(), auth, agent_id).await?,
+            )),
+            AppCommand::CreateAgent(request) => Ok(AppReply::Agent(
+                create_agent(self.agent_administration.as_ref(), auth, request).await?,
+            )),
+            AppCommand::UpdateAgent { agent_id, request } => Ok(AppReply::Agent(
+                update_agent(self.agent_administration.as_ref(), auth, agent_id, request).await?,
+            )),
+            AppCommand::DuplicateAgent { agent_id } => Ok(AppReply::Agent(
+                duplicate_agent(self.agent_administration.as_ref(), auth, agent_id).await?,
+            )),
+            AppCommand::SetAgentHidden { agent_id, hidden } => Ok(AppReply::AgentLifecycle(
+                set_agent_hidden(self.agent_administration.as_ref(), auth, agent_id, hidden)
+                    .await?,
+            )),
+            AppCommand::DeleteAgent { agent_id } => Ok(AppReply::AgentLifecycle(
+                delete_agent(self.agent_administration.as_ref(), auth, agent_id).await?,
+            )),
+            AppCommand::TestAgentConnection(request) => Ok(AppReply::AgentConnectionVerdict(
+                test_agent_connection(self.agent_administration.as_ref(), auth, request).await?,
             )),
             AppCommand::ListComponents => Ok(AppReply::Components(
                 list_components(self.components.as_ref(), auth).await?,

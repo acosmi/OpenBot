@@ -474,6 +474,283 @@ entries:
   - id: T-TEST-0455
     disposition: revalidate
     notes: "Batch67 proves exact function revoke removes the grant and audits it."
+  # Batch68: user-created Agent lifecycle, remote auth, safe probe, HTTP framing and affected done targets.
+  - id: T-API-0021
+    disposition: revalidate
+    notes: "Batch68 reruns the newly closed typed Agent HTTP surface against current application/PG evidence."
+  - id: T-API-0022
+    disposition: revalidate
+    notes: "Batch68 reruns the newly closed typed Agent HTTP surface against current application/PG evidence."
+  - id: T-API-0023
+    disposition: revalidate
+    notes: "Batch68 reruns the newly closed typed Agent HTTP surface against current application/PG evidence."
+  - id: T-API-0024
+    disposition: revalidate
+    notes: "Batch68 reruns the newly closed typed Agent HTTP surface against current application/PG evidence."
+  - id: T-API-0025
+    disposition: revalidate
+    notes: "Batch68 reruns the newly closed typed Agent HTTP surface against current application/PG evidence."
+  - id: T-API-0026
+    disposition: revalidate
+    notes: "Batch68 reruns the newly closed typed Agent HTTP surface against current application/PG evidence."
+  - id: T-API-0029
+    disposition: revalidate
+    notes: "Batch68 reruns the newly closed typed Agent HTTP surface against current application/PG evidence."
+  - id: T-TEST-0269
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0270
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0271
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0272
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0273
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0274
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0275
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0276
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0277
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0278
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0279
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0280
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0281
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0282
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0283
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0284
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0285
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0286
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0287
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0288
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0289
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0290
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0291
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0292
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0293
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0294
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0295
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0296
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0297
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0304
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0306
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0308
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0309
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0310
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0311
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0312
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0313
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0314
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0315
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0316
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0317
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0318
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0321
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0322
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0323
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0325
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0326
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0327
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0330
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0331
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0333
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0335
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0348
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0349
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0372
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0373
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0374
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0376
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0377
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0378
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0380
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0381
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0382
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0383
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0660
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0664
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-TEST-0670
+    disposition: revalidate
+    notes: "Batch68 reruns the affected or newly closed Agent lifecycle target with current unit/PG evidence."
+  - id: T-UI-0029
+    disposition: revalidate
+    notes: "Batch68 reruns the affected Agent projection/presence target after lifecycle UI integration."
+  - id: T-UI-0035
+    disposition: revalidate
+    notes: "Batch68 reruns the affected Agent projection/presence target after lifecycle UI integration."
+  - id: T-UI-0036
+    disposition: revalidate
+    notes: "Batch68 reruns the affected Agent projection/presence target after lifecycle UI integration."
+  - id: T-TEST-0392
+    disposition: revalidate
+    notes: "Batch68 reruns current-membership channel activity after private Agent run visibility is aligned with the domain policy."
+  - id: T-TEST-0395
+    disposition: revalidate
+    notes: "Batch68 reruns current-membership channel activity after target_visible gains the authoritative admin branch."
+  - id: T-TEST-0398
+    disposition: revalidate
+    notes: "Batch68 reruns the shared channel activity subscription on PostgreSQL 17.11 SCRAM."
+  - id: T-TEST-0399
+    disposition: revalidate
+    notes: "Batch68 reruns the shared channel activity subscription on PostgreSQL 17.11 SCRAM."
+  - id: T-TEST-0400
+    disposition: revalidate
+    notes: "Batch68 reruns the shared channel event receiver on PostgreSQL 17.11 SCRAM."
+  - id: T-TEST-0401
+    disposition: revalidate
+    notes: "Batch68 reruns the shared channel activity driver on PostgreSQL 17.11 SCRAM."
+  - id: T-TEST-0402
+    disposition: revalidate
+    notes: "Batch68 reruns committed user/assistant fan-out and membership revocation evidence."
+  - id: T-TEST-0307
+    disposition: superseded
+    replacement: "T-TEST-0323 + T-TEST-0330"
+    notes: "R142: v4 closed parsing rejects forged authority fields with 400; silent ignore is not preserved."
+  - id: T-TEST-0324
+    disposition: superseded
+    replacement: "T-TEST-0323 + T-TEST-0330"
+    notes: "R142: accepted fields are trimmed, but forged fields are rejected rather than silently ignored."
+  - id: T-TEST-0334
+    disposition: superseded
+    replacement: "T-TEST-0333"
+    notes: "R142: closed AgentAdministrationError/AppError makes an untyped store exception unrepresentable; stable mapping replaces rethrow."
+  - id: T-TEST-0336
+    disposition: superseded
+    replacement: "T-TEST-0333 + T-API-0021–T-API-0029"
+    notes: "R142: the canonical typed API remains mounted and NoAgentAdministration fails closed with 503."
+  - id: T-TEST-0379
+    disposition: superseded
+    replacement: "T-TEST-0378 + Batch68 atomic rollback evidence"
+    notes: "R142: v4 requires authority mutation and hash-chain audit to commit atomically; audit failure rolls the mutation back."
+  - id: T-TEST-0384
+    disposition: superseded
+    replacement: "T-TEST-0380–T-TEST-0383"
+    notes: "R142: Vault is authoritative for customer auth; Vault failure fails closed and rolls the edit back."
   - id: T-CMP-0015
     disposition: split
     scope: web

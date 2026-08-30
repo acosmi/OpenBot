@@ -622,6 +622,17 @@ impl fmt::Debug for SafeDialer {
 }
 
 impl SafeDialer {
+    /// Resolve one URL and apply the exact current destination policy without opening a socket.
+    /// Callers use this only as an early registration verdict; execute re-resolves every hop.
+    pub async fn validate_destination(
+        &self,
+        url: &Url,
+        scheme_policy: SchemePolicy,
+    ) -> Result<(), SafeHttpError> {
+        validate_url(url, scheme_policy)?;
+        self.resolve_and_filter(url).await.map(|_| ())
+    }
+
     /// 生产构造：系统 DNS + lockfile 固定的 Mozilla roots。
     #[must_use]
     pub fn new(policy: EgressPolicy) -> Self {

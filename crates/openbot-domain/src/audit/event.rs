@@ -54,6 +54,24 @@ use super::payload::{AuditIdentifier, AuditLabel, AuditPayload};
 pub struct AuditEventType(&'static str);
 
 impl AuditEventType {
+    /// A new encrypted credential row became authoritative.
+    pub const CREDENTIAL_CREATED: Self = Self("credential.created");
+    /// One encrypted credential replaced another without exposing either value.
+    pub const CREDENTIAL_ROTATED: Self = Self("credential.rotated");
+    /// An encrypted credential was locally retired.
+    pub const CREDENTIAL_REVOKED: Self = Self("credential.revoked");
+    /// Caller-owned Agent profile was created.
+    pub const BOT_CREATED: Self = Self("bot.created");
+    /// Manageable Agent profile/configuration was updated.
+    pub const BOT_UPDATED: Self = Self("bot.updated");
+    /// A visible Agent's presentation was copied into a new private managed Agent.
+    pub const BOT_DUPLICATED: Self = Self("bot.duplicated");
+    /// Current actor hid one visible Agent.
+    pub const BOT_HIDDEN: Self = Self("bot.hidden");
+    /// Current actor restored one hidden Agent.
+    pub const BOT_UNHIDDEN: Self = Self("bot.unhidden");
+    /// Manageable Agent was soft-deleted and its credentials retired.
+    pub const BOT_DELETED: Self = Self("bot.deleted");
     /// A create-time channel recipient was explicitly chosen or inferred.
     pub const CHANNEL_ROUTED: Self = Self("channel.routed");
     /// Built-in/remote Agent run 已 durable activate。

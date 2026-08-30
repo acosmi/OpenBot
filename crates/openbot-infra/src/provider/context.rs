@@ -6,18 +6,21 @@ use async_trait::async_trait;
 use openbot_application::{
     AgentContextError, AgentContextSource, ComponentAdministration, ComponentRuntimeScope,
     ProviderMessage, ProviderMessageRole, ProviderRequest, ProviderRoute, ProviderToolCall,
-    ProviderToolDefinition, RemoteAguiRoute, RunExecutionLease, SandboxedComponentAdministration,
+    ProviderToolDefinition, RemoteAguiAuthorization, RemoteAguiRoute, RunExecutionLease,
+    SandboxedComponentAdministration,
 };
 use openbot_contracts::components::{
     compiled_component_manifest, compiled_component_parameter_schema,
 };
-use openbot_contracts::ids::{DeploymentId, TenantId};
+use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
 use openbot_domain::remote_callback::{RemoteRunAssertionSigner, RemoteRunScope, RemoteToolSet};
+use openbot_domain::vault::{SecretKind, SecretPrincipal, ServiceId};
 use serde_json::Value;
 
 use crate::component_catalogue::PostgresComponentAdministration;
 use crate::mcp_catalog::{GrantedMcpTool, McpCatalogError, PostgresMcpCatalog};
 use crate::sandboxed_components::PostgresSandboxedComponentAdministration;
+use crate::vault::CredentialRecordVault;
 
 // SPDX-License-Identifier: MIT
 // Source: CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d
@@ -56,6 +59,7 @@ pub struct PostgresAgentContextSource {
     mcp_catalog: Option<std::sync::Arc<PostgresMcpCatalog>>,
     components: Option<std::sync::Arc<PostgresComponentAdministration>>,
     sandboxed_components: Option<std::sync::Arc<PostgresSandboxedComponentAdministration>>,
+    agent_credential_vault: Option<CredentialRecordVault>,
 }
 
 impl PostgresAgentContextSource {
@@ -81,6 +85,7 @@ impl PostgresAgentContextSource {
             mcp_catalog: None,
             components: None,
             sandboxed_components: None,
+            agent_credential_vault: None,
         })
     }
 
@@ -127,6 +132,13 @@ impl PostgresAgentContextSource {
         self.sandboxed_components = Some(components);
         self
     }
+
+    /// Attach the same tenant Vault used by Agent lifecycle credential writes.
+    #[must_use]
+    pub fn with_agent_credential_vault(mut self, vault: CredentialRecordVault) -> Self {
+        self.agent_credential_vault = Some(vault);
+        self
+    }
 }
 
 #[async_trait]
@@ -140,6 +152,7 @@ impl AgentContextSource for PostgresAgentContextSource {
         let visible = client
             .query_opt(
                 "SELECT a.type::text AS agent_type,a.name,a.configuration,p.title,p.role_description, \
+                        p.owner_user_id, \
                         EXISTS(SELECT 1 FROM public.user_roles ur \
                                 WHERE ur.user_id=$4 AND ur.role='admin') AS actor_admin, \
                         floor(extract(epoch FROM clock_timestamp())*1000)::bigint \
@@ -148,15 +161,18 @@ impl AgentContextSource for PostgresAgentContextSource {
                    JOIN public.threads t ON t.thread_id=r.thread_id \
                    JOIN public.thread_memberships tm ON tm.thread_id=t.thread_id \
                    JOIN public.agents a ON a.id=r.bot_id \
-                   JOIN public.deployment_packages dp ON dp.id=a.package_id \
+                   LEFT JOIN public.deployment_packages dp ON dp.id=a.package_id \
                    JOIN public.agent_profiles p ON p.agent_id=a.id \
                    WHERE r.run_id=$1 AND r.thread_id=$2 AND r.bot_id=$3 AND r.actor_id=$4 \
                      AND r.fencing_token=$5 AND r.status='running' \
                      AND t.deployment_id=$6 AND t.tenant_id=$7 \
-                     AND dp.tenant_id=$7 \
+                     AND (a.package_id IS NULL OR dp.tenant_id=$7) \
                      AND t.status='active' AND tm.user_id=$4 \
                      AND a.type IN ('built_in','remote_ag_ui') \
-                     AND p.deleted_at IS NULL",
+                     AND p.deleted_at IS NULL \
+                     AND (p.visibility='public' OR p.owner_user_id=$4 OR EXISTS( \
+                           SELECT 1 FROM public.user_roles access_role \
+                            WHERE access_role.user_id=$4 AND access_role.role='admin'))",
                 &[
                     &lease.run_id().as_str(),
                     &lease.thread_id().as_str(),
@@ -322,14 +338,31 @@ impl AgentContextSource for PostgresAgentContextSource {
                     .map_err(|_| AgentContextError::Corrupt {
                         field: "remote_run_assertion",
                     })?;
+                let authorization = load_remote_authorization(
+                    &client,
+                    &configuration,
+                    lease.bot_id(),
+                    visible
+                        .try_get::<_, Option<String>>("owner_user_id")
+                        .map_err(|_| AgentContextError::Corrupt {
+                            field: "owner_user_id",
+                        })?
+                        .as_deref(),
+                    self.agent_credential_vault.as_ref(),
+                )
+                .await?;
+                let mut route = RemoteAguiRoute::new(
+                    endpoint,
+                    lease.thread_id().as_str().to_owned(),
+                    lease.run_id().as_str().to_owned(),
+                    lease.bot_id().as_str().to_owned(),
+                    Some(assertion),
+                )?;
+                if let Some(authorization) = authorization {
+                    route = route.with_authorization(authorization);
+                }
                 (
-                    ProviderRoute::RemoteAgUi(RemoteAguiRoute::new(
-                        endpoint,
-                        lease.thread_id().as_str().to_owned(),
-                        lease.run_id().as_str().to_owned(),
-                        lease.bot_id().as_str().to_owned(),
-                        Some(assertion),
-                    )?),
+                    ProviderRoute::RemoteAgUi(route),
                     append_granted_tool_guidance(
                         remote_standing_prompt(&name, &title, &role_description)?,
                         &granted_mcp,
@@ -715,6 +748,74 @@ fn remote_standing_prompt(
         return Err(AgentContextError::TooLarge);
     }
     Ok(prompt)
+}
+
+async fn load_remote_authorization(
+    client: &tokio_postgres::Client,
+    configuration: &Value,
+    bot: &BotId,
+    owner: Option<&str>,
+    vault: Option<&CredentialRecordVault>,
+) -> Result<Option<RemoteAguiAuthorization>, AgentContextError> {
+    let Some(auth) = configuration.get("auth") else {
+        return Ok(None);
+    };
+    let auth = auth.as_object().ok_or(AgentContextError::Corrupt {
+        field: "remote_authorization",
+    })?;
+    if auth.len() != 2 || auth.get("header").and_then(Value::as_str) != Some("Authorization") {
+        return Err(AgentContextError::Corrupt {
+            field: "remote_authorization",
+        });
+    }
+    let credential_id = auth
+        .get("credentialId")
+        .and_then(Value::as_str)
+        .and_then(|value| uuid::Uuid::parse_str(value).ok())
+        .ok_or(AgentContextError::Corrupt {
+            field: "remote_credential_id",
+        })?;
+    let owner = owner.ok_or(AgentContextError::Corrupt {
+        field: "owner_user_id",
+    })?;
+    let vault = vault.ok_or(AgentContextError::Unavailable)?;
+    let row = client
+        .query_opt(
+            "SELECT encrypted_value,key_id FROM public.credentials
+              WHERE id=$1 AND kind='agent' AND provider=$2 AND revoked_at IS NULL",
+            &[&credential_id, &bot.as_str()],
+        )
+        .await
+        .map_err(|_| AgentContextError::Unavailable)?
+        .ok_or(AgentContextError::Stale)?;
+    let key_id: String = row
+        .try_get("key_id")
+        .map_err(|_| AgentContextError::Corrupt {
+            field: "remote_credential_owner",
+        })?;
+    if key_id != owner {
+        return Err(AgentContextError::Corrupt {
+            field: "remote_credential_owner",
+        });
+    }
+    let encrypted: String =
+        row.try_get("encrypted_value")
+            .map_err(|_| AgentContextError::Corrupt {
+                field: "remote_credential",
+            })?;
+    let secret = vault
+        .open(
+            &credential_id,
+            SecretKind::Agent,
+            SecretPrincipal::Actor(ActorId::new(owner)),
+            SecretPrincipal::Service(ServiceId::new(bot.as_str())),
+            &encrypted,
+        )
+        .map_err(|_| AgentContextError::Corrupt {
+            field: "remote_credential",
+        })?
+        .into_secret();
+    RemoteAguiAuthorization::new(secret).map(Some)
 }
 
 fn text_content(value: &Value) -> Option<String> {

@@ -30,7 +30,10 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use crate::agent::{AgentProfile, CallbackTokenIssued, CallbackTokenRevoked};
+use crate::agent::{
+    AgentConnectionTestRequest, AgentConnectionVerdict, AgentLifecycleReceipt,
+    AgentMutationRequest, AgentProfile, CallbackTokenIssued, CallbackTokenRevoked,
+};
 use crate::audit::AuditPage;
 use crate::auth::Role;
 use crate::components::{
@@ -141,6 +144,40 @@ pub enum AppCommand {
         /// Untrusted path identity.
         agent_id: BotId,
     },
+
+    /// Create one caller-owned managed or remote Agent.
+    CreateAgent(AgentMutationRequest),
+
+    /// Replace one manageable Agent's editable fields and optionally rotate remote auth.
+    UpdateAgent {
+        /// Untrusted path identity.
+        agent_id: BotId,
+        /// Full canonical form; Server-owned fields cannot fit.
+        request: AgentMutationRequest,
+    },
+
+    /// Copy presentation into a new private managed-slot Agent.
+    DuplicateAgent {
+        /// Visible source Agent candidate.
+        agent_id: BotId,
+    },
+
+    /// Set only the current actor's hidden preference.
+    SetAgentHidden {
+        /// Visible Agent candidate.
+        agent_id: BotId,
+        /// True hides; false restores to the default roster.
+        hidden: bool,
+    },
+
+    /// Soft-delete one manageable non-package Agent.
+    DeleteAgent {
+        /// Untrusted path identity.
+        agent_id: BotId,
+    },
+
+    /// Real bounded remote AG-UI probe before saving a form.
+    TestAgentConnection(AgentConnectionTestRequest),
 
     /// List durable compiled-component governance rows for any authenticated actor.
     ListComponents,
@@ -440,6 +477,10 @@ pub enum AppReply {
     Agents(Vec<AgentProfile>),
     /// [`AppCommand::GetVisibleAgent`] response.
     Agent(AgentProfile),
+    /// Hide/unhide/delete authoritative acknowledgement.
+    AgentLifecycle(AgentLifecycleReceipt),
+    /// Pre-save remote endpoint probe verdict.
+    AgentConnectionVerdict(AgentConnectionVerdict),
     /// [`AppCommand::ListComponents`] response.
     Components(ComponentRecords),
     /// [`AppCommand::SyncComponentCatalogue`] response.

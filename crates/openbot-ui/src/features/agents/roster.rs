@@ -13,20 +13,32 @@ use crate::features::layout::{
 use crate::i18n::{t, t_string, use_i18n};
 use crate::primitives::{Button, ButtonSize, ButtonVariant};
 
-use super::{AgentCard, AgentProfilePanel};
+use super::{AgentCard, AgentEditor, AgentProfilePanel};
 
-/// Current-user coworker roster. Create/edit/hide/delete controls remain absent until their APIs land.
+/// Current-user coworker roster with URL-owned create/detail state and a recoverable hidden list.
 #[component]
 pub fn AgentsPage() -> impl IntoView {
     let i18n = use_i18n();
     let query = use_query_map();
     let navigate = use_navigate();
-    let selected_agent_id = Memo::new(move |_| query.get().get("agent"));
+    let creating = Memo::new(move |_| query.get().get("new").as_deref() == Some("true"));
+    let selected_agent_id = Memo::new(move |_| {
+        (!creating.get())
+            .then(|| query.get().get("agent"))
+            .flatten()
+    });
     let agents = RwSignal::new(Vec::<AgentProfile>::new());
+    let hidden_agents = RwSignal::new(Vec::<AgentProfile>::new());
     let loading = RwSignal::new(true);
     let load_error = RwSignal::new(false);
     let reload_generation = RwSignal::new(0_u64);
-    install_agent_loader(reload_generation, agents, loading, load_error);
+    install_agent_loader(
+        reload_generation,
+        agents,
+        hidden_agents,
+        loading,
+        load_error,
+    );
 
     let mine = Memo::new(move |_| {
         split_agents(&agents.get())
@@ -42,11 +54,37 @@ pub fn AgentsPage() -> impl IntoView {
             .enumerate()
             .collect::<Vec<_>>()
     });
+    let hidden = Memo::new(move |_| {
+        hidden_agents
+            .get()
+            .into_iter()
+            .enumerate()
+            .collect::<Vec<_>>()
+    });
     let retry =
         move |_| reload_generation.update(|generation| *generation = generation.saturating_add(1));
-    let close = move |_| navigate("/agents", Default::default());
+    let close_navigate = navigate.clone();
+    let close = move |_| close_navigate("/agents", Default::default());
+    let cancel_navigate = use_navigate();
+    let create_cancel = UnsyncCallback::new(move |_| {
+        cancel_navigate("/agents", Default::default());
+    });
+    let create_navigate = navigate.clone();
+    let open_create = move |_| create_navigate("/agents?new=true", Default::default());
+    let changed_navigate = navigate.clone();
+    let changed = UnsyncCallback::new(move |agent: AgentProfile| {
+        reload_generation.update(|generation| *generation = generation.saturating_add(1));
+        let href = crate::api::agent_profile_href(agent.id.as_str())
+            .expect("server Agent id must be route-safe");
+        changed_navigate(&href, Default::default());
+    });
+    let closed_navigate = navigate;
+    let closed = UnsyncCallback::new(move |_| {
+        reload_generation.update(|generation| *generation = generation.saturating_add(1));
+        closed_navigate("/agents", Default::default());
+    });
     let detail_agent = Signal::derive(move || selected_agent_id.get());
-    let panel_open = Signal::derive(move || selected_agent_id.get().is_some());
+    let panel_open = Signal::derive(move || creating.get() || selected_agent_id.get().is_some());
 
     view! {
         <DetailPanelLayout>
@@ -54,10 +92,17 @@ pub fn AgentsPage() -> impl IntoView {
                 <div id="agents-roster-focus" class="ob-agent-roster-focus" tabindex="-1">
                     <PageShell width=PageWidth::Content>
                         <div class="ob-agent-roster-content">
-                            <PageHeader
-                                heading_id="agents-page-title"
-                                title=move || t_string!(i18n, agents.title).to_owned()
-                            />
+                            <div class="ob-agent-roster-toolbar">
+                                <PageHeader
+                                    heading_id="agents-page-title"
+                                    title=move || t_string!(i18n, agents.title).to_owned()
+                                />
+                                <Button
+                                    variant=ButtonVariant::Primary
+                                    size=ButtonSize::Small
+                                    on_activate=open_create
+                                >{move || t!(i18n, agents.new_coworker)}</Button>
+                            </div>
                             <Show when=move || loading.get()>
                                 <div class="ob-loading" role="status">
                                     {move || t!(i18n, common.loading)}
@@ -101,6 +146,25 @@ pub fn AgentsPage() -> impl IntoView {
                                         </div>
                                     </Show>
                                 </PageSection>
+                                <Show when=move || !hidden.get().is_empty()>
+                                    <PageSection
+                                        heading_id="agents-hidden-title"
+                                        title=move || t_string!(i18n, agents.hidden_agents).to_owned()
+                                        description=move || t_string!(i18n, agents.hidden_help).to_owned()
+                                    >
+                                        <div class="ob-agent-grid">
+                                            <For
+                                                each=move || hidden.get()
+                                                key=|(_, agent)| agent.id.clone()
+                                                children=move |(index, agent)| view! {
+                                                    <StaggerItem index=index>
+                                                        <AgentCard agent />
+                                                    </StaggerItem>
+                                                }
+                                            />
+                                        </div>
+                                    </PageSection>
+                                </Show>
                                 <PageSection
                                     heading_id="agents-explore-title"
                                     title=move || t_string!(i18n, agents.explore_agents).to_owned()
@@ -133,12 +197,31 @@ pub fn AgentsPage() -> impl IntoView {
             </DetailPanelMain>
             <DetailPanel
                 id="agent-profile-panel"
-                title=move || t_string!(i18n, agents.profile).to_owned()
+                title=move || if creating.get() {
+                    t_string!(i18n, agents.new_coworker).to_owned()
+                } else {
+                    t_string!(i18n, agents.profile).to_owned()
+                }
                 open=panel_open
                 return_focus_id="agents-roster-focus"
                 on_close=close
             >
-                <AgentProfilePanel agent_id=detail_agent />
+                <Show
+                    when=move || creating.get()
+                    fallback=move || view! {
+                        <AgentProfilePanel
+                            agent_id=detail_agent
+                            on_changed=changed
+                            on_closed=closed
+                        />
+                    }
+                >
+                    <AgentEditor
+                        profile=None
+                        on_saved=changed
+                        on_cancel=create_cancel
+                    />
+                </Show>
             </DetailPanel>
         </DetailPanelLayout>
     }
@@ -157,6 +240,7 @@ fn split_agents(agents: &[AgentProfile]) -> (Vec<AgentProfile>, Vec<AgentProfile
 fn install_agent_loader(
     reload_generation: RwSignal<u64>,
     agents: RwSignal<Vec<AgentProfile>>,
+    hidden_agents: RwSignal<Vec<AgentProfile>>,
     loading: RwSignal<bool>,
     load_error: RwSignal<bool>,
 ) {
@@ -167,13 +251,18 @@ fn install_agent_loader(
         load_error.set(false);
         leptos::task::spawn_local_scoped_with_cancellation(async move {
             let outcome = list_agents(false).await;
+            let hidden_outcome = list_agents(true).await;
             if reload_generation.get_untracked() != generation {
                 return;
             }
-            match outcome {
-                Ok(loaded) => agents.set(loaded),
-                Err(_) => {
+            match (outcome, hidden_outcome) {
+                (Ok(loaded), Ok(hidden)) => {
+                    agents.set(loaded);
+                    hidden_agents.set(hidden);
+                }
+                _ => {
                     agents.set(Vec::new());
+                    hidden_agents.set(Vec::new());
                     load_error.set(true);
                 }
             }
@@ -181,7 +270,13 @@ fn install_agent_loader(
         });
     });
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (reload_generation, agents, loading, load_error);
+    let _ = (
+        reload_generation,
+        agents,
+        hidden_agents,
+        loading,
+        load_error,
+    );
 }
 
 #[cfg(test)]

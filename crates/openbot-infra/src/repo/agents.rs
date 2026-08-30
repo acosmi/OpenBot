@@ -1,5 +1,9 @@
 //! Agent 三张表的类型化 PostgreSQL repositories 与 roster/detail reader。
 
+#[path = "../agent_lifecycle.rs"]
+mod lifecycle;
+pub use lifecycle::PostgresAgentAdministration;
+
 use async_trait::async_trait;
 use deadpool_postgres::Pool;
 use openbot_application::{AgentDirectory, AgentReadScope, PortError};
@@ -15,7 +19,7 @@ use crate::repo::common::define_table_repo;
 const DEPENDENCY: &str = "database";
 
 const LIST_VISIBLE_AGENTS_SQL: &str = "\
-SELECT a.id,a.name,p.title,p.role_description,p.avatar_seed,
+SELECT a.id,a.name,a.type::text AS agent_type,p.title,p.role_description,p.avatar_seed,
        p.visibility::text,p.owner_user_id,a.package_id,a.configuration,
        (p.callback_token_hash IS NOT NULL) AS has_callback_token,
        (pref.hidden_at IS NOT NULL) AS hidden
@@ -32,7 +36,7 @@ WHERE p.deleted_at IS NULL
 ORDER BY a.id";
 
 const GET_VISIBLE_AGENT_SQL: &str = "\
-SELECT a.id,a.name,p.title,p.role_description,p.avatar_seed,
+SELECT a.id,a.name,a.type::text AS agent_type,p.title,p.role_description,p.avatar_seed,
        p.visibility::text,p.owner_user_id,a.package_id,a.configuration,
        (p.callback_token_hash IS NOT NULL) AS has_callback_token,
        (pref.hidden_at IS NOT NULL) AS hidden
@@ -141,19 +145,26 @@ fn decode_profile(
             });
         }
     };
-    let endpoint = configuration
-        .as_object()
-        .and_then(|object| object.get("endpoint"))
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let has_auth = configuration
-        .as_object()
-        .and_then(|object| object.get("auth"))
-        .and_then(Value::as_object)
-        .is_some_and(|auth| {
-            auth.get("header").and_then(Value::as_str).is_some()
-                && auth.get("credentialId").and_then(Value::as_str).is_some()
-        });
+    let agent_type: String = get(row, "agent_type")?;
+    let (endpoint, has_auth) = match agent_type.as_str() {
+        "built_in" => {
+            if configuration.get("auth").is_some() || configuration.get("endpoint").is_some() {
+                return Err(corrupt("agent_configuration"));
+            }
+            (None, false)
+        }
+        "remote_ag_ui" => {
+            let endpoint = configuration
+                .get("endpoint")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| corrupt("endpoint"))?
+                .to_owned();
+            let has_auth = strict_auth_reference(&configuration)?;
+            (Some(endpoint), has_auth)
+        }
+        _ => return Err(corrupt("agent_type")),
+    };
     let mine = owner.as_deref() == Some(scope.actor.as_str());
     let system_owned = package_id.is_some();
     let actor = AgentActor {
@@ -207,6 +218,29 @@ fn unavailable(context: &'static str, error: tokio_postgres::Error) -> PortError
     tracing::error!(context, error = %error, "agent directory query failed");
     PortError::Unavailable {
         dependency: DEPENDENCY,
+    }
+}
+
+fn strict_auth_reference(configuration: &Value) -> Result<bool, PortError> {
+    let Some(auth) = configuration.get("auth") else {
+        return Ok(false);
+    };
+    let auth = auth.as_object().ok_or_else(|| corrupt("agent_auth"))?;
+    if auth.len() != 2 || auth.get("header").and_then(Value::as_str) != Some("Authorization") {
+        return Err(corrupt("agent_auth"));
+    }
+    let credential_id = auth
+        .get("credentialId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| corrupt("credential_id"))?;
+    uuid::Uuid::parse_str(credential_id).map_err(|_| corrupt("credential_id"))?;
+    Ok(true)
+}
+
+const fn corrupt(field: &'static str) -> PortError {
+    PortError::Corrupt {
+        dependency: DEPENDENCY,
+        field,
     }
 }
 

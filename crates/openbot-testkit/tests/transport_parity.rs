@@ -474,6 +474,12 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::RouteChannelMessage { .. }
         | AppCommand::ListVisibleAgents { .. }
         | AppCommand::GetVisibleAgent { .. }
+        | AppCommand::CreateAgent(_)
+        | AppCommand::UpdateAgent { .. }
+        | AppCommand::DuplicateAgent { .. }
+        | AppCommand::SetAgentHidden { .. }
+        | AppCommand::DeleteAgent { .. }
+        | AppCommand::TestAgentConnection(_)
         | AppCommand::ListComponents
         | AppCommand::SyncComponentCatalogue(_)
         | AppCommand::UpdateComponentGovernance(_)
