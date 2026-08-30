@@ -91,7 +91,13 @@ pub struct InProcessTransport {
     service: Arc<dyn ApplicationService>,
     broker: Arc<EventBroker>,
     commands: Semaphore,
-    pumps: Mutex<Vec<JoinHandle<()>>>,
+    pumps: Mutex<Vec<PumpHandle>>,
+}
+
+struct PumpHandle {
+    label: WindowLabel,
+    cancellation: CancellationToken,
+    task: JoinHandle<()>,
 }
 
 impl InProcessTransport {
@@ -204,6 +210,7 @@ impl InProcessTransport {
         let identity = WindowIdentity::bind(label, auth);
         let stream = self.service.subscribe(auth.clone(), request).await?;
         let session = self.broker.open_window(identity.clone(), subscriptions)?;
+        let session_cancellation = CancellationToken::new();
 
         // 订阅流是**这个窗口自己的**，所以 scope 就是这个窗口。换成 actor scope 会让同一
         // 个 actor 的第二个窗口收到第一个窗口的订阅帧 —— 两条独立订阅会互相灌帧。
@@ -211,17 +218,44 @@ impl InProcessTransport {
         let handle = tokio::spawn(pump(
             Arc::clone(&self.broker),
             self.shutdown_token().clone(),
+            session_cancellation.clone(),
             identity.label().clone(),
             scope,
             identity.auth_generation(),
             stream,
         ));
-        self.pumps
-            .lock()
-            .expect("事件泵句柄锁不会中毒")
-            .push(handle);
+        let mut pumps = self.pumps.lock().expect("事件泵句柄锁不会中毒");
+        pumps.retain(|pump| !pump.task.is_finished());
+        pumps.push(PumpHandle {
+            label: identity.label().clone(),
+            cancellation: session_cancellation,
+            task: handle,
+        });
 
         Ok(session)
+    }
+
+    /// Close one host-owned subscription without shutting down the process.
+    ///
+    /// The exact broker route is synchronously removed after receiving one explicit terminal frame,
+    /// then its upstream pump is cancelled. Returning `true` therefore proves that the route is no
+    /// longer eligible for delivery; callers do not need to wait for another upstream event.
+    pub fn close_session(&self, label: &WindowLabel) -> bool {
+        let cancellations = self
+            .pumps
+            .lock()
+            .expect("事件泵句柄锁不会中毒")
+            .iter()
+            .filter(|pump| &pump.label == label)
+            .map(|pump| pump.cancellation.clone())
+            .collect::<Vec<_>>();
+        let closed = self
+            .broker
+            .close_window(label, crate::broker::DisconnectReason::SubscriptionClosed);
+        for cancellation in cancellations {
+            cancellation.cancel();
+        }
+        closed
     }
 
     /// 关停：取消信号 → 给每个窗口投终止帧 → 在 [`SHUTDOWN_DEADLINE`] 内收拢事件泵。
@@ -237,7 +271,7 @@ impl InProcessTransport {
         self.shutdown_token().cancel();
         let windows_closed = self.broker.close_all();
 
-        let mut handles: Vec<JoinHandle<()>> =
+        let mut handles: Vec<PumpHandle> =
             core::mem::take(&mut *self.pumps.lock().expect("事件泵句柄锁不会中毒"));
         let pumps_total = handles.len();
 
@@ -247,14 +281,14 @@ impl InProcessTransport {
         for handle in &mut handles {
             tokio::select! {
                 () = &mut deadline => break,
-                _ = handle => pumps_joined += 1,
+                _ = &mut handle.task => pumps_joined += 1,
             }
         }
 
         let mut pumps_aborted = 0_usize;
         for handle in handles {
-            if !handle.is_finished() {
-                handle.abort();
+            if !handle.task.is_finished() {
+                handle.task.abort();
                 pumps_aborted += 1;
             }
         }
@@ -283,17 +317,35 @@ impl InProcessTransport {
 async fn pump(
     broker: Arc<EventBroker>,
     shutdown: CancellationToken,
+    session_cancellation: CancellationToken,
     label: WindowLabel,
     scope: EventScope,
     auth_generation: u64,
     mut stream: AppEventStream,
 ) {
     loop {
+        enum PumpInput {
+            Shutdown,
+            SessionClosed,
+            Event(Option<AppEvent>),
+        }
         let next = tokio::select! {
-            () = shutdown.cancelled() => None,
-            item = next_event(&mut stream) => item,
+            () = shutdown.cancelled() => PumpInput::Shutdown,
+            () = session_cancellation.cancelled() => PumpInput::SessionClosed,
+            item = next_event(&mut stream) => PumpInput::Event(item),
         };
-        let Some(event) = next else { break };
+        let event = match next {
+            PumpInput::Shutdown => break,
+            PumpInput::SessionClosed => {
+                broker.close_window(&label, crate::broker::DisconnectReason::SubscriptionClosed);
+                break;
+            }
+            PumpInput::Event(Some(event)) => event,
+            PumpInput::Event(None) => {
+                broker.close_window(&label, crate::broker::DisconnectReason::UpstreamEnded);
+                break;
+            }
+        };
 
         let Ok(report) = broker.publish(BrokerEvent::new(scope.clone(), auth_generation, event))
         else {
@@ -330,9 +382,12 @@ mod tests {
     use crate::event::SequenceTracker;
     use crate::testing::{TEST_AUTH_GENERATION, auth_for};
     use async_trait::async_trait;
+    use core::pin::Pin;
+    use core::task::{Context, Poll};
     use openbot_application::{ChannelReader, OpenBotApplication, PortError};
     use openbot_contracts::command::{ChannelSummary, HealthReport};
     use openbot_contracts::ids::{ActorId, BotId, ChannelId};
+    use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use time::OffsetDateTime;
     use tokio::time::{Duration as TokioDuration, timeout};
@@ -404,6 +459,42 @@ mod tests {
             _request: SubscriptionRequest,
         ) -> Result<AppEventStream, AppError> {
             Err(AppError::NotVisible)
+        }
+    }
+
+    struct FiniteEventStream(VecDeque<AppEvent>);
+
+    impl futures_core::Stream for FiniteEventStream {
+        type Item = AppEvent;
+
+        fn poll_next(
+            mut self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Option<Self::Item>> {
+            Poll::Ready(self.0.pop_front())
+        }
+    }
+
+    struct FiniteSubscriptionService;
+
+    #[async_trait]
+    impl ApplicationService for FiniteSubscriptionService {
+        async fn execute(
+            &self,
+            _auth: AuthContext,
+            _command: AppCommand,
+        ) -> Result<AppReply, AppError> {
+            Ok(AppReply::Health(HealthReport { ok: true }))
+        }
+
+        async fn subscribe(
+            &self,
+            _auth: AuthContext,
+            _request: SubscriptionRequest,
+        ) -> Result<AppEventStream, AppError> {
+            Ok(Box::pin(FiniteEventStream(VecDeque::from([
+                AppEvent::Heartbeat { seq: 41 },
+            ]))))
         }
     }
 
@@ -621,6 +712,72 @@ mod tests {
     // -----------------------------------------------------------------------
     // 取消与 deadline
     // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn upstream_end_is_an_explicit_terminal_before_receiver_close() {
+        let transport = InProcessTransport::new(Arc::new(FiniteSubscriptionService));
+        let mut session = transport
+            .open_session(
+                WindowLabel::new("finite"),
+                &auth_for("actor-1"),
+                SubscriptionRequest::Health,
+                ThreadSubscriptions::none(),
+            )
+            .await
+            .expect("finite subscription opens");
+
+        let event = session.next_frame().await.expect("event frame");
+        let terminal = session.next_frame().await.expect("terminal frame");
+        assert_eq!(event.seq(), 0);
+        assert_eq!(event.event(), Some(&AppEvent::Heartbeat { seq: 41 }));
+        assert_eq!(terminal.seq(), 1);
+        assert_eq!(
+            terminal.terminal_reason(),
+            Some(crate::broker::DisconnectReason::UpstreamEnded)
+        );
+        assert!(session.next_frame().await.is_none());
+        assert_eq!(transport.broker().window_count(), 0);
+        let report = transport.shutdown().await;
+        assert_eq!(report.pumps_aborted, 0);
+    }
+
+    #[tokio::test]
+    async fn close_session_removes_the_exact_route_and_wakes_its_pump() {
+        let transport = InProcessTransport::new(application());
+        let label = WindowLabel::new("main");
+        let mut session = transport
+            .open_session(
+                label.clone(),
+                &auth_for("actor-1"),
+                SubscriptionRequest::Health,
+                ThreadSubscriptions::none(),
+            )
+            .await
+            .expect("subscription opens");
+
+        assert!(transport.close_session(&label));
+        assert!(!transport.close_session(&label));
+        assert_eq!(transport.broker().window_count(), 0);
+        let reason = timeout(TokioDuration::from_secs(2), async {
+            loop {
+                let frame = session
+                    .next_frame()
+                    .await
+                    .expect("receiver cannot close before terminal");
+                if let Some(reason) = frame.terminal_reason() {
+                    break reason;
+                }
+            }
+        })
+        .await
+        .expect("close must wake receiver");
+        assert_eq!(reason, crate::broker::DisconnectReason::SubscriptionClosed);
+        assert!(session.next_frame().await.is_none());
+
+        let report = transport.shutdown().await;
+        assert_eq!(report.pumps_aborted, 0);
+        assert!(report.within_deadline);
+    }
 
     /// 取消之后：生产停止、在 deadline 内停住、没有任何泵被 abort。
     ///
