@@ -10,13 +10,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
+#[cfg(feature = "postgres-supervisor")]
+use std::process::Stdio;
 use std::sync::Arc;
+#[cfg(feature = "postgres-supervisor")]
+use std::time::Duration;
 
 use openbot_contracts::engine::ENGINE_RELEASE_EPOCH;
 #[cfg(feature = "postgres-key-store")]
 use openbot_domain::vault::SecretBytes;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
+#[cfg(feature = "postgres-supervisor")]
+use tokio::io::AsyncWriteExt as _;
+#[cfg(feature = "postgres-supervisor")]
+use tokio::process::{Child, Command};
+#[cfg(feature = "postgres-supervisor")]
+use tokio_postgres::NoTls;
 
 /// Exact PGDG source release used to build the first PostgreSQL sidecar epoch.
 pub const POSTGRES_VERSION: &str = "17.11";
@@ -33,6 +43,16 @@ const BUNDLE_MAX_FILES: usize = 8192;
 const BUNDLE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const LOCK_HEADER: &str = "openbot-postgres-start-lock-v1";
 const LOCK_NONCE_BYTES: usize = 16;
+#[cfg(feature = "postgres-supervisor")]
+const POSTGRES_USER: &str = "desktop_admin";
+#[cfg(feature = "postgres-supervisor")]
+const VERSION_DEADLINE: Duration = Duration::from_secs(5);
+#[cfg(feature = "postgres-supervisor")]
+const INITDB_DEADLINE: Duration = Duration::from_secs(30);
+#[cfg(feature = "postgres-supervisor")]
+const READY_DEADLINE: Duration = Duration::from_secs(10);
+#[cfg(feature = "postgres-supervisor")]
+const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Stable bundle/lock failures without filesystem paths, manifest payloads, or secret bytes.
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +75,38 @@ pub enum PostgresSidecarError {
     /// A caller-supplied release signing identity was not a reviewed closed value.
     #[error("postgres_sidecar_signing_identity_invalid")]
     SigningIdentityInvalid,
+    /// Instance data directory was non-private, partial, symlinked, or not the exact direct child.
+    #[cfg(feature = "postgres-supervisor")]
+    #[error("postgres_sidecar_data_directory_invalid")]
+    DataDirectoryInvalid,
+    /// A verified program did not report the pinned PostgreSQL 17.11 version.
+    #[cfg(feature = "postgres-supervisor")]
+    #[error("postgres_sidecar_version_mismatch")]
+    VersionMismatch,
+    /// `initdb` failed, timed out, or could not receive the password through stdin.
+    #[cfg(feature = "postgres-supervisor")]
+    #[error("postgres_sidecar_initdb_failed")]
+    InitdbFailed,
+    /// The verified `postgres` process could not be spawned.
+    #[cfg(feature = "postgres-supervisor")]
+    #[error("postgres_sidecar_spawn_failed")]
+    SpawnFailed,
+    /// PostgreSQL exited before SCRAM readiness.
+    #[cfg(feature = "postgres-supervisor")]
+    #[error("postgres_sidecar_exited_before_ready")]
+    ExitedBeforeReady,
+    /// SCRAM-authenticated loopback readiness did not pass before the deadline.
+    #[cfg(feature = "postgres-supervisor")]
+    #[error("postgres_sidecar_ready_timeout")]
+    ReadyTimeout,
+    /// Graceful shutdown failed or exceeded its deadline; the start lock remains stale.
+    #[cfg(feature = "postgres-supervisor")]
+    #[error("postgres_sidecar_shutdown_failed")]
+    ShutdownFailed,
+    /// OS key-store secret acquisition failed before process launch.
+    #[cfg(feature = "postgres-supervisor")]
+    #[error(transparent)]
+    Secret(#[from] PostgresSecretStoreError),
 }
 
 impl From<io::Error> for PostgresSidecarError {
@@ -229,6 +281,7 @@ pub struct PostgresStartLock {
     path: PathBuf,
     bytes: Vec<u8>,
     instance_id: Arc<str>,
+    remove_on_drop: bool,
     _file: File,
 }
 
@@ -300,8 +353,14 @@ impl PostgresStartLock {
             path,
             bytes,
             instance_id: Arc::from(instance_id),
+            remove_on_drop: true,
             _file: file,
         })
+    }
+
+    #[cfg(feature = "postgres-supervisor")]
+    fn preserve_on_drop(&mut self) {
+        self.remove_on_drop = false;
     }
 }
 
@@ -336,7 +395,7 @@ impl PostgresStartLock {
 
 impl Drop for PostgresStartLock {
     fn drop(&mut self) {
-        if lock_file_matches(&self.path, &self.bytes) {
+        if self.remove_on_drop && lock_file_matches(&self.path, &self.bytes) {
             let _ = fs::remove_file(&self.path);
             if let Some(parent) = self.path.parent() {
                 let _ = sync_directory(parent);
@@ -581,6 +640,549 @@ impl PostgresSecretStore for WindowsCredentialPostgresSecretStore {
             PostgresSecretStoreError::Unavailable
         })
     }
+}
+
+/// Whether this supervisor initialized a new cluster or opened an existing PostgreSQL 17 cluster.
+#[cfg(feature = "postgres-supervisor")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PostgresSidecarOrigin {
+    /// The exact instance directory was empty and `initdb` completed this start.
+    Fresh,
+    /// A private instance directory already contained exact `PG_VERSION=17`.
+    Existing,
+}
+
+/// Borrowed SCRAM connection material for the later Batch79/bootstrap assembly.
+#[cfg(feature = "postgres-supervisor")]
+pub struct PostgresSidecarConnection<'a> {
+    port: u16,
+    secret: &'a PostgresScramSecret,
+}
+
+#[cfg(feature = "postgres-supervisor")]
+impl PostgresSidecarConnection<'_> {
+    /// Exact numeric loopback host; hostnames and remote addresses are unrepresentable.
+    #[must_use]
+    pub const fn host(&self) -> &'static str {
+        "127.0.0.1"
+    }
+
+    /// PostgreSQL port selected before the verified process was spawned.
+    #[must_use]
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Fixed local administrative role created by `initdb`.
+    #[must_use]
+    pub const fn user(&self) -> &'static str {
+        POSTGRES_USER
+    }
+
+    /// Explicitly expose the password only to the later database-pool constructor.
+    #[must_use]
+    pub fn expose_password(&self) -> &[u8] {
+        self.secret.expose()
+    }
+}
+
+#[cfg(feature = "postgres-supervisor")]
+impl core::fmt::Debug for PostgresSidecarConnection<'_> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("PostgresSidecarConnection")
+            .field("host", &self.host())
+            .field("port", &self.port)
+            .field("user", &POSTGRES_USER)
+            .field("password", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// A SCRAM-ready PostgreSQL child that still owns its bundle, secret, and exclusive start lock.
+#[cfg(feature = "postgres-supervisor")]
+pub struct RunningPostgresSidecar {
+    child: Option<Child>,
+    lock: Option<PostgresStartLock>,
+    secret: PostgresScramSecret,
+    bundle: VerifiedPostgresBundle,
+    data_dir: PathBuf,
+    port: u16,
+    origin: PostgresSidecarOrigin,
+}
+
+#[cfg(feature = "postgres-supervisor")]
+impl core::fmt::Debug for RunningPostgresSidecar {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("RunningPostgresSidecar")
+            .field("pid", &self.child.as_ref().and_then(Child::id))
+            .field("port", &self.port)
+            .field("origin", &self.origin)
+            .field("data_dir", &"<redacted>")
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[cfg(feature = "postgres-supervisor")]
+impl RunningPostgresSidecar {
+    /// Fresh/existing result proved before process start.
+    #[must_use]
+    pub const fn origin(&self) -> PostgresSidecarOrigin {
+        self.origin
+    }
+
+    /// SCRAM connection input for the later application/bootstrap assembly.
+    #[must_use]
+    pub const fn connection(&self) -> PostgresSidecarConnection<'_> {
+        PostgresSidecarConnection {
+            port: self.port,
+            secret: &self.secret,
+        }
+    }
+
+    /// Instance data directory already bound by Batch79/B82 path checks.
+    #[must_use]
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// Stop through the verified `pg_ctl`, then wait for the exact owned child before releasing
+    /// the start lock. Failure preserves a stale lock and kills the child best-effort.
+    pub async fn shutdown(mut self) -> Result<(), PostgresSidecarError> {
+        let status = run_pg_ctl_stop(&self.bundle, &self.data_dir).await;
+        if !matches!(status, Ok(status) if status.success()) {
+            self.preserve_lock();
+            if let Some(child) = self.child.as_mut() {
+                let _ = terminate_child(child).await;
+            }
+            self.child.take();
+            return Err(PostgresSidecarError::ShutdownFailed);
+        }
+        let Some(mut child) = self.child.take() else {
+            self.preserve_lock();
+            return Err(PostgresSidecarError::ShutdownFailed);
+        };
+        let waited = tokio::time::timeout(SHUTDOWN_DEADLINE, child.wait()).await;
+        match waited {
+            Ok(Ok(status)) if status.success() => {
+                drop(self.lock.take());
+                Ok(())
+            }
+            _ => {
+                self.preserve_lock();
+                let _ = terminate_child(&mut child).await;
+                Err(PostgresSidecarError::ShutdownFailed)
+            }
+        }
+    }
+
+    fn preserve_lock(&mut self) {
+        if let Some(lock) = self.lock.as_mut() {
+            lock.preserve_on_drop();
+        }
+    }
+}
+
+#[cfg(feature = "postgres-supervisor")]
+impl Drop for RunningPostgresSidecar {
+    fn drop(&mut self) {
+        if self.child.is_some() {
+            self.preserve_lock();
+        }
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.start_kill();
+        }
+    }
+}
+
+/// Verified PostgreSQL process lifecycle owner. It ends at SCRAM readiness; schema/package/window
+/// assembly remains a separate step and cannot run before this succeeds.
+#[cfg(feature = "postgres-supervisor")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PostgresSidecarSupervisor;
+
+#[cfg(feature = "postgres-supervisor")]
+impl PostgresSidecarSupervisor {
+    /// Start one exact instance from a verified release bundle.
+    pub async fn start<S: PostgresSecretStore + ?Sized>(
+        bundle: VerifiedPostgresBundle,
+        app_data_root: &Path,
+        instance_id: &str,
+        data_dir: &Path,
+        store: &S,
+        service: &ReviewedPostgresKeyStoreService,
+    ) -> Result<RunningPostgresSidecar, PostgresSidecarError> {
+        validate_supervisor_paths(app_data_root, instance_id, data_dir)?;
+        let mut lock = PostgresStartLock::acquire(
+            app_data_root,
+            instance_id,
+            PostgresBundleDigest(bundle.manifest_sha256),
+        )?;
+        verify_program_versions(&bundle).await?;
+        let secret = lock.load_or_create_scram_secret(store, service)?;
+        let origin = data_directory_origin(data_dir)?;
+        if origin == PostgresSidecarOrigin::Fresh {
+            run_initdb(&bundle, data_dir, &secret).await?;
+        }
+        let port = reserve_loopback_port()?;
+        write_runtime_configuration(data_dir, port)?;
+        let mut child = spawn_postgres(&bundle, data_dir)?;
+        if let Err(error) = wait_until_ready(&mut child, port, &secret).await {
+            if terminate_child(&mut child).await.is_err() {
+                lock.preserve_on_drop();
+            }
+            return Err(error);
+        }
+        Ok(RunningPostgresSidecar {
+            child: Some(child),
+            lock: Some(lock),
+            secret,
+            bundle,
+            data_dir: data_dir.to_owned(),
+            port,
+            origin,
+        })
+    }
+}
+
+#[cfg(feature = "postgres-supervisor")]
+fn validate_supervisor_paths(
+    app_data_root: &Path,
+    instance_id: &str,
+    data_dir: &Path,
+) -> Result<(), PostgresSidecarError> {
+    if !app_data_root.is_absolute()
+        || !valid_instance_id(instance_id)
+        || data_dir != app_data_root.join(format!("postgresql-17-{instance_id}"))
+    {
+        return Err(PostgresSidecarError::DataDirectoryInvalid);
+    }
+    let root = fs::symlink_metadata(app_data_root)?;
+    let data = fs::symlink_metadata(data_dir)?;
+    if !root.file_type().is_dir()
+        || root.file_type().is_symlink()
+        || !data.file_type().is_dir()
+        || data.file_type().is_symlink()
+    {
+        return Err(PostgresSidecarError::DataDirectoryInvalid);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if root.permissions().mode() & 0o077 != 0 || data.permissions().mode() & 0o077 != 0 {
+            return Err(PostgresSidecarError::DataDirectoryInvalid);
+        }
+    }
+    let root = fs::canonicalize(app_data_root)?;
+    let data = fs::canonicalize(data_dir)?;
+    if data.parent() != Some(root.as_path()) {
+        return Err(PostgresSidecarError::DataDirectoryInvalid);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "postgres-supervisor")]
+fn data_directory_origin(data_dir: &Path) -> Result<PostgresSidecarOrigin, PostgresSidecarError> {
+    let version = data_dir.join("PG_VERSION");
+    match fs::symlink_metadata(&version) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file()
+                || metadata.file_type().is_symlink()
+                || metadata.len() > 16
+                || fs::read_to_string(version)
+                    .map_err(PostgresSidecarError::Io)?
+                    .trim()
+                    != "17"
+            {
+                return Err(PostgresSidecarError::DataDirectoryInvalid);
+            }
+            Ok(PostgresSidecarOrigin::Existing)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if fs::read_dir(data_dir)?.next().is_some() {
+                return Err(PostgresSidecarError::DataDirectoryInvalid);
+            }
+            Ok(PostgresSidecarOrigin::Fresh)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(feature = "postgres-supervisor")]
+async fn verify_program_versions(
+    bundle: &VerifiedPostgresBundle,
+) -> Result<(), PostgresSidecarError> {
+    for (program, label) in [
+        (bundle.postgres(), "postgres"),
+        (bundle.initdb(), "initdb"),
+        (bundle.pg_ctl(), "pg_ctl"),
+    ] {
+        let mut command = clean_command(program);
+        command.arg("--version").kill_on_drop(true);
+        let output = tokio::time::timeout(VERSION_DEADLINE, command.output())
+            .await
+            .map_err(|_| PostgresSidecarError::VersionMismatch)?
+            .map_err(|_| PostgresSidecarError::VersionMismatch)?;
+        if !output.status.success() || output.stdout.len() + output.stderr.len() > 4096 {
+            return Err(PostgresSidecarError::VersionMismatch);
+        }
+        let bytes = match (output.stdout.is_empty(), output.stderr.is_empty()) {
+            (false, true) => output.stdout,
+            (true, false) => output.stderr,
+            _ => return Err(PostgresSidecarError::VersionMismatch),
+        };
+        let line = std::str::from_utf8(&bytes)
+            .map_err(|_| PostgresSidecarError::VersionMismatch)?
+            .trim();
+        let prefix = format!("{label} (PostgreSQL) {POSTGRES_VERSION}");
+        let suffix = line
+            .strip_prefix(&prefix)
+            .ok_or(PostgresSidecarError::VersionMismatch)?;
+        if !suffix.is_empty()
+            && !(suffix.starts_with(" (")
+                && suffix.ends_with(')')
+                && suffix
+                    .bytes()
+                    .all(|byte| byte == b' ' || byte.is_ascii_graphic()))
+        {
+            return Err(PostgresSidecarError::VersionMismatch);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "postgres-supervisor")]
+async fn run_initdb(
+    bundle: &VerifiedPostgresBundle,
+    data_dir: &Path,
+    secret: &PostgresScramSecret,
+) -> Result<(), PostgresSidecarError> {
+    let mut command = clean_command(bundle.initdb());
+    command
+        .arg("--pgdata")
+        .arg(data_dir)
+        .arg(format!("--username={POSTGRES_USER}"))
+        .args([
+            "--pwprompt",
+            "--auth-host=scram-sha-256",
+            "--auth-local=reject",
+            "--encoding=UTF8",
+            "--no-locale",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command
+        .spawn()
+        .map_err(|_| PostgresSidecarError::InitdbFailed)?;
+    let completed = tokio::time::timeout(INITDB_DEADLINE, async {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or(PostgresSidecarError::InitdbFailed)?;
+        for _ in 0..2 {
+            stdin
+                .write_all(secret.expose())
+                .await
+                .map_err(|_| PostgresSidecarError::InitdbFailed)?;
+            stdin
+                .write_all(b"\n")
+                .await
+                .map_err(|_| PostgresSidecarError::InitdbFailed)?;
+        }
+        stdin
+            .shutdown()
+            .await
+            .map_err(|_| PostgresSidecarError::InitdbFailed)?;
+        drop(stdin);
+        child
+            .wait()
+            .await
+            .map_err(|_| PostgresSidecarError::InitdbFailed)
+    })
+    .await;
+    match completed {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        _ => {
+            let _ = terminate_child(&mut child).await;
+            Err(PostgresSidecarError::InitdbFailed)
+        }
+    }
+}
+
+#[cfg(feature = "postgres-supervisor")]
+fn write_runtime_configuration(data_dir: &Path, port: u16) -> Result<(), PostgresSidecarError> {
+    let settings = format!(
+        "# managed by signed Desktop core\nlisten_addresses = '127.0.0.1'\nport = {port}\nssl = off\npassword_encryption = 'scram-sha-256'\nmax_connections = 32\nlogging_collector = off\n"
+    );
+    #[cfg(unix)]
+    let settings =
+        settings + "unix_socket_directories = ''\ndynamic_shared_memory_type = 'posix'\n";
+    let hba = if cfg!(unix) {
+        "# managed by signed Desktop core\nlocal all all reject\nhost all all 127.0.0.1/32 scram-sha-256\nhost all all ::1/128 scram-sha-256\n"
+    } else {
+        "# managed by signed Desktop core\nhost all all 127.0.0.1/32 scram-sha-256\nhost all all ::1/128 scram-sha-256\n"
+    };
+    write_private_file(&data_dir.join("postgresql.auto.conf"), settings.as_bytes())?;
+    write_private_file(&data_dir.join("pg_hba.conf"), hba.as_bytes())?;
+    sync_directory(data_dir)
+}
+
+#[cfg(feature = "postgres-supervisor")]
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), PostgresSidecarError> {
+    if let Ok(metadata) = fs::symlink_metadata(path)
+        && (!metadata.file_type().is_file() || metadata.file_type().is_symlink())
+    {
+        return Err(PostgresSidecarError::DataDirectoryInvalid);
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "postgres-supervisor")]
+fn spawn_postgres(
+    bundle: &VerifiedPostgresBundle,
+    data_dir: &Path,
+) -> Result<Child, PostgresSidecarError> {
+    let mut command = clean_command(bundle.postgres());
+    command
+        .arg("-D")
+        .arg(data_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|_| PostgresSidecarError::SpawnFailed)
+}
+
+#[cfg(feature = "postgres-supervisor")]
+async fn wait_until_ready(
+    child: &mut Child,
+    port: u16,
+    secret: &PostgresScramSecret,
+) -> Result<(), PostgresSidecarError> {
+    let deadline = tokio::time::Instant::now() + READY_DEADLINE;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|_| PostgresSidecarError::ExitedBeforeReady)?
+            .is_some()
+        {
+            return Err(PostgresSidecarError::ExitedBeforeReady);
+        }
+        if postgres_ready(port, secret).await {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(PostgresSidecarError::ReadyTimeout);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[cfg(feature = "postgres-supervisor")]
+async fn postgres_ready(port: u16, secret: &PostgresScramSecret) -> bool {
+    let mut config = tokio_postgres::Config::new();
+    config
+        .host("127.0.0.1")
+        .port(port)
+        .user(POSTGRES_USER)
+        .password(secret.expose())
+        .dbname("postgres")
+        .application_name("desktop-postgres-ready")
+        .connect_timeout(Duration::from_secs(1));
+    let connected = tokio::time::timeout(Duration::from_secs(2), config.connect(NoTls)).await;
+    let Ok(Ok((client, connection))) = connected else {
+        return false;
+    };
+    let driver = tokio::spawn(connection);
+    let ready = tokio::time::timeout(
+        Duration::from_secs(1),
+        client.query_one("SELECT 1::int4", &[]),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .and_then(|row| row.try_get::<_, i32>(0).ok())
+        == Some(1);
+    drop(client);
+    driver.abort();
+    ready
+}
+
+#[cfg(feature = "postgres-supervisor")]
+async fn run_pg_ctl_stop(
+    bundle: &VerifiedPostgresBundle,
+    data_dir: &Path,
+) -> Result<std::process::ExitStatus, PostgresSidecarError> {
+    let mut command = clean_command(bundle.pg_ctl());
+    command
+        .arg("-D")
+        .arg(data_dir)
+        .args(["-m", "fast", "-w", "-t", "5", "stop"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    tokio::time::timeout(SHUTDOWN_DEADLINE + Duration::from_secs(1), command.status())
+        .await
+        .map_err(|_| PostgresSidecarError::ShutdownFailed)?
+        .map_err(|_| PostgresSidecarError::ShutdownFailed)
+}
+
+#[cfg(feature = "postgres-supervisor")]
+async fn terminate_child(child: &mut Child) -> Result<(), PostgresSidecarError> {
+    if child
+        .try_wait()
+        .map_err(|_| PostgresSidecarError::ShutdownFailed)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    child
+        .start_kill()
+        .map_err(|_| PostgresSidecarError::ShutdownFailed)?;
+    tokio::time::timeout(SHUTDOWN_DEADLINE, child.wait())
+        .await
+        .map_err(|_| PostgresSidecarError::ShutdownFailed)?
+        .map_err(|_| PostgresSidecarError::ShutdownFailed)?;
+    Ok(())
+}
+
+#[cfg(feature = "postgres-supervisor")]
+fn reserve_loopback_port() -> Result<u16, PostgresSidecarError> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
+}
+
+#[cfg(feature = "postgres-supervisor")]
+fn clean_command(program: &Path) -> Command {
+    let mut command = Command::new(program);
+    command.env_clear().env("LC_ALL", "C").env("LANG", "C");
+    if let Some(root) = program.parent().and_then(Path::parent) {
+        command.current_dir(root);
+    }
+    command
 }
 
 #[derive(Debug, Deserialize)]
@@ -900,15 +1502,15 @@ mod tests {
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
             }
         }
+        let digest = write_manifest(&root);
+        (root, digest)
+    }
+
+    fn write_manifest(root: &Path) -> PostgresBundleDigest {
         let mut files = BTreeMap::new();
-        for relative in [
-            expected_program_paths()[0],
-            expected_program_paths()[1],
-            expected_program_paths()[2],
-            "share/timezonesets/Default",
-        ] {
+        for relative in inventory_files(root).unwrap() {
             files.insert(
-                relative.to_owned(),
+                relative.clone(),
                 encode_hex(&sha256_file(&root.join(relative)).unwrap()),
             );
         }
@@ -932,7 +1534,7 @@ mod tests {
         let bytes = serde_json::to_vec_pretty(&manifest).unwrap();
         fs::write(root.join(MANIFEST_FILE), &bytes).unwrap();
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
-        (root, PostgresBundleDigest(digest))
+        PostgresBundleDigest(digest)
     }
 
     fn rewrite_manifest(root: &Path, mutate: impl FnOnce(&mut Value)) -> PostgresBundleDigest {
@@ -1085,6 +1687,72 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "postgres-supervisor")]
+    #[test]
+    fn supervisor_paths_cluster_state_configuration_and_stale_lock_are_closed() {
+        let app_root = root("supervisor-paths");
+        let instance = "c".repeat(64);
+        let data_dir = app_root.join(format!("postgresql-17-{instance}"));
+        fs::create_dir_all(&data_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&app_root, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        validate_supervisor_paths(&app_root, &instance, &data_dir).unwrap();
+        assert_eq!(
+            data_directory_origin(&data_dir).unwrap(),
+            PostgresSidecarOrigin::Fresh
+        );
+        fs::write(data_dir.join("partial"), b"partial").unwrap();
+        assert!(matches!(
+            data_directory_origin(&data_dir),
+            Err(PostgresSidecarError::DataDirectoryInvalid)
+        ));
+        fs::remove_file(data_dir.join("partial")).unwrap();
+        fs::write(data_dir.join("PG_VERSION"), b"16\n").unwrap();
+        assert!(matches!(
+            data_directory_origin(&data_dir),
+            Err(PostgresSidecarError::DataDirectoryInvalid)
+        ));
+        fs::write(data_dir.join("PG_VERSION"), b"17\n").unwrap();
+        assert_eq!(
+            data_directory_origin(&data_dir).unwrap(),
+            PostgresSidecarOrigin::Existing
+        );
+        write_runtime_configuration(&data_dir, 55482).unwrap();
+        let settings = fs::read_to_string(data_dir.join("postgresql.auto.conf")).unwrap();
+        let hba = fs::read_to_string(data_dir.join("pg_hba.conf")).unwrap();
+        assert!(settings.contains("listen_addresses = '127.0.0.1'"));
+        assert!(settings.contains("port = 55482"));
+        assert!(settings.contains("password_encryption = 'scram-sha-256'"));
+        assert!(hba.contains("127.0.0.1/32 scram-sha-256"));
+
+        let mut stale =
+            PostgresStartLock::acquire(&app_root, &instance, PostgresBundleDigest([0x66; 32]))
+                .unwrap();
+        let stale_path = stale.path.clone();
+        stale.preserve_on_drop();
+        drop(stale);
+        assert!(stale_path.is_file());
+        let source = include_str!("postgres_sidecar.rs");
+        let production = source.split("\nmod tests {").next().unwrap();
+        for forbidden in [
+            ["PG", "PASSWORD"].concat(),
+            ["--pw", "file"].concat(),
+            ["std::env::", "var"].concat(),
+        ] {
+            assert!(
+                !production.contains(&forbidden),
+                "secret fallback appeared: {forbidden}"
+            );
+        }
+        assert!(production.contains(".stdin(Stdio::piped())"));
+        fs::remove_file(stale_path).unwrap();
+        fs::remove_dir_all(app_root).unwrap();
+    }
+
     #[cfg(feature = "postgres-key-store")]
     struct MemorySecretStore {
         value: Mutex<Option<Vec<u8>>>,
@@ -1150,6 +1818,302 @@ mod tests {
             });
             Ok(())
         }
+    }
+
+    #[cfg(feature = "postgres-supervisor")]
+    fn supervisor_test_paths(name: &str) -> (PathBuf, String, PathBuf) {
+        let app_root = root(name);
+        let instance = "e".repeat(64);
+        let data_dir = app_root.join(format!("postgresql-17-{instance}"));
+        fs::create_dir_all(&data_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&app_root, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        (app_root, instance, data_dir)
+    }
+
+    #[cfg(feature = "postgres-supervisor")]
+    #[tokio::test]
+    async fn version_failure_precedes_secret_store_and_releases_unstarted_lock() {
+        let (bundle_root, digest) = materialize_bundle("bad-version-process");
+        let bundle =
+            VerifiedPostgresBundle::open(&bundle_root, digest, &signing_identity()).unwrap();
+        let (app_root, instance, data_dir) = supervisor_test_paths("bad-version-app");
+        let store = MemorySecretStore::empty();
+        let service = ReviewedPostgresKeyStoreService::from_reviewed_release(
+            "com.example.product.postgresql.bad-version",
+        )
+        .unwrap();
+        assert!(matches!(
+            PostgresSidecarSupervisor::start(
+                bundle, &app_root, &instance, &data_dir, &store, &service,
+            )
+            .await,
+            Err(PostgresSidecarError::VersionMismatch)
+        ));
+        assert_eq!(store.writes.load(Ordering::Relaxed), 0);
+        assert!(
+            !fs::read_dir(&app_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains("start-lock"))
+        );
+        fs::remove_dir_all(app_root).unwrap();
+        fs::remove_dir_all(bundle_root).unwrap();
+    }
+
+    #[cfg(all(feature = "postgres-supervisor", unix))]
+    fn materialize_failing_initdb_bundle() -> (PathBuf, PostgresBundleDigest) {
+        let root = root("failing-initdb");
+        fs::create_dir_all(root.join("bin")).unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        for (relative, label) in [
+            (expected_program_paths()[0], "postgres"),
+            (expected_program_paths()[1], "initdb"),
+            (expected_program_paths()[2], "pg_ctl"),
+        ] {
+            let script = format!(
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"{label} (PostgreSQL) {POSTGRES_VERSION}\"; exit 0; fi\nexit 17\n"
+            );
+            let path = root.join(relative);
+            fs::write(&path, script).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let digest = write_manifest(&root);
+        (root, digest)
+    }
+
+    #[cfg(all(feature = "postgres-supervisor", unix))]
+    #[tokio::test]
+    async fn initdb_failure_keeps_persisted_secret_but_starts_no_process_and_releases_lock() {
+        let (bundle_root, digest) = materialize_failing_initdb_bundle();
+        let bundle =
+            VerifiedPostgresBundle::open(&bundle_root, digest, &signing_identity()).unwrap();
+        let (app_root, instance, data_dir) = supervisor_test_paths("failing-initdb-app");
+        let store = MemorySecretStore::empty();
+        let service = ReviewedPostgresKeyStoreService::from_reviewed_release(
+            "com.example.product.postgresql.failing-initdb",
+        )
+        .unwrap();
+        assert!(matches!(
+            PostgresSidecarSupervisor::start(
+                bundle, &app_root, &instance, &data_dir, &store, &service,
+            )
+            .await,
+            Err(PostgresSidecarError::InitdbFailed)
+        ));
+        assert_eq!(store.writes.load(Ordering::Relaxed), 1);
+        assert!(store.value.lock().unwrap().is_some());
+        assert!(fs::read_dir(&data_dir).unwrap().next().is_none());
+        assert!(
+            !fs::read_dir(&app_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains("start-lock"))
+        );
+        fs::remove_dir_all(app_root).unwrap();
+        fs::remove_dir_all(bundle_root).unwrap();
+    }
+
+    #[cfg(all(feature = "postgres-supervisor", unix))]
+    fn materialize_exiting_postgres_bundle() -> (PathBuf, PostgresBundleDigest) {
+        let root = root("exiting-postgres");
+        fs::create_dir_all(root.join("bin")).unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        let postgres = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"postgres (PostgreSQL) {POSTGRES_VERSION}\"; exit 0; fi\nexit 17\n"
+        );
+        let initdb = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"initdb (PostgreSQL) {POSTGRES_VERSION}\"; exit 0; fi\ndata=\nwhile [ $# -gt 0 ]; do if [ \"$1\" = \"--pgdata\" ]; then data=$2; shift 2; else shift; fi; done\nIFS= read -r first\nIFS= read -r second\n[ -n \"$data\" ] && [ \"$first\" = \"$second\" ] || exit 18\nprintf '17\\n' > \"$data/PG_VERSION\"\nexit 0\n"
+        );
+        let pg_ctl = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"pg_ctl (PostgreSQL) {POSTGRES_VERSION}\"; exit 0; fi\nexit 17\n"
+        );
+        for (relative, script) in [
+            (expected_program_paths()[0], postgres),
+            (expected_program_paths()[1], initdb),
+            (expected_program_paths()[2], pg_ctl),
+        ] {
+            let path = root.join(relative);
+            fs::write(&path, script).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let digest = write_manifest(&root);
+        (root, digest)
+    }
+
+    #[cfg(all(feature = "postgres-supervisor", unix))]
+    #[tokio::test]
+    async fn child_exit_before_ready_is_explicit_and_releases_confirmed_dead_lock() {
+        let (bundle_root, digest) = materialize_exiting_postgres_bundle();
+        let bundle =
+            VerifiedPostgresBundle::open(&bundle_root, digest, &signing_identity()).unwrap();
+        let (app_root, instance, data_dir) = supervisor_test_paths("exiting-postgres-app");
+        let store = MemorySecretStore::empty();
+        let service = ReviewedPostgresKeyStoreService::from_reviewed_release(
+            "com.example.product.postgresql.exiting",
+        )
+        .unwrap();
+        assert!(matches!(
+            PostgresSidecarSupervisor::start(
+                bundle, &app_root, &instance, &data_dir, &store, &service,
+            )
+            .await,
+            Err(PostgresSidecarError::ExitedBeforeReady)
+        ));
+        assert_eq!(store.writes.load(Ordering::Relaxed), 1);
+        assert!(
+            !fs::read_dir(&app_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains("start-lock"))
+        );
+        fs::remove_dir_all(app_root).unwrap();
+        fs::remove_dir_all(bundle_root).unwrap();
+    }
+
+    #[cfg(all(feature = "postgres-supervisor", unix))]
+    fn materialize_host_postgres_bundle(bin_dir: &Path) -> (PathBuf, PostgresBundleDigest) {
+        let root = root("host-postgres");
+        fs::create_dir_all(root.join("bin")).unwrap();
+        for relative in expected_program_paths() {
+            let name = Path::new(relative).file_name().unwrap();
+            fs::copy(bin_dir.join(name), root.join(relative)).unwrap();
+        }
+        let digest = write_manifest(&root);
+        (root, digest)
+    }
+
+    #[cfg(all(feature = "postgres-supervisor", unix))]
+    #[tokio::test]
+    #[ignore = "需要本机PostgreSQL 17.11 binaries；设置OPENBOT_TEST_POSTGRES_BIN_DIR后运行"]
+    async fn verified_host_fixture_fresh_ready_shutdown_and_existing_restart() {
+        let bin_dir = PathBuf::from(std::env::var_os("OPENBOT_TEST_POSTGRES_BIN_DIR").unwrap());
+        let (bundle_root, digest) = materialize_host_postgres_bundle(&bin_dir);
+        let signing = signing_identity();
+        let service = ReviewedPostgresKeyStoreService::from_reviewed_release(
+            "com.example.product.postgresql.process-test",
+        )
+        .unwrap();
+        let store = MemorySecretStore::empty();
+        let app_root = root("supervisor-process");
+        let instance = "d".repeat(64);
+        let data_dir = app_root.join(format!("postgresql-17-{instance}"));
+        fs::create_dir_all(&data_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&app_root, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+
+        let bundle = VerifiedPostgresBundle::open(&bundle_root, digest, &signing).unwrap();
+        let running = PostgresSidecarSupervisor::start(
+            bundle, &app_root, &instance, &data_dir, &store, &service,
+        )
+        .await
+        .unwrap();
+        assert_eq!(running.origin(), PostgresSidecarOrigin::Fresh);
+        let first_password = running.connection().expose_password().to_vec();
+        assert!(!format!("{running:?}").contains(std::str::from_utf8(&first_password).unwrap()));
+        for relative in ["postgresql.auto.conf", "pg_hba.conf", "postmaster.opts"] {
+            let path = data_dir.join(relative);
+            if path.is_file() {
+                let bytes = fs::read(path).unwrap();
+                assert!(
+                    !bytes
+                        .windows(first_password.len())
+                        .any(|window| window == first_password),
+                    "raw SCRAM secret leaked into {relative}"
+                );
+            }
+        }
+        probe_running_sidecar(&running).await;
+        running.shutdown().await.unwrap();
+        assert!(
+            !fs::read_dir(&app_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains("start-lock"))
+        );
+
+        let bundle = VerifiedPostgresBundle::open(&bundle_root, digest, &signing).unwrap();
+        let restarted = PostgresSidecarSupervisor::start(
+            bundle, &app_root, &instance, &data_dir, &store, &service,
+        )
+        .await
+        .unwrap();
+        assert_eq!(restarted.origin(), PostgresSidecarOrigin::Existing);
+        assert_eq!(restarted.connection().expose_password(), first_password);
+        probe_running_sidecar(&restarted).await;
+        restarted.shutdown().await.unwrap();
+
+        let bundle = VerifiedPostgresBundle::open(&bundle_root, digest, &signing).unwrap();
+        let unclean = PostgresSidecarSupervisor::start(
+            bundle, &app_root, &instance, &data_dir, &store, &service,
+        )
+        .await
+        .unwrap();
+        let unclean_port = unclean.connection().port();
+        drop(unclean);
+        let closed_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if tokio::net::TcpStream::connect(("127.0.0.1", unclean_port))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            assert!(tokio::time::Instant::now() < closed_deadline);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let stale_lock = app_root.join(format!(".postgresql-17-{instance}.start-lock-v1"));
+        assert!(stale_lock.is_file());
+        let bundle = VerifiedPostgresBundle::open(&bundle_root, digest, &signing).unwrap();
+        assert!(matches!(
+            PostgresSidecarSupervisor::start(
+                bundle, &app_root, &instance, &data_dir, &store, &service,
+            )
+            .await,
+            Err(PostgresSidecarError::StartLockHeld)
+        ));
+        fs::remove_file(stale_lock).unwrap();
+        fs::remove_dir_all(app_root).unwrap();
+        fs::remove_dir_all(bundle_root).unwrap();
+    }
+
+    #[cfg(all(feature = "postgres-supervisor", unix))]
+    async fn probe_running_sidecar(running: &RunningPostgresSidecar) {
+        let connection = running.connection();
+        let mut config = tokio_postgres::Config::new();
+        config
+            .host(connection.host())
+            .port(connection.port())
+            .user(connection.user())
+            .password(connection.expose_password())
+            .dbname("postgres");
+        let (client, driver) = config.connect(NoTls).await.unwrap();
+        let driver = tokio::spawn(driver);
+        let row = client
+            .query_one(
+                "SELECT current_setting('server_version_num'), current_setting('data_directory'), current_setting('listen_addresses'), current_setting('password_encryption'), (SELECT bool_and(auth_method='scram-sha-256') FROM pg_hba_file_rules WHERE type LIKE 'host%' AND error IS NULL)",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(row.get::<_, String>(0).starts_with("17"));
+        assert_eq!(
+            fs::canonicalize(row.get::<_, String>(1)).unwrap(),
+            fs::canonicalize(running.data_dir()).unwrap()
+        );
+        assert_eq!(row.get::<_, String>(2), "127.0.0.1");
+        assert_eq!(row.get::<_, String>(3), "scram-sha-256");
+        assert!(row.get::<_, bool>(4));
+        drop(client);
+        driver.abort();
     }
 
     #[cfg(feature = "postgres-key-store")]
