@@ -509,6 +509,30 @@ pub fn router(state: ServerState) -> Router {
         )
         .route("/api/components/functions", get(components::functions_get))
         .route(
+            "/api/components/{name}/functions",
+            post(components::functions_post),
+        )
+        .route(
+            "/api/components/{name}/functions/{function}",
+            delete(components::functions_delete),
+        )
+        .route(
+            "/api/components/{name}/grants",
+            post(components::grants_post),
+        )
+        .route(
+            "/api/components/{name}/grants/{agent_id}",
+            delete(components::grants_delete),
+        )
+        .route(
+            "/api/components/{name}/publication",
+            post(components::publication_post),
+        )
+        .route(
+            "/api/components/{name}/draft",
+            axum::routing::put(components::draft_put),
+        )
+        .route(
             "/api/components/human-decisions",
             get(components::human_decisions_get),
         )

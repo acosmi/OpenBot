@@ -202,21 +202,23 @@ entries:
   - id: admin-components-index
     upstream: app/src/routes/_authed/admin/components/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_components_index -> /admin/components"
+    target: "openbot_ui::shell::admin_components::AdminComponentsPage -> /admin/components"
     owner: openbot-ui
     test_id: T-ROUTE-0015
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch67 AdminShell真实加入Components destination并保持child-before-gate零构造；页面best-effort announce后权威GET全部governance row，release fixture实得16条（13 build+2 stale/future+1 sandboxed）、每tile真实link/status/preview，Admin secondary nav current恰1。1024×640/600×900外层overflow0，formal golden独立保持todo。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/components/index.tsx 得 title=\"UI Components\" + description=\"What each Bot may answer with...Each change and each refusal is a row in Audit.\""
     notes: "模板 List。journey：管理员看已发布的 compiled component 清单，逐个进入配置 per-Bot withholding（v3 §3.1 条 10、§3.3）。权限：仅 admin。"
   - id: admin-component-detail
     upstream: app/src/routes/_authed/admin/components/$name.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_component_detail -> /admin/components/:name"
+    target: "openbot_ui::shell::admin_components::AdminComponentDetailPage -> /admin/components/:name"
     owner: openbot-ui
     test_id: T-ROUTE-0016
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch67 detail由URL name join权威records，unknown只画统一NotFound；Activity release浏览器贯穿draft保存不泄published→unpublish→publish提升、Research Partner withhold/restore、botActivity grant/revoke，所有成功只用Server完整ComponentRecord重建keyed view，alert/runtime/duplicate/nested/overflow0。sandboxed publication/Edit均disabled且唯一链接Playground，避免拆开source/description/revision。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/components/$name.tsx 得 title=\"Configuration\" + title=\"No such component\" / description=\"Nothing here answers to that name.\""
     notes: "模板 Form。journey：管理员配置单个 component 的用途说明与哪些 Bot 可以用它答复；未知 name 走「没有这个 component」空态（上游在页内渲染 not-found 而不是抛 404，重写按 v3 §3.2 统一 404 语义时须单列测试）。权限：仅 admin。"
   - id: admin-computers
@@ -264,11 +266,12 @@ entries:
   - id: admin-playground
     upstream: app/src/routes/_authed/admin/playground.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_playground -> /admin/playground"
+    target: "openbot_ui::features::admin::playground::SandboxPlaygroundPage -> /admin/playground"
     owner: openbot-ui
     test_id: T-ROUTE-0021
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch67发现并修复production CSP缺frame-src导致/sandbox/runner被default-src none阻断；Server/Tauri只新增frame-src self，runner自身仍default/connect none+nonce且iframe sandbox只有allow-scripts。release runner=200、preview真实显示sample。又发现name-only For key使publish后列表stale，改完整closed record SHA-256 key并以单测锁定；最终custom_batch67_card draft-only→published revision1在同页可见，API row一致。1024×640 overflow0、main1/nav2/h1 1、duplicate/nested/visible alert0；formal golden仍todo。"
     evidence: "grep -nE '<h1|Playground|sandbox' app/src/routes/_authed/admin/playground.tsx 得 <h1>Playground</h1>、useQuery(sandboxedListQueryOptions())，以及文件头注释 \"Browser-authored components are edited as drafts, previewed in the production sandbox renderer\""
     notes: "模板 Focus（无 max-width 的编辑 + 预览工作区）。journey：作者写 HTML/CSS/JS 草稿 -> 在与生产同一个沙箱渲染器里预览（sample arguments 与组件代码在同一次沙箱求值中注入）-> draft/publish/revision（v3 §3.1 条 10、§3.3）。权限：仅 admin；沙箱脚本按 v3 §3.3 只能看到 window.__args 与自己的 DOM，无 data function、无网络、无回宿主通道。"
   - id: admin-plugins-index

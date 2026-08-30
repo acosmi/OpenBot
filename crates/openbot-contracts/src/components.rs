@@ -24,6 +24,8 @@ pub const RECENT_REFUSALS_FUNCTION_DESCRIPTION: &str =
     "The most recent things this deployment refused, and the reason each was refused.";
 /// Stable source description shared by both first-party data functions.
 pub const AUDIT_TRAIL_READS_DESCRIPTION: &str = "the audit trail";
+/// Maximum UTF-8 bytes in one compiled-component model-facing description.
+pub const MAX_COMPONENT_DESCRIPTION_BYTES: usize = 64 * 1024;
 
 /// Stable tool/catalogue identity for the first compiled Rust renderer slice.
 pub const SHOW_QUOTE_COMPONENT_NAME: &str = "showQuote";
@@ -193,6 +195,97 @@ pub struct ComponentRecord {
 pub struct ComponentRecords {
     /// All durable compiled-component governance rows in stable kind/title/name order.
     pub components: Vec<ComponentRecord>,
+}
+
+/// Exact body for granting one compiled component to one Agent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComponentAgentGrantRequest {
+    /// Server-authorized Agent identity; actor authority never comes from this body.
+    pub agent_id: BotId,
+}
+
+/// Exact body for granting one build-owned data function to one component.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentFunctionGrantRequest {
+    /// Stable function identity from the build-owned manifest.
+    pub function: String,
+}
+
+/// Exact body for publishing or unpublishing one compiled component.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentPublicationRequest {
+    /// True promotes the current draft; false makes the component unavailable to every Agent.
+    pub published: bool,
+}
+
+/// Exact body for saving one compiled component's model-facing draft description.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentDraftRequest {
+    /// Draft text; application applies ECMAScript trim and the shared byte limit.
+    pub description: String,
+}
+
+/// One closed component-governance mutation after HTTP framing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ComponentGovernanceMutation {
+    /// Add or remove one per-Agent withholding exception.
+    SetAgentGrant {
+        /// Stable component identity from the route path.
+        component_name: String,
+        /// Server-authorized Agent identity.
+        agent_id: BotId,
+        /// True removes withholding; false creates it.
+        granted: bool,
+    },
+    /// Add or remove one component-to-data-function grant.
+    SetFunctionGrant {
+        /// Stable component identity from the route path.
+        component_name: String,
+        /// Build-owned data-function identity.
+        function: String,
+        /// True inserts the grant; false removes it.
+        granted: bool,
+    },
+    /// Publish or unpublish one compiled component.
+    SetPublication {
+        /// Stable component identity from the route path.
+        component_name: String,
+        /// True promotes the current draft; false preserves grants while withdrawing the tool.
+        published: bool,
+    },
+    /// Save a compiled component draft without changing what Agents can see.
+    SaveDraft {
+        /// Stable component identity from the route path.
+        component_name: String,
+        /// Canonical, non-empty model-facing draft.
+        description: String,
+    },
+}
+
+impl ComponentGovernanceMutation {
+    /// Borrow the component identity common to every operation.
+    #[must_use]
+    pub fn component_name(&self) -> &str {
+        match self {
+            Self::SetAgentGrant { component_name, .. }
+            | Self::SetFunctionGrant { component_name, .. }
+            | Self::SetPublication { component_name, .. }
+            | Self::SaveDraft { component_name, .. } => component_name,
+        }
+    }
+}
+
+/// Mutation receipt carrying the exact authoritative governance row after commit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentGovernanceReceipt {
+    /// Current durable row; clients never patch governance optimistically.
+    pub component: ComponentRecord,
 }
 
 /// One published compiled component actually available to one verified Agent runtime.
@@ -1903,6 +1996,61 @@ mod tests {
                 json!({"decision":"approved","effect":"write"})
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn component_governance_requests_mutations_and_receipts_are_closed() {
+        let request = ComponentAgentGrantRequest {
+            agent_id: BotId::new("agent-one"),
+        };
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            json!({"agentId":"agent-one"})
+        );
+        assert!(
+            serde_json::from_value::<ComponentAgentGrantRequest>(
+                json!({"agentId":"agent-one","actor":"forged"})
+            )
+            .is_err()
+        );
+        let mutation = ComponentGovernanceMutation::SetFunctionGrant {
+            component_name: "showQuote".to_owned(),
+            function: "botActivity".to_owned(),
+            granted: true,
+        };
+        assert_eq!(mutation.component_name(), "showQuote");
+        assert_eq!(
+            serde_json::to_value(&mutation).unwrap(),
+            json!({
+                "operation":"set_function_grant",
+                "component_name":"showQuote",
+                "function":"botActivity",
+                "granted":true
+            })
+        );
+        let receipt = ComponentGovernanceReceipt {
+            component: ComponentRecord {
+                name: "showQuote".to_owned(),
+                title: "Quotation".to_owned(),
+                kind: CompiledComponentKind::Card,
+                draft_description: "quote".to_owned(),
+                published_description: Some("quote".to_owned()),
+                published: true,
+                published_at: Some(OffsetDateTime::UNIX_EPOCH),
+                updated_by: Some("admin".to_owned()),
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+                has_unpublished_changes: false,
+                withheld_from: Vec::new(),
+                functions: vec!["botActivity".to_owned()],
+            },
+        };
+        assert_eq!(
+            serde_json::from_value::<ComponentGovernanceReceipt>(
+                serde_json::to_value(&receipt).unwrap()
+            )
+            .unwrap(),
+            receipt
         );
     }
 }

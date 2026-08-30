@@ -116,7 +116,7 @@ pub use components::{
     await_component_human_decision, call_component_function, decide_component,
     list_component_data_functions, list_components, list_components_for_agent,
     list_pending_component_human_decisions, resolve_component_human_decision,
-    sync_component_catalogue, validate_manifest_entries,
+    sync_component_catalogue, update_component_governance, validate_manifest_entries,
 };
 pub use cursor::{ChannelCursor, channel_recency};
 pub use intelligence_import::{

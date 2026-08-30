@@ -33,7 +33,7 @@ use crate::components::{
     ComponentAdministration, NoComponentAdministration, await_component_human_decision,
     call_component_function, decide_component, list_component_data_functions, list_components,
     list_components_for_agent, list_pending_component_human_decisions,
-    resolve_component_human_decision, sync_component_catalogue,
+    resolve_component_human_decision, sync_component_catalogue, update_component_governance,
 };
 use crate::mcp_connections::{
     McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
@@ -468,6 +468,11 @@ where
             AppCommand::SyncComponentCatalogue(request) => Ok(AppReply::ComponentCatalogueAdded(
                 sync_component_catalogue(self.components.as_ref(), auth, request).await?,
             )),
+            AppCommand::UpdateComponentGovernance(mutation) => {
+                Ok(AppReply::ComponentGovernanceUpdated(
+                    update_component_governance(self.components.as_ref(), auth, mutation).await?,
+                ))
+            }
             AppCommand::ListComponentsForAgent { agent_id } => Ok(AppReply::GrantedComponents(
                 list_components_for_agent(self.components.as_ref(), auth, agent_id).await?,
             )),

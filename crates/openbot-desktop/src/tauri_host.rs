@@ -11,8 +11,9 @@ use http::{Method, Request, Response, StatusCode};
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::components::{
-    ComponentCatalogueRequest, ComponentDecisionRequest, ComponentFunctionCallRequest,
-    ComponentHumanDecisionAnswer,
+    ComponentAgentGrantRequest, ComponentCatalogueRequest, ComponentDecisionRequest,
+    ComponentDraftRequest, ComponentFunctionCallRequest, ComponentFunctionGrantRequest,
+    ComponentGovernanceMutation, ComponentHumanDecisionAnswer, ComponentPublicationRequest,
 };
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::BotId;
@@ -30,11 +31,12 @@ const ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const API_BODY_MAX_BYTES: usize = 4096;
 const COMPONENT_CATALOGUE_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_DECISION_BODY_MAX_BYTES: usize = 256 * 1024;
+const COMPONENT_GOVERNANCE_BODY_MAX_BYTES: usize = 68 * 1024;
 const SANDBOXED_COMPONENT_BODY_MAX_BYTES: usize = 1024 * 1024;
 const HTML_ROOT_MARKER: &str = "<html lang=\"en\">";
 const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
                    connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; \
-                   object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; \
+                   object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'none'; \
                    worker-src 'none'; manifest-src 'none'; media-src 'none'";
 
 /// Host registration/open error without leaking filesystem content.
@@ -68,6 +70,65 @@ impl WindowAuthority {
     fn is_fresh(&self) -> bool {
         self.fresh_until
             .is_some_and(|deadline| Instant::now() <= deadline)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ComponentGovernanceRoute<'a> {
+    Functions {
+        raw_name: &'a str,
+    },
+    Function {
+        raw_name: &'a str,
+        raw_function: &'a str,
+    },
+    Grants {
+        raw_name: &'a str,
+    },
+    Grant {
+        raw_name: &'a str,
+        raw_agent_id: &'a str,
+    },
+    Publication {
+        raw_name: &'a str,
+    },
+    Draft {
+        raw_name: &'a str,
+    },
+}
+
+impl<'a> ComponentGovernanceRoute<'a> {
+    fn component_name(self) -> &'a str {
+        match self {
+            Self::Functions { raw_name }
+            | Self::Function { raw_name, .. }
+            | Self::Grants { raw_name }
+            | Self::Grant { raw_name, .. }
+            | Self::Publication { raw_name }
+            | Self::Draft { raw_name } => raw_name,
+        }
+    }
+}
+
+fn component_governance_route(path: &str) -> Option<ComponentGovernanceRoute<'_>> {
+    let segments = path
+        .strip_prefix("/api/components/")?
+        .split('/')
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        [raw_name, "functions"] => Some(ComponentGovernanceRoute::Functions { raw_name }),
+        [raw_name, "functions", raw_function] => Some(ComponentGovernanceRoute::Function {
+            raw_name,
+            raw_function,
+        }),
+        [raw_name, "grants"] => Some(ComponentGovernanceRoute::Grants { raw_name }),
+        [raw_name, "grants", raw_agent_id] => Some(ComponentGovernanceRoute::Grant {
+            raw_name,
+            raw_agent_id,
+        }),
+        [raw_name, "publication"] => Some(ComponentGovernanceRoute::Publication { raw_name }),
+        [raw_name, "draft"] => Some(ComponentGovernanceRoute::Draft { raw_name }),
+        _ => None,
     }
 }
 
@@ -206,6 +267,9 @@ impl DesktopTauriProtocol {
             return self
                 .components_for_agent(request, authority, raw_agent_id)
                 .await;
+        }
+        if let Some(route) = component_governance_route(&path) {
+            return self.component_governance(request, authority, route).await;
         }
         if let Some(raw_name) = path
             .strip_prefix("/api/components/")
@@ -568,6 +632,129 @@ impl DesktopTauriProtocol {
             .await
         {
             Ok(AppReply::ComponentDataFunctions(functions)) => json_response(&functions),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn component_governance(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        route: ComponentGovernanceRoute<'_>,
+    ) -> Response<Vec<u8>> {
+        if !authority.is_fresh() {
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        if request.body().len() > COMPONENT_GOVERNANCE_BODY_MAX_BYTES {
+            return payload_too_large();
+        }
+        let component_name = match percent_decode_segment(route.component_name()) {
+            Some(component_name) => component_name,
+            None => {
+                return error_response(AppError::MalformedPayload {
+                    field: "component_name",
+                });
+            }
+        };
+        let mutation = match route {
+            ComponentGovernanceRoute::Functions { .. } if request.method() == Method::POST => {
+                let request =
+                    match serde_json::from_slice::<ComponentFunctionGrantRequest>(request.body()) {
+                        Ok(request) => request,
+                        Err(_) => {
+                            return error_response(AppError::MalformedPayload { field: "body" });
+                        }
+                    };
+                ComponentGovernanceMutation::SetFunctionGrant {
+                    component_name,
+                    function: request.function,
+                    granted: true,
+                }
+            }
+            ComponentGovernanceRoute::Function { raw_function, .. }
+                if request.method() == Method::DELETE && request.body().is_empty() =>
+            {
+                let function = match percent_decode_segment(raw_function) {
+                    Some(function) => function,
+                    None => {
+                        return error_response(AppError::MalformedPayload { field: "function" });
+                    }
+                };
+                ComponentGovernanceMutation::SetFunctionGrant {
+                    component_name,
+                    function,
+                    granted: false,
+                }
+            }
+            ComponentGovernanceRoute::Grants { .. } if request.method() == Method::POST => {
+                let request =
+                    match serde_json::from_slice::<ComponentAgentGrantRequest>(request.body()) {
+                        Ok(request) => request,
+                        Err(_) => {
+                            return error_response(AppError::MalformedPayload { field: "body" });
+                        }
+                    };
+                ComponentGovernanceMutation::SetAgentGrant {
+                    component_name,
+                    agent_id: request.agent_id,
+                    granted: true,
+                }
+            }
+            ComponentGovernanceRoute::Grant { raw_agent_id, .. }
+                if request.method() == Method::DELETE && request.body().is_empty() =>
+            {
+                let agent_id = match percent_decode_segment(raw_agent_id) {
+                    Some(agent_id) => BotId::new(agent_id),
+                    None => {
+                        return error_response(AppError::MalformedPayload { field: "agent_id" });
+                    }
+                };
+                ComponentGovernanceMutation::SetAgentGrant {
+                    component_name,
+                    agent_id,
+                    granted: false,
+                }
+            }
+            ComponentGovernanceRoute::Publication { .. } if request.method() == Method::POST => {
+                let request =
+                    match serde_json::from_slice::<ComponentPublicationRequest>(request.body()) {
+                        Ok(request) => request,
+                        Err(_) => {
+                            return error_response(AppError::MalformedPayload { field: "body" });
+                        }
+                    };
+                ComponentGovernanceMutation::SetPublication {
+                    component_name,
+                    published: request.published,
+                }
+            }
+            ComponentGovernanceRoute::Draft { .. } if request.method() == Method::PUT => {
+                let request = match serde_json::from_slice::<ComponentDraftRequest>(request.body())
+                {
+                    Ok(request) => request,
+                    Err(_) => {
+                        return error_response(AppError::MalformedPayload { field: "body" });
+                    }
+                };
+                ComponentGovernanceMutation::SaveDraft {
+                    component_name,
+                    description: request.description,
+                }
+            }
+            _ => return empty_response(StatusCode::METHOD_NOT_ALLOWED),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::UpdateComponentGovernance(mutation),
+            )
+            .await
+        {
+            Ok(AppReply::ComponentGovernanceUpdated(receipt)) => json_response(&receipt),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -1007,7 +1194,8 @@ mod tests {
         BOT_ACTIVITY_FUNCTION_NAME, BotActivityReport, CompiledComponentManifestEntry,
         ComponentApprovalAnswer, ComponentApprovalDecision, ComponentCatalogueAdded,
         ComponentDataFunctions, ComponentDecision, ComponentDecisionRequest, ComponentFunctionCall,
-        ComponentFunctionData, ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved,
+        ComponentFunctionData, ComponentGovernanceMutation, ComponentGovernanceReceipt,
+        ComponentHumanDecisionAnswer, ComponentHumanDecisionResolved, ComponentRecord,
         ComponentRecords, GrantedCompiledComponent, GrantedCompiledComponents,
         PendingComponentHumanDecisions, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
@@ -1223,6 +1411,44 @@ mod tests {
             Ok(ComponentCatalogueAdded {
                 added: entries.iter().map(|entry| entry.name.clone()).collect(),
             })
+        }
+
+        async fn update_component_governance(
+            &self,
+            auth: &AuthContext,
+            mutation: &ComponentGovernanceMutation,
+        ) -> Result<ComponentRecord, ComponentAdministrationError> {
+            let mut component = ComponentRecord {
+                name: mutation.component_name().to_owned(),
+                title: "Quotation".to_owned(),
+                kind: openbot_contracts::components::CompiledComponentKind::Card,
+                draft_description: "quote".to_owned(),
+                published_description: Some("quote".to_owned()),
+                published: true,
+                published_at: Some(time::OffsetDateTime::UNIX_EPOCH),
+                updated_by: Some(auth.actor().as_str().to_owned()),
+                updated_at: time::OffsetDateTime::UNIX_EPOCH,
+                has_unpublished_changes: false,
+                withheld_from: Vec::new(),
+                functions: Vec::new(),
+            };
+            match mutation {
+                ComponentGovernanceMutation::SetAgentGrant {
+                    agent_id, granted, ..
+                } if !granted => component.withheld_from.push(agent_id.as_str().to_owned()),
+                ComponentGovernanceMutation::SetFunctionGrant {
+                    function, granted, ..
+                } if *granted => component.functions.push(function.clone()),
+                ComponentGovernanceMutation::SetPublication { published, .. } => {
+                    component.published = *published;
+                }
+                ComponentGovernanceMutation::SaveDraft { description, .. } => {
+                    component.draft_description = description.clone();
+                    component.has_unpublished_changes = true;
+                }
+                _ => {}
+            }
+            Ok(component)
         }
 
         async fn list_components_for_agent(
@@ -1666,6 +1892,82 @@ mod tests {
                 decision: ToolApprovalDecision::Grant,
             }
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn component_governance_routes_share_typed_application_and_require_fresh_admin() {
+        let (protocol, root) = protocol();
+        protocol.bind_window("admin", admin_auth(), None).unwrap();
+        let stale = protocol
+            .handle(
+                "admin",
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/components/showQuote/draft")
+                    .body(br#"{"description":"edited"}"#.to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+        assert!(protocol.unbind_window("admin").unwrap());
+        protocol
+            .bind_window("admin", admin_auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+
+        let requests = [
+            (
+                Method::POST,
+                "/api/components/showQuote/functions",
+                br#"{"function":"botActivity"}"#.to_vec(),
+            ),
+            (
+                Method::DELETE,
+                "/api/components/showQuote/functions/botActivity",
+                Vec::new(),
+            ),
+            (
+                Method::POST,
+                "/api/components/showQuote/grants",
+                br#"{"agentId":"agent-one"}"#.to_vec(),
+            ),
+            (
+                Method::DELETE,
+                "/api/components/showQuote/grants/agent-one",
+                Vec::new(),
+            ),
+            (
+                Method::POST,
+                "/api/components/showQuote/publication",
+                br#"{"published":false}"#.to_vec(),
+            ),
+            (
+                Method::PUT,
+                "/api/components/showQuote/draft",
+                br#"{"description":"edited quote"}"#.to_vec(),
+            ),
+        ];
+        for (method, uri, body) in requests {
+            let response = protocol
+                .handle(
+                    "admin",
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(body)
+                        .unwrap(),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+            assert_eq!(
+                serde_json::from_slice::<ComponentGovernanceReceipt>(response.body())
+                    .unwrap()
+                    .component
+                    .name,
+                SHOW_QUOTE_COMPONENT_NAME
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

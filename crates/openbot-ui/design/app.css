@@ -4394,6 +4394,108 @@ textarea:focus-visible,
   font-size: var(--text-xs);
 }
 
+.ob-admin-components-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 4);
+  margin-block-start: calc(var(--spacing) * 8);
+}
+
+.ob-admin-component-card {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+.ob-admin-component-card:hover,
+.ob-admin-component-card:focus-within {
+  border-color: var(--ring);
+}
+
+.ob-admin-component-copy:focus-visible {
+  outline: 3px solid color-mix(in oklab, var(--ring) 50%, transparent);
+  outline-offset: -3px;
+}
+
+.ob-admin-component-copy {
+  display: grid;
+  min-width: 0;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 4);
+  color: var(--card-foreground);
+  text-decoration: none;
+}
+
+.ob-admin-component-copy > span,
+.ob-admin-component-copy > small {
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-admin-component-heading {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  color: var(--fg) !important;
+}
+
+.ob-admin-component-status {
+  width: calc(var(--spacing) * 1.5);
+  height: calc(var(--spacing) * 1.5);
+  flex: 0 0 auto;
+  border-radius: var(--radius-full);
+  background: var(--fg-muted);
+}
+
+.ob-admin-component-status[data-state="published"] {
+  background: var(--success);
+}
+
+.ob-admin-component-preview,
+.ob-admin-component-detail-preview {
+  min-width: 0;
+  overflow: hidden;
+  border-block-start: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+
+.ob-admin-component-preview {
+  min-height: calc(var(--spacing) * 40);
+  padding: calc(var(--spacing) * 3);
+}
+
+.ob-admin-component-detail-preview {
+  margin-block-start: calc(var(--spacing) * 6);
+  padding: calc(var(--spacing) * 4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.ob-component-governance-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--spacing) * 4);
+  padding: calc(var(--spacing) * 3);
+}
+
+.ob-component-governance-row > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--spacing);
+}
+
+.ob-component-governance-row small {
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 47.999rem) {
   .ob-playground-grid,
   .ob-playground-identity {
@@ -4406,6 +4508,14 @@ textarea:focus-visible,
 
   .ob-gallery-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ob-admin-components-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ob-component-governance-row {
+    align-items: flex-start;
   }
 
   .ob-settings-shell {

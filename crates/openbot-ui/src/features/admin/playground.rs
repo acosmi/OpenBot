@@ -1,5 +1,6 @@
 //! Browser-authored sandbox component editor using the production Web renderer.
 
+use core::fmt::Write as _;
 use std::collections::BTreeMap;
 
 use leptos::prelude::*;
@@ -9,6 +10,7 @@ use openbot_contracts::sandboxed::{
     PublishedSandboxedComponent, SandboxedComponentRecord, is_sandboxed_component_name,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::api::ApiError;
 #[cfg(target_arch = "wasm32")]
@@ -319,7 +321,7 @@ pub fn SandboxPlaygroundPage() -> impl IntoView {
                         <ul class="ob-playground-list">
                             <For
                                 each=move || components.get()
-                                key=|component| component.name.clone()
+                                key=sandboxed_component_row_key
                                 children=move |component| {
                                     let open_component = component.clone();
                                     let delete_name = component.name.clone();
@@ -434,6 +436,15 @@ fn parse_object(raw: &str) -> Option<BTreeMap<String, Value>> {
     serde_json::from_str(raw).ok()
 }
 
+fn sandboxed_component_row_key(component: &SandboxedComponentRecord) -> String {
+    let encoded = serde_json::to_vec(component).unwrap_or_default();
+    let mut key = String::from("sandboxed-row-");
+    for byte in Sha256::digest(encoded) {
+        write!(&mut key, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    key
+}
+
 fn install_loader(
     generation: RwSignal<u64>,
     components: RwSignal<Vec<SandboxedComponentRecord>>,
@@ -477,5 +488,36 @@ mod tests {
         for invalid in ["", "[]", "null", "true", "{"] {
             assert!(parse_object(invalid).is_none(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn saved_row_identity_changes_with_draft_and_publication_state() {
+        let mut component = SandboxedComponentRecord {
+            name: "custom_card".to_owned(),
+            title: "Card".to_owned(),
+            draft_description: "draft".to_owned(),
+            draft_html: "<p>draft</p>".to_owned(),
+            draft_css: "p{}".to_owned(),
+            draft_js_functions: "document.body.dataset.ready='1';".to_owned(),
+            draft_argument_schema: BTreeMap::new(),
+            published_html: None,
+            published_css: None,
+            published_js_functions: None,
+            published_argument_schema: None,
+            sample_arguments: BTreeMap::new(),
+            revision: 0,
+            published: false,
+            published_at: None,
+            authored_by: Some("admin".to_owned()),
+            has_unpublished_changes: false,
+        };
+        let draft_key = sandboxed_component_row_key(&component);
+        component.published = true;
+        component.revision = 1;
+        component.published_html = Some(component.draft_html.clone());
+        component.published_css = Some(component.draft_css.clone());
+        component.published_js_functions = Some(component.draft_js_functions.clone());
+        component.published_argument_schema = Some(BTreeMap::new());
+        assert_ne!(sandboxed_component_row_key(&component), draft_key);
     }
 }
