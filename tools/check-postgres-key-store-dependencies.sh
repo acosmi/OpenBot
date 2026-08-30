@@ -44,7 +44,8 @@ keychain_consumers=$(rg -l 'security_framework(::|_sys::)' crates --glob '*.rs' 
 credential_consumers=$(rg -l 'Cred(ReadW|WriteW|Free|DeleteW)' crates --glob '*.rs' | sort || true)
 [[ "$credential_consumers" == "crates/openbot-windows-sandbox/src/windows.rs" ]] || fail "Credential Manager FFI consumer set drift: ${credential_consumers:-none}"
 
-if rg -n 'std::env::(var|var_os|vars|vars_os)|std::process::Command' crates/openbot-desktop/src/postgres_sidecar.rs >/dev/null; then
+production_source=$(awk '/^mod tests \{/{exit} {print}' crates/openbot-desktop/src/postgres_sidecar.rs)
+if rg -n 'std::env::(var|var_os|vars|vars_os)|std::process::Command|PGPASSWORD|--pwfile' <<<"$production_source" >/dev/null; then
   fail "PostgreSQL secret path gained environment or command fallback"
 fi
 

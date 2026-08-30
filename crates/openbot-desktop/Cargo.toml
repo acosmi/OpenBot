@@ -30,6 +30,8 @@ postgres-key-store = [
     "dep:security-framework",
     "dep:security-framework-sys",
 ]
+# Verified process lifecycle through SCRAM-authenticated readiness and graceful pg_ctl shutdown.
+postgres-supervisor = ["postgres-key-store", "dep:tokio-postgres"]
 
 [dependencies]
 # 唯一业务入口。transport 只穿过它，不实现任何业务规则（v3 §5.2）。
@@ -45,7 +47,7 @@ futures-core.workspace = true
 
 # 有界队列（`mpsc`）、取消广播（`watch`）、command 并发预算（`Semaphore`）、
 # 关停 deadline（`time::sleep`）、事件泵（`task::JoinHandle`）。
-tokio.workspace = true
+tokio = { workspace = true, features = ["process"] }
 
 # `PublishRejected` / `OpenSessionError` / `SequenceError` 的错误分层。
 thiserror.workspace = true
@@ -65,6 +67,7 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true }
+tokio-postgres = { workspace = true, optional = true }
 
 # GUI first source §10.1 has Desktop goldens only for macOS arm64 and Windows x64. Linux is the
 # Server/Web capture platform, not a Desktop release, so GTK/WebKitGTK must not enter the Linux

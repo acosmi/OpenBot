@@ -48,7 +48,8 @@
 //! | [`postgres_sidecar`] | PGDG source、signed-manifest、start lock与macOS/Windows OS key-store SCRAM secret | §14.1 / §16.2 |
 //!
 //! **尚未实现**（不要冒充）：可发布 Tauri binary/tauri.conf/capability 清单与真实窗口生命周期
-//! assembly（G6）、PostgreSQL process/ready/shutdown/orphan/backup/update（§14.1/§16.2）、
+//! assembly（G6）、PostgreSQL release binary build/sign、Batch79 schema/package组合、Windows runtime、
+//! backup/update（§14.1/§16.2）、
 //! screen loopback binary WebSocket（§13.4/G7）。
 //! Batch 16 已落 opt-in Tauri 2.11.5 custom-protocol adapter、本地偏好原子文件与首帧改写，
 //! Batch69–71又依次接Agent lifecycle/callback与channel/thread unary framing；Batch72补
@@ -61,8 +62,10 @@
 //! closed navigation/new-window/download与`Destroyed` exact unbind primitive，不虚构`tauri.conf`、session
 //! source或发行identity。Batch80补PGDG 17.11 source pin、release-owned manifest全树校验与
 //! crash-safe fail-closed start lock；Batch81再让持锁owner经`SecretBytes`接macOS private/default
-//! Keychain与Windows唯一unsafe Credential Manager边界，并在新建后回读常数时间核验。平台binary
-//! build/sign与进程supervisor仍未落。SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。
+//! Keychain与Windows唯一unsafe Credential Manager边界，并在新建后回读常数时间核验。Batch82又闭合
+//! verified version、stdin-only initdb、direct child、TCP SCRAM ready、fast shutdown与unclean stale-lock。
+//! 平台binary build/sign、Batch79 bootstrap组合与Tauri setup仍未落。SSE/WebSocket也不能塞进
+//! custom-protocol `Vec<u8>`响应。
 //! 许可/RustSec/cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
 //!
 //! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
@@ -173,6 +176,12 @@ pub use postgres_sidecar::MacOsKeychainPostgresSecretStore;
 
 #[cfg(all(feature = "postgres-key-store", target_os = "windows"))]
 pub use postgres_sidecar::WindowsCredentialPostgresSecretStore;
+
+#[cfg(feature = "postgres-supervisor")]
+pub use postgres_sidecar::{
+    PostgresSidecarConnection, PostgresSidecarOrigin, PostgresSidecarSupervisor,
+    RunningPostgresSidecar,
+};
 pub use preferences::DesktopUiPreferenceStore;
 pub use session::{DesktopSession, event_of};
 pub use transport::{InProcessTransport, OpenSessionError, ShutdownReport};
