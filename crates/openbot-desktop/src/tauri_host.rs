@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64 as HostAtomicU64, Ordering as HostAtomicOrdering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE};
@@ -95,6 +95,12 @@ pub enum TauriHostError {
     /// Host window-binding counter is exhausted; wrapping could attach work to a new window.
     #[error("desktop_window_binding_counter_exhausted")]
     WindowBindingCounterExhausted,
+    /// Tauri framing was reached before the background application owner became ready.
+    #[error("desktop_protocol_not_ready")]
+    ProtocolNotReady,
+    /// A second background owner attempted to replace the process-wide protocol.
+    #[error("desktop_protocol_already_ready")]
+    ProtocolAlreadyReady,
 }
 
 /// Host-verified authority for one webview label. The renderer cannot construct this type.
@@ -296,6 +302,45 @@ pub struct DesktopTauriProtocol {
     next_window_binding_id: HostAtomicU64,
     windows: RwLock<BTreeMap<String, WindowAuthority>>,
     os_locale: UiLocale,
+}
+
+/// Process-wide protocol hand-off used when `app_data_dir()` is available only inside setup.
+pub(crate) struct DesktopTauriProtocolSlot {
+    protocol: OnceLock<Arc<DesktopTauriProtocol>>,
+}
+
+impl DesktopTauriProtocolSlot {
+    pub(crate) fn pending() -> Arc<Self> {
+        Arc::new(Self {
+            protocol: OnceLock::new(),
+        })
+    }
+
+    pub(crate) fn ready(protocol: Arc<DesktopTauriProtocol>) -> Arc<Self> {
+        let slot = Self::pending();
+        assert!(
+            slot.protocol.set(protocol).is_ok(),
+            "fresh protocol slot must accept its initial value"
+        );
+        slot
+    }
+
+    #[cfg(feature = "desktop-local-runtime")]
+    pub(crate) fn install(
+        &self,
+        protocol: Arc<DesktopTauriProtocol>,
+    ) -> Result<(), TauriHostError> {
+        self.protocol
+            .set(protocol)
+            .map_err(|_| TauriHostError::ProtocolAlreadyReady)
+    }
+
+    pub(crate) fn get(&self) -> Result<Arc<DesktopTauriProtocol>, TauriHostError> {
+        self.protocol
+            .get()
+            .cloned()
+            .ok_or(TauriHostError::ProtocolNotReady)
+    }
 }
 
 impl DesktopTauriProtocol {
@@ -1686,12 +1731,14 @@ impl DesktopTauriProtocol {
 #[tauri::command]
 async fn openbot_structured_events_open(
     webview: Webview,
-    protocol: State<'_, Arc<DesktopTauriProtocol>>,
+    protocol: State<'_, Arc<DesktopTauriProtocolSlot>>,
     request: SubscriptionRequest,
     channel: Channel<String>,
 ) -> Result<DesktopStructuredSubscriptionOpened, String> {
     let label = webview.label().to_owned();
-    let protocol = Arc::clone(protocol.inner());
+    let protocol = protocol
+        .get()
+        .map_err(|error| tauri_host_error_code(&error).to_owned())?;
     let subscription = protocol
         .open_structured_subscription(&label, request)
         .await
@@ -1708,10 +1755,12 @@ async fn openbot_structured_events_open(
 #[tauri::command]
 fn openbot_structured_events_close(
     webview: Webview,
-    protocol: State<'_, Arc<DesktopTauriProtocol>>,
+    protocol: State<'_, Arc<DesktopTauriProtocolSlot>>,
     request: DesktopStructuredSubscriptionCloseRequest,
 ) -> Result<bool, String> {
     protocol
+        .get()
+        .map_err(|error| tauri_host_error_code(&error).to_owned())?
         .close_structured_subscription(webview.label(), request.subscription_id)
         .map_err(|error| tauri_host_error_code(&error).to_owned())
 }
@@ -1725,6 +1774,8 @@ fn tauri_host_error_code(error: &TauriHostError) -> &'static str {
         TauriHostError::InvalidFreshness => "desktop_freshness_invalid",
         TauriHostError::WindowUnbound => "desktop_window_unbound",
         TauriHostError::WindowBindingCounterExhausted => "desktop_window_binding_counter_exhausted",
+        TauriHostError::ProtocolNotReady => "desktop_protocol_not_ready",
+        TauriHostError::ProtocolAlreadyReady => "desktop_protocol_already_ready",
         TauriHostError::StructuredSubscription(DesktopStructuredOpenError::CounterExhausted) => {
             "structured_subscription_counter_exhausted"
         }
@@ -1760,8 +1811,23 @@ pub fn register_tauri_protocol(
         DesktopWindowLifecycle::new(&scheme, Arc::clone(&protocol))
             .map_err(|_| TauriHostError::InvalidScheme)?,
     );
-    let builder = register_tauri_window_lifecycle(builder, lifecycle)
-        .manage(Arc::clone(&protocol))
+    let slot = DesktopTauriProtocolSlot::ready(protocol);
+    let builder = register_tauri_window_lifecycle(builder, lifecycle);
+    register_tauri_protocol_slot(builder, &scheme, slot)
+}
+
+pub(crate) fn register_tauri_protocol_slot(
+    builder: Builder<tauri::Wry>,
+    scheme: &str,
+    slot: Arc<DesktopTauriProtocolSlot>,
+) -> Result<Builder<tauri::Wry>, TauriHostError> {
+    if !valid_scheme(scheme) {
+        return Err(TauriHostError::InvalidScheme);
+    }
+    let scheme = scheme.to_owned();
+    let request_slot = Arc::clone(&slot);
+    let builder = builder
+        .manage(slot)
         .invoke_handler(tauri::generate_handler![
             openbot_structured_events_open,
             openbot_structured_events_close
@@ -1769,7 +1835,10 @@ pub fn register_tauri_protocol(
     Ok(builder.register_asynchronous_uri_scheme_protocol(
         scheme,
         move |context, request, responder| {
-            let protocol = Arc::clone(&protocol);
+            let Ok(protocol) = request_slot.get() else {
+                responder.respond(empty_response(StatusCode::SERVICE_UNAVAILABLE));
+                return;
+            };
             let label = context.webview_label().to_owned();
             tauri::async_runtime::spawn(async move {
                 responder.respond(protocol.handle(&label, request).await);
@@ -3159,6 +3228,21 @@ mod tests {
         let (protocol, root) = protocol();
         let builder = Builder::<tauri::Wry>::default();
         assert!(register_tauri_protocol(builder, "openbot", protocol).is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(feature = "desktop-local-runtime")]
+    #[test]
+    fn deferred_protocol_slot_is_not_ready_then_install_once() {
+        let (protocol, root) = protocol();
+        let slot = DesktopTauriProtocolSlot::pending();
+        assert!(matches!(slot.get(), Err(TauriHostError::ProtocolNotReady)));
+        slot.install(Arc::clone(&protocol)).unwrap();
+        assert!(Arc::ptr_eq(&slot.get().unwrap(), &protocol));
+        assert!(matches!(
+            slot.install(protocol),
+            Err(TauriHostError::ProtocolAlreadyReady)
+        ));
         std::fs::remove_dir_all(root).unwrap();
     }
 

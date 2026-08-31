@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{AsyncMessage, NoTls, Row, Transaction};
 
-use crate::db::pool::DatabaseConfig;
+use crate::thread_listener::ThreadListenerDatabase;
 
 const THREAD_EVENT_TOPIC: &str = "openbot_thread_events";
 const DISPATCH_DESTINATION: &str = "agent_run_dispatch";
@@ -73,7 +73,7 @@ impl RunRelay {
     pub fn start_with_database(
         runtime: Arc<dyn RunRuntime>,
         consumer: Arc<dyn RunDispatchConsumer>,
-        database: DatabaseConfig,
+        database: impl Into<ThreadListenerDatabase>,
     ) -> Self {
         let (stop, stop_rx) = watch::channel(false);
         let wake = Arc::new(Notify::new());
@@ -84,7 +84,9 @@ impl RunRelay {
             wake.clone(),
         ));
         let listener = Some(tokio::spawn(supervise_run_control_listener(
-            database, wake, stop_rx,
+            database.into(),
+            wake,
+            stop_rx,
         )));
         Self {
             stop,
@@ -454,7 +456,7 @@ async fn handle_cancellation(
 }
 
 async fn supervise_run_control_listener(
-    database: DatabaseConfig,
+    database: ThreadListenerDatabase,
     wake: Arc<Notify>,
     mut stop: watch::Receiver<bool>,
 ) {
@@ -462,7 +464,7 @@ async fn supervise_run_control_listener(
         if *stop.borrow() {
             return;
         }
-        let connection = database.to_pg_config().connect(NoTls).await;
+        let connection = database.config().connect(NoTls).await;
         let (client, mut connection) = match connection {
             Ok(connection) => connection,
             Err(error) => {

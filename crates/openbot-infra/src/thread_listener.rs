@@ -51,6 +51,12 @@ impl ThreadListenerDatabase {
         self.0.application_name(name);
         self
     }
+
+    /// Clone the same redacted credentials for the durable run-control LISTEN connection.
+    #[must_use]
+    pub fn for_run_control(&self) -> Self {
+        self.clone().with_application_name("openbot-run-control")
+    }
 }
 
 impl From<DatabaseConfig> for ThreadListenerDatabase {

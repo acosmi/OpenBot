@@ -45,10 +45,22 @@ desktop-vault = [
     "os-key-store",
     "openbot-infra/desktop-local-vault",
 ]
+# Full supported-host background composition. This intentionally enables Infra network/runtime
+# adapters without enabling Server SSO/xmlsec/OpenSSL, and still requires reviewed release inputs.
+desktop-local-runtime = [
+    "desktop-vault",
+    "tauri-host",
+    "dep:openbot-agent",
+    "dep:url",
+    "openbot-infra/server-runtime",
+]
 
 [dependencies]
 # 唯一业务入口。transport 只穿过它，不实现任何业务规则（v3 §5.2）。
 openbot-application.workspace = true
+# Full Desktop Local runtime owns a built-in Agent host from the same reviewed Agent/Infra
+# primitives as Server, behind the explicit feature so the default typed graph stays minimal.
+openbot-agent = { workspace = true, optional = true }
 # AuthContext / AppCommand / AppReply / AppEvent / AppError / ID newtype / Transport label。
 openbot-contracts.workspace = true
 # SecretBytes is enabled only for the explicit PostgreSQL OS-key-store feature.
@@ -84,6 +96,7 @@ serde_json = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true }
 tokio-postgres = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
 
 # GUI first source §10.1 has Desktop goldens only for macOS arm64 and Windows x64. Linux is the
 # Server/Web capture platform, not a Desktop release, so GTK/WebKitGTK must not enter the Linux

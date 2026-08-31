@@ -48,9 +48,8 @@
 //! | [`postgres_sidecar`] | PGDG source、signed manifest、start lock、OS SCRAM secret与verified process lifecycle | §14.1 / §16.2 |
 //! | [`desktop_local_bootstrap`] | ready child→attestation→固定业务库→migration/principal/package的pre-window owner | §13.2 / §14.1 |
 //!
-//! **尚未实现**（不要冒充）：可发布 Tauri binary/tauri.conf/capability 清单与真实窗口生命周期
-//! assembly（G6）、PostgreSQL release binary build/sign、production ApplicationService组装、Windows runtime、
-//! backup/update（§14.1/§16.2）、
+//! **尚未实现**（不要冒充）：可发布 Tauri binary、正式tauri.conf/capability/产品identity与真实Wry
+//! runtime journey（G6）、PostgreSQL release binary build/sign、Windows full-runtime、backup/update（§14.1/§16.2）、
 //! screen loopback binary WebSocket（§13.4/G7）。
 //! Batch 16 已落 opt-in Tauri 2.11.5 custom-protocol adapter、本地偏好原子文件与首帧改写，
 //! Batch69–71又依次接Agent lifecycle/callback与channel/thread unary framing；Batch72补
@@ -65,10 +64,13 @@
 //! crash-safe fail-closed start lock；Batch81再让持锁owner经`SecretBytes`接macOS private/default
 //! Keychain与Windows唯一unsafe Credential Manager边界，并在新建后回读常数时间核验。Batch82又闭合
 //! verified version→stdin initdb→TCP SCRAM ready→clean/unclean process lifecycle；Batch83把该child接到
-//! R153共用attestation/migration/principal/package bootstrap与固定`openbot`业务库，仍不冒充Tauri setup。
-//! 平台binary build/sign、production ApplicationService与Tauri setup仍未落。SSE/WebSocket也不能塞进
-//! custom-protocol `Vec<u8>`响应。
-//! 许可/RustSec/cargo-vet delta仍红，且没有真实窗口证据，不能据此勾Desktop/G6整关。
+//! R153共用attestation/migration/principal/package bootstrap与固定`openbot`业务库；Batch84补per-instance
+//! application key material，Batch85补共享ApplicationService adapter composition。Batch86再从真实
+//! Tauri `app_data_dir()`延迟启动sidecar/data-plane/key/application/BuiltInAgentRuntime/RunRelay，首窗最后
+//! 创建，最后`Destroyed`按authority→transport→relay/Agent→MCP→sidecar逆序停机；Desktop preference仍
+//! 落app-data闭集文件。正式capability/identity、release PG binary、Windows full-runtime与真实Wry仍未落。
+//! SSE/WebSocket也不能塞进custom-protocol `Vec<u8>`响应。许可/RustSec/cargo-vet delta仍红，不能据此
+//! 勾Desktop/G6整关。
 //!
 //! # G1 默认路径不引 Tauri 本体（主控裁决，2026-08-22）
 //!
@@ -119,6 +121,11 @@
 pub mod broker;
 pub mod budget;
 pub mod cancel;
+#[cfg(all(
+    feature = "desktop-local-runtime",
+    any(target_os = "macos", target_os = "windows")
+))]
+mod desktop_agent_runtime;
 #[cfg(feature = "desktop-local-bootstrap")]
 pub mod desktop_local_bootstrap;
 #[cfg(feature = "desktop-vault")]
@@ -146,6 +153,11 @@ pub mod structured_events;
 pub mod tauri_lifecycle;
 
 #[cfg(all(
+    feature = "desktop-local-runtime",
+    any(target_os = "macos", target_os = "windows")
+))]
+pub mod tauri_background;
+#[cfg(all(
     feature = "tauri-host",
     any(target_os = "macos", target_os = "windows")
 ))]
@@ -163,6 +175,13 @@ pub use budget::{
     TOKEN_DELTA_COALESCE_BYTES, TOKEN_DELTA_COALESCE_WINDOW, delivery_class,
 };
 pub use cancel::{CancellationToken, SHUTDOWN_DEADLINE};
+#[cfg(all(
+    feature = "desktop-local-runtime",
+    any(target_os = "macos", target_os = "windows")
+))]
+pub use desktop_agent_runtime::{
+    DesktopAgentBudgets, DesktopAgentRuntimeError, DesktopOpenAiProviderInput,
+};
 #[cfg(feature = "desktop-vault")]
 pub use desktop_vault::{
     DesktopApplicationKeyMaterial, DesktopVaultKeyError, ReviewedDesktopVaultKeyStoreService,
@@ -235,4 +254,14 @@ pub use tauri_lifecycle::{
 pub use tauri_host::{
     DESKTOP_TAURI_COMMANDS, DesktopTauriProtocol, TauriHostError, detect_os_locale,
     register_tauri_protocol,
+};
+
+#[cfg(all(
+    feature = "desktop-local-runtime",
+    any(target_os = "macos", target_os = "windows")
+))]
+pub use tauri_background::{
+    DesktopLocalApplicationInput, DesktopLocalReleaseInput, DesktopLocalRuntimeConfig,
+    DesktopLocalRuntimeError, DesktopLocalRuntimePhase, DesktopLocalRuntimeState,
+    DesktopLocalTauriBuilder, register_desktop_local_runtime,
 };

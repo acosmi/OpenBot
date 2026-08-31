@@ -20,6 +20,7 @@ use openbot_infra::application_assembly::{
 };
 use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::policy::PolicyStore;
+use openbot_infra::ui_preferences::PostgresUiPreferenceAdministration;
 use openbot_infra::vault::CredentialRecordVault;
 use url::Url;
 
@@ -94,6 +95,7 @@ async fn shared_postgres_application_assembly_executes_real_command() {
                 ),
                 mcp_oauth_state_key: SecretBytes::new(vec![0x53; 32]),
                 policy_store,
+                ui_preferences: Arc::new(PostgresUiPreferenceAdministration::new(pool.clone())),
                 remote_agent_probe: Arc::new(ClosedRemoteProbe),
                 managed_slot_available: false,
                 channel_routing_provider: ChannelRoutingProviderInput {

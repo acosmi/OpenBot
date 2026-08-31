@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use deadpool_postgres::Pool;
 use openbot_application::provider::RemoteAguiTransport;
-use openbot_application::{ApplicationService, OpenBotApplication, ProviderAdapter, RunRuntime};
+use openbot_application::{
+    ApplicationService, OpenBotApplication, ProviderAdapter, RunRuntime, UiPreferenceAdministration,
+};
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use openbot_domain::identity::roles::AdminFloor;
 use openbot_domain::remote_callback::RemoteRunAssertionSigner;
@@ -47,7 +49,6 @@ use crate::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirec
 use crate::thread_id::mint_thread_id;
 use crate::thread_listener::ThreadListenerDatabase;
 use crate::tool_approval::PostgresToolApprovalCoordinator;
-use crate::ui_preferences::PostgresUiPreferenceAdministration;
 use crate::vault::CredentialRecordVault;
 
 const CHANNEL_ROUTING_PROTOCOL: OpenAiProtocol = OpenAiProtocol::ChatCompletions;
@@ -80,7 +81,7 @@ impl core::fmt::Debug for ChannelRoutingProviderInput {
     }
 }
 
-/// Explicit inputs shared by Server and future Tauri background setup.
+/// Explicit inputs shared by Server and the Tauri background setup.
 pub struct PostgresApplicationAssemblyInput {
     pub pool: Pool,
     pub listener_database: ThreadListenerDatabase,
@@ -95,6 +96,7 @@ pub struct PostgresApplicationAssemblyInput {
     pub remote_assertions: Arc<RemoteRunAssertionSigner>,
     pub mcp_oauth_state_key: SecretBytes,
     pub policy_store: PolicyStore,
+    pub ui_preferences: Arc<dyn UiPreferenceAdministration>,
     pub remote_agent_probe: Arc<dyn RemoteAguiTransport>,
     pub managed_slot_available: bool,
     pub channel_routing_provider: ChannelRoutingProviderInput,
@@ -116,6 +118,7 @@ impl core::fmt::Debug for PostgresApplicationAssemblyInput {
             .field("audit_key", &"[REDACTED]")
             .field("remote_assertions", &self.remote_assertions)
             .field("mcp_oauth_state_key", &"[REDACTED]")
+            .field("ui_preferences", &"Arc<dyn UiPreferenceAdministration>")
             .field("managed_slot_available", &self.managed_slot_available)
             .field("channel_routing_provider", &self.channel_routing_provider)
             .field("stall_timeout", &self.stall_timeout)
@@ -159,6 +162,13 @@ impl core::fmt::Debug for PostgresApplicationAssembly {
     }
 }
 
+impl PostgresApplicationAssembly {
+    /// Stop background reconcilers before dropping database-backed adapter handles.
+    pub async fn shutdown(self) {
+        self.mcp_revocation_reconciler.stop().await;
+    }
+}
+
 /// Stable assembly failure. Detailed dependency errors remain inside their typed adapters and are
 /// not carried toward transport/UI errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -183,6 +193,7 @@ pub async fn assemble_postgres_application(
         remote_assertions,
         mcp_oauth_state_key,
         policy_store,
+        ui_preferences,
         remote_agent_probe,
         managed_slot_available,
         channel_routing_provider,
@@ -372,9 +383,7 @@ pub async fn assemble_postgres_application(
         .with_sandboxed_component_administration(sandboxed_components.clone())
         .with_mcp_connections(mcp_connections.clone())
         .with_tool_approvals(tool_approvals)
-        .with_ui_preferences(Arc::new(PostgresUiPreferenceAdministration::new(
-            pool.clone(),
-        )));
+        .with_ui_preferences(ui_preferences);
     let application: Arc<dyn ApplicationService> = Arc::new(application);
     let mcp_revocation_reconciler = McpRevocationReconciler::start(mcp_connections.clone());
     Ok(PostgresApplicationAssembly {
