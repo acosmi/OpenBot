@@ -323,9 +323,9 @@ entries:
     test_id: T-ROUTE-0026
     migration_rule: "preserve"
     status: done
-    done_evidence: "Batch37 release WASM/browser：Sidebar Settings link从/settings/memory真实导航到/settings且aria-current=page；页面复用同一ThemeToggle/LocaleSwitch与native0021/API，Sidebar+页面双实例为2 radiogroup/2 locale switch且duplicate IDs=0。主题与语言即时同步两处，键盘End/ArrowDown/Enter与返焦通过；快速连续theme+locale更新时当前页面唯一role=status，稳定AppShell owner使serialized/coalesced队列完成后status消失，hard reload保留两项，alerts/console=0。1440/1024/900/600 overflow0、main/nav/h1各1。"
+    done_evidence: "Batch37 release WASM/browser：Sidebar Settings link从/settings/memory真实导航到/settings且aria-current=page；页面复用同一ThemeToggle/LocaleSwitch与native0021/API，Sidebar+页面双实例为2 radiogroup/2 locale switch且duplicate IDs=0。主题与语言即时同步两处，键盘End/ArrowDown/Enter与返焦通过；快速连续theme+locale更新时当前页面唯一role=status，稳定AppShell owner使serialized/coalesced队列完成后status消失，hard reload保留两项，alerts/console=0。1440/1024/900/600 overflow0、main/nav/h1各1。Batch89在同页新增actor-scoped per-run cost cap：closed GET/PUT/Desktop transport、整数micro-unit转换、加载/保存/关闭/错误可见；UI180/0/0、WASM check、release bundle与CSS/i18n/design闸门绿。"
     evidence: "cat app/src/routes/_authed/settings/index.tsx 得 PageShell title=\"Preferences\" + PageSection title=\"General\" + 单个 Item「Dark theme」Switch（useTheme 的 dark/setDark）"
-    notes: "模板 List（静态row + 右侧控件）。journey：改自己的偏好；上游只有Dark theme两态，本页按第一真源增加system第三态与locale切换，并经既有deployment/tenant/actor scoped typed persistence跨设备保存。权限：已登录可见，只影响当前deployment内本人。settings二级Sidebar/layout仍是T-ROUTE-0005 todo；正式golden T-UI-0150也未因本轮目视截图而关闭。"
+    notes: "模板 List（静态row + 右侧控件）。journey：改自己的偏好；上游只有Dark theme两态，本页按第一真源增加system第三态、locale切换与R163 per-run cost cap，并经既有deployment/tenant/actor scoped typed persistence跨设备保存。cap显示保守费用上界而非账单，不做汇率换算。权限：已登录可见，只影响当前deployment内本人。settings二级Sidebar/layout仍是T-ROUTE-0005 todo；正式golden T-UI-0150也未因本轮实现而关闭。"
   - id: settings-components-gallery-index
     upstream: app/src/routes/_authed/settings/components-gallery/index.tsx
     label: parity
