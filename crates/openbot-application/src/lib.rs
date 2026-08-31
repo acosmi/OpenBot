@@ -150,11 +150,12 @@ pub use ports::{
 };
 pub use provider::{
     AgentAudit, AgentAuditError, AgentAuditKind, AgentAuthorizationError, AgentAuthorizationSource,
-    AgentContextError, AgentContextSource, NoAgentAudit, ProviderAdapter, ProviderEvent,
-    ProviderFailure, ProviderMessage, ProviderMessageRole, ProviderOutputKind, ProviderPortError,
-    ProviderRequest, ProviderRoute, ProviderSession, ProviderToolCall, ProviderToolDefinition,
-    ProviderUsage, RemoteAguiAuthorization, RemoteAguiEventStream, RemoteAguiRoute,
-    RemoteAguiTransport, RemoteAguiTransportError,
+    AgentContextError, AgentContextSource, NoAgentAudit, ProviderAdapter, ProviderBillingFamily,
+    ProviderCostUpperBound, ProviderEvent, ProviderFailure, ProviderMessage, ProviderMessageRole,
+    ProviderOutputKind, ProviderPortError, ProviderRateCard, ProviderRateCardError,
+    ProviderRateCardInput, ProviderRequest, ProviderRoute, ProviderSession, ProviderToolCall,
+    ProviderToolDefinition, ProviderUsage, RemoteAguiAuthorization, RemoteAguiEventStream,
+    RemoteAguiRoute, RemoteAguiTransport, RemoteAguiTransportError,
 };
 pub use run_runtime::{
     ClaimedRunCancellation, ClaimedRunDispatch, DurableTextRun, NoRunDispatchConsumer,

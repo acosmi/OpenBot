@@ -15,8 +15,8 @@ use openbot_application::tenant::package::{
     TenantPackageEnvironment, synchronize_tenant_package,
 };
 use openbot_application::{
-    AgentAudit, NoRunDispatchConsumer, ProviderAdapter, RunDispatchConsumer, RunRuntime,
-    remember_provider_tool,
+    AgentAudit, NoRunDispatchConsumer, ProviderAdapter, ProviderRateCard, RunDispatchConsumer,
+    RunRuntime, remember_provider_tool,
 };
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
@@ -103,6 +103,7 @@ struct BuiltInAgentAssemblyInput {
     required: bool,
     requires_managed: bool,
     model: String,
+    package_rate_card: Option<ProviderRateCard>,
     credential_key_id: String,
     provider: PackageOpenAiProviderConfig,
     managed_provider: Option<ManagedProviderConfig>,
@@ -388,6 +389,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         required: requires_agent_runtime,
         requires_managed: requires_managed_agent,
         model: tenant_package.package.model.default_model.clone(),
+        package_rate_card: tenant_package.package.model.rate_card.clone(),
         credential_key_id: tenant_package.package.model.credential_secret_ref.clone(),
         provider: server.package_openai_provider.clone(),
         managed_provider,
@@ -494,6 +496,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         required,
         requires_managed,
         model,
+        package_rate_card,
         credential_key_id,
         provider,
         managed_provider,
@@ -547,10 +550,14 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
             SafeDialer::new(egress_policy.clone()),
         ));
     let managed = if requires_managed {
+        let managed_rate_card = managed_provider
+            .as_ref()
+            .and_then(|provider| provider.rate_card.clone());
         Some(build_managed_provider(
             managed_provider.ok_or_else(|| startup_error("managed_provider_key_missing"))?,
             budgets,
         )?)
+        .map(|provider| (provider, managed_rate_card))
     } else {
         None
     };
@@ -558,11 +565,21 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
     let remote_provider: Arc<dyn ProviderAdapter> =
         Arc::new(RemoteAguiProvider::new(remote_transport));
     let provider = Arc::new(RetryingProvider::new(
-        Arc::new(ProviderRouter::new(package_provider, managed).with_remote_agui(remote_provider)),
+        Arc::new(
+            ProviderRouter::new(
+                package_provider,
+                managed.as_ref().map(|(provider, _)| Arc::clone(provider)),
+            )
+            .with_remote_agui(remote_provider),
+        ),
         RetryingProviderConfig::default(),
     )?);
     let context = Arc::new(
         PostgresAgentContextSource::new(pool, deployment, tenant, Some(budgets.max_output_tokens))?
+            .with_rate_cards(
+                package_rate_card,
+                managed.and_then(|(_, rate_card)| rate_card),
+            )
             .with_tools(vec![remember_provider_tool()])
             .with_remote_assertions(remote_assertions)
             .with_mcp_catalog(mcp_catalog)
@@ -600,6 +617,7 @@ fn managed_provider_for_slot(server: &ServerConfig) -> Option<ManagedProviderCon
                 use_responses_api: false,
                 egress_allow_cidrs: package.egress_allow_cidrs.clone(),
                 allow_http: package.allow_http,
+                rate_card: None,
             })
     })
 }
@@ -636,6 +654,7 @@ fn build_managed_provider(
         use_responses_api,
         egress_allow_cidrs,
         allow_http,
+        rate_card: _,
     } = config;
     let scheme = if allow_http {
         SchemePolicy::HttpOrHttps
@@ -1054,6 +1073,7 @@ mod tests {
                     use_responses_api,
                     egress_allow_cidrs: Vec::new(),
                     allow_http: false,
+                    rate_card: None,
                 },
                 AgentBudgets {
                     stall_timeout: None,

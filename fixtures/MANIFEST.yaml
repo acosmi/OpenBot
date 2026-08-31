@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 40
+    expect: 41
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 22
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 18
+    expect: 19
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 40 40
+    expect: 41 41
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 30 0
+    expect: 10 31 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -261,6 +261,22 @@ entries:
       不建新表；只给 runs 追加 immutable output ceiling、input/output/total aggregate、next/last
       sampling 与 exact replay 三元组。全部计数非负且total覆盖已知分量；本批不伪造vendor价格，
       用户费用上限与价格 provenance 仍属完整 run-wide budget 后续项。
+
+  - id: db-schema-0025
+    upstream: "-"
+    label: 新增
+    target: fixtures/db/schema-0025.json -> openbot_infra::db::native
+    owner: openbot-infra
+    test_id: T-FIX-0041
+    migration_rule: "n/a: G4 operator-attested maximum provider rate snapshot 与 exact run cost upper bound 的 expand-only post-migration 事实"
+    status: done
+    evidence: "PostgreSQL 17.11 本机隔离实例上 baseline_0012.sql → native_0013..0025.sql → schema_facts.sql 机械生成；45 表 / 447 列 / 320 NOT NULL / 247 约束 / 91 索引 / 4 触发器 / 4 enum / 1 public 函数 / 0 extension"
+    done_evidence: "fixtures/db/schema-0025.json（5241行，SHA-256 f72fe00b7bf2690786d7810bfa0d9481da0ea325a6f896ff56f152a14d8094cc）；regeneration开启与关闭各1/0/0，逐旧列证明0024子集，native ledger恰13；PG usage/cost覆盖currency+maximum-rate snapshot exact replay、异值漂移conflict、跨sampling上界余数carry、超限仍记账及无rate时保持NULL/unpriced。"
+    notes: >-
+      不建价格服务、不抓官网现价；runs只冻结operator-attested currency+maximum rate、credential-free HTTPS
+      source URL、source document SHA-256与observed_at，并以whole micro currency unit + millionth remainder
+      做无浮点上界累计。rate必须是不低于任一适用cache/uncached档位的contract maximum；NULL表示
+      unpriced，绝不解释成零成本；它不冒充vendor最终账单，用户费用上限仍属下一批。
 
   - id: db-seed-0012
     upstream: "-"

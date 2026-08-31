@@ -9,9 +9,10 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use openbot_application::{
     AgentAudit, AgentAuditKind, AgentContextError, AgentContextSource, DurableTextRun,
-    ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, RunCancellationDisposition,
-    RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime,
-    RunRuntimeError, RunTerminal, RunTokenUsageReceipt, RunToolExchange,
+    ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, ProviderRateCard,
+    RunCancellationDisposition, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease,
+    RunFailureCode, RunRuntime, RunRuntimeError, RunTerminal, RunTokenUsageReceipt,
+    RunToolExchange,
 };
 use openbot_contracts::components::is_component_human_decision_name;
 use openbot_domain::agent::{
@@ -355,6 +356,7 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
     let mut journal = DurableTextRun::new(inner.runtime.clone(), lease.clone());
     let mut sampling_index = 0_u32;
     let mut run_output_ceiling = None::<Option<u64>>;
+    let mut run_rate_card = None::<Option<ProviderRateCard>>;
     if inner
         .audit
         .record(lease, AgentAuditKind::Invoked)
@@ -409,6 +411,7 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
             }
         };
         let max_output_tokens = request.max_output_tokens;
+        let candidate_rate_card = request.rate_card.clone();
         let candidate_run_output_ceiling =
             max_output_tokens.map(|limit| u64::from(limit) * (u64::from(TOOL_STEP_CAP) + 1));
         match run_output_ceiling {
@@ -418,7 +421,20 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
                 drive_terminal_event(
                     &mut state,
                     &mut journal,
-                    AgentEvent::ProviderFailed(AgentFailure::ProviderInvalidResponse),
+                    AgentEvent::ContextFailed(AgentFailure::ProviderInvalidResponse),
+                )
+                .await;
+                return;
+            }
+        }
+        match &run_rate_card {
+            None => run_rate_card = Some(candidate_rate_card),
+            Some(existing) if *existing == candidate_rate_card => {}
+            Some(_) => {
+                drive_terminal_event(
+                    &mut state,
+                    &mut journal,
+                    AgentEvent::ContextFailed(AgentFailure::ProviderInvalidResponse),
                 )
                 .await;
                 return;
@@ -552,6 +568,7 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
                             lease,
                             sampling_index,
                             max_run_output_tokens: run_output_ceiling.flatten(),
+                            rate_card: run_rate_card.as_ref().and_then(Option::as_ref),
                             audit: inner.audit.as_ref(),
                         };
                         if handle_provider_event(
@@ -798,6 +815,7 @@ struct ProviderSamplingContext<'a> {
     lease: &'a RunExecutionLease,
     sampling_index: u32,
     max_run_output_tokens: Option<u64>,
+    rate_card: Option<&'a ProviderRateCard>,
     audit: &'a dyn AgentAudit,
 }
 
@@ -875,6 +893,7 @@ async fn handle_provider_event(
                         sampling.sampling_index,
                         usage,
                         sampling.max_run_output_tokens,
+                        sampling.rate_card,
                     )
                     .await
                 {
@@ -1122,12 +1141,14 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     use openbot_application::{
-        AgentAuditError, ClaimedRunDispatch, NoAgentAudit, ProviderMessage, ProviderMessageRole,
-        ProviderPortError, ProviderRequest, ProviderSession, ProviderUsage, RunSemanticChannel,
-        RunTokenUsage, RunToolExchange, RunWriteReceipt,
+        AgentAuditError, ClaimedRunDispatch, NoAgentAudit, ProviderBillingFamily, ProviderMessage,
+        ProviderMessageRole, ProviderPortError, ProviderRateCardInput, ProviderRequest,
+        ProviderSession, ProviderUsage, RunSemanticChannel, RunTokenUsage, RunToolExchange,
+        RunWriteReceipt,
     };
     use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId, ToolCallId};
     use openbot_domain::thread::FencingToken;
+    use time::macros::datetime;
     use tokio::sync::Notify;
 
     use super::*;
@@ -1144,6 +1165,8 @@ mod tests {
     struct FakeUsage {
         ceiling_initialized: bool,
         ceiling: Option<u64>,
+        rate_card_initialized: bool,
+        rate_card: Option<ProviderRateCard>,
         next_sampling: u32,
         aggregate: RunTokenUsage,
         last: Option<(u32, ProviderUsage)>,
@@ -1282,6 +1305,7 @@ mod tests {
             sampling_index: u32,
             usage: ProviderUsage,
             max_run_output_tokens: Option<u64>,
+            rate_card: Option<&ProviderRateCard>,
         ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
             let mut state = self.usage.lock().expect("usage lock");
             if state.ceiling_initialized {
@@ -1291,6 +1315,14 @@ mod tests {
             } else {
                 state.ceiling_initialized = true;
                 state.ceiling = max_run_output_tokens;
+            }
+            if state.rate_card_initialized {
+                if state.rate_card.as_ref() != rate_card {
+                    return Err(RunRuntimeError::Conflict);
+                }
+            } else {
+                state.rate_card_initialized = true;
+                state.rate_card = rate_card.cloned();
             }
             if self.force_budget_exceeded {
                 return Ok(RunTokenUsageReceipt::BudgetExceeded(state.aggregate));
@@ -1397,6 +1429,7 @@ mod tests {
                 }],
                 tools: Vec::new(),
                 max_output_tokens: Some(32),
+                rate_card: None,
             })
         }
     }
@@ -1408,6 +1441,11 @@ mod tests {
         loads: AtomicUsize,
     }
 
+    #[derive(Default)]
+    struct DriftingRateContext {
+        loads: AtomicUsize,
+    }
+
     #[async_trait]
     impl AgentContextSource for CountingContext {
         async fn load(
@@ -1416,6 +1454,39 @@ mod tests {
         ) -> Result<ProviderRequest, AgentContextError> {
             self.loads.fetch_add(1, AtomicOrdering::SeqCst);
             FakeContext.load(lease).await
+        }
+    }
+
+    #[async_trait]
+    impl AgentContextSource for DriftingRateContext {
+        async fn load(
+            &self,
+            lease: &RunExecutionLease,
+        ) -> Result<ProviderRequest, AgentContextError> {
+            let index = self.loads.fetch_add(1, AtomicOrdering::SeqCst);
+            let mut request = FakeContext.load(lease).await?;
+            request.rate_card = Some(
+                ProviderRateCard::new(ProviderRateCardInput {
+                    family: ProviderBillingFamily::OpenAiCompatible,
+                    model: "model-1".to_owned(),
+                    currency: "USD".to_owned(),
+                    max_input_micro_units_per_million_tokens: if index == 0 {
+                        1_500_000
+                    } else {
+                        1_500_001
+                    },
+                    max_output_micro_units_per_million_tokens: 2_000_000,
+                    source_url: "https://prices.example.test/archive/2026-08-30".to_owned(),
+                    source_sha256: if index == 0 {
+                        "a".repeat(64)
+                    } else {
+                        "b".repeat(64)
+                    },
+                    observed_at: datetime!(2026-08-30 12:00 UTC),
+                })
+                .expect("test rate card"),
+            );
+            Ok(request)
         }
     }
 
@@ -1775,6 +1846,70 @@ mod tests {
         );
         agent.stop().await;
         assert_eq!(tools.releases.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn provider_rate_snapshot_cannot_drift_between_tool_samplings() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let context = Arc::new(DriftingRateContext::default());
+        let provider = Arc::new(SequencedProvider {
+            sessions: StdMutex::new(
+                vec![vec![
+                    ProviderEvent::ToolCallCompleted {
+                        index: 0,
+                        call_id: "provider-call-priced".to_owned(),
+                        name: "remember".to_owned(),
+                        arguments: serde_json::json!({"content":"tea"}),
+                    },
+                    ProviderEvent::Usage(ProviderUsage {
+                        input_tokens: 3,
+                        output_tokens: 2,
+                        total_tokens: 5,
+                    }),
+                    ProviderEvent::Completed,
+                ]]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        });
+        let tools = Arc::new(FakeToolInvoker::default());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            context.clone(),
+            provider.clone(),
+            tools,
+            Arc::new(NoAgentAudit),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-price-drift");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert_eq!(context.loads.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(provider.starts.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(
+            runtime.calls(),
+            [
+                RuntimeCall::ToolExchange(
+                    1,
+                    "provider-call-priced".to_owned(),
+                    "remember".to_owned(),
+                    r#"{"status":"remembered"}"#.to_owned(),
+                ),
+                RuntimeCall::Finish(
+                    2,
+                    RunTerminal::Failed(RunFailureCode::ProviderInvalidResponse),
+                ),
+            ]
+        );
+        agent.stop().await;
     }
 
     #[tokio::test]

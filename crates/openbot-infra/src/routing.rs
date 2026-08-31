@@ -77,6 +77,7 @@ impl ChannelRoutingBackend for PostgresChannelRouting {
             }],
             tools: Vec::new(),
             max_output_tokens: Some(ROUTING_MAX_OUTPUT_TOKENS),
+            rate_card: None,
         };
         tokio::time::timeout(
             ROUTING_DEADLINE,
@@ -397,6 +398,7 @@ mod tests {
                 }],
                 tools: Vec::new(),
                 max_output_tokens: Some(ROUTING_MAX_OUTPUT_TOKENS),
+                rate_card: None,
             },
         )
         .await
@@ -430,6 +432,7 @@ mod tests {
                         messages: Vec::new(),
                         tools: Vec::new(),
                         max_output_tokens: Some(1),
+                        rate_card: None,
                     },
                 )
                 .await

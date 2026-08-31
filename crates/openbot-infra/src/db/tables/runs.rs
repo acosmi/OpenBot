@@ -1,4 +1,4 @@
-//! `public.runs` typed row（native 0016 + expand-only 0024 usage suffix）。
+//! `public.runs` typed row（native 0016 + expand-only 0024 usage / 0025 cost suffix）。
 
 crate::db::tables::define_table! {
     table = "runs";
@@ -25,4 +25,14 @@ crate::db::tables::define_table! {
     usage_last_input_tokens: Option<i64> = ("usage_last_input_tokens", "bigint", false),
     usage_last_output_tokens: Option<i64> = ("usage_last_output_tokens", "bigint", false),
     usage_last_total_tokens: Option<i64> = ("usage_last_total_tokens", "bigint", false),
+    cost_currency: Option<String> = ("cost_currency", "text", false),
+    cost_provider: Option<String> = ("cost_provider", "text", false),
+    cost_model: Option<String> = ("cost_model", "text", false),
+    cost_max_input_micro_units_per_million_tokens: Option<i64> = ("cost_max_input_micro_units_per_million_tokens", "bigint", false),
+    cost_max_output_micro_units_per_million_tokens: Option<i64> = ("cost_max_output_micro_units_per_million_tokens", "bigint", false),
+    cost_source_url: Option<String> = ("cost_source_url", "text", false),
+    cost_source_sha256: Option<String> = ("cost_source_sha256", "text", false),
+    cost_observed_at: Option<time::OffsetDateTime> = ("cost_observed_at", "timestamp with time zone", false),
+    usage_cost_upper_bound_micro_units: Option<i64> = ("usage_cost_upper_bound_micro_units", "bigint", false),
+    usage_cost_upper_bound_remainder_millionths: Option<i32> = ("usage_cost_upper_bound_remainder_millionths", "integer", false),
 }

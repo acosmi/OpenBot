@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use openbot_application::{
     AgentContextError, AgentContextSource, ComponentAdministration, ComponentRuntimeScope,
-    ProviderMessage, ProviderMessageRole, ProviderRequest, ProviderRoute, ProviderToolCall,
-    ProviderToolDefinition, RemoteAguiAuthorization, RemoteAguiRoute, RunExecutionLease,
-    SandboxedComponentAdministration,
+    ProviderMessage, ProviderMessageRole, ProviderRateCard, ProviderRequest, ProviderRoute,
+    ProviderToolCall, ProviderToolDefinition, RemoteAguiAuthorization, RemoteAguiRoute,
+    RunExecutionLease, SandboxedComponentAdministration,
 };
 use openbot_contracts::components::{
     compiled_component_manifest, compiled_component_parameter_schema,
@@ -54,6 +54,8 @@ pub struct PostgresAgentContextSource {
     deployment: DeploymentId,
     tenant: TenantId,
     max_output_tokens: Option<u32>,
+    package_rate_card: Option<ProviderRateCard>,
+    managed_rate_card: Option<ProviderRateCard>,
     tools: Vec<ProviderToolDefinition>,
     remote_assertions: Option<std::sync::Arc<RemoteRunAssertionSigner>>,
     mcp_catalog: Option<std::sync::Arc<PostgresMcpCatalog>>,
@@ -80,6 +82,8 @@ impl PostgresAgentContextSource {
             deployment,
             tenant,
             max_output_tokens,
+            package_rate_card: None,
+            managed_rate_card: None,
             tools: Vec::new(),
             remote_assertions: None,
             mcp_catalog: None,
@@ -87,6 +91,18 @@ impl PostgresAgentContextSource {
             sandboxed_components: None,
             agent_credential_vault: None,
         })
+    }
+
+    /// Attach host-validated package and managed provider rate snapshots.
+    #[must_use]
+    pub fn with_rate_cards(
+        mut self,
+        package: Option<ProviderRateCard>,
+        managed: Option<ProviderRateCard>,
+    ) -> Self {
+        self.package_rate_card = package;
+        self.managed_rate_card = managed;
+        self
     }
 
     /// Attach the first-party catalog projected to model-visible JSON Schema.
@@ -267,17 +283,32 @@ impl AgentContextSource for PostgresAgentContextSource {
                 .collect::<Vec<_>>(),
             None => Vec::new(),
         };
-        let (route, standing_prompt, tools, max_output_tokens) = match agent_type.as_str() {
+        let database_now_millis: i64 =
+            visible.try_get("assertion_issued_at_millis").map_err(|_| {
+                AgentContextError::Corrupt {
+                    field: "database_now_millis",
+                }
+            })?;
+        let (route, standing_prompt, tools, max_output_tokens, rate_card) = match agent_type
+            .as_str()
+        {
             "built_in" => {
                 let mut tools = self.tools.clone();
                 tools.extend(component_tools.clone());
                 tools.extend(sandboxed_component_tools.clone());
                 tools.extend(granted_mcp.iter().map(|tool| tool.provider_definition()));
+                let route = provider_route(&configuration)?;
+                let rate_card = match &route {
+                    ProviderRoute::PackageOpenAi => self.package_rate_card.clone(),
+                    ProviderRoute::Managed => self.managed_rate_card.clone(),
+                    ProviderRoute::RemoteAgUi(_) => None,
+                };
                 (
-                    provider_route(&configuration)?,
+                    route,
                     append_granted_tool_guidance(standing_prompt(&configuration)?, &granted_mcp),
                     tools,
                     self.max_output_tokens,
+                    rate_card,
                 )
             }
             "remote_ag_ui" => {
@@ -309,12 +340,6 @@ impl AgentContextSource for PostgresAgentContextSource {
                             field: "role_description",
                         }
                     })?;
-                let issued_at_millis: i64 =
-                    visible.try_get("assertion_issued_at_millis").map_err(|_| {
-                        AgentContextError::Corrupt {
-                            field: "assertion_issued_at_millis",
-                        }
-                    })?;
                 let remote_tools =
                     RemoteToolSet::new(granted_mcp.iter().map(|tool| tool.model_name.clone()))
                         .map_err(|_| AgentContextError::Corrupt {
@@ -333,7 +358,7 @@ impl AgentContextSource for PostgresAgentContextSource {
                             run: lease.run_id().clone(),
                         },
                         &remote_tools,
-                        issued_at_millis,
+                        database_now_millis,
                     )
                     .map_err(|_| AgentContextError::Corrupt {
                         field: "remote_run_assertion",
@@ -373,6 +398,7 @@ impl AgentContextSource for PostgresAgentContextSource {
                         .chain(granted_mcp.iter().map(|tool| tool.provider_definition()))
                         .collect(),
                     None,
+                    None,
                 )
             }
             _ => {
@@ -381,6 +407,16 @@ impl AgentContextSource for PostgresAgentContextSource {
                 });
             }
         };
+        if rate_card.as_ref().is_some_and(|rate| {
+            rate.observed_at().unix_timestamp_nanos()
+                >= i128::from(database_now_millis)
+                    .saturating_add(1)
+                    .saturating_mul(1_000_000)
+        }) {
+            return Err(AgentContextError::Corrupt {
+                field: "provider_rate_observed_at",
+            });
+        }
         let count: i64 = client
             .query_one(
                 "SELECT count(*)::bigint FROM public.messages WHERE thread_id=$1",
@@ -535,6 +571,7 @@ impl AgentContextSource for PostgresAgentContextSource {
             messages,
             tools,
             max_output_tokens,
+            rate_card,
         })
     }
 }

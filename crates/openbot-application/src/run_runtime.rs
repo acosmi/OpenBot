@@ -13,7 +13,7 @@ use openbot_domain::thread::FencingToken;
 use serde_json::Value;
 
 use crate::chunk::{SEMANTIC_CHUNK_MAX_BYTES, SemanticChunkAccumulator};
-use crate::provider::ProviderUsage;
+use crate::provider::{ProviderRateCard, ProviderUsage};
 
 /// Run runtime 的稳定内部错误域；不得携带数据库/provider 原文。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -606,6 +606,7 @@ pub trait RunRuntime: Send + Sync {
         _sampling_index: u32,
         _usage: ProviderUsage,
         _max_run_output_tokens: Option<u64>,
+        _rate_card: Option<&ProviderRateCard>,
     ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
         Err(RunRuntimeError::Unavailable)
     }

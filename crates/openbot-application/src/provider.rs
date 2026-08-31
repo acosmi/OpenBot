@@ -6,6 +6,8 @@ use openbot_contracts::auth::AuthContext;
 use openbot_domain::vault::SecretBytes;
 use serde_json::Value;
 use std::sync::Arc;
+use time::OffsetDateTime;
+use url::Url;
 
 use crate::RunExecutionLease;
 
@@ -184,6 +186,278 @@ pub enum ProviderRoute {
     RemoteAgUi(RemoteAguiRoute),
 }
 
+/// Provider family bound into an operator-attested price snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderBillingFamily {
+    /// OpenAI or an explicitly compatible endpoint.
+    OpenAiCompatible,
+    /// Anthropic Messages.
+    Anthropic,
+    /// Google Generative AI.
+    Google,
+}
+
+impl ProviderBillingFamily {
+    /// Stable PostgreSQL/audit literal.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAiCompatible => "openai_compatible",
+            Self::Anthropic => "anthropic",
+            Self::Google => "google",
+        }
+    }
+
+    /// Parse the stable storage literal.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "openai_compatible" => Some(Self::OpenAiCompatible),
+            "anthropic" => Some(Self::Anthropic),
+            "google" => Some(Self::Google),
+            _ => None,
+        }
+    }
+}
+
+/// Invalid operator-attested rate-card field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ProviderRateCardError {
+    /// Provider/model identity is not bounded or canonical.
+    #[error("provider_rate_card_identity_invalid")]
+    Identity,
+    /// Currency must be an explicit three-letter uppercase code.
+    #[error("provider_rate_card_currency_invalid")]
+    Currency,
+    /// Source must be a credential-free HTTPS URL with no query or fragment.
+    #[error("provider_rate_card_source_invalid")]
+    Source,
+    /// Source digest must be lowercase SHA-256.
+    #[error("provider_rate_card_digest_invalid")]
+    Digest,
+    /// Observation time must be at or after the Unix epoch.
+    #[error("provider_rate_card_observed_at_invalid")]
+    ObservedAt,
+    /// A rate cannot fit the PostgreSQL signed-bigint boundary.
+    #[error("provider_rate_card_rate_invalid")]
+    Rate,
+}
+
+/// Operator-attested immutable maximum-rate provenance for one provider/model pair.
+///
+/// OpenBot does not ship mutable vendor list prices. The deployment owner records the rate that
+/// bounds its contract together with the source document hash and observation time. Maximum rates
+/// make the counter conservative when a vendor reports no stable cache-discount breakdown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderRateCard {
+    family: ProviderBillingFamily,
+    model: String,
+    currency: String,
+    max_input_micro_units_per_million_tokens: u64,
+    max_output_micro_units_per_million_tokens: u64,
+    source_url: String,
+    source_sha256: String,
+    observed_at: OffsetDateTime,
+}
+
+/// Explicit input for one operator-attested maximum-rate snapshot.
+pub struct ProviderRateCardInput {
+    /// Provider family.
+    pub family: ProviderBillingFamily,
+    /// Exact provider model id.
+    pub model: String,
+    /// Three-letter uppercase currency code; OpenBot performs no conversion.
+    pub currency: String,
+    /// Maximum micro currency units per one million input tokens.
+    pub max_input_micro_units_per_million_tokens: u64,
+    /// Maximum micro currency units per one million output tokens.
+    pub max_output_micro_units_per_million_tokens: u64,
+    /// Credential-free HTTPS source URL.
+    pub source_url: String,
+    /// Lowercase SHA-256 of the source document.
+    pub source_sha256: String,
+    /// Operator observation time.
+    pub observed_at: OffsetDateTime,
+}
+
+impl ProviderRateCard {
+    /// Validate and canonicalize one explicit maximum-rate snapshot.
+    pub fn new(input: ProviderRateCardInput) -> Result<Self, ProviderRateCardError> {
+        let ProviderRateCardInput {
+            family,
+            model,
+            currency,
+            max_input_micro_units_per_million_tokens,
+            max_output_micro_units_per_million_tokens,
+            source_url,
+            source_sha256,
+            observed_at,
+        } = input;
+        if model.is_empty() || model.len() > 256 || model.as_bytes().contains(&0) {
+            return Err(ProviderRateCardError::Identity);
+        }
+        if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_uppercase()) {
+            return Err(ProviderRateCardError::Currency);
+        }
+        if max_input_micro_units_per_million_tokens > i64::MAX as u64
+            || max_output_micro_units_per_million_tokens > i64::MAX as u64
+        {
+            return Err(ProviderRateCardError::Rate);
+        }
+        let source = Url::parse(&source_url).map_err(|_| ProviderRateCardError::Source)?;
+        if source.scheme() != "https"
+            || source.host_str().is_none()
+            || !source.username().is_empty()
+            || source.password().is_some()
+            || source.query().is_some()
+            || source.fragment().is_some()
+            || source.as_str().len() > 2048
+        {
+            return Err(ProviderRateCardError::Source);
+        }
+        if source_sha256.len() != 64
+            || !source_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(ProviderRateCardError::Digest);
+        }
+        if observed_at < OffsetDateTime::UNIX_EPOCH {
+            return Err(ProviderRateCardError::ObservedAt);
+        }
+        Ok(Self {
+            family,
+            model,
+            currency,
+            max_input_micro_units_per_million_tokens,
+            max_output_micro_units_per_million_tokens,
+            source_url: source.to_string(),
+            source_sha256,
+            observed_at,
+        })
+    }
+
+    /// Provider family.
+    #[must_use]
+    pub const fn family(&self) -> ProviderBillingFamily {
+        self.family
+    }
+
+    /// Exact configured model.
+    #[must_use]
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Currency code. No conversion is performed.
+    #[must_use]
+    pub fn currency(&self) -> &str {
+        &self.currency
+    }
+
+    /// Maximum USD millionths charged per one million input tokens.
+    #[must_use]
+    pub const fn max_input_rate(&self) -> u64 {
+        self.max_input_micro_units_per_million_tokens
+    }
+
+    /// Maximum USD millionths charged per one million output tokens.
+    #[must_use]
+    pub const fn max_output_rate(&self) -> u64 {
+        self.max_output_micro_units_per_million_tokens
+    }
+
+    /// Canonical credential-free HTTPS provenance URL.
+    #[must_use]
+    pub fn source_url(&self) -> &str {
+        &self.source_url
+    }
+
+    /// Lowercase source-document SHA-256.
+    #[must_use]
+    pub fn source_sha256(&self) -> &str {
+        &self.source_sha256
+    }
+
+    /// When the operator observed the attested rate.
+    #[must_use]
+    pub const fn observed_at(&self) -> OffsetDateTime {
+        self.observed_at
+    }
+}
+
+/// Exact arithmetic upper bound under operator-attested maximum rates in one currency.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProviderCostUpperBound {
+    micro_units: u64,
+    remainder_millionths: u32,
+}
+
+impl ProviderCostUpperBound {
+    /// Restore a durable counter.
+    pub fn from_parts(
+        micro_units: u64,
+        remainder_millionths: u32,
+    ) -> Result<Self, ProviderRateCardError> {
+        if remainder_millionths >= 1_000_000 || micro_units > i64::MAX as u64 {
+            return Err(ProviderRateCardError::Rate);
+        }
+        Ok(Self {
+            micro_units,
+            remainder_millionths,
+        })
+    }
+
+    /// Add one normalized usage without floating point or per-sampling rounding.
+    pub fn accrue(
+        self,
+        usage: ProviderUsage,
+        rate: &ProviderRateCard,
+    ) -> Result<Self, ProviderRateCardError> {
+        let input = u128::from(usage.input_tokens)
+            .checked_mul(u128::from(rate.max_input_rate()))
+            .ok_or(ProviderRateCardError::Rate)?;
+        let output = u128::from(usage.output_tokens)
+            .checked_mul(u128::from(rate.max_output_rate()))
+            .ok_or(ProviderRateCardError::Rate)?;
+        let numerator = input
+            .checked_add(output)
+            .and_then(|value| value.checked_add(u128::from(self.remainder_millionths)))
+            .ok_or(ProviderRateCardError::Rate)?;
+        let whole =
+            u64::try_from(numerator / 1_000_000).map_err(|_| ProviderRateCardError::Rate)?;
+        let micro_units = self
+            .micro_units
+            .checked_add(whole)
+            .filter(|value| *value <= i64::MAX as u64)
+            .ok_or(ProviderRateCardError::Rate)?;
+        Ok(Self {
+            micro_units,
+            remainder_millionths: u32::try_from(numerator % 1_000_000)
+                .map_err(|_| ProviderRateCardError::Rate)?,
+        })
+    }
+
+    /// Whole micro currency units already carried from exact arithmetic.
+    #[must_use]
+    pub const fn micro_units(self) -> u64 {
+        self.micro_units
+    }
+
+    /// Remaining millionths of one micro currency unit.
+    #[must_use]
+    pub const fn remainder_millionths(self) -> u32 {
+        self.remainder_millionths
+    }
+
+    /// Conservative billable amount rounded up only at the aggregate boundary.
+    #[must_use]
+    pub fn billed_upper_bound_micro_units(self) -> Option<u64> {
+        self.micro_units
+            .checked_add(u64::from(self.remainder_millionths != 0))
+    }
+}
+
 /// SafeDialer/SSE transport failure without remote body text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RemoteAguiTransportError {
@@ -331,6 +605,8 @@ pub struct ProviderRequest {
     pub tools: Vec<ProviderToolDefinition>,
     /// Optional output token cap from authoritative budget。
     pub max_output_tokens: Option<u32>,
+    /// Optional operator-attested price snapshot; `None` means explicitly unpriced, never zero.
+    pub rate_card: Option<ProviderRateCard>,
 }
 
 /// Provider output item kind。
@@ -615,5 +891,132 @@ impl AgentAudit for NoAgentAudit {
         _kind: AgentAuditKind,
     ) -> Result<(), AgentAuditError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod rate_card_tests {
+    use super::*;
+    use time::macros::datetime;
+
+    fn card(input: u64, output: u64) -> ProviderRateCard {
+        ProviderRateCard::new(ProviderRateCardInput {
+            family: ProviderBillingFamily::OpenAiCompatible,
+            model: "model-1".to_owned(),
+            currency: "USD".to_owned(),
+            max_input_micro_units_per_million_tokens: input,
+            max_output_micro_units_per_million_tokens: output,
+            source_url: "https://prices.example.test/archive/2026-08-30".to_owned(),
+            source_sha256: "a".repeat(64),
+            observed_at: datetime!(2026-08-30 12:00 UTC),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn explicit_provenance_is_closed_and_credential_free() {
+        let rate = card(1_500_000, 2_000_000);
+        assert_eq!(rate.family().as_str(), "openai_compatible");
+        assert_eq!(rate.model(), "model-1");
+        assert_eq!(rate.currency(), "USD");
+        assert_eq!(rate.source_sha256(), "a".repeat(64));
+        assert_eq!(rate.observed_at(), datetime!(2026-08-30 12:00 UTC));
+        let bad_currency = ProviderRateCardInput {
+            family: ProviderBillingFamily::OpenAiCompatible,
+            model: "model-1".to_owned(),
+            currency: "usd".to_owned(),
+            max_input_micro_units_per_million_tokens: 1,
+            max_output_micro_units_per_million_tokens: 1,
+            source_url: "https://prices.example.test/rates".to_owned(),
+            source_sha256: "a".repeat(64),
+            observed_at: datetime!(2026-08-30 12:00 UTC),
+        };
+        assert_eq!(
+            ProviderRateCard::new(bad_currency),
+            Err(ProviderRateCardError::Currency),
+        );
+        for source in [
+            "http://prices.example.test/rates",
+            "https://user@prices.example.test/rates",
+            "https://prices.example.test/rates?contract=secret",
+            "https://prices.example.test/rates#today",
+        ] {
+            assert_eq!(
+                ProviderRateCard::new(ProviderRateCardInput {
+                    family: ProviderBillingFamily::Anthropic,
+                    model: "model-1".to_owned(),
+                    currency: "USD".to_owned(),
+                    max_input_micro_units_per_million_tokens: 1,
+                    max_output_micro_units_per_million_tokens: 1,
+                    source_url: source.to_owned(),
+                    source_sha256: "a".repeat(64),
+                    observed_at: datetime!(2026-08-30 12:00 UTC),
+                }),
+                Err(ProviderRateCardError::Source),
+            );
+        }
+        assert_eq!(
+            ProviderRateCard::new(ProviderRateCardInput {
+                family: ProviderBillingFamily::Google,
+                model: "model-1".to_owned(),
+                currency: "USD".to_owned(),
+                max_input_micro_units_per_million_tokens: 1,
+                max_output_micro_units_per_million_tokens: 1,
+                source_url: "https://prices.example.test/rates".to_owned(),
+                source_sha256: "A".repeat(64),
+                observed_at: datetime!(2026-08-30 12:00 UTC),
+            }),
+            Err(ProviderRateCardError::Digest),
+        );
+    }
+
+    #[test]
+    fn exact_cost_carries_fraction_across_samplings_before_rounding() {
+        let rate = card(1_500_000, 2_000_000);
+        let one = ProviderCostUpperBound::default()
+            .accrue(
+                ProviderUsage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    total_tokens: 2,
+                },
+                &rate,
+            )
+            .unwrap();
+        assert_eq!(one.micro_units(), 3);
+        assert_eq!(one.remainder_millionths(), 500_000);
+        assert_eq!(one.billed_upper_bound_micro_units(), Some(4));
+        let two = one
+            .accrue(
+                ProviderUsage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    total_tokens: 2,
+                },
+                &rate,
+            )
+            .unwrap();
+        assert_eq!(two.micro_units(), 7);
+        assert_eq!(two.remainder_millionths(), 0);
+        assert_eq!(two.billed_upper_bound_micro_units(), Some(7));
+    }
+
+    #[test]
+    fn arithmetic_overflow_and_invalid_durable_parts_fail_closed() {
+        assert_eq!(
+            ProviderCostUpperBound::from_parts(0, 1_000_000),
+            Err(ProviderRateCardError::Rate),
+        );
+        assert_eq!(
+            ProviderCostUpperBound::default().accrue(
+                ProviderUsage {
+                    input_tokens: u64::MAX,
+                    output_tokens: u64::MAX,
+                    total_tokens: u64::MAX,
+                },
+                &card(i64::MAX as u64, i64::MAX as u64),
+            ),
+            Err(ProviderRateCardError::Rate),
+        );
     }
 }

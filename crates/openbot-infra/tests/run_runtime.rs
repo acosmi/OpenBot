@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use harness::{admin_config, with_temp_database};
 use openbot_application::{
-    BeginThreadRunRequest, NoRunDispatchConsumer, ProviderUsage, RunExecutionLease, RunFailureCode,
-    RunRuntime, RunRuntimeError, RunSemanticChannel, RunTerminal, RunTokenUsage,
-    RunTokenUsageReceipt, ThreadDirectory,
+    BeginThreadRunRequest, NoRunDispatchConsumer, ProviderBillingFamily, ProviderRateCard,
+    ProviderRateCardInput, ProviderUsage, RunExecutionLease, RunFailureCode, RunRuntime,
+    RunRuntimeError, RunSemanticChannel, RunTerminal, RunTokenUsage, RunTokenUsageReceipt,
+    ThreadDirectory,
 };
 use openbot_contracts::command::{BeginThreadRun, ThreadRunAnchor};
 use openbot_contracts::ids::thread::ThreadIdentity;
@@ -17,6 +18,7 @@ use openbot_domain::thread::FencingToken;
 use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
 use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThreadDirectory};
+use time::macros::datetime;
 
 async fn provision(pool: &deadpool_postgres::Pool) -> Result<(), String> {
     let mut client = pool.get().await.map_err(|error| error.to_string())?;
@@ -99,6 +101,47 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 .acknowledge_dispatch(&claim)
                 .await
                 .map_err(|error| error.to_string())?;
+            let rate_card = ProviderRateCard::new(ProviderRateCardInput {
+                family: ProviderBillingFamily::OpenAiCompatible,
+                model: "model-priced".to_owned(),
+                currency: "USD".to_owned(),
+                max_input_micro_units_per_million_tokens: 1_500_000,
+                max_output_micro_units_per_million_tokens: 2_000_000,
+                source_url: "https://prices.example.test/archive/2026-08-30".to_owned(),
+                source_sha256: "a".repeat(64),
+                observed_at: datetime!(2026-08-30 12:00 UTC),
+            })
+            .map_err(|error| error.to_string())?;
+            let future_rate = ProviderRateCard::new(ProviderRateCardInput {
+                family: ProviderBillingFamily::OpenAiCompatible,
+                model: "model-priced".to_owned(),
+                currency: "USD".to_owned(),
+                max_input_micro_units_per_million_tokens: 1_500_000,
+                max_output_micro_units_per_million_tokens: 2_000_000,
+                source_url: "https://prices.example.test/future".to_owned(),
+                source_sha256: "f".repeat(64),
+                observed_at: datetime!(9999-01-01 0:00 UTC),
+            })
+            .map_err(|error| error.to_string())?;
+            if runtime
+                .record_provider_usage(
+                    &lease,
+                    0,
+                    ProviderUsage {
+                        input_tokens: 2,
+                        output_tokens: 1,
+                        total_tokens: 3,
+                    },
+                    Some(5),
+                    Some(&future_rate),
+                )
+                .await
+                != Err(RunRuntimeError::InvalidInput {
+                    field: "provider_rate_observed_at",
+                })
+            {
+                return Err("future rate snapshot must fail before usage write".to_owned());
+            }
             if runtime
                 .record_provider_usage(
                     &lease,
@@ -109,6 +152,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                         total_tokens: 2,
                     },
                     Some(5),
+                    Some(&rate_card),
                 )
                 .await
                 != Err(RunRuntimeError::InvalidInput {
@@ -124,6 +168,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                             total_tokens: 3,
                         },
                         Some(0),
+                        Some(&rate_card),
                     )
                     .await
                     != Err(RunRuntimeError::InvalidInput {
@@ -143,7 +188,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 total_tokens: 12,
             };
             if runtime
-                .record_provider_usage(&lease, 0, first_usage, Some(5))
+                .record_provider_usage(&lease, 0, first_usage, Some(5), Some(&rate_card))
                 .await
                 .map_err(|error| error.to_string())?
                 != RunTokenUsageReceipt::Recorded(first)
@@ -151,7 +196,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 return Err("首个 sampling usage 未精确记录".to_owned());
             }
             if runtime
-                .record_provider_usage(&lease, 0, first_usage, Some(5))
+                .record_provider_usage(&lease, 0, first_usage, Some(5), Some(&rate_card))
                 .await
                 .map_err(|error| error.to_string())?
                 != RunTokenUsageReceipt::Replayed(first)
@@ -173,6 +218,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                         total_tokens: 11,
                     },
                     Some(5),
+                    Some(&rate_card),
                 )
                 .await
                 != Err(RunRuntimeError::Conflict)
@@ -180,7 +226,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 return Err("同 index 异值 usage 必须 conflict".to_owned());
             }
             if runtime
-                .record_provider_usage(&lease, 2, first_usage, Some(5))
+                .record_provider_usage(&lease, 2, first_usage, Some(5), Some(&rate_card))
                 .await
                 != Err(RunRuntimeError::Conflict)
             {
@@ -201,6 +247,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                         total_tokens: 23,
                     },
                     Some(5),
+                    Some(&rate_card),
                 )
                 .await
                 .map_err(|error| error.to_string())?
@@ -218,6 +265,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                         total_tokens: 2,
                     },
                     Some(5),
+                    Some(&rate_card),
                 )
                 .await
                 .map_err(|error| error.to_string())?
@@ -235,6 +283,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                         total_tokens: 2,
                     },
                     Some(5),
+                    Some(&rate_card),
                 )
                 .await
                 .map_err(|error| error.to_string())?
@@ -252,11 +301,40 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                         total_tokens: 1,
                     },
                     Some(6),
+                    Some(&rate_card),
                 )
                 .await
                 != Err(RunRuntimeError::Conflict)
             {
                 return Err("已固定 run ceiling 不得漂移".to_owned());
+            }
+            let changed_rate = ProviderRateCard::new(ProviderRateCardInput {
+                family: ProviderBillingFamily::OpenAiCompatible,
+                model: "model-priced".to_owned(),
+                currency: "USD".to_owned(),
+                max_input_micro_units_per_million_tokens: 1_500_001,
+                max_output_micro_units_per_million_tokens: 2_000_000,
+                source_url: "https://prices.example.test/archive/2026-08-30".to_owned(),
+                source_sha256: "b".repeat(64),
+                observed_at: datetime!(2026-08-30 12:00 UTC),
+            })
+            .map_err(|error| error.to_string())?;
+            if runtime
+                .record_provider_usage(
+                    &lease,
+                    3,
+                    ProviderUsage {
+                        input_tokens: 1,
+                        output_tokens: 0,
+                        total_tokens: 1,
+                    },
+                    Some(5),
+                    Some(&changed_rate),
+                )
+                .await
+                != Err(RunRuntimeError::Conflict)
+            {
+                return Err("已固定 provider rate snapshot 不得漂移".to_owned());
             }
             let client = pool.get().await.map_err(|error| error.to_string())?;
             let row = client
@@ -278,6 +356,54 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
             );
             if facts != (Some(5), 31, 6, 37, 3, Some(2)) {
                 return Err(format!("durable run usage 漂移：{facts:?}"));
+            }
+            let cost_row = client
+                .query_one(
+                    "SELECT cost_currency,cost_provider,cost_model, \
+                            cost_max_input_micro_units_per_million_tokens, \
+                            cost_max_output_micro_units_per_million_tokens,cost_source_sha256, \
+                            cost_observed_at,usage_cost_upper_bound_micro_units, \
+                            usage_cost_upper_bound_remainder_millionths \
+                     FROM public.runs WHERE run_id='run-usage'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let cost: (
+                String,
+                String,
+                String,
+                i64,
+                i64,
+                String,
+                time::OffsetDateTime,
+                i64,
+                i32,
+            ) = (
+                cost_row.try_get(0).map_err(|error| error.to_string())?,
+                cost_row.try_get(1).map_err(|error| error.to_string())?,
+                cost_row.try_get(2).map_err(|error| error.to_string())?,
+                cost_row.try_get(3).map_err(|error| error.to_string())?,
+                cost_row.try_get(4).map_err(|error| error.to_string())?,
+                cost_row.try_get(5).map_err(|error| error.to_string())?,
+                cost_row.try_get(6).map_err(|error| error.to_string())?,
+                cost_row.try_get(7).map_err(|error| error.to_string())?,
+                cost_row.try_get(8).map_err(|error| error.to_string())?,
+            );
+            if cost
+                != (
+                    "USD".to_owned(),
+                    "openai_compatible".to_owned(),
+                    "model-priced".to_owned(),
+                    1_500_000,
+                    2_000_000,
+                    "a".repeat(64),
+                    datetime!(2026-08-30 12:00 UTC),
+                    58,
+                    500_000,
+                )
+            {
+                return Err(format!("durable run provider cost 漂移：{cost:?}"));
             }
             runtime
                 .finish_run(
@@ -309,11 +435,43 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 return Err(format!("run budget terminal code 漂移：{terminal:?}"));
             }
             if runtime
-                .record_provider_usage(&lease, 3, first_usage, Some(5))
+                .record_provider_usage(&lease, 3, first_usage, Some(5), Some(&rate_card))
                 .await
                 != Err(RunRuntimeError::StaleLease)
             {
                 return Err("terminal run 必须拒绝后续 usage".to_owned());
+            }
+            directory
+                .begin_thread_run(request(&deployment, 92, "run-unpriced"))
+                .await
+                .map_err(|error| error.to_string())?;
+            let claim = runtime
+                .claim_dispatch()
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or("unpriced dispatch 未被 claim")?;
+            let unpriced_lease = runtime
+                .acknowledge_dispatch(&claim)
+                .await
+                .map_err(|error| error.to_string())?;
+            runtime
+                .record_provider_usage(&unpriced_lease, 0, first_usage, Some(5), None)
+                .await
+                .map_err(|error| error.to_string())?;
+            let unpriced_is_null: bool = client
+                .query_one(
+                    "SELECT cost_currency IS NULL AND cost_provider IS NULL \
+                            AND cost_model IS NULL AND usage_cost_upper_bound_micro_units IS NULL \
+                            AND usage_cost_upper_bound_remainder_millionths IS NULL \
+                     FROM public.runs WHERE run_id='run-unpriced'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if !unpriced_is_null {
+                return Err("缺 rate card 必须保持 unpriced/null，不能静默记零".to_owned());
             }
             Ok(())
         }

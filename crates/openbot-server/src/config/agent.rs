@@ -2,6 +2,12 @@
 
 use std::time::Duration;
 
+use openbot_application::{
+    ProviderBillingFamily, ProviderRateCard, ProviderRateCardError, ProviderRateCardInput,
+};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+
 use crate::config::address::DeploymentAddress;
 use crate::config::env::{self, EnvMap};
 use crate::config::error::{ConfigProblem, Expectation};
@@ -35,6 +41,8 @@ pub struct ManagedProviderConfig {
     pub egress_allow_cidrs: Vec<String>,
     /// New explicit HTTP override；still requires CIDR/global destination policy。
     pub allow_http: bool,
+    /// Optional operator-attested pricing snapshot for this exact provider/model.
+    pub rate_card: Option<ProviderRateCard>,
 }
 
 /// Agent runtime budgets independent of whether a key is currently configured。
@@ -44,7 +52,7 @@ pub struct AgentBudgets {
     pub stall_timeout: Option<Duration>,
     /// `None` = OPENBOT_RUN_DEADLINE_MS=0；unset defaults 30min。
     pub run_deadline: Option<Duration>,
-    /// Per-sampling output cap；tool loop 后续还须累计成 per-run token budget。
+    /// Per-sampling output cap；run-wide token/cost-upper-bound accounting由runtime独立累计。
     pub max_output_tokens: u32,
 }
 
@@ -95,6 +103,12 @@ pub fn parse_agent_config(
         "ANTHROPIC_BASE_URL",
         "GOOGLE_API_KEY",
         "GOOGLE_GENERATIVE_AI_BASE_URL",
+        "BOT_PRICE_CURRENCY",
+        "BOT_PRICE_MAX_INPUT_MICRO_UNITS_PER_MILLION_TOKENS",
+        "BOT_PRICE_MAX_OUTPUT_MICRO_UNITS_PER_MILLION_TOKENS",
+        "BOT_PRICE_SOURCE_URL",
+        "BOT_PRICE_SOURCE_SHA256",
+        "BOT_PRICE_OBSERVED_AT",
     ]
     .into_iter()
     .any(|name| env::optional(env_map, name).is_some());
@@ -160,6 +174,7 @@ pub fn parse_agent_config(
             problems,
         )
     };
+    let rate_card = parse_managed_rate_card(env_map, provider, &model, problems);
     (
         budgets,
         package_openai.clone(),
@@ -172,8 +187,101 @@ pub fn parse_agent_config(
                 && env::optional(env_map, "BOT_RESPONSES_API") == Some("true"),
             egress_allow_cidrs: package_openai.egress_allow_cidrs.clone(),
             allow_http: package_openai.allow_http,
+            rate_card,
         }),
     )
+}
+
+fn parse_managed_rate_card(
+    env_map: &EnvMap,
+    provider: ManagedProviderKind,
+    model: &str,
+    problems: &mut Vec<ConfigProblem>,
+) -> Option<ProviderRateCard> {
+    const CURRENCY: &str = "BOT_PRICE_CURRENCY";
+    const INPUT: &str = "BOT_PRICE_MAX_INPUT_MICRO_UNITS_PER_MILLION_TOKENS";
+    const OUTPUT: &str = "BOT_PRICE_MAX_OUTPUT_MICRO_UNITS_PER_MILLION_TOKENS";
+    const SOURCE: &str = "BOT_PRICE_SOURCE_URL";
+    const DIGEST: &str = "BOT_PRICE_SOURCE_SHA256";
+    const OBSERVED: &str = "BOT_PRICE_OBSERVED_AT";
+    const NAMES: [&str; 6] = [CURRENCY, INPUT, OUTPUT, SOURCE, DIGEST, OBSERVED];
+    let present = NAMES
+        .iter()
+        .filter(|name| env::optional(env_map, name).is_some())
+        .count();
+    if present == 0 {
+        return None;
+    }
+    if present != NAMES.len() {
+        for name in NAMES {
+            if env::optional(env_map, name).is_none() {
+                problems.push(ConfigProblem::Malformed {
+                    variable: name,
+                    expectation: Expectation::ProviderRateCard,
+                });
+            }
+        }
+        return None;
+    }
+    let parse_rate = |name: &'static str, problems: &mut Vec<ConfigProblem>| {
+        env::optional(env_map, name)
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .filter(|value| *value <= i64::MAX as u64)
+            .or_else(|| {
+                problems.push(ConfigProblem::Malformed {
+                    variable: name,
+                    expectation: Expectation::ProviderRateCard,
+                });
+                None
+            })
+    };
+    let input = parse_rate(INPUT, problems)?;
+    let output = parse_rate(OUTPUT, problems)?;
+    let observed = env::optional(env_map, OBSERVED)
+        .and_then(|raw| OffsetDateTime::parse(raw, &Rfc3339).ok())
+        .or_else(|| {
+            problems.push(ConfigProblem::Malformed {
+                variable: OBSERVED,
+                expectation: Expectation::ProviderRateCard,
+            });
+            None
+        })?;
+    let family = match provider {
+        ManagedProviderKind::OpenAi => ProviderBillingFamily::OpenAiCompatible,
+        ManagedProviderKind::Anthropic => ProviderBillingFamily::Anthropic,
+        ManagedProviderKind::Google => ProviderBillingFamily::Google,
+    };
+    ProviderRateCard::new(ProviderRateCardInput {
+        family,
+        model: model.to_owned(),
+        currency: env::optional(env_map, CURRENCY)
+            .unwrap_or_default()
+            .to_owned(),
+        max_input_micro_units_per_million_tokens: input,
+        max_output_micro_units_per_million_tokens: output,
+        source_url: env::optional(env_map, SOURCE)
+            .unwrap_or_default()
+            .to_owned(),
+        source_sha256: env::optional(env_map, DIGEST)
+            .unwrap_or_default()
+            .to_owned(),
+        observed_at: observed,
+    })
+    .map_err(|error| {
+        let variable = match error {
+            ProviderRateCardError::Identity => "BOT_MODEL",
+            ProviderRateCardError::Currency => CURRENCY,
+            ProviderRateCardError::Source => SOURCE,
+            ProviderRateCardError::Digest => DIGEST,
+            ProviderRateCardError::ObservedAt => OBSERVED,
+            ProviderRateCardError::Rate => INPUT,
+        };
+        problems.push(ConfigProblem::Malformed {
+            variable,
+            expectation: Expectation::ProviderRateCard,
+        });
+    })
+    .ok()
 }
 
 fn parse_output_tokens(env_map: &EnvMap, problems: &mut Vec<ConfigProblem>) -> u32 {
@@ -289,6 +397,7 @@ mod tests {
         assert!(!provider.allow_http);
         assert_eq!(provider.api_key.expose(), "key");
         assert_eq!(provider.base_url.as_str(), "https://api.openai.com/v1");
+        assert_eq!(provider.rate_card, None);
 
         let mut exact = env;
         exact.insert("BOT_RESPONSES_API".to_owned(), "true".to_owned());
@@ -343,7 +452,62 @@ mod tests {
             assert_eq!(provider.api_key.expose(), expected_key);
             assert_eq!(provider.base_url.as_str(), expected_base);
             assert!(!provider.use_responses_api);
+            assert_eq!(provider.rate_card, None);
         }
+    }
+
+    #[test]
+    fn managed_rate_card_is_all_or_none_and_binds_exact_provider_model() {
+        let mut env = BTreeMap::from([
+            ("BOT_PROVIDER".to_owned(), "anthropic".to_owned()),
+            ("BOT_MODEL".to_owned(), "claude-priced".to_owned()),
+            ("ANTHROPIC_API_KEY".to_owned(), "key".to_owned()),
+            (
+                "BOT_PRICE_MAX_INPUT_MICRO_UNITS_PER_MILLION_TOKENS".to_owned(),
+                "1500000".to_owned(),
+            ),
+            (
+                "BOT_PRICE_MAX_OUTPUT_MICRO_UNITS_PER_MILLION_TOKENS".to_owned(),
+                "2000000".to_owned(),
+            ),
+            ("BOT_PRICE_CURRENCY".to_owned(), "USD".to_owned()),
+            (
+                "BOT_PRICE_SOURCE_URL".to_owned(),
+                "https://prices.example.test/archive/2026-08-30".to_owned(),
+            ),
+            ("BOT_PRICE_SOURCE_SHA256".to_owned(), "a".repeat(64)),
+            (
+                "BOT_PRICE_OBSERVED_AT".to_owned(),
+                "2026-08-30T12:00:00Z".to_owned(),
+            ),
+        ]);
+        let mut problems = Vec::new();
+        let (_, _, provider) = parse_agent_config(&env, &mut problems);
+        assert!(problems.is_empty());
+        let rate = provider.unwrap().rate_card.expect("rate card");
+        assert_eq!(rate.family(), ProviderBillingFamily::Anthropic);
+        assert_eq!(rate.model(), "claude-priced");
+        assert_eq!(rate.currency(), "USD");
+        assert_eq!(rate.max_input_rate(), 1_500_000);
+        assert_eq!(rate.max_output_rate(), 2_000_000);
+
+        env.remove("BOT_PRICE_SOURCE_SHA256");
+        let mut problems = Vec::new();
+        let (_, _, provider) = parse_agent_config(&env, &mut problems);
+        assert_eq!(provider.unwrap().rate_card, None);
+        assert!(problems.contains(&ConfigProblem::Malformed {
+            variable: "BOT_PRICE_SOURCE_SHA256",
+            expectation: Expectation::ProviderRateCard,
+        }));
+        env.insert("BOT_PRICE_SOURCE_SHA256".to_owned(), "a".repeat(64));
+        env.insert("BOT_PRICE_CURRENCY".to_owned(), "usd".to_owned());
+        let mut problems = Vec::new();
+        let (_, _, provider) = parse_agent_config(&env, &mut problems);
+        assert_eq!(provider.unwrap().rate_card, None);
+        assert!(problems.contains(&ConfigProblem::Malformed {
+            variable: "BOT_PRICE_CURRENCY",
+            expectation: Expectation::ProviderRateCard,
+        }));
     }
 
     #[test]
