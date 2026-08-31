@@ -625,7 +625,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（截至 2026-08-30，Batch 15–85；条目内历史计数按注明批次）
+### 15.1 当前实施勾选（截至 2026-08-30，Batch 15–86；条目内历史计数按注明批次）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -633,7 +633,7 @@ G6 重写后的文本（替换 v3 原四条）：
   UI startup read/serialized partial write/reload persistence；
 - [x] Tauri 2.11.5 production custom-protocol adapter：window-label authority、typed in-process、
   本地首帧/CSP/canonical asset；依赖只进入 macOS/Windows Desktop target；
-- [x] Batch72–85 Desktop structured realtime、window lifecycle与Local authority/PG/Vault/application assembly前置代码闭环：host-owned closed wire与真实Tauri Channel、
+- [x] Batch72–86 Desktop structured realtime、window lifecycle与Local authority/PG/Vault/application/background assembly前置代码闭环：host-owned closed wire与真实Tauri Channel、
   actual open/close command、同一release WASM按`window.isTauri`选择typed bridge；callback index有界重排、
   terminal+end、u64 JSON string保真与Drop/integrity failure exact close均已定向实跑；同一actual Webview
   的全部internal stream再共享256 queued event-ref permit，live+pending subscription第257条在
@@ -648,11 +648,13 @@ G6 重写后的文本（替换 v3 原四条）：
   Batch82再闭合verified version、stdin-only initdb、direct child、TCP SCRAM ready、fast shutdown与unclean stale-lock fencing；
   Batch83把同一child接fixed `openbot`、pre-write live attestation、shared migration/principal/package与data-plane shutdown owner；
   Batch84再由持锁owner从共享OS key-store取得per-instance Vault master并导出application cryptographic material；
-  Batch85再把PostgreSQL application adapters与唯一ApplicationService上收到无transport/window/env的Infra composition root，Server精确消费一次，Desktop从持锁sidecar得到脱敏listener hand-off。
-  普通Web仍走原WebSocket/EventSource且有Batch74 release浏览器回归；Batch75–85无视觉/CSS/locale变化，
+  Batch85再把PostgreSQL application adapters与唯一ApplicationService上收到无transport/window/env的Infra composition root，Server精确消费一次，Desktop从持锁sidecar得到脱敏listener hand-off；
+  Batch86再由零窗Tauri setup读取真实app-data，在background依次持有PG/key/application/Agent+RunRelay，
+  protocol ready后才建首窗，最后Destroyed后逆序停机；UI preference继续落app-data closed文件。
+  普通Web仍走原WebSocket/EventSource且有Batch74 release浏览器回归；Batch75–86无视觉/CSS/locale变化，
   MockRuntime与macOS文件证据不冒充真实native runtime/Windows ACL；
-- [ ] Desktop Local sidecar binary build-sign、Windows process/key-store真机、Linux Secret Service、Desktop消费共享ApplicationService及真实Tauri `app_data_dir()` setup接线、actual `tauri.conf.json`/
-  capability/binary、Desktop Remote session source、真实macOS/Windows Webview runtime、
+- [ ] Desktop Local sidecar binary build-sign、Windows full-runtime/process/key-store真机、Linux Secret Service、actual `tauri.conf.json`/
+  capability/identity/binary、Desktop Remote session source、真实macOS/Windows Webview runtime、
   Desktop formal golden/AX仍未闭合；
 - [x] 截至 Batch23，27条 primitive 子账全 done：Batch18前20条 + Dialog/Sheet +
   Menu + MessageScroller + Combobox/Select + Sidebar，当时 UI=`27/125/152`；
