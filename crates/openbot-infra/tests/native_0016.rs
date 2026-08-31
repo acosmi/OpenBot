@@ -232,6 +232,15 @@ async fn native_constraints_and_repositories_enforce_fencing_replay_outbox_and_m
                 created_at: now,
                 started_at: Some(now),
                 finished_at: None,
+                budget_max_output_tokens: None,
+                usage_input_tokens: 0,
+                usage_output_tokens: 0,
+                usage_total_tokens: 0,
+                usage_next_sampling: 0,
+                usage_last_sampling: None,
+                usage_last_input_tokens: None,
+                usage_last_output_tokens: None,
+                usage_last_total_tokens: None,
             };
             RunRepo::new(pool.clone())
                 .insert(&run)

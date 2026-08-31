@@ -11,7 +11,7 @@ use openbot_application::{
     AgentAudit, AgentAuditKind, AgentContextError, AgentContextSource, DurableTextRun,
     ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, RunCancellationDisposition,
     RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime,
-    RunRuntimeError, RunTerminal, RunToolExchange,
+    RunRuntimeError, RunTerminal, RunTokenUsageReceipt, RunToolExchange,
 };
 use openbot_contracts::components::is_component_human_decision_name;
 use openbot_domain::agent::{
@@ -353,6 +353,8 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
         return;
     }
     let mut journal = DurableTextRun::new(inner.runtime.clone(), lease.clone());
+    let mut sampling_index = 0_u32;
+    let mut run_output_ceiling = None::<Option<u64>>;
     if inner
         .audit
         .record(lease, AgentAuditKind::Invoked)
@@ -407,6 +409,21 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
             }
         };
         let max_output_tokens = request.max_output_tokens;
+        let candidate_run_output_ceiling =
+            max_output_tokens.map(|limit| u64::from(limit) * (u64::from(TOOL_STEP_CAP) + 1));
+        match run_output_ceiling {
+            None => run_output_ceiling = Some(candidate_run_output_ceiling),
+            Some(existing) if existing == candidate_run_output_ceiling => {}
+            Some(_) => {
+                drive_terminal_event(
+                    &mut state,
+                    &mut journal,
+                    AgentEvent::ProviderFailed(AgentFailure::ProviderInvalidResponse),
+                )
+                .await;
+                return;
+            }
+        }
         let Ok((next, effects)) = reduce(&state, AgentEvent::ContextPrepared) else {
             return;
         };
@@ -528,14 +545,20 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
                         break pending_tools.into_values().collect::<Vec<_>>();
                     }
                     Ok(Some(event)) => {
+                        let sampling = ProviderSamplingContext {
+                            max_output_tokens,
+                            usage_seen: &mut usage_seen,
+                            runtime: inner.runtime.as_ref(),
+                            lease,
+                            sampling_index,
+                            max_run_output_tokens: run_output_ceiling.flatten(),
+                            audit: inner.audit.as_ref(),
+                        };
                         if handle_provider_event(
                             &mut state,
                             &mut journal,
                             event,
-                            max_output_tokens,
-                            &mut usage_seen,
-                            inner.audit.as_ref(),
-                            lease,
+                            sampling,
                         ).await {
                             return;
                         }
@@ -716,6 +739,16 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
         if !matches!(effects.as_slice(), [AgentEffect::LoadContext]) {
             return;
         }
+        let Some(next_sampling_index) = sampling_index.checked_add(1) else {
+            drive_terminal_event(
+                &mut state,
+                &mut journal,
+                AgentEvent::ProviderFailed(AgentFailure::RunTokenBudgetExceeded),
+            )
+            .await;
+            return;
+        };
+        sampling_index = next_sampling_index;
     }
 }
 
@@ -758,14 +791,21 @@ where
     }
 }
 
+struct ProviderSamplingContext<'a> {
+    max_output_tokens: Option<u32>,
+    usage_seen: &'a mut bool,
+    runtime: &'a dyn RunRuntime,
+    lease: &'a RunExecutionLease,
+    sampling_index: u32,
+    max_run_output_tokens: Option<u64>,
+    audit: &'a dyn AgentAudit,
+}
+
 async fn handle_provider_event(
     state: &mut AgentState,
     journal: &mut DurableTextRun,
     event: ProviderEvent,
-    max_output_tokens: Option<u32>,
-    usage_seen: &mut bool,
-    audit: &dyn AgentAudit,
-    lease: &RunExecutionLease,
+    sampling: ProviderSamplingContext<'_>,
 ) -> bool {
     match event {
         ProviderEvent::ResponseStarted { .. }
@@ -811,7 +851,7 @@ async fn handle_provider_event(
             true
         }
         ProviderEvent::Usage(usage) => {
-            let usage_is_invalid = *usage_seen
+            let usage_is_invalid = *sampling.usage_seen
                 || usage
                     .input_tokens
                     .checked_add(usage.output_tokens)
@@ -824,23 +864,60 @@ async fn handle_provider_event(
                 )
                 .await;
                 true
-            } else if max_output_tokens.is_some_and(|limit| usage.output_tokens > u64::from(limit))
-            {
-                *usage_seen = true;
-                drive_terminal_event(
-                    state,
-                    journal,
-                    AgentEvent::ProviderFailed(AgentFailure::ProviderTokenBudgetExceeded),
-                )
-                .await;
-                true
             } else {
-                *usage_seen = true;
-                false
+                let sampling_budget_exceeded = sampling
+                    .max_output_tokens
+                    .is_some_and(|limit| usage.output_tokens > u64::from(limit));
+                match sampling
+                    .runtime
+                    .record_provider_usage(
+                        sampling.lease,
+                        sampling.sampling_index,
+                        usage,
+                        sampling.max_run_output_tokens,
+                    )
+                    .await
+                {
+                    Ok(RunTokenUsageReceipt::Recorded(_) | RunTokenUsageReceipt::Replayed(_)) => {
+                        *sampling.usage_seen = true;
+                        if sampling_budget_exceeded {
+                            drive_terminal_event(
+                                state,
+                                journal,
+                                AgentEvent::ProviderFailed(
+                                    AgentFailure::ProviderTokenBudgetExceeded,
+                                ),
+                            )
+                            .await;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Ok(RunTokenUsageReceipt::BudgetExceeded(_)) => {
+                        *sampling.usage_seen = true;
+                        drive_terminal_event(
+                            state,
+                            journal,
+                            AgentEvent::ProviderFailed(AgentFailure::RunTokenBudgetExceeded),
+                        )
+                        .await;
+                        true
+                    }
+                    Err(RunRuntimeError::StaleLease) => {
+                        drive_terminal_event(state, journal, AgentEvent::LeaseLost).await;
+                        true
+                    }
+                    Err(_) => {
+                        drive_terminal_event(state, journal, AgentEvent::JournalCommitUnknown)
+                            .await;
+                        true
+                    }
+                }
             }
         }
         ProviderEvent::Completed => {
-            if max_output_tokens.is_some() && !*usage_seen {
+            if sampling.max_output_tokens.is_some() && !*sampling.usage_seen {
                 drive_terminal_event(
                     state,
                     journal,
@@ -862,8 +939,9 @@ async fn handle_provider_event(
         ProviderEvent::Failed(failure) => {
             if failure == ProviderFailure::StreamStalled && {
                 metrics::counter!("openbot_agent_stream_stalled_total").increment(1);
-                audit
-                    .record(lease, AgentAuditKind::StreamStalled)
+                sampling
+                    .audit
+                    .record(sampling.lease, AgentAuditKind::StreamStalled)
                     .await
                     .is_err()
             } {
@@ -1028,6 +1106,7 @@ const fn failure_code(failure: AgentFailure) -> RunFailureCode {
         AgentFailure::ProviderStreamStalled => RunFailureCode::ProviderStreamStalled,
         AgentFailure::ProviderGenerationFailed => RunFailureCode::ProviderGenerationFailed,
         AgentFailure::ProviderTokenBudgetExceeded => RunFailureCode::ProviderTokenBudgetExceeded,
+        AgentFailure::RunTokenBudgetExceeded => RunFailureCode::RunTokenBudgetExceeded,
         AgentFailure::ToolStepLimit => RunFailureCode::ToolStepLimit,
         AgentFailure::ToolLoopUnavailable => RunFailureCode::ToolLoopUnavailable,
         AgentFailure::ToolDenied => RunFailureCode::ToolDenied,
@@ -1045,7 +1124,7 @@ mod tests {
     use openbot_application::{
         AgentAuditError, ClaimedRunDispatch, NoAgentAudit, ProviderMessage, ProviderMessageRole,
         ProviderPortError, ProviderRequest, ProviderSession, ProviderUsage, RunSemanticChannel,
-        RunToolExchange, RunWriteReceipt,
+        RunTokenUsage, RunToolExchange, RunWriteReceipt,
     };
     use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId, ToolCallId};
     use openbot_domain::thread::FencingToken;
@@ -1056,7 +1135,18 @@ mod tests {
 
     struct FakeRuntime {
         calls: StdMutex<Vec<RuntimeCall>>,
+        usage: StdMutex<FakeUsage>,
+        force_budget_exceeded: bool,
         terminal: Notify,
+    }
+
+    #[derive(Default)]
+    struct FakeUsage {
+        ceiling_initialized: bool,
+        ceiling: Option<u64>,
+        next_sampling: u32,
+        aggregate: RunTokenUsage,
+        last: Option<(u32, ProviderUsage)>,
     }
 
     #[derive(Default)]
@@ -1094,12 +1184,26 @@ mod tests {
         fn new() -> Self {
             Self {
                 calls: StdMutex::new(Vec::new()),
+                usage: StdMutex::new(FakeUsage::default()),
+                force_budget_exceeded: false,
                 terminal: Notify::new(),
+            }
+        }
+
+        fn rejecting_usage_budget() -> Self {
+            Self {
+                force_budget_exceeded: true,
+                ..Self::new()
             }
         }
 
         fn calls(&self) -> Vec<RuntimeCall> {
             self.calls.lock().expect("fake lock").clone()
+        }
+
+        fn usage(&self) -> (Option<u64>, u32, RunTokenUsage) {
+            let usage = self.usage.lock().expect("usage lock");
+            (usage.ceiling, usage.next_sampling, usage.aggregate)
         }
     }
 
@@ -1170,6 +1274,89 @@ mod tests {
                     exchange.result().to_owned(),
                 ));
             Ok(receipt(expected_sequence))
+        }
+
+        async fn record_provider_usage(
+            &self,
+            _lease: &RunExecutionLease,
+            sampling_index: u32,
+            usage: ProviderUsage,
+            max_run_output_tokens: Option<u64>,
+        ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
+            let mut state = self.usage.lock().expect("usage lock");
+            if state.ceiling_initialized {
+                if state.ceiling != max_run_output_tokens {
+                    return Err(RunRuntimeError::Conflict);
+                }
+            } else {
+                state.ceiling_initialized = true;
+                state.ceiling = max_run_output_tokens;
+            }
+            if self.force_budget_exceeded {
+                return Ok(RunTokenUsageReceipt::BudgetExceeded(state.aggregate));
+            }
+            if sampling_index < state.next_sampling {
+                return if state.last == Some((sampling_index, usage))
+                    && sampling_index.checked_add(1) == Some(state.next_sampling)
+                {
+                    if state
+                        .ceiling
+                        .is_some_and(|limit| state.aggregate.output_tokens > limit)
+                    {
+                        Ok(RunTokenUsageReceipt::BudgetExceeded(state.aggregate))
+                    } else {
+                        Ok(RunTokenUsageReceipt::Replayed(state.aggregate))
+                    }
+                } else {
+                    Err(RunRuntimeError::Conflict)
+                };
+            }
+            if sampling_index != state.next_sampling {
+                return Err(RunRuntimeError::Conflict);
+            }
+            let next = RunTokenUsage {
+                input_tokens: state
+                    .aggregate
+                    .input_tokens
+                    .checked_add(usage.input_tokens)
+                    .ok_or(RunRuntimeError::InvalidInput {
+                        field: "provider_usage",
+                    })?,
+                output_tokens: state
+                    .aggregate
+                    .output_tokens
+                    .checked_add(usage.output_tokens)
+                    .ok_or(RunRuntimeError::InvalidInput {
+                        field: "provider_usage",
+                    })?,
+                total_tokens: state
+                    .aggregate
+                    .total_tokens
+                    .checked_add(usage.total_tokens)
+                    .ok_or(RunRuntimeError::InvalidInput {
+                        field: "provider_usage",
+                    })?,
+            };
+            if max_run_output_tokens.is_some_and(|limit| next.output_tokens > limit) {
+                state.aggregate = next;
+                state.last = Some((sampling_index, usage));
+                state.next_sampling =
+                    sampling_index
+                        .checked_add(1)
+                        .ok_or(RunRuntimeError::InvalidInput {
+                            field: "sampling_index",
+                        })?;
+                return Ok(RunTokenUsageReceipt::BudgetExceeded(next));
+            }
+            state.aggregate = next;
+            state.last = Some((sampling_index, usage));
+            state.next_sampling =
+                sampling_index
+                    .checked_add(1)
+                    .ok_or(RunRuntimeError::InvalidInput {
+                        field: "sampling_index",
+                    })?;
+            Ok(RunTokenUsageReceipt::Recorded(next))
         }
 
         async fn finish_run(
@@ -1574,8 +1761,59 @@ mod tests {
         assert_eq!(context.loads.load(AtomicOrdering::SeqCst), 2);
         assert_eq!(provider.starts.load(AtomicOrdering::SeqCst), 2);
         assert_eq!(tools.calls.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(
+            runtime.usage(),
+            (
+                Some(288),
+                2,
+                RunTokenUsage {
+                    input_tokens: 8,
+                    output_tokens: 3,
+                    total_tokens: 11,
+                },
+            )
+        );
         agent.stop().await;
         assert_eq!(tools.releases.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn run_wide_usage_budget_exhaustion_commits_stable_terminal() {
+        let runtime = Arc::new(FakeRuntime::rejecting_usage_budget());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            Arc::new(FakeProvider {
+                events: vec![ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 3,
+                    output_tokens: 2,
+                    total_tokens: 5,
+                })],
+                hold: false,
+            }),
+            Arc::new(NoAgentToolInvoker),
+            Arc::new(NoAgentAudit),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-wide-budget");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.calls(),
+            [RuntimeCall::Finish(
+                1,
+                RunTerminal::Failed(RunFailureCode::RunTokenBudgetExceeded),
+            )]
+        );
+        agent.stop().await;
     }
 
     #[tokio::test]
@@ -1857,6 +2095,18 @@ mod tests {
                 1,
                 RunTerminal::Failed(RunFailureCode::ProviderTokenBudgetExceeded)
             )]
+        );
+        assert_eq!(
+            runtime.usage(),
+            (
+                Some(288),
+                1,
+                RunTokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 33,
+                    total_tokens: 43,
+                },
+            )
         );
         agent.stop().await;
     }

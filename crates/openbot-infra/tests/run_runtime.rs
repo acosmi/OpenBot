@@ -6,8 +6,9 @@ use std::sync::Arc;
 
 use harness::{admin_config, with_temp_database};
 use openbot_application::{
-    BeginThreadRunRequest, NoRunDispatchConsumer, RunExecutionLease, RunFailureCode, RunRuntime,
-    RunRuntimeError, RunSemanticChannel, RunTerminal, ThreadDirectory,
+    BeginThreadRunRequest, NoRunDispatchConsumer, ProviderUsage, RunExecutionLease, RunFailureCode,
+    RunRuntime, RunRuntimeError, RunSemanticChannel, RunTerminal, RunTokenUsage,
+    RunTokenUsageReceipt, ThreadDirectory,
 };
 use openbot_contracts::command::{BeginThreadRun, ThreadRunAnchor};
 use openbot_contracts::ids::thread::ThreadIdentity;
@@ -64,6 +65,263 @@ fn runtime(pool: &deadpool_postgres::Pool, owner: &str) -> Result<PostgresRunRun
         DEFAULT_DISPATCH_CLAIM_DURATION,
     )
     .map_err(|error| error.to_string())
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
+    let admin = admin_config("provider_usage_is_run_wide_exact_replayable_and_budget_fenced");
+    with_temp_database(&admin, "runusage", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let deployment = DeploymentId::new("dep-usage");
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                "runtime-usage".to_owned(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            directory
+                .begin_thread_run(request(&deployment, 91, "run-usage"))
+                .await
+                .map_err(|error| error.to_string())?;
+            let runtime = runtime(&pool, "runtime-usage")?;
+            let claim = runtime
+                .claim_dispatch()
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or("usage dispatch 未被 claim")?;
+            let lease = runtime
+                .acknowledge_dispatch(&claim)
+                .await
+                .map_err(|error| error.to_string())?;
+            if runtime
+                .record_provider_usage(
+                    &lease,
+                    0,
+                    ProviderUsage {
+                        input_tokens: 2,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    Some(5),
+                )
+                .await
+                != Err(RunRuntimeError::InvalidInput {
+                    field: "provider_usage",
+                })
+                || runtime
+                    .record_provider_usage(
+                        &lease,
+                        0,
+                        ProviderUsage {
+                            input_tokens: 2,
+                            output_tokens: 1,
+                            total_tokens: 3,
+                        },
+                        Some(0),
+                    )
+                    .await
+                    != Err(RunRuntimeError::InvalidInput {
+                        field: "provider_usage",
+                    })
+            {
+                return Err("invalid usage/cap 必须在写入前拒绝".to_owned());
+            }
+            let first_usage = ProviderUsage {
+                input_tokens: 10,
+                output_tokens: 2,
+                total_tokens: 12,
+            };
+            let first = RunTokenUsage {
+                input_tokens: 10,
+                output_tokens: 2,
+                total_tokens: 12,
+            };
+            if runtime
+                .record_provider_usage(&lease, 0, first_usage, Some(5))
+                .await
+                .map_err(|error| error.to_string())?
+                != RunTokenUsageReceipt::Recorded(first)
+            {
+                return Err("首个 sampling usage 未精确记录".to_owned());
+            }
+            if runtime
+                .record_provider_usage(&lease, 0, first_usage, Some(5))
+                .await
+                .map_err(|error| error.to_string())?
+                != RunTokenUsageReceipt::Replayed(first)
+            {
+                return Err("同一 sampling usage 未精确回放".to_owned());
+            }
+            let exceeded = RunTokenUsage {
+                input_tokens: 31,
+                output_tokens: 6,
+                total_tokens: 37,
+            };
+            if runtime
+                .record_provider_usage(
+                    &lease,
+                    0,
+                    ProviderUsage {
+                        input_tokens: 10,
+                        output_tokens: 1,
+                        total_tokens: 11,
+                    },
+                    Some(5),
+                )
+                .await
+                != Err(RunRuntimeError::Conflict)
+            {
+                return Err("同 index 异值 usage 必须 conflict".to_owned());
+            }
+            if runtime
+                .record_provider_usage(&lease, 2, first_usage, Some(5))
+                .await
+                != Err(RunRuntimeError::Conflict)
+            {
+                return Err("跳号 sampling usage 必须 conflict".to_owned());
+            }
+            let second = RunTokenUsage {
+                input_tokens: 30,
+                output_tokens: 5,
+                total_tokens: 35,
+            };
+            if runtime
+                .record_provider_usage(
+                    &lease,
+                    1,
+                    ProviderUsage {
+                        input_tokens: 20,
+                        output_tokens: 3,
+                        total_tokens: 23,
+                    },
+                    Some(5),
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                != RunTokenUsageReceipt::Recorded(second)
+            {
+                return Err("第二个 sampling 未累加到 run aggregate".to_owned());
+            }
+            if runtime
+                .record_provider_usage(
+                    &lease,
+                    2,
+                    ProviderUsage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    Some(5),
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                != RunTokenUsageReceipt::BudgetExceeded(exceeded)
+            {
+                return Err("跨 sampling output ceiling 未 fail closed".to_owned());
+            }
+            if runtime
+                .record_provider_usage(
+                    &lease,
+                    2,
+                    ProviderUsage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    Some(5),
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                != RunTokenUsageReceipt::BudgetExceeded(exceeded)
+            {
+                return Err("超预算 sampling 未精确回放同一结论".to_owned());
+            }
+            if runtime
+                .record_provider_usage(
+                    &lease,
+                    3,
+                    ProviderUsage {
+                        input_tokens: 1,
+                        output_tokens: 0,
+                        total_tokens: 1,
+                    },
+                    Some(6),
+                )
+                .await
+                != Err(RunRuntimeError::Conflict)
+            {
+                return Err("已固定 run ceiling 不得漂移".to_owned());
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let row = client
+                .query_one(
+                    "SELECT budget_max_output_tokens,usage_input_tokens,usage_output_tokens, \
+                            usage_total_tokens,usage_next_sampling,usage_last_sampling \
+                     FROM public.runs WHERE run_id='run-usage'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let facts: (Option<i64>, i64, i64, i64, i32, Option<i32>) = (
+                row.try_get(0).map_err(|error| error.to_string())?,
+                row.try_get(1).map_err(|error| error.to_string())?,
+                row.try_get(2).map_err(|error| error.to_string())?,
+                row.try_get(3).map_err(|error| error.to_string())?,
+                row.try_get(4).map_err(|error| error.to_string())?,
+                row.try_get(5).map_err(|error| error.to_string())?,
+            );
+            if facts != (Some(5), 31, 6, 37, 3, Some(2)) {
+                return Err(format!("durable run usage 漂移：{facts:?}"));
+            }
+            runtime
+                .finish_run(
+                    &lease,
+                    1,
+                    RunTerminal::Failed(RunFailureCode::RunTokenBudgetExceeded),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let terminal: (String, Option<String>) = client
+                .query_one(
+                    "SELECT status,error_code FROM public.runs WHERE run_id='run-usage'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|row| {
+                    Ok((
+                        row.try_get(0).map_err(|error| error.to_string())?,
+                        row.try_get(1).map_err(|error| error.to_string())?,
+                    ))
+                })?;
+            if terminal
+                != (
+                    "failed".to_owned(),
+                    Some("run_token_budget_exceeded".to_owned()),
+                )
+            {
+                return Err(format!("run budget terminal code 漂移：{terminal:?}"));
+            }
+            if runtime
+                .record_provider_usage(&lease, 3, first_usage, Some(5))
+                .await
+                != Err(RunRuntimeError::StaleLease)
+            {
+                return Err("terminal run 必须拒绝后续 usage".to_owned());
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
 }
 
 #[tokio::test]

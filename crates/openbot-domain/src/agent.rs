@@ -203,6 +203,8 @@ pub enum AgentFailure {
     ProviderGenerationFailed,
     /// Provider reported output beyond the authoritative per-sampling cap。
     ProviderTokenBudgetExceeded,
+    /// Cumulative normalized output exceeded the run-wide token ceiling.
+    RunTokenBudgetExceeded,
     /// Tool step cap 8。
     ToolStepLimit,
     /// Tool loop implementation unavailable。

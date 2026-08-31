@@ -214,6 +214,41 @@ pub const SECRET_SCAN_EXEMPTIONS: &[(&str, &str, &str)] = &[
         "SHA-256 导入完整性摘要，不是 secret 或可用认证物",
     ),
     (
+        "runs",
+        "budget_max_output_tokens",
+        "bigint：run 输出 token 的数值上限，不含任何可认证 token 字节",
+    ),
+    (
+        "runs",
+        "usage_input_tokens",
+        "bigint：provider 输入 token 的累计数量，不含 prompt 或可认证 token 字节",
+    ),
+    (
+        "runs",
+        "usage_last_input_tokens",
+        "bigint：最后一次 sampling 的输入 token 数量，不含 prompt 或可认证 token 字节",
+    ),
+    (
+        "runs",
+        "usage_last_output_tokens",
+        "bigint：最后一次 sampling 的输出 token 数量，不含回复或可认证 token 字节",
+    ),
+    (
+        "runs",
+        "usage_last_total_tokens",
+        "bigint：最后一次 sampling 的总 token 数量，不含内容或可认证 token 字节",
+    ),
+    (
+        "runs",
+        "usage_output_tokens",
+        "bigint：provider 输出 token 的累计数量，不含回复或可认证 token 字节",
+    ),
+    (
+        "runs",
+        "usage_total_tokens",
+        "bigint：provider 报告 token 的累计总数，不含内容或可认证 token 字节",
+    ),
+    (
         "tool_calls",
         "schema_hash",
         "SHA-256 catalog schema 摘要是公开版本标识，不由运行期 secret 输入派生",
@@ -222,7 +257,7 @@ pub const SECRET_SCAN_EXEMPTIONS: &[(&str, &str, &str)] = &[
 
 /// 这一列是否登记在 [`SECRET_COLUMNS`] 里。
 ///
-/// 由 `define_table!` 展开出来的 `Debug` 调用。线性扫 26 项 —— `Debug` 不在热路径上，
+/// 由 `define_table!` 展开出来的 `Debug` 调用。线性扫 32 项 —— `Debug` 不在热路径上，
 /// 换成完美哈希只会多一处可以和台账漂开的东西。
 pub fn is_secret_column(table: &str, column: &str) -> bool {
     SECRET_COLUMNS
@@ -481,7 +516,8 @@ pub mod thread_leases;
 pub mod thread_memberships;
 pub mod threads;
 
-/// Native 0016 的十张 thread/realtime/memory 表，按表名升序。
+/// Native 0016 的十张 thread/realtime/memory 表，按表名升序；`runs` 的 typed row
+/// 同步包含 0024 expand-only usage suffix。
 pub const NATIVE_0016_TABLES: &[TableSpec] = &[
     TableSpec {
         name: intelligence_import_cursors::TABLE_NAME,
@@ -943,7 +979,7 @@ mod tests {
             .count();
         assert_eq!(hits, registered_root_hits + exemption_root_hits);
         assert_eq!(SECRET_COLUMNS.len(), 32);
-        assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 11);
+        assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 18);
     }
 
     /// 两张名单都必须指向真实存在的 `(表, 列)`，且互不重叠。

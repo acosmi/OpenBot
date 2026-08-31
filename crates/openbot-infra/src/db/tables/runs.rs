@@ -1,4 +1,4 @@
-//! `public.runs` typed row（native 0016）。
+//! `public.runs` typed row（native 0016 + expand-only 0024 usage suffix）。
 
 crate::db::tables::define_table! {
     table = "runs";
@@ -16,4 +16,13 @@ crate::db::tables::define_table! {
     created_at: time::OffsetDateTime = ("created_at", "timestamp with time zone", true),
     started_at: Option<time::OffsetDateTime> = ("started_at", "timestamp with time zone", false),
     finished_at: Option<time::OffsetDateTime> = ("finished_at", "timestamp with time zone", false),
+    budget_max_output_tokens: Option<i64> = ("budget_max_output_tokens", "bigint", false),
+    usage_input_tokens: i64 = ("usage_input_tokens", "bigint", true),
+    usage_output_tokens: i64 = ("usage_output_tokens", "bigint", true),
+    usage_total_tokens: i64 = ("usage_total_tokens", "bigint", true),
+    usage_next_sampling: i32 = ("usage_next_sampling", "integer", true),
+    usage_last_sampling: Option<i32> = ("usage_last_sampling", "integer", false),
+    usage_last_input_tokens: Option<i64> = ("usage_last_input_tokens", "bigint", false),
+    usage_last_output_tokens: Option<i64> = ("usage_last_output_tokens", "bigint", false),
+    usage_last_total_tokens: Option<i64> = ("usage_last_total_tokens", "bigint", false),
 }
