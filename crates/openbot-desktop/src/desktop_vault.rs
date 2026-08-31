@@ -3,7 +3,7 @@
 //! v4 §6.4 requires the Desktop master key to live in Keychain / Credential Manager / Secret
 //! Service, never an environment variable or app-data file. The only production entry point is a
 //! live [`RunningDesktopLocalDataPlane`], which still owns the single-instance PostgreSQL start
-//! lock. Platform calls are blocking; future Tauri setup must call this module on a background
+//! lock. Platform calls are blocking; the Desktop runtime calls this module from its Tauri runtime
 //! worker before creating any window.
 
 use std::sync::Arc;
@@ -121,6 +121,23 @@ impl DesktopApplicationKeyMaterial {
     #[must_use]
     pub fn expose_mcp_oauth_state_key(&self) -> &[u8] {
         self.mcp_oauth_state_key.expose()
+    }
+
+    #[cfg(feature = "desktop-local-runtime")]
+    pub(crate) fn into_assembly_parts(
+        self,
+    ) -> (
+        CredentialRecordVault,
+        SecretBytes,
+        Arc<RemoteRunAssertionSigner>,
+        SecretBytes,
+    ) {
+        (
+            self.credential_vault,
+            self.audit_key,
+            self.remote_assertions,
+            self.mcp_oauth_state_key,
+        )
     }
 }
 

@@ -64,6 +64,7 @@ use openbot_infra::remote_agui::SafeRemoteAguiTransport;
 use openbot_infra::run_runtime::RunRelay;
 use openbot_infra::sandboxed_components::PostgresSandboxedComponentAdministration;
 use openbot_infra::tenant::{PostgresTenantPackageSynchronizer, load_tenant_package};
+use openbot_infra::ui_preferences::PostgresUiPreferenceAdministration;
 use openbot_infra::vault::CredentialRecordVault;
 use openbot_server::config::{
     AgentBudgets, DEFAULT_TENANT_PACKAGE_DIR, DeploymentEnvironment, ManagedProviderConfig,
@@ -339,6 +340,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         remote_assertions: remote_assertions.clone(),
         mcp_oauth_state_key: SecretBytes::new(mcp_oauth_state_key.expose().to_vec()),
         policy_store: policy_store.clone(),
+        ui_preferences: Arc::new(PostgresUiPreferenceAdministration::new(pool.clone())),
         remote_agent_probe,
         managed_slot_available: managed_provider_for_slot(&server).is_some(),
         channel_routing_provider: ChannelRoutingProviderInput {

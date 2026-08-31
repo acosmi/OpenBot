@@ -24,6 +24,9 @@ grep -Fq 'openbot-infra = { workspace = true, features = ["server-sso"] }' crate
 grep -Fq 'openbot-infra = { workspace = true, optional = true, features = ["desktop-local"] }' crates/openbot-desktop/Cargo.toml || fail "Desktop local infra edge drift"
 grep -Fq 'os-key-store = [' crates/openbot-desktop/Cargo.toml || fail "shared OS key-store feature missing"
 grep -Fq 'desktop-vault = [' crates/openbot-desktop/Cargo.toml || fail "Desktop Vault feature missing"
+grep -Fq 'desktop-local-runtime = [' crates/openbot-desktop/Cargo.toml || fail "Desktop Local runtime feature missing"
+grep -Fq '    "openbot-infra/server-runtime",' crates/openbot-desktop/Cargo.toml || fail "Desktop Local runtime lost shared application adapters"
+grep -Fq '    "dep:openbot-agent",' crates/openbot-desktop/Cargo.toml || fail "Desktop Local runtime lost Agent host"
 
 sf_block=$(awk '/^name = "security-framework"$/{show=1} show{print} show && /^$/{exit}' Cargo.lock)
 sfs_block=$(awk '/^name = "security-framework-sys"$/{show=1} show{print} show && /^$/{exit}' Cargo.lock)
@@ -39,6 +42,9 @@ build_scripts=$(jq '[.packages[] | select(.name == "security-framework" or .name
 mac_tree=$(cargo tree -p openbot-desktop --all-features --target aarch64-apple-darwin -e normal --locked)
 windows_tree=$(cargo tree -p openbot-desktop --all-features --target x86_64-pc-windows-msvc -e normal --locked)
 linux_tree=$(cargo tree -p openbot-desktop --all-features --target x86_64-unknown-linux-gnu -e normal --locked)
+mac_vault_tree=$(cargo tree -p openbot-desktop --no-default-features --features desktop-vault --target aarch64-apple-darwin -e normal --locked)
+windows_vault_tree=$(cargo tree -p openbot-desktop --no-default-features --features desktop-vault --target x86_64-pc-windows-msvc -e normal --locked)
+linux_vault_tree=$(cargo tree -p openbot-desktop --no-default-features --features desktop-vault --target x86_64-unknown-linux-gnu -e normal --locked)
 server_tree=$(cargo tree -p openbot-server --target aarch64-apple-darwin -e normal --locked)
 
 grep -Fq 'security-framework v3.7.0' <<<"$mac_tree" || fail "macOS Desktop graph lacks Keychain adapter"
@@ -49,9 +55,19 @@ grep -Fq 'openbot-windows-sandbox v' <<<"$windows_tree" || fail "Windows Desktop
 if grep -Fq 'openbot-windows-sandbox v' <<<"$mac_tree$linux_tree$server_tree"; then
   fail "Windows unsafe boundary leaked into macOS/Linux/Server graph"
 fi
-if grep -Eq '(^| )(samael|openssl-sys|ring|rustls) v' <<<"$mac_tree$windows_tree$linux_tree"; then
-  fail "Server TLS/SAML/xmlsec/OpenSSL leaked into Desktop graph"
+if grep -Eq '(^| )(samael|openssl-sys|ring|rustls) v' <<<"$mac_vault_tree$windows_vault_tree$linux_vault_tree"; then
+  fail "Server network/SSO graph leaked into the Desktop bootstrap/Vault-only graph"
 fi
+if grep -Fq 'openbot-agent v' <<<"$mac_vault_tree$windows_vault_tree$linux_vault_tree"; then
+  fail "Agent host leaked into the Desktop bootstrap/Vault-only graph"
+fi
+if grep -Eq '(^| )(samael|openssl-sys) v' <<<"$mac_tree$windows_tree$linux_tree"; then
+  fail "Server SSO/xmlsec/OpenSSL leaked into the full Desktop application graph"
+fi
+grep -Fq 'rustls v' <<<"$mac_tree" || fail "full macOS Desktop application graph lacks SafeDialer TLS"
+grep -Fq 'rustls v' <<<"$windows_tree" || fail "full Windows Desktop application graph lacks SafeDialer TLS"
+grep -Fq 'openbot-agent v' <<<"$mac_tree" || fail "full macOS Desktop application graph lacks Agent host"
+grep -Fq 'openbot-agent v' <<<"$windows_tree" || fail "full Windows Desktop application graph lacks Agent host"
 grep -Fq 'samael v0.0.22' <<<"$server_tree" || fail "Server graph lost pinned SAML implementation"
 grep -Fq 'openssl-sys v' <<<"$server_tree" || fail "Server graph lost reviewed xmlsec/OpenSSL edge"
 grep -Fq 'rustls v' <<<"$server_tree" || fail "Server graph lost reviewed TLS edge"
@@ -89,4 +105,4 @@ if rg -n 'DatabaseConfig::new|std::env::(var|var_os|vars|vars_os)' <<<"$desktop_
   fail "Desktop Local bootstrap gained String config or environment fallback"
 fi
 
-echo "PostgreSQL key-store dependency guard: ok (one shared macOS Keychain consumer; Windows sole unsafe Cred*; PG+Vault formats isolated; Desktop TLS/SAML/OpenSSL=0; Server runtime+SSO retained)"
+echo "PostgreSQL key-store dependency guard: ok (one shared macOS Keychain consumer; Windows sole unsafe Cred*; bootstrap TLS/SSO=0; full Desktop rustls with SSO/OpenSSL=0; Server runtime+SSO retained)"

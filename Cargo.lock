@@ -4537,6 +4537,7 @@ dependencies = [
  "futures-core",
  "getrandom 0.4.3",
  "http",
+ "openbot-agent",
  "openbot-application",
  "openbot-contracts",
  "openbot-domain",
@@ -4554,6 +4555,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+ "url",
  "uuid",
 ]
 

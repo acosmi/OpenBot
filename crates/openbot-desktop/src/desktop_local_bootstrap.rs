@@ -3,8 +3,8 @@
 //! This module deliberately stops before Tauri window creation. Its success value proves the
 //! exact sequence required by v4 R153–R156: same installation/data directory, exact Tenant Package
 //! scope, administrative SCRAM connection, live sidecar attestation, fixed database
-//! create/reconciliation, shared migrations, canonical principal, and package membership. A later
-//! Tauri setup may build one application service and bind a window only while this owner remains
+//! create/reconciliation, shared migrations, canonical principal, and package membership. The
+//! Tauri background runtime now consumes this owner and may bind a window only while it remains
 //! alive.
 
 use openbot_application::tenant::package::LoadedTenantPackage;

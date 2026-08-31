@@ -1405,6 +1405,12 @@ mod tests {
     use openbot_application::tenant::package::{
         LoadedTenantPackage, TenantPackageFiles, validate_tenant_package,
     };
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    use openbot_contracts::command::{AppCommand, AppReply, BeginThreadRun, ThreadRunAnchor};
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    use openbot_contracts::ids::{BotId, RunId};
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    use openbot_contracts::ui::{UiTheme, UpdateUiPreferences};
     #[cfg(all(feature = "desktop-vault", unix))]
     use openbot_domain::vault::{SecretKind, SecretPrincipal};
     #[cfg(all(feature = "desktop-vault", unix))]
@@ -1426,6 +1432,13 @@ mod tests {
     use crate::desktop_vault::ReviewedDesktopVaultKeyStoreService;
     #[cfg(all(feature = "desktop-vault", unix))]
     use crate::os_secret_store::{OsSecretStore, OsSecretStoreError};
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    use crate::tauri_background::{
+        DesktopLocalApplicationInput, DesktopLocalReleaseInput, DesktopLocalRuntimeConfig,
+        prepare_desktop_local_runtime,
+    };
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    use crate::{DesktopAgentBudgets, DesktopOpenAiProviderInput};
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1821,6 +1834,53 @@ mod tests {
         }
     }
 
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    struct RuntimeMemorySecretStore {
+        values: Mutex<std::collections::BTreeMap<(String, String), Vec<u8>>>,
+        writes: AtomicUsize,
+    }
+
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    impl RuntimeMemorySecretStore {
+        fn empty() -> Self {
+            Self {
+                values: Mutex::new(std::collections::BTreeMap::new()),
+                writes: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    impl OsSecretStore for RuntimeMemorySecretStore {
+        fn read(
+            &self,
+            service: &str,
+            account: &str,
+        ) -> Result<Option<SecretBytes>, OsSecretStoreError> {
+            Ok(self
+                .values
+                .lock()
+                .unwrap()
+                .get(&(service.to_owned(), account.to_owned()))
+                .cloned()
+                .map(SecretBytes::new))
+        }
+
+        fn write(
+            &self,
+            service: &str,
+            account: &str,
+            secret: &[u8],
+        ) -> Result<(), OsSecretStoreError> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            self.values
+                .lock()
+                .unwrap()
+                .insert((service.to_owned(), account.to_owned()), secret.to_vec());
+            Ok(())
+        }
+    }
+
     #[cfg(feature = "postgres-supervisor")]
     fn supervisor_test_paths(name: &str) -> (PathBuf, String, PathBuf) {
         let app_root = root(name);
@@ -2005,6 +2065,19 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    fn materialize_desktop_dist() -> PathBuf {
+        let dist = root("tauri-background-dist");
+        fs::create_dir_all(&dist).unwrap();
+        fs::write(
+            dist.join("index.html"),
+            "<!doctype html><html lang=\"en\"><head><script type=\"module\" src=\"/openbot-bootstrap.mjs\"></script></head><body></body></html>",
+        )
+        .unwrap();
+        fs::write(dist.join("openbot-bootstrap.mjs"), "export {};").unwrap();
+        dist
+    }
+
     #[cfg(all(feature = "desktop-vault", unix))]
     async fn fixed_application_database_exists(running: &RunningPostgresSidecar) -> bool {
         let connection = running.connection();
@@ -2032,6 +2105,138 @@ mod tests {
             .expect("probe driver task join")
             .expect("probe driver close");
         exists
+    }
+
+    #[cfg(all(feature = "desktop-local-runtime", unix))]
+    #[tokio::test]
+    #[ignore = "需要本机PostgreSQL 17.11 binaries；设置OPENBOT_TEST_POSTGRES_BIN_DIR后运行"]
+    async fn tauri_background_prepares_one_real_application_and_cleans_every_owner() {
+        let bin_dir = PathBuf::from(std::env::var_os("OPENBOT_TEST_POSTGRES_BIN_DIR").unwrap());
+        let (bundle_root, digest) = materialize_host_postgres_bundle(&bin_dir);
+        let bundle =
+            VerifiedPostgresBundle::open(&bundle_root, digest, &signing_identity()).unwrap();
+        let app_root = root("tauri-background-app");
+        let dist = materialize_desktop_dist();
+        let store = Arc::new(RuntimeMemorySecretStore::empty());
+        let os_store: Arc<dyn OsSecretStore> = store.clone();
+        let release = DesktopLocalReleaseInput::new(
+            &dist,
+            "openbot",
+            "main",
+            bundle,
+            ReviewedPostgresKeyStoreService::from_reviewed_release(
+                "com.example.product.postgresql.tauri-background",
+            )
+            .unwrap(),
+            ReviewedDesktopVaultKeyStoreService::from_reviewed_release(
+                "com.example.product.desktop-vault.tauri-background",
+            )
+            .unwrap(),
+            os_store,
+        )
+        .unwrap();
+        let application = DesktopLocalApplicationInput::new(
+            DesktopOpenAiProviderInput::new("https://api.example.test/v1", Vec::new()).unwrap(),
+            DesktopAgentBudgets::new(
+                Some(Duration::from_secs(2)),
+                Some(Duration::from_secs(1_800)),
+                16_384,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let config = DesktopLocalRuntimeConfig::new(release, application, |authority| {
+            Ok(loaded_desktop_package(
+                authority.auth_context().tenant().as_str(),
+            ))
+        });
+        let root = CurrentOsUserAppDataRoot::from_current_os_user_app_data(&app_root).unwrap();
+        let prepared = prepare_desktop_local_runtime(root, config).await.unwrap();
+        let reply = prepared
+            .application()
+            .execute(prepared.auth_context().clone(), AppCommand::GetCurrentUser)
+            .await
+            .unwrap();
+        assert!(matches!(reply, AppReply::CurrentUser(_)));
+        let reply = prepared
+            .application()
+            .execute(
+                prepared.auth_context().clone(),
+                AppCommand::UpdateUiPreferences(UpdateUiPreferences {
+                    theme: Some(UiTheme::Light),
+                    locale: None,
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            reply,
+            AppReply::UiPreferences(preferences)
+                if preferences.theme == Some(UiTheme::Light)
+        ));
+        let preferences = fs::read_to_string(app_root.join("ui-preferences-v1")).unwrap();
+        assert!(preferences.contains("theme=light"));
+        let minted = prepared
+            .application()
+            .execute(prepared.auth_context().clone(), AppCommand::MintThreadId)
+            .await
+            .unwrap();
+        let AppReply::ThreadMinted(minted) = minted else {
+            panic!("Desktop background application must mint a native thread");
+        };
+        let run_id = RunId::new("desktop-background-provider-missing");
+        let started = prepared
+            .application()
+            .execute(
+                prepared.auth_context().clone(),
+                AppCommand::BeginThreadRun(BeginThreadRun {
+                    thread_id: minted.thread_id,
+                    run_id: run_id.clone(),
+                    bot_id: BotId::new("desktop-assistant"),
+                    anchor: ThreadRunAnchor::DirectBot,
+                    message: "prove the Desktop Agent consumer".to_owned(),
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(started, AppReply::ThreadRunStarted(_)));
+        let mut terminal = None;
+        for _ in 0..200 {
+            let client = prepared.pool().get().await.unwrap();
+            let row = client
+                .query_one(
+                    "SELECT status,error_code FROM public.runs WHERE run_id=$1",
+                    &[&run_id.as_str()],
+                )
+                .await
+                .unwrap();
+            let status: String = row.get(0);
+            let error: Option<String> = row.get(1);
+            if status != "running" {
+                terminal = Some((status, error));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(
+            terminal,
+            Some((
+                "failed".to_owned(),
+                Some("provider_authentication".to_owned())
+            ))
+        );
+        assert_eq!(store.writes.load(Ordering::Relaxed), 2);
+        assert_eq!(prepared.active_window_count(), 0);
+        prepared.shutdown().await.unwrap();
+        assert!(
+            !fs::read_dir(&app_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains("start-lock"))
+        );
+        fs::remove_dir_all(app_root).unwrap();
+        fs::remove_dir_all(bundle_root).unwrap();
+        fs::remove_dir_all(dist).unwrap();
     }
 
     #[cfg(all(feature = "desktop-vault", unix))]
