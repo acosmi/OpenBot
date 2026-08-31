@@ -13,6 +13,7 @@ use openbot_contracts::agent::{
     AgentConnectionTestRequest, AgentMutationRequest, AgentProfileResponse, AgentProfilesResponse,
 };
 use openbot_contracts::auth::AuthContext;
+use openbot_contracts::budget::RunCostBudgetPreference;
 use openbot_contracts::command::{
     AppCommand, AppReply, BeginThreadRun, BeginThreadRunBody, CancelThreadRun,
     ChannelDetailResponse, CreateChannelRequest, MAX_THREAD_MESSAGE_BYTES, RouteChannelRequest,
@@ -535,6 +536,9 @@ impl DesktopTauriProtocol {
         if path == "/api/me/preferences" {
             return self.preferences(request, authority).await;
         }
+        if path == "/api/me/run-cost-budget" {
+            return self.run_cost_budget(request, authority).await;
+        }
         if path == "/api/channels" {
             return self.channels(request, authority).await;
         }
@@ -696,6 +700,33 @@ impl DesktopTauriProtocol {
         };
         match self.transport.execute(authority.auth, command).await {
             Ok(AppReply::UiPreferences(preferences)) => json_response(&preferences),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn run_cost_budget(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        let command = match *request.method() {
+            Method::GET if request.body().is_empty() => AppCommand::GetRunCostBudget,
+            Method::PUT if request.body().len() <= API_BODY_MAX_BYTES => {
+                let preference =
+                    match serde_json::from_slice::<RunCostBudgetPreference>(request.body()) {
+                        Ok(preference) => preference,
+                        Err(_) => {
+                            return error_response(AppError::MalformedPayload { field: "body" });
+                        }
+                    };
+                AppCommand::ReplaceRunCostBudget(preference)
+            }
+            Method::PUT => return payload_too_large(),
+            _ => return empty_response(StatusCode::METHOD_NOT_ALLOWED),
+        };
+        match self.transport.execute(authority.auth, command).await {
+            Ok(AppReply::RunCostBudget(preference)) => json_response(&preference),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -2167,7 +2198,8 @@ mod tests {
         ChannelReader, ChannelRoutingBackend, ChannelRoutingBackendError, ComponentAdministration,
         ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
         ComponentRuntimeScope, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
-        PeoplePortError, PortError, RoutingAuditRecord, SandboxedComponentAdministration,
+        PeoplePortError, PortError, RoutingAuditRecord, RunCostBudgetAdministration,
+        RunCostBudgetAdministrationError, RunCostCap, SandboxedComponentAdministration,
         SandboxedComponentAdministrationError, SandboxedComponentDraft, ThreadConversationRequest,
         ThreadDirectory, ThreadDirectoryError, ToolApprovalAdministration,
         ToolApprovalAdministrationError, UiPreferenceAdministration,
@@ -2178,6 +2210,7 @@ mod tests {
         AgentVisibility, CallbackTokenIssued, CallbackTokenRevoked,
     };
     use openbot_contracts::auth::{AuthGeneration, Role};
+    use openbot_contracts::budget::{RunCostBudgetPreference, RunCostCapInput};
     use openbot_contracts::command::{
         ChannelDetail, ChannelPage, ChannelRoutingDecision, ChannelSummary,
         ThreadConversationSnapshot, ThreadForegroundRunState, ThreadMinted, ThreadRunAnchor,
@@ -2895,6 +2928,27 @@ mod tests {
         }
     }
 
+    struct FakeRunCostBudgets(Mutex<Option<RunCostCap>>);
+
+    #[async_trait]
+    impl RunCostBudgetAdministration for FakeRunCostBudgets {
+        async fn get(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<Option<RunCostCap>, RunCostBudgetAdministrationError> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+
+        async fn replace(
+            &self,
+            _auth: &AuthContext,
+            cap: Option<RunCostCap>,
+        ) -> Result<Option<RunCostCap>, RunCostBudgetAdministrationError> {
+            *self.0.lock().unwrap() = cap.clone();
+            Ok(cap)
+        }
+    }
+
     struct FakeApprovals;
 
     struct FakeComponents;
@@ -3200,6 +3254,7 @@ mod tests {
                 .with_agent_directory(agents.clone())
                 .with_agent_administration(agents)
                 .with_ui_preferences(preferences)
+                .with_run_cost_budgets(Arc::new(FakeRunCostBudgets(Mutex::new(None))))
                 .with_component_administration(Arc::new(FakeComponents))
                 .with_sandboxed_component_administration(Arc::new(FakeSandboxed))
                 .with_tool_approvals(Arc::new(FakeApprovals)),
@@ -4336,6 +4391,42 @@ mod tests {
                 locale: Some(UiLocale::ZhCn),
             }
         );
+
+        let budget = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/me/run-cost-budget")
+                    .body(br#"{"cap":{"currency":"USD","maxCostMicroUnits":"250000"}}"#.to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(budget.status(), StatusCode::OK);
+        assert_eq!(budget.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<RunCostBudgetPreference>(budget.body()).unwrap(),
+            RunCostBudgetPreference {
+                cap: Some(RunCostCapInput {
+                    currency: "USD".to_owned(),
+                    max_cost_micro_units: "250000".to_owned(),
+                }),
+            }
+        );
+        let smuggled = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/me/run-cost-budget")
+                    .body(
+                        br#"{"cap":{"currency":"USD","maxCostMicroUnits":"1","actor":"admin"}}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(smuggled.status(), StatusCode::BAD_REQUEST);
 
         let approvals = protocol
             .handle(

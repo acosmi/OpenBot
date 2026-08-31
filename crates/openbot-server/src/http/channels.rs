@@ -180,7 +180,8 @@ pub async fn list(
         | AppReply::McpServerMutation(_)
         | AppReply::PendingToolApprovals(_)
         | AppReply::ToolApprovalResolved(_)
-        | AppReply::UiPreferences(_) => {
+        | AppReply::UiPreferences(_)
+        | AppReply::RunCostBudget(_) => {
             tracing::error!(
                 "ListVisibleChannels 收到非 Channels 应答 —— ApplicationService 契约破损"
             );
@@ -255,7 +256,8 @@ pub async fn get(
         | AppReply::McpServerMutation(_)
         | AppReply::PendingToolApprovals(_)
         | AppReply::ToolApprovalResolved(_)
-        | AppReply::UiPreferences(_) => {
+        | AppReply::UiPreferences(_)
+        | AppReply::RunCostBudget(_) => {
             tracing::error!("GetVisibleChannel received a non-Channel application reply");
             Err(AppError::DependencyUnavailable {
                 dependency: "application",
@@ -336,7 +338,8 @@ pub async fn create(
         | AppReply::McpServerMutation(_)
         | AppReply::PendingToolApprovals(_)
         | AppReply::ToolApprovalResolved(_)
-        | AppReply::UiPreferences(_) => {
+        | AppReply::UiPreferences(_)
+        | AppReply::RunCostBudget(_) => {
             tracing::error!("CreateChannel received a non-Channel application reply");
             Err(AppError::DependencyUnavailable {
                 dependency: "application",

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use harness::{admin_config, with_temp_database};
 use openbot_application::{
     AgentContextSource, ComponentAdministration, ProviderBillingFamily, ProviderRateCard,
-    ProviderRateCardInput, ProviderRoute, RunExecutionLease,
+    ProviderRateCardInput, ProviderRoute, RunCostCap, RunExecutionLease,
 };
 use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::components::{
@@ -63,9 +63,10 @@ async fn fresh_component_grants_are_exact_provider_definitions_and_revocation_is
                        VALUES('thread-1','actor-a');
                      INSERT INTO public.runs(
                        run_id,thread_id,bot_id,actor_id,foreground,status,fencing_token,
-                       next_event_seq,created_at,started_at
+                       next_event_seq,created_at,started_at,budget_cost_currency,
+                       budget_max_cost_micro_units
                      ) VALUES('run-1','thread-1','bot-1','actor-a',true,'running',1,0,
-                              clock_timestamp(),clock_timestamp());
+                              clock_timestamp(),clock_timestamp(),'USD',250000);
                      INSERT INTO public.messages(
                        message_id,thread_id,seq,role,content,search_text,run_id,actor_id,created_at
                      ) VALUES('message-1','thread-1',0,'user','{\"text\":\"Show it.\"}',
@@ -149,6 +150,14 @@ async fn fresh_component_grants_are_exact_provider_definitions_and_revocation_is
                 .map_err(|error| error.to_string())?;
             if first.rate_card.as_ref() != Some(&package_rate) {
                 return Err("package provider did not receive its exact rate snapshot".to_owned());
+            }
+            if first.cost_cap
+                != Some(
+                    RunCostCap::new("USD".to_owned(), 250_000)
+                        .map_err(|error| error.to_string())?,
+                )
+            {
+                return Err("context did not load the frozen run cost cap".to_owned());
             }
             let expected = compiled_component_manifest()
                 .into_iter()

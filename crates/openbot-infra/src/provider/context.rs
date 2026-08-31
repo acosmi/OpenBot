@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use openbot_application::{
     AgentContextError, AgentContextSource, ComponentAdministration, ComponentRuntimeScope,
     ProviderMessage, ProviderMessageRole, ProviderRateCard, ProviderRequest, ProviderRoute,
-    ProviderToolCall, ProviderToolDefinition, RemoteAguiAuthorization, RemoteAguiRoute,
+    ProviderToolCall, ProviderToolDefinition, RemoteAguiAuthorization, RemoteAguiRoute, RunCostCap,
     RunExecutionLease, SandboxedComponentAdministration,
 };
 use openbot_contracts::components::{
@@ -168,7 +168,7 @@ impl AgentContextSource for PostgresAgentContextSource {
         let visible = client
             .query_opt(
                 "SELECT a.type::text AS agent_type,a.name,a.configuration,p.title,p.role_description, \
-                        p.owner_user_id, \
+                        p.owner_user_id,r.budget_cost_currency,r.budget_max_cost_micro_units, \
                         EXISTS(SELECT 1 FROM public.user_roles ur \
                                 WHERE ur.user_id=$4 AND ur.role='admin') AS actor_admin, \
                         floor(extract(epoch FROM clock_timestamp())*1000)::bigint \
@@ -289,6 +289,36 @@ impl AgentContextSource for PostgresAgentContextSource {
                     field: "database_now_millis",
                 }
             })?;
+        let cost_cap = match (
+            visible
+                .try_get::<_, Option<String>>("budget_cost_currency")
+                .map_err(|_| AgentContextError::Corrupt {
+                    field: "budget_cost_currency",
+                })?,
+            visible
+                .try_get::<_, Option<i64>>("budget_max_cost_micro_units")
+                .map_err(|_| AgentContextError::Corrupt {
+                    field: "budget_max_cost_micro_units",
+                })?,
+        ) {
+            (None, None) => None,
+            (Some(currency), Some(amount)) => Some(
+                RunCostCap::new(
+                    currency,
+                    u64::try_from(amount).map_err(|_| AgentContextError::Corrupt {
+                        field: "budget_max_cost_micro_units",
+                    })?,
+                )
+                .map_err(|_| AgentContextError::Corrupt {
+                    field: "run_cost_budget",
+                })?,
+            ),
+            _ => {
+                return Err(AgentContextError::Corrupt {
+                    field: "run_cost_budget_shape",
+                });
+            }
+        };
         let (route, standing_prompt, tools, max_output_tokens, rate_card) = match agent_type
             .as_str()
         {
@@ -572,6 +602,7 @@ impl AgentContextSource for PostgresAgentContextSource {
             tools,
             max_output_tokens,
             rate_card,
+            cost_cap,
         })
     }
 }

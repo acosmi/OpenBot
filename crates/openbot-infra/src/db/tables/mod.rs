@@ -43,9 +43,9 @@
 //! [`SECRET_COLUMN_NAME_ROOTS`] 却既不在 [`SECRET_COLUMNS`] 也不在 [`SECRET_SCAN_EXEMPTIONS`]
 //! 的，当场判红。将来有人加一列 `refresh_token` 而忘了登记，闸门会拦住。
 //!
-//! 0013、0016、0020、0021、0022 与 0023 的 native 表分别登记在 [`NATIVE_0013_TABLES`] /
+//! 0013、0016、0020、0021、0022、0023 与 0026 的 native 表分别登记在 [`NATIVE_0013_TABLES`] /
 //! [`NATIVE_0016_TABLES`] / [`NATIVE_0020_TABLES`] / [`NATIVE_0021_TABLES`] /
-//! [`NATIVE_0022_TABLES`] / [`NATIVE_0023_TABLES`]，
+//! [`NATIVE_0022_TABLES`] / [`NATIVE_0023_TABLES`] / [`NATIVE_0026_TABLES`]，
 //! 始终不混进只代表固定上游 0012 的 [`ALL_TABLES`]。
 
 use std::fmt;
@@ -527,7 +527,7 @@ pub mod thread_memberships;
 pub mod threads;
 
 /// Native 0016 的十张 thread/realtime/memory 表，按表名升序；`runs` 的 typed row
-/// 同步包含 0024 usage 与 0025 maximum-rate cost-upper-bound expand-only suffix。
+/// 同步包含 0024 usage、0025 maximum-rate cost-upper-bound 与 0026 frozen user-cap suffix。
 pub const NATIVE_0016_TABLES: &[TableSpec] = &[
     TableSpec {
         name: intelligence_import_cursors::TABLE_NAME,
@@ -617,6 +617,15 @@ pub const NATIVE_0023_TABLES: &[TableSpec] = &[TableSpec {
     column_specs: component_human_decisions::COLUMN_SPECS,
 }];
 
+pub mod user_run_cost_budgets;
+
+/// Native 0026 actor-scoped per-run cost budget table.
+pub const NATIVE_0026_TABLES: &[TableSpec] = &[TableSpec {
+    name: user_run_cost_budgets::TABLE_NAME,
+    columns: user_run_cost_budgets::COLUMNS,
+    column_specs: user_run_cost_budgets::COLUMN_SPECS,
+}];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,6 +639,7 @@ mod tests {
             .chain(NATIVE_0021_TABLES.iter())
             .chain(NATIVE_0022_TABLES.iter())
             .chain(NATIVE_0023_TABLES.iter())
+            .chain(NATIVE_0026_TABLES.iter())
     }
 
     /// 每张表的列数。数值取自参照库（`fixtures/db/schema-0012.json`），合计必须是 204。

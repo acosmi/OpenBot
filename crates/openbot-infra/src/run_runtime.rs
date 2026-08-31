@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use openbot_application::{
     ClaimedRunCancellation, ClaimedRunDispatch, ProviderBillingFamily, ProviderCostUpperBound,
-    ProviderRateCard, ProviderRateCardInput, ProviderUsage, RunCancellationDisposition,
+    ProviderRateCard, ProviderRateCardInput, ProviderUsage, RunCancellationDisposition, RunCostCap,
     RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime,
     RunRuntimeError, RunSemanticChannel, RunTerminal, RunTokenUsage, RunTokenUsageReceipt,
     RunToolExchange, RunWriteReceipt, SEMANTIC_CHUNK_MAX_BYTES,
@@ -349,6 +349,7 @@ impl RunRuntime for PostgresRunRuntime {
         usage: ProviderUsage,
         max_run_output_tokens: Option<u64>,
         rate_card: Option<&ProviderRateCard>,
+        cost_cap: Option<&RunCostCap>,
     ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
         let mut client = self.client().await?;
         let transaction = client
@@ -359,10 +360,13 @@ impl RunRuntime for PostgresRunRuntime {
             &transaction,
             &self.owner_id,
             lease,
-            sampling_index,
-            usage,
-            max_run_output_tokens,
-            rate_card,
+            ProviderUsageRecord {
+                sampling_index,
+                usage,
+                max_run_output_tokens,
+                rate_card,
+                cost_cap,
+            },
         )
         .await;
         finish_transaction(transaction, result).await
@@ -1510,6 +1514,31 @@ struct LockedRunCost {
     remainder_millionths: Option<i32>,
 }
 
+struct LockedRunCostBudget {
+    currency: Option<String>,
+    max_cost_micro_units: Option<i64>,
+}
+
+impl LockedRunCostBudget {
+    fn decode(self) -> Result<Option<RunCostCap>, RunRuntimeError> {
+        match (self.currency, self.max_cost_micro_units) {
+            (None, None) => Ok(None),
+            (Some(currency), Some(amount)) => Ok(Some(
+                RunCostCap::new(
+                    currency,
+                    sequence_u64(amount, "budget_max_cost_micro_units")?,
+                )
+                .map_err(|_| RunRuntimeError::Corrupt {
+                    field: "run_cost_budget",
+                })?,
+            )),
+            _ => Err(RunRuntimeError::Corrupt {
+                field: "run_cost_budget_shape",
+            }),
+        }
+    }
+}
+
 impl LockedRunCost {
     fn decode(
         self,
@@ -1580,16 +1609,29 @@ impl LockedRunCost {
     }
 }
 
+struct ProviderUsageRecord<'a> {
+    sampling_index: u32,
+    usage: ProviderUsage,
+    max_run_output_tokens: Option<u64>,
+    rate_card: Option<&'a ProviderRateCard>,
+    cost_cap: Option<&'a RunCostCap>,
+}
+
 async fn record_provider_usage_in_transaction(
     transaction: &Transaction<'_>,
     owner: &str,
     lease: &RunExecutionLease,
-    sampling_index: u32,
-    usage: ProviderUsage,
-    max_run_output_tokens: Option<u64>,
-    rate_card: Option<&ProviderRateCard>,
+    record: ProviderUsageRecord<'_>,
 ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
+    let ProviderUsageRecord {
+        sampling_index,
+        usage,
+        max_run_output_tokens,
+        rate_card,
+        cost_cap,
+    } = record;
     let rate_card = rate_card.cloned();
+    let cost_cap = cost_cap.cloned();
     let known = usage.input_tokens.checked_add(usage.output_tokens).ok_or(
         RunRuntimeError::InvalidInput {
             field: "provider_usage",
@@ -1598,6 +1640,15 @@ async fn record_provider_usage_in_transaction(
     if usage.total_tokens < known || max_run_output_tokens == Some(0) {
         return Err(RunRuntimeError::InvalidInput {
             field: "provider_usage",
+        });
+    }
+    if cost_cap.as_ref().is_some_and(|cap| {
+        rate_card
+            .as_ref()
+            .is_none_or(|rate| rate.currency() != cap.currency())
+    }) {
+        return Err(RunRuntimeError::InvalidInput {
+            field: "run_cost_budget",
         });
     }
     let sampling_index =
@@ -1638,7 +1689,8 @@ async fn record_provider_usage_in_transaction(
                     cost_max_input_micro_units_per_million_tokens, \
                     cost_max_output_micro_units_per_million_tokens,cost_source_url, \
                     cost_source_sha256,cost_observed_at,usage_cost_upper_bound_micro_units, \
-                    usage_cost_upper_bound_remainder_millionths \
+                    usage_cost_upper_bound_remainder_millionths,budget_cost_currency, \
+                    budget_max_cost_micro_units \
              FROM public.runs WHERE run_id=$1",
             &[&lease.run_id().as_str()],
         )
@@ -1669,6 +1721,14 @@ async fn record_provider_usage_in_transaction(
         remainder_millionths: decode(&row, "usage_cost_upper_bound_remainder_millionths")?,
     }
     .decode()?;
+    let stored_cost_cap = LockedRunCostBudget {
+        currency: decode(&row, "budget_cost_currency")?,
+        max_cost_micro_units: decode(&row, "budget_max_cost_micro_units")?,
+    }
+    .decode()?;
+    if stored_cost_cap != cost_cap {
+        return Err(RunRuntimeError::Conflict);
+    }
     let last_shape_is_valid = if stored.next_sampling == 0 {
         stored.last_sampling.is_none()
             && stored.last_input_tokens.is_none()
@@ -1723,6 +1783,12 @@ async fn record_provider_usage_in_transaction(
                 .is_some_and(|limit| stored.output_tokens > limit)
             {
                 Ok(RunTokenUsageReceipt::BudgetExceeded(aggregate))
+            } else if stored_cost_cap.as_ref().is_some_and(|cap| {
+                stored_cost
+                    .and_then(ProviderCostUpperBound::billed_upper_bound_micro_units)
+                    .is_some_and(|cost| cost > cap.max_cost_micro_units())
+            }) {
+                Ok(RunTokenUsageReceipt::CostBudgetExceeded(aggregate))
             } else {
                 Ok(RunTokenUsageReceipt::Replayed(aggregate))
             }
@@ -1785,6 +1851,11 @@ async fn record_provider_usage_in_transaction(
         _ => return Err(RunRuntimeError::Conflict),
     };
     let budget_exceeded = max_output_tokens.is_some_and(|limit| next_output > limit);
+    let cost_budget_exceeded = cost_cap.as_ref().is_some_and(|cap| {
+        next_cost
+            .and_then(ProviderCostUpperBound::billed_upper_bound_micro_units)
+            .is_some_and(|cost| cost > cap.max_cost_micro_units())
+    });
     let next_sampling = stored
         .next_sampling
         .checked_add(1)
@@ -1865,6 +1936,8 @@ async fn record_provider_usage_in_transaction(
     };
     if budget_exceeded {
         Ok(RunTokenUsageReceipt::BudgetExceeded(aggregate))
+    } else if cost_budget_exceeded {
+        Ok(RunTokenUsageReceipt::CostBudgetExceeded(aggregate))
     } else {
         Ok(RunTokenUsageReceipt::Recorded(aggregate))
     }

@@ -251,6 +251,8 @@ async fn native_constraints_and_repositories_enforce_fencing_replay_outbox_and_m
                 cost_observed_at: None,
                 usage_cost_upper_bound_micro_units: None,
                 usage_cost_upper_bound_remainder_millionths: None,
+                budget_cost_currency: None,
+                budget_max_cost_micro_units: None,
             };
             RunRepo::new(pool.clone())
                 .insert(&run)

@@ -1213,6 +1213,42 @@ async fn apply_begin(
     run.start(now).map_err(|_| ThreadDirectoryError::Corrupt {
         field: "run_transition",
     })?;
+    let budget_row = transaction
+        .query_opt(
+            "SELECT currency,max_cost_micro_units FROM public.user_run_cost_budgets \
+             WHERE deployment_id=$1 AND tenant_id=$2 AND actor_user_id=$3",
+            &[
+                &request.deployment.as_str(),
+                &request.tenant.as_str(),
+                &request.actor.as_str(),
+            ],
+        )
+        .await
+        .map_err(|error| unavailable("读取 run cost budget snapshot 失败", error))?;
+    let (budget_currency, budget_max_cost_micro_units) = match budget_row {
+        Some(row) => {
+            let currency = row.try_get::<_, String>("currency").map_err(|_| {
+                ThreadDirectoryError::Corrupt {
+                    field: "budget_cost_currency",
+                }
+            })?;
+            let amount = row.try_get::<_, i64>("max_cost_micro_units").map_err(|_| {
+                ThreadDirectoryError::Corrupt {
+                    field: "budget_max_cost_micro_units",
+                }
+            })?;
+            if currency.len() != 3
+                || !currency.bytes().all(|byte| byte.is_ascii_uppercase())
+                || amount <= 0
+            {
+                return Err(ThreadDirectoryError::Corrupt {
+                    field: "run_cost_budget",
+                });
+            }
+            (Some(currency), Some(amount))
+        }
+        None => (None, None),
+    };
     let message_id = input_message_id(command.run_id.as_str());
     let content = json!({"text": command.message});
     let message = Message::new(
@@ -1257,8 +1293,9 @@ async fn apply_begin(
         .execute(
             "INSERT INTO public.runs( \
                run_id,thread_id,bot_id,actor_id,foreground,status,fencing_token,next_event_seq, \
-               terminal_event_seq,error_code,created_at,started_at,finished_at \
-             ) VALUES($1,$2,$3,$4,$5,$6,$7,1,NULL,NULL,$8,$9,NULL)",
+               terminal_event_seq,error_code,created_at,started_at,finished_at, \
+               budget_cost_currency,budget_max_cost_micro_units \
+             ) VALUES($1,$2,$3,$4,$5,$6,$7,1,NULL,NULL,$8,$9,NULL,$10,$11)",
             &[
                 &run.id().as_str(),
                 &run.thread().as_str(),
@@ -1269,6 +1306,8 @@ async fn apply_begin(
                 &run.fencing().get(),
                 &run.created_at(),
                 &run.started_at(),
+                &budget_currency,
+                &budget_max_cost_micro_units,
             ],
         )
         .await

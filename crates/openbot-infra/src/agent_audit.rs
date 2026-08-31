@@ -102,7 +102,22 @@ fn audit_shape(kind: AgentAuditKind) -> Result<(AuditEventType, AuditPayload), A
             ))])
             .map_err(|_| AgentAuditError::Unavailable)?,
         )),
+        AgentAuditKind::RunCostBudgetUnpriced => cost_budget_refusal("run_cost_budget_unpriced"),
+        AgentAuditKind::RunCostBudgetCurrencyMismatch => {
+            cost_budget_refusal("run_cost_budget_currency_mismatch")
+        }
+        AgentAuditKind::RunCostBudgetExceeded => cost_budget_refusal("run_cost_budget_exceeded"),
     }
+}
+
+fn cost_budget_refusal(
+    code: &'static str,
+) -> Result<(AuditEventType, AuditPayload), AgentAuditError> {
+    Ok((
+        AuditEventType::AGENT_RUN_COST_BUDGET_REFUSED,
+        AuditPayload::from_facts([AuditFact::ErrorCode(AuditLabel::new(code))])
+            .map_err(|_| AgentAuditError::Unavailable)?,
+    ))
 }
 
 #[cfg(test)]
@@ -115,6 +130,9 @@ mod tests {
             AgentAuditKind::Invoked,
             AgentAuditKind::StreamStalled,
             AgentAuditKind::RunDeadlineExceeded,
+            AgentAuditKind::RunCostBudgetUnpriced,
+            AgentAuditKind::RunCostBudgetCurrencyMismatch,
+            AgentAuditKind::RunCostBudgetExceeded,
         ] {
             let (_, payload) = audit_shape(kind).unwrap();
             assert!(payload.len() <= 1);

@@ -42,6 +42,7 @@ use crate::repo::audit::PostgresAuditReader;
 use crate::repo::people_admin::PostgresPeopleAdministration;
 use crate::repo::tools::PostgresToolJournal;
 use crate::routing::PostgresChannelRouting;
+use crate::run_cost_budget::PostgresRunCostBudgetAdministration;
 use crate::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime};
 use crate::sandboxed_components::PostgresSandboxedComponentAdministration;
 use crate::store::plugin_user_credential::PostgresOwnedCredentialRetirer;
@@ -383,7 +384,10 @@ pub async fn assemble_postgres_application(
         .with_sandboxed_component_administration(sandboxed_components.clone())
         .with_mcp_connections(mcp_connections.clone())
         .with_tool_approvals(tool_approvals)
-        .with_ui_preferences(ui_preferences);
+        .with_ui_preferences(ui_preferences)
+        .with_run_cost_budgets(Arc::new(PostgresRunCostBudgetAdministration::new(
+            pool.clone(),
+        )));
     let application: Arc<dyn ApplicationService> = Arc::new(application);
     let mcp_revocation_reconciler = McpRevocationReconciler::start(mcp_connections.clone());
     Ok(PostgresApplicationAssembly {

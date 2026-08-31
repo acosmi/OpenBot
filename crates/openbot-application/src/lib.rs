@@ -82,6 +82,7 @@ pub mod intelligence_import;
 pub mod mcp_connections;
 pub mod ports;
 pub mod provider;
+pub mod run_cost_budget;
 pub mod run_runtime;
 pub mod sandboxed_components;
 pub mod service;
@@ -156,6 +157,10 @@ pub use provider::{
     ProviderRateCardInput, ProviderRequest, ProviderRoute, ProviderSession, ProviderToolCall,
     ProviderToolDefinition, ProviderUsage, RemoteAguiAuthorization, RemoteAguiEventStream,
     RemoteAguiRoute, RemoteAguiTransport, RemoteAguiTransportError,
+};
+pub use run_cost_budget::{
+    NoRunCostBudgetAdministration, RunCostBudgetAdministration, RunCostBudgetAdministrationError,
+    RunCostCap, get_run_cost_budget, replace_run_cost_budget,
 };
 pub use run_runtime::{
     ClaimedRunCancellation, ClaimedRunDispatch, DurableTextRun, NoRunDispatchConsumer,

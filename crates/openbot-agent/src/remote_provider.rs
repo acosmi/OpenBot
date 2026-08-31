@@ -372,6 +372,7 @@ mod tests {
             tools,
             max_output_tokens: None,
             rate_card: None,
+            cost_cap: None,
         }
     }
 

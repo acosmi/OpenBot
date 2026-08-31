@@ -134,6 +134,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                     },
                     Some(5),
                     Some(&future_rate),
+                    None,
                 )
                 .await
                 != Err(RunRuntimeError::InvalidInput {
@@ -153,6 +154,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                     },
                     Some(5),
                     Some(&rate_card),
+                    None,
                 )
                 .await
                 != Err(RunRuntimeError::InvalidInput {
@@ -169,6 +171,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                         },
                         Some(0),
                         Some(&rate_card),
+                        None,
                     )
                     .await
                     != Err(RunRuntimeError::InvalidInput {
@@ -188,7 +191,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 total_tokens: 12,
             };
             if runtime
-                .record_provider_usage(&lease, 0, first_usage, Some(5), Some(&rate_card))
+                .record_provider_usage(&lease, 0, first_usage, Some(5), Some(&rate_card), None)
                 .await
                 .map_err(|error| error.to_string())?
                 != RunTokenUsageReceipt::Recorded(first)
@@ -196,7 +199,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 return Err("首个 sampling usage 未精确记录".to_owned());
             }
             if runtime
-                .record_provider_usage(&lease, 0, first_usage, Some(5), Some(&rate_card))
+                .record_provider_usage(&lease, 0, first_usage, Some(5), Some(&rate_card), None)
                 .await
                 .map_err(|error| error.to_string())?
                 != RunTokenUsageReceipt::Replayed(first)
@@ -219,6 +222,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                     },
                     Some(5),
                     Some(&rate_card),
+                    None,
                 )
                 .await
                 != Err(RunRuntimeError::Conflict)
@@ -226,7 +230,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 return Err("同 index 异值 usage 必须 conflict".to_owned());
             }
             if runtime
-                .record_provider_usage(&lease, 2, first_usage, Some(5), Some(&rate_card))
+                .record_provider_usage(&lease, 2, first_usage, Some(5), Some(&rate_card), None)
                 .await
                 != Err(RunRuntimeError::Conflict)
             {
@@ -248,6 +252,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                     },
                     Some(5),
                     Some(&rate_card),
+                    None,
                 )
                 .await
                 .map_err(|error| error.to_string())?
@@ -266,6 +271,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                     },
                     Some(5),
                     Some(&rate_card),
+                    None,
                 )
                 .await
                 .map_err(|error| error.to_string())?
@@ -284,6 +290,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                     },
                     Some(5),
                     Some(&rate_card),
+                    None,
                 )
                 .await
                 .map_err(|error| error.to_string())?
@@ -302,6 +309,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                     },
                     Some(6),
                     Some(&rate_card),
+                    None,
                 )
                 .await
                 != Err(RunRuntimeError::Conflict)
@@ -330,6 +338,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                     },
                     Some(5),
                     Some(&changed_rate),
+                    None,
                 )
                 .await
                 != Err(RunRuntimeError::Conflict)
@@ -435,7 +444,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 return Err(format!("run budget terminal code 漂移：{terminal:?}"));
             }
             if runtime
-                .record_provider_usage(&lease, 3, first_usage, Some(5), Some(&rate_card))
+                .record_provider_usage(&lease, 3, first_usage, Some(5), Some(&rate_card), None)
                 .await
                 != Err(RunRuntimeError::StaleLease)
             {
@@ -455,7 +464,7 @@ async fn provider_usage_is_run_wide_exact_replayable_and_budget_fenced() {
                 .await
                 .map_err(|error| error.to_string())?;
             runtime
-                .record_provider_usage(&unpriced_lease, 0, first_usage, Some(5), None)
+                .record_provider_usage(&unpriced_lease, 0, first_usage, Some(5), None, None)
                 .await
                 .map_err(|error| error.to_string())?;
             let unpriced_is_null: bool = client

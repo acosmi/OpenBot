@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 170
+    expect: 172
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 24
+    expect: 26
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 170
+    expect: 172
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1864,3 +1864,27 @@ entries:
     done_evidence: "Batch56: upgrade前已认证同源与exact openbot.tool-approvals.v1；ApplicationService只订阅当前AuthContext actor。frame只含bounded pendingCount，不含approval id/tool/target/summary；client Text/Binary=>1008，错误frame后1011。Server真实loopback 212/0/0含两条新增socket用例；PG17.11 host SCRAM 1/0/0证明跨replica pending 0→1→0与other actor零frame；UI用frame只触发typed GET，重连前refetch、30s bounded fallback、checked epoch拒绝stale GET。"
     evidence: "固定上游95条静态route无/api/tool-approvals/events；v4 §13.4规定approval不可静默丢，§24 G4登记critical realtime未闭合"
     notes: "新增的read-only invalidation hint，不是第二状态存储；它故意没有durable cursor，任何连接/重连/坏帧均先回权威GET，因此不冒充§7.5 durable run event replay。错误码：401/403/400 protocol/503 upgrade前；frame内稳定error后1011。"
+
+  - id: "api-run-cost-budget-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::run_cost_budget::get (GET /api/me/run-cost-budget)"
+    owner: "openbot-server"
+    test_id: "T-API-0171"
+    migration_rule: "n/a: v4 §7.4/§17.3 要求actor-scoped currency-bound per-run provider cost cap"
+    status: "done"
+    done_evidence: "Batch89 closed response只有cap:null或currency+canonical decimal-string maxCostMicroUnits，零actor/deployment/tenant/run id；authenticated/no-store，经唯一ApplicationService与PostgresRunCostBudgetAdministration。Server framing 1/0/0、Application 1/0/0、PG17.11 native0026 runtime 2/0/0；Desktop custom protocol同typed command。"
+    evidence: "固定上游95条静态route无/api/me/run-cost-budget；v4 §7.4逐字要求用户配置费用上限"
+    notes: "新增。金额用micro currency unit十进制字符串，避免WASM/JavaScript超过2^53或浮点舍入；NULL明确为未配置，不解释为零成本。错误码：401/503。"
+
+  - id: "api-run-cost-budget-put"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::run_cost_budget::put (PUT /api/me/run-cost-budget)"
+    owner: "openbot-server"
+    test_id: "T-API-0172"
+    migration_rule: "n/a: v4 §7.4/§17.3 用户费用cap的完整替换写面"
+    status: "done"
+    done_evidence: "Batch89 trusted Origin在JSON parse前；body full replace为cap:null或exact currency/maxCostMicroUnits，unknown actor字段400，currency恰3位uppercase、amount canonical positive bigint。PG upsert/delete只按AuthContext三轴，commit unknown不冒充成功；新run同begin事务冻结，现有run不漂移。Server 1/0/0、Desktop Tauri-host定向、UI parse/wire定向绿。"
+    evidence: "固定上游95条静态route无/api/me/run-cost-budget；v4 §7.4/§17.3要求用户费用上限与stable quota rejection"
+    notes: "新增。写请求不接受rate、provider、model、actor或run；cap缺rate/币种不匹配由Agent在provider effect前以稳定terminal拒绝。错误码：401/403 Origin/400/503/reconciliation。"
