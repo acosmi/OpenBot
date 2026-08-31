@@ -162,6 +162,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::DecideToolApproval { .. } => "decide_tool_approval",
         AppCommand::GetUiPreferences => "get_ui_preferences",
         AppCommand::UpdateUiPreferences(_) => "update_ui_preferences",
+        AppCommand::GetRunCostBudget => "get_run_cost_budget",
+        AppCommand::ReplaceRunCostBudget(_) => "replace_run_cost_budget",
     }
 }
 
@@ -434,6 +436,13 @@ mod tests {
                     locale: None,
                 }),
                 "update_ui_preferences",
+            ),
+            (AppCommand::GetRunCostBudget, "get_run_cost_budget"),
+            (
+                AppCommand::ReplaceRunCostBudget(
+                    openbot_contracts::budget::RunCostBudgetPreference::default(),
+                ),
+                "replace_run_cost_budget",
             ),
         ];
         for (command, expected) in commands {

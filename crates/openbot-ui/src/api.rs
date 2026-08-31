@@ -21,6 +21,7 @@ use openbot_contracts::auth::{
     AuthenticationStartResponse, EnterpriseSsoRoutingAccepted, EnterpriseSsoStartRequest,
     MAX_SSO_ROUTING_EMAIL_BYTES,
 };
+use openbot_contracts::budget::{RunCostBudgetPreference, RunCostCapInput};
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::command::MAX_CHANNEL_ROUTING_REASON_CODE_POINTS;
 #[cfg(target_arch = "wasm32")]
@@ -2375,6 +2376,103 @@ pub async fn save_ui_preferences(update: UpdateUiPreferences) -> Result<UiPrefer
     }
 }
 
+/// Read the authenticated actor's optional per-run provider-cost upper-bound preference.
+pub async fn load_run_cost_budget() -> Result<RunCostBudgetPreference, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/me/run-cost-budget")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let preference = response
+            .json::<RunCostBudgetPreference>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_run_cost_budget_preference(&preference)?;
+        Ok(preference)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Fully replace the authenticated actor's optional per-run provider-cost upper-bound preference.
+pub async fn replace_run_cost_budget(
+    preference: RunCostBudgetPreference,
+) -> Result<RunCostBudgetPreference, ApiError> {
+    validate_run_cost_budget_preference(&preference)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let request = Request::put("/api/me/run-cost-budget")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(&preference)
+            .map_err(|_| ApiError::InvalidResponse)?;
+        let response = request.send().await.map_err(|_| ApiError::Network)?;
+        if !response.ok() {
+            return Err(status_error(response.status()));
+        }
+        let stored = response
+            .json::<RunCostBudgetPreference>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_run_cost_budget_preference(&stored)?;
+        if stored != preference {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(stored)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = preference;
+        Err(ApiError::Unavailable)
+    }
+}
+
+fn validate_run_cost_budget_preference(
+    preference: &RunCostBudgetPreference,
+) -> Result<(), ApiError> {
+    let Some(RunCostCapInput {
+        currency,
+        max_cost_micro_units,
+    }) = preference.cap.as_ref()
+    else {
+        return Ok(());
+    };
+    if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_uppercase()) {
+        return Err(ApiError::InvalidResponse);
+    }
+    let amount = max_cost_micro_units.as_bytes();
+    if amount.is_empty()
+        || amount.len() > 19
+        || !matches!(amount[0], b'1'..=b'9')
+        || !amount[1..].iter().all(u8::is_ascii_digit)
+    {
+        return Err(ApiError::InvalidResponse);
+    }
+    let parsed = max_cost_micro_units
+        .parse::<u64>()
+        .map_err(|_| ApiError::InvalidResponse)?;
+    if parsed > i64::MAX as u64 {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(())
+}
+
 /// Discover whether the current authenticated host uses one revocable database session.
 pub async fn load_session_status() -> Result<SessionStatus, ApiError> {
     #[cfg(target_arch = "wasm32")]
@@ -3494,6 +3592,40 @@ mod tests {
     use time::OffsetDateTime;
 
     use super::*;
+
+    #[test]
+    fn run_cost_budget_projection_accepts_only_the_closed_canonical_shape() {
+        assert!(validate_run_cost_budget_preference(&RunCostBudgetPreference::default()).is_ok());
+        assert!(
+            validate_run_cost_budget_preference(&RunCostBudgetPreference {
+                cap: Some(RunCostCapInput {
+                    currency: "USD".to_owned(),
+                    max_cost_micro_units: i64::MAX.to_string(),
+                }),
+            })
+            .is_ok()
+        );
+        for cap in [
+            RunCostCapInput {
+                currency: "usd".to_owned(),
+                max_cost_micro_units: "1".to_owned(),
+            },
+            RunCostCapInput {
+                currency: "USD".to_owned(),
+                max_cost_micro_units: "01".to_owned(),
+            },
+            RunCostCapInput {
+                currency: "USD".to_owned(),
+                max_cost_micro_units: "9223372036854775808".to_owned(),
+            },
+        ] {
+            assert_eq!(
+                validate_run_cost_budget_preference(&RunCostBudgetPreference { cap: Some(cap) })
+                    .unwrap_err(),
+                ApiError::InvalidResponse
+            );
+        }
+    }
 
     #[test]
     fn all_environment_auth_providers_share_one_closed_start_route_shape() {

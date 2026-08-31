@@ -122,6 +122,7 @@ pub mod remote_agui;
 pub mod repo;
 #[cfg(feature = "server-runtime")]
 pub mod routing;
+pub mod run_cost_budget;
 #[cfg(feature = "server-runtime")]
 pub mod run_runtime;
 #[cfg(feature = "server-runtime")]

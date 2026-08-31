@@ -80,6 +80,8 @@ impl AuditEventType {
     pub const AGENT_STREAM_STALLED: Self = Self("agent.stream_stalled");
     /// 新增 absolute run deadline 到点且 child 已停止。
     pub const AGENT_RUN_DEADLINE_EXCEEDED: Self = Self("agent.run_deadline_exceeded");
+    /// Actor-scoped run cost budget refused before or after a provider sampling.
+    pub const AGENT_RUN_COST_BUDGET_REFUSED: Self = Self("agent.run_cost_budget_refused");
     /// Explicit remember tool was refused before execution.
     pub const MEMORY_REMEMBER_REFUSED: Self = Self("memory.remember_refused");
     /// Explicit remember tool committed a memory record.
@@ -154,7 +156,7 @@ impl fmt::Display for AuditEventType {
     }
 }
 
-/// 事件类型全集：上游 57 项 + 本项目新增 deadline/memory/catalog/approval/component 14 项。
+/// 事件类型全集：上游 57 项 + 本项目新增 deadline/budget/memory/catalog/approval/component 15 项。
 ///
 /// 顺序也照抄上游，方便逐行对拍。
 pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
@@ -169,6 +171,7 @@ pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
     AuditEventType("agent.invoked"),
     AuditEventType("agent.stream_stalled"),
     AuditEventType("agent.run_deadline_exceeded"),
+    AuditEventType("agent.run_cost_budget_refused"),
     AuditEventType("memory.remember_refused"),
     AuditEventType("memory.remember_succeeded"),
     AuditEventType("memory.remember_failed"),
@@ -289,10 +292,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn catalog_is_upstream_fifty_seven_plus_fourteen_new_and_has_no_duplicates() {
-        assert_eq!(AUDIT_EVENT_TYPES.len(), 71);
+    fn catalog_is_upstream_fifty_seven_plus_fifteen_new_and_has_no_duplicates() {
+        assert_eq!(AUDIT_EVENT_TYPES.len(), 72);
         let unique: BTreeSet<&str> = AUDIT_EVENT_TYPES.iter().map(|t| t.0).collect();
-        assert_eq!(unique.len(), 71, "目录里有重复的事件类型");
+        assert_eq!(unique.len(), 72, "目录里有重复的事件类型");
     }
 
     #[test]
@@ -317,6 +320,7 @@ mod tests {
             AuditEventType::AGENT_INVOKED,
             AuditEventType::AGENT_STREAM_STALLED,
             AuditEventType::AGENT_RUN_DEADLINE_EXCEEDED,
+            AuditEventType::AGENT_RUN_COST_BUDGET_REFUSED,
             AuditEventType::MEMORY_REMEMBER_REFUSED,
             AuditEventType::MEMORY_REMEMBER_SUCCEEDED,
             AuditEventType::MEMORY_REMEMBER_FAILED,

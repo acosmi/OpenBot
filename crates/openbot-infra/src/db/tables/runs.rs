@@ -1,4 +1,4 @@
-//! `public.runs` typed row（native 0016 + expand-only 0024 usage / 0025 cost suffix）。
+//! `public.runs` typed row（native 0016 + expand-only 0024 usage / 0025 cost / 0026 cap suffix）。
 
 crate::db::tables::define_table! {
     table = "runs";
@@ -35,4 +35,6 @@ crate::db::tables::define_table! {
     cost_observed_at: Option<time::OffsetDateTime> = ("cost_observed_at", "timestamp with time zone", false),
     usage_cost_upper_bound_micro_units: Option<i64> = ("usage_cost_upper_bound_micro_units", "bigint", false),
     usage_cost_upper_bound_remainder_millionths: Option<i32> = ("usage_cost_upper_bound_remainder_millionths", "integer", false),
+    budget_cost_currency: Option<String> = ("budget_cost_currency", "text", false),
+    budget_max_cost_micro_units: Option<i64> = ("budget_max_cost_micro_units", "bigint", false),
 }

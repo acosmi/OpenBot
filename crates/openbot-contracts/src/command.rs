@@ -36,6 +36,7 @@ use crate::agent::{
 };
 use crate::audit::AuditPage;
 use crate::auth::Role;
+use crate::budget::RunCostBudgetPreference;
 use crate::components::{
     ComponentCatalogueAdded, ComponentCatalogueRequest, ComponentDataFunctions, ComponentDecision,
     ComponentDecisionRequest, ComponentFunctionCall, ComponentFunctionCallRequest,
@@ -459,6 +460,12 @@ pub enum AppCommand {
 
     /// Atomically update one or both UI preferences; actor/scope come only from `AuthContext`.
     UpdateUiPreferences(UpdateUiPreferences),
+
+    /// Read the authenticated actor's per-run provider cost cap.
+    GetRunCostBudget,
+
+    /// Fully replace the authenticated actor's per-run provider cost cap.
+    ReplaceRunCostBudget(RunCostBudgetPreference),
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -564,6 +571,8 @@ pub enum AppReply {
     ToolApprovalResolved(ToolApprovalResolved),
     /// UI preference read/update response.
     UiPreferences(UiPreferences),
+    /// Per-run cost budget read/replacement response.
+    RunCostBudget(RunCostBudgetPreference),
 }
 
 /// 探活结果。

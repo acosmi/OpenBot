@@ -355,13 +355,13 @@ impl ProviderRateCard {
         &self.currency
     }
 
-    /// Maximum USD millionths charged per one million input tokens.
+    /// Maximum micro currency units charged per one million input tokens.
     #[must_use]
     pub const fn max_input_rate(&self) -> u64 {
         self.max_input_micro_units_per_million_tokens
     }
 
-    /// Maximum USD millionths charged per one million output tokens.
+    /// Maximum micro currency units charged per one million output tokens.
     #[must_use]
     pub const fn max_output_rate(&self) -> u64 {
         self.max_output_micro_units_per_million_tokens
@@ -607,6 +607,8 @@ pub struct ProviderRequest {
     pub max_output_tokens: Option<u32>,
     /// Optional operator-attested price snapshot; `None` means explicitly unpriced, never zero.
     pub rate_card: Option<ProviderRateCard>,
+    /// User cap frozen onto this run when it was created; never supplied by the model/renderer.
+    pub cost_cap: Option<crate::run_cost_budget::RunCostCap>,
 }
 
 /// Provider output item kind。
@@ -858,6 +860,12 @@ pub enum AgentAuditKind {
     StreamStalled,
     /// Absolute run deadline fired after child cancellation。
     RunDeadlineExceeded,
+    /// Frozen cap has no operator-attested rate snapshot.
+    RunCostBudgetUnpriced,
+    /// Frozen cap and operator-attested rate use different currencies.
+    RunCostBudgetCurrencyMismatch,
+    /// Durable cost upper bound exceeded the frozen cap.
+    RunCostBudgetExceeded,
 }
 
 /// Audit chain append failure；底层错误不跨 Agent boundary。

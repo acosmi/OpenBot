@@ -205,6 +205,12 @@ pub enum AgentFailure {
     ProviderTokenBudgetExceeded,
     /// Cumulative normalized output exceeded the run-wide token ceiling.
     RunTokenBudgetExceeded,
+    /// A frozen user cost cap has no operator-attested rate snapshot.
+    RunCostBudgetUnpriced,
+    /// A frozen user cost cap and provider rate snapshot use different currencies.
+    RunCostBudgetCurrencyMismatch,
+    /// Durable provider cost upper bound exceeded the frozen user cap.
+    RunCostBudgetExceeded,
     /// Tool step cap 8。
     ToolStepLimit,
     /// Tool loop implementation unavailable。

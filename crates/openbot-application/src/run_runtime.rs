@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use crate::chunk::{SEMANTIC_CHUNK_MAX_BYTES, SemanticChunkAccumulator};
 use crate::provider::{ProviderRateCard, ProviderUsage};
+use crate::run_cost_budget::RunCostCap;
 
 /// Run runtime 的稳定内部错误域；不得携带数据库/provider 原文。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -73,6 +74,12 @@ pub enum RunFailureCode {
     ProviderTokenBudgetExceeded,
     /// Cumulative output usage across this run exceeded its derived run-wide ceiling.
     RunTokenBudgetExceeded,
+    /// User cap exists but this provider/model run has no attested price snapshot.
+    RunCostBudgetUnpriced,
+    /// User cap and provider price snapshot use different currencies.
+    RunCostBudgetCurrencyMismatch,
+    /// Durable cost upper bound exceeded the immutable user cap.
+    RunCostBudgetExceeded,
     /// Built-in Agent tool sampling step cap reached。
     ToolStepLimit,
     /// G4 tool loop not yet available for this requested call。
@@ -103,6 +110,9 @@ impl RunFailureCode {
             Self::ProviderGenerationFailed => "provider_generation_failed",
             Self::ProviderTokenBudgetExceeded => "provider_token_budget_exceeded",
             Self::RunTokenBudgetExceeded => "run_token_budget_exceeded",
+            Self::RunCostBudgetUnpriced => "run_cost_budget_unpriced",
+            Self::RunCostBudgetCurrencyMismatch => "run_cost_budget_currency_mismatch",
+            Self::RunCostBudgetExceeded => "run_cost_budget_exceeded",
             Self::ToolStepLimit => "tool_step_limit",
             Self::ToolLoopUnavailable => "tool_loop_unavailable",
             Self::ToolDenied => "tool_denied",
@@ -500,6 +510,8 @@ pub enum RunTokenUsageReceipt {
     Replayed(RunTokenUsage),
     /// This sampling was recorded and made the aggregate exceed the immutable run ceiling.
     BudgetExceeded(RunTokenUsage),
+    /// This sampling was recorded and made the cost upper bound exceed the immutable user cap.
+    CostBudgetExceeded(RunTokenUsage),
 }
 
 /// Built-in/remote Agent 的 in-process dispatch 边界。
@@ -607,6 +619,7 @@ pub trait RunRuntime: Send + Sync {
         _usage: ProviderUsage,
         _max_run_output_tokens: Option<u64>,
         _rate_card: Option<&ProviderRateCard>,
+        _cost_cap: Option<&RunCostCap>,
     ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
         Err(RunRuntimeError::Unavailable)
     }

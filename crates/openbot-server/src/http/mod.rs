@@ -56,6 +56,7 @@ pub mod memories;
 pub mod metrics;
 pub mod plugins;
 pub mod routing;
+pub mod run_cost_budget;
 pub mod sandbox_runner;
 pub mod sandboxed;
 pub mod session;
@@ -635,6 +636,10 @@ pub fn router(state: ServerState) -> Router {
         .route(
             "/api/me/preferences",
             get(ui_preferences::get).put(ui_preferences::put),
+        )
+        .route(
+            "/api/me/run-cost-budget",
+            get(run_cost_budget::get).put(run_cost_budget::put),
         )
         .route("/api/admin/status", get(admin::status))
         .route("/api/admin/identity-providers", get(auth_sso::list))

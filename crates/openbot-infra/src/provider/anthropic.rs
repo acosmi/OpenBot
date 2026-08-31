@@ -878,6 +878,7 @@ mod tests {
             }],
             max_output_tokens: None,
             rate_card: None,
+            cost_cap: None,
         };
         let body: Value =
             serde_json::from_slice(&build_request_body("claude-sonnet-4-5", &request).unwrap())
@@ -945,6 +946,7 @@ mod tests {
                 tools: Vec::new(),
                 max_output_tokens: Some(16),
                 rate_card: None,
+                cost_cap: None,
             })
             .await
             .unwrap();

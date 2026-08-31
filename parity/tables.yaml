@@ -7,7 +7,7 @@
 # 三类 entry：
 #   1. 上游 28 张表（表名取自 server/src/db/schema/*.ts 的 pgTable 实参，不抄文档）—— label: parity
 #   2. 上游 13 条 migration（server/drizzle/0000–0012）—— label: parity
-#   3. Rust-owned native 新表（当前 17 张，含 audit/tool/approval/UI/memory/decision）—— label: 新增
+#   3. Rust-owned native 新表（当前 18 张，含 audit/tool/approval/UI/memory/decision/budget）—— label: 新增
 #
 # status 随实施推进；权威计数是 `cargo xtask parity-check --json`。done 只表示本条 target
 # 与证据已落地，不蕴含 notes 里的 repository 已实现。
@@ -62,15 +62,15 @@ recount:
     expect: 13
   - command: "grep -c '^  - id: ' parity/tables.yaml"
     cwd: repo
-    expect: 58
+    expect: 59
   - command: "grep -c 'label: \"parity\"' parity/tables.yaml"
     cwd: repo
     expect: 41
   - command: "grep -c 'label: \"新增\"' parity/tables.yaml"
     cwd: repo
-    expect: 17
-  # 「上游没有这 17 张 native 表」的负向断言。
-  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(audit_checkpoints|threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|tool_approvals|outbox|memories|memory_events|intelligence_import_cursors|user_ui_preferences|user_memory_controls|component_human_decisions)\"'"
+    expect: 18
+  # 「上游没有这 18 张 native 表」的负向断言。
+  - command: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"(audit_checkpoints|threads|thread_memberships|messages|runs|run_events|thread_leases|tool_calls|tool_attempts|tool_approvals|outbox|memories|memory_events|intelligence_import_cursors|user_ui_preferences|user_memory_controls|component_human_decisions|user_run_cost_budgets)\"'"
     cwd: upstream
     expect: 0
   # 上一条的正向对照：同一条管线在确实存在的表名上命中，证明它不是恒 0 的坏探测器。
@@ -665,9 +665,9 @@ entries:
     test_id: "T-TBL-0045"
     migration_rule: "n/a: 新表，无上游数据"
     status: "done"
-    done_evidence: "native 0016 真库：run PK/thread FK、状态/terminal/fencing/time CHECK；部分唯一索引实证第二个 active foreground run 命中拒绝；Run/RunStatus 纯状态机 terminal exactly-once 测试全绿。Batch87 native0024以expand-only追加9列/3具名CHECK并按sampling累计token。Batch88 native0025再追加10列/1具名shape CHECK，冻结operator-attested provider/model/maximum rates/source digest/time；PG实证exact snapshot replay、漂移conflict、无浮点跨samplingcost-upper-bound remainder carry、超限仍记账，缺rate保持NULL而非0。"
+    done_evidence: "native 0016 真库：run PK/thread FK、状态/terminal/fencing/time CHECK；部分唯一索引实证第二个 active foreground run 命中拒绝；Run/RunStatus 纯状态机 terminal exactly-once 测试全绿。Batch87 native0024以expand-only追加9列/3具名CHECK并按sampling累计token。Batch88 native0025再追加10列/1具名shape CHECK，冻结operator-attested provider/model/maximum rates/source digest/time；PG实证exact snapshot replay、漂移conflict、无浮点跨samplingcost-upper-bound remainder carry、超限仍记账，缺rate保持NULL而非0。Batch89 native0026追加2列/1 shape CHECK，BeginThreadRun同事务冻结actor cap；偏好后改不漂移，cap/rate mismatch拒绝，成本上界超限与exact replay绿。"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"runs\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::run::RunRepo（表 openbot-infra::db::tables::runs） | PK=run_id；FK thread cascade | `runs_one_foreground_active_per_thread` 覆盖 queued/running/reconciliation_required，unknown commit 继续占 slot | terminal_event_seq/status/finished_at 同形 CHECK，failed/reconciliation 必须 error_code | fencing_token Debug 脱敏 | 0024 usage suffix按run保存immutable output ceiling、input/output/total aggregate与exact last-sampling replay；0025 cost suffix只接受operator-attested currency+maximum-rate snapshot，NULL明确为unpriced，whole micro-unit+millionth remainder计算保守上界且不冒充vendor最终账单；不同currency不换算/不相加，尚无用户费用上限，不冒充完整budget | tool_calls→runs 为 NOT VALID staged FK：不扫描历史但约束新写 | retention 不猜固定天数；operational checkpoint 归 run_events，不进 memory"
+    notes: "repo=openbot-infra::repo::run::RunRepo（表 openbot-infra::db::tables::runs） | PK=run_id；FK thread cascade | `runs_one_foreground_active_per_thread` 覆盖 queued/running/reconciliation_required，unknown commit 继续占 slot | terminal_event_seq/status/finished_at 同形 CHECK，failed/reconciliation 必须 error_code | fencing_token Debug 脱敏 | 0024 usage suffix按run保存immutable output ceiling、input/output/total aggregate与exact last-sampling replay；0025 cost suffix只接受operator-attested currency+maximum-rate snapshot，NULL明确为unpriced，whole micro-unit+millionth remainder计算保守上界且不冒充vendor最终账单；不同currency不换算/不相加；0026在run创建事务冻结actor的currency-bound positive micro-unit cap，NULL明确为未配置，设置后改不漂移现有run，消费0025 cost upper bound且不冒充账单 | tool_calls→runs 为 NOT VALID staged FK：不扫描历史但约束新写 | retention 不猜固定天数；operational checkpoint 归 run_events，不进 memory"
 
   - id: "native-run-events"
     upstream: "-"
@@ -808,3 +808,15 @@ entries:
     done_evidence: "Batch47 native0023 PG17.11 SCRAM exact fixture：在schema0022上只新增component_human_decisions与2 indexes，旧表/列逐项不变，ledger11。PK decision_id、unique(run_id,provider_call_id)、thread/run/actor/Bot/component/resolved_by FK；component/state/Approval-vs-Choice answer/time/hash具名CHECK负例。Row Debug对arguments/answer/hash三列脱敏；PG runtime证明exact replay/异值conflict/actor+generation+membership+lease scope/DB expiry/cancel/audit rollback。"
     evidence: "固定上游schema与useHumanInTheLoop实现无durable表；同管线users/channels=2"
     notes: "typed boundary=PostgresComponentAdministration；与tool_approvals结构性分表，零effect/target/policy/computer generation。pending保存bounded renderer args，answer只按stored component/option校验；完整Agent suspend/resume与Leptos renderer留Batch48。"
+
+  - id: "native-user-run-cost-budgets"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-infra::db::tables::user_run_cost_budgets"
+    owner: "openbot-infra"
+    test_id: "T-TBL-0059"
+    migration_rule: "n/a: v4 §7.4/§17.3 actor-scoped currency-bound per-run provider cost cap"
+    status: "done"
+    done_evidence: "Batch89 native0026 PG17.11 exact fixture与runtime 2/0/0：46表/455列/326 NOT NULL/253约束/92索引，逐旧列证明0025子集，ledger14；deployment/tenant/actor三轴隔离、full replace/delete、BeginThreadRun冻结、后改不漂移、cost overage exact replay均绿。"
+    evidence: "固定上游schema对user_run_cost_budgets零命中；同管线users/channels=2"
+    notes: "typed boundary=PostgresRunCostBudgetAdministration；PK=(deployment_id,tenant_id,actor_user_id)，actor FK cascade；currency恰3位uppercase，max_cost_micro_units为正bigint，updated_at取DB clock。当前偏好只影响未来run，BeginThreadRun同事务复制到runs；API owner=openbot-server/Desktop typed ApplicationService。不是计价表，不存rate/账单，不做汇率换算。"

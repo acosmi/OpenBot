@@ -74,6 +74,7 @@
 pub mod agent;
 pub mod audit;
 pub mod auth;
+pub mod budget;
 pub mod command;
 pub mod components;
 pub mod desktop;

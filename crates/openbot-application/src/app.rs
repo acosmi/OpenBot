@@ -47,6 +47,10 @@ use crate::ports::{
     NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory, PeopleAdministration,
     PolicyAdministration, ThreadDirectory,
 };
+use crate::run_cost_budget::{
+    NoRunCostBudgetAdministration, RunCostBudgetAdministration, get_run_cost_budget,
+    replace_run_cost_budget,
+};
 use crate::sandboxed_components::{
     NoSandboxedComponentAdministration, SandboxedComponentAdministration,
     authorize_sandboxed_component, delete_sandboxed_component, list_published_sandboxed_components,
@@ -104,6 +108,7 @@ pub struct OpenBotApplication<
     mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
     tool_approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
     ui_preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
+    run_cost_budgets: std::sync::Arc<dyn RunCostBudgetAdministration>,
     heartbeat_period: Duration,
 }
 
@@ -141,6 +146,7 @@ impl<R>
             mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
             tool_approvals: std::sync::Arc::new(NoToolApprovalAdministration),
             ui_preferences: std::sync::Arc::new(NoUiPreferenceAdministration),
+            run_cost_budgets: std::sync::Arc::new(NoRunCostBudgetAdministration),
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
@@ -169,6 +175,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
+            run_cost_budgets: self.run_cost_budgets,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -195,6 +202,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
+            run_cost_budgets: self.run_cost_budgets,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -221,6 +229,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
+            run_cost_budgets: self.run_cost_budgets,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -251,6 +260,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
+            run_cost_budgets: self.run_cost_budgets,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -277,6 +287,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
+            run_cost_budgets: self.run_cost_budgets,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -303,6 +314,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
+            run_cost_budgets: self.run_cost_budgets,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -332,6 +344,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             mcp_connections: self.mcp_connections,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
+            run_cost_budgets: self.run_cost_budgets,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -420,6 +433,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
         preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
     ) -> Self {
         self.ui_preferences = preferences;
+        self
+    }
+
+    /// Attach authenticated run-cost budget storage shared by Server and Desktop.
+    #[must_use]
+    pub fn with_run_cost_budgets(
+        mut self,
+        budgets: std::sync::Arc<dyn RunCostBudgetAdministration>,
+    ) -> Self {
+        self.run_cost_budgets = budgets;
         self
     }
 
@@ -751,6 +774,12 @@ where
             )),
             AppCommand::UpdateUiPreferences(update) => Ok(AppReply::UiPreferences(
                 update_ui_preferences(self.ui_preferences.as_ref(), auth, update).await?,
+            )),
+            AppCommand::GetRunCostBudget => Ok(AppReply::RunCostBudget(
+                get_run_cost_budget(self.run_cost_budgets.as_ref(), auth).await?,
+            )),
+            AppCommand::ReplaceRunCostBudget(preference) => Ok(AppReply::RunCostBudget(
+                replace_run_cost_budget(self.run_cost_budgets.as_ref(), auth, preference).await?,
             )),
         }
     }

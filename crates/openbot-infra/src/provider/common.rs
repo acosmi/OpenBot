@@ -228,6 +228,7 @@ mod tests {
             tools: Vec::new(),
             max_output_tokens: Some(1),
             rate_card: None,
+            cost_cap: None,
         };
         assert_eq!(validate_request(&request), Ok(()));
         let mut mismatched = request.clone();

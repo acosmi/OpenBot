@@ -10,6 +10,7 @@ use openbot_application::provider::{
     RemoteAguiEventStream, RemoteAguiTransport, RemoteAguiTransportError,
 };
 use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
+use openbot_contracts::budget::{RunCostBudgetPreference, RunCostCapInput};
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::remote_callback::RemoteRunAssertionSigner;
@@ -130,11 +131,34 @@ async fn shared_postgres_application_assembly_executes_real_command() {
             .with_roles([Role::User, Role::Admin])
             .build();
             let reply = application
-                .execute(auth, AppCommand::GetCurrentUser)
+                .execute(auth.clone(), AppCommand::GetCurrentUser)
                 .await
                 .map_err(|error| error.to_string())?;
             if !matches!(reply, AppReply::CurrentUser(_)) {
                 return Err(format!("shared application reply drifted: {reply:?}"));
+            }
+            let preference = RunCostBudgetPreference {
+                cap: Some(RunCostCapInput {
+                    currency: "USD".to_owned(),
+                    max_cost_micro_units: "250000".to_owned(),
+                }),
+            };
+            let saved = application
+                .execute(
+                    auth.clone(),
+                    AppCommand::ReplaceRunCostBudget(preference.clone()),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if saved != AppReply::RunCostBudget(preference.clone()) {
+                return Err(format!("shared cost budget write drifted: {saved:?}"));
+            }
+            let loaded = application
+                .execute(auth, AppCommand::GetRunCostBudget)
+                .await
+                .map_err(|error| error.to_string())?;
+            if loaded != AppReply::RunCostBudget(preference) {
+                return Err(format!("shared cost budget read drifted: {loaded:?}"));
             }
             mcp_revocation_reconciler.stop().await;
             Ok(())

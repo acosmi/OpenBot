@@ -10,9 +10,9 @@ use async_trait::async_trait;
 use openbot_application::{
     AgentAudit, AgentAuditKind, AgentContextError, AgentContextSource, DurableTextRun,
     ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, ProviderRateCard,
-    RunCancellationDisposition, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease,
-    RunFailureCode, RunRuntime, RunRuntimeError, RunTerminal, RunTokenUsageReceipt,
-    RunToolExchange,
+    RunCancellationDisposition, RunCostCap, RunDispatchConsumer, RunDispatchDecision,
+    RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError, RunTerminal,
+    RunTokenUsageReceipt, RunToolExchange,
 };
 use openbot_contracts::components::is_component_human_decision_name;
 use openbot_domain::agent::{
@@ -357,6 +357,7 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
     let mut sampling_index = 0_u32;
     let mut run_output_ceiling = None::<Option<u64>>;
     let mut run_rate_card = None::<Option<ProviderRateCard>>;
+    let mut run_cost_cap = None::<Option<RunCostCap>>;
     if inner
         .audit
         .record(lease, AgentAuditKind::Invoked)
@@ -412,6 +413,36 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
         };
         let max_output_tokens = request.max_output_tokens;
         let candidate_rate_card = request.rate_card.clone();
+        let candidate_cost_cap = request.cost_cap.clone();
+        if let Some(cap) = &candidate_cost_cap {
+            match &candidate_rate_card {
+                None => {
+                    reject_cost_budget_before_provider(
+                        &mut state,
+                        &mut journal,
+                        inner.audit.as_ref(),
+                        lease,
+                        AgentFailure::RunCostBudgetUnpriced,
+                        AgentAuditKind::RunCostBudgetUnpriced,
+                    )
+                    .await;
+                    return;
+                }
+                Some(rate) if rate.currency() != cap.currency() => {
+                    reject_cost_budget_before_provider(
+                        &mut state,
+                        &mut journal,
+                        inner.audit.as_ref(),
+                        lease,
+                        AgentFailure::RunCostBudgetCurrencyMismatch,
+                        AgentAuditKind::RunCostBudgetCurrencyMismatch,
+                    )
+                    .await;
+                    return;
+                }
+                Some(_) => {}
+            }
+        }
         let candidate_run_output_ceiling =
             max_output_tokens.map(|limit| u64::from(limit) * (u64::from(TOOL_STEP_CAP) + 1));
         match run_output_ceiling {
@@ -430,6 +461,19 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
         match &run_rate_card {
             None => run_rate_card = Some(candidate_rate_card),
             Some(existing) if *existing == candidate_rate_card => {}
+            Some(_) => {
+                drive_terminal_event(
+                    &mut state,
+                    &mut journal,
+                    AgentEvent::ContextFailed(AgentFailure::ProviderInvalidResponse),
+                )
+                .await;
+                return;
+            }
+        }
+        match &run_cost_cap {
+            None => run_cost_cap = Some(candidate_cost_cap),
+            Some(existing) if *existing == candidate_cost_cap => {}
             Some(_) => {
                 drive_terminal_event(
                     &mut state,
@@ -569,6 +613,7 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
                             sampling_index,
                             max_run_output_tokens: run_output_ceiling.flatten(),
                             rate_card: run_rate_card.as_ref().and_then(Option::as_ref),
+                            cost_cap: run_cost_cap.as_ref().and_then(Option::as_ref),
                             audit: inner.audit.as_ref(),
                         };
                         if handle_provider_event(
@@ -816,6 +861,7 @@ struct ProviderSamplingContext<'a> {
     sampling_index: u32,
     max_run_output_tokens: Option<u64>,
     rate_card: Option<&'a ProviderRateCard>,
+    cost_cap: Option<&'a RunCostCap>,
     audit: &'a dyn AgentAudit,
 }
 
@@ -894,6 +940,7 @@ async fn handle_provider_event(
                         usage,
                         sampling.max_run_output_tokens,
                         sampling.rate_card,
+                        sampling.cost_cap,
                     )
                     .await
                 {
@@ -921,6 +968,26 @@ async fn handle_provider_event(
                             AgentEvent::ProviderFailed(AgentFailure::RunTokenBudgetExceeded),
                         )
                         .await;
+                        true
+                    }
+                    Ok(RunTokenUsageReceipt::CostBudgetExceeded(_)) => {
+                        *sampling.usage_seen = true;
+                        if sampling
+                            .audit
+                            .record(sampling.lease, AgentAuditKind::RunCostBudgetExceeded)
+                            .await
+                            .is_err()
+                        {
+                            drive_terminal_event(state, journal, AgentEvent::JournalCommitUnknown)
+                                .await;
+                        } else {
+                            drive_terminal_event(
+                                state,
+                                journal,
+                                AgentEvent::ProviderFailed(AgentFailure::RunCostBudgetExceeded),
+                            )
+                            .await;
+                        }
                         true
                     }
                     Err(RunRuntimeError::StaleLease) => {
@@ -1006,6 +1073,21 @@ async fn drive_terminal_event(
         return;
     };
     commit_terminal(state, journal, *terminal).await;
+}
+
+async fn reject_cost_budget_before_provider(
+    state: &mut AgentState,
+    journal: &mut DurableTextRun,
+    audit: &dyn AgentAudit,
+    lease: &RunExecutionLease,
+    failure: AgentFailure,
+    audit_kind: AgentAuditKind,
+) {
+    if audit.record(lease, audit_kind).await.is_err() {
+        drive_terminal_event(state, journal, AgentEvent::JournalCommitUnknown).await;
+    } else {
+        drive_terminal_event(state, journal, AgentEvent::ContextFailed(failure)).await;
+    }
 }
 
 async fn cancel_and_commit(
@@ -1126,6 +1208,11 @@ const fn failure_code(failure: AgentFailure) -> RunFailureCode {
         AgentFailure::ProviderGenerationFailed => RunFailureCode::ProviderGenerationFailed,
         AgentFailure::ProviderTokenBudgetExceeded => RunFailureCode::ProviderTokenBudgetExceeded,
         AgentFailure::RunTokenBudgetExceeded => RunFailureCode::RunTokenBudgetExceeded,
+        AgentFailure::RunCostBudgetUnpriced => RunFailureCode::RunCostBudgetUnpriced,
+        AgentFailure::RunCostBudgetCurrencyMismatch => {
+            RunFailureCode::RunCostBudgetCurrencyMismatch
+        }
+        AgentFailure::RunCostBudgetExceeded => RunFailureCode::RunCostBudgetExceeded,
         AgentFailure::ToolStepLimit => RunFailureCode::ToolStepLimit,
         AgentFailure::ToolLoopUnavailable => RunFailureCode::ToolLoopUnavailable,
         AgentFailure::ToolDenied => RunFailureCode::ToolDenied,
@@ -1158,6 +1245,7 @@ mod tests {
         calls: StdMutex<Vec<RuntimeCall>>,
         usage: StdMutex<FakeUsage>,
         force_budget_exceeded: bool,
+        force_cost_budget_exceeded: bool,
         terminal: Notify,
     }
 
@@ -1167,6 +1255,8 @@ mod tests {
         ceiling: Option<u64>,
         rate_card_initialized: bool,
         rate_card: Option<ProviderRateCard>,
+        cost_cap_initialized: bool,
+        cost_cap: Option<RunCostCap>,
         next_sampling: u32,
         aggregate: RunTokenUsage,
         last: Option<(u32, ProviderUsage)>,
@@ -1209,6 +1299,7 @@ mod tests {
                 calls: StdMutex::new(Vec::new()),
                 usage: StdMutex::new(FakeUsage::default()),
                 force_budget_exceeded: false,
+                force_cost_budget_exceeded: false,
                 terminal: Notify::new(),
             }
         }
@@ -1216,6 +1307,13 @@ mod tests {
         fn rejecting_usage_budget() -> Self {
             Self {
                 force_budget_exceeded: true,
+                ..Self::new()
+            }
+        }
+
+        fn rejecting_cost_budget() -> Self {
+            Self {
+                force_cost_budget_exceeded: true,
                 ..Self::new()
             }
         }
@@ -1306,6 +1404,7 @@ mod tests {
             usage: ProviderUsage,
             max_run_output_tokens: Option<u64>,
             rate_card: Option<&ProviderRateCard>,
+            cost_cap: Option<&RunCostCap>,
         ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
             let mut state = self.usage.lock().expect("usage lock");
             if state.ceiling_initialized {
@@ -1324,8 +1423,19 @@ mod tests {
                 state.rate_card_initialized = true;
                 state.rate_card = rate_card.cloned();
             }
+            if state.cost_cap_initialized {
+                if state.cost_cap.as_ref() != cost_cap {
+                    return Err(RunRuntimeError::Conflict);
+                }
+            } else {
+                state.cost_cap_initialized = true;
+                state.cost_cap = cost_cap.cloned();
+            }
             if self.force_budget_exceeded {
                 return Ok(RunTokenUsageReceipt::BudgetExceeded(state.aggregate));
+            }
+            if self.force_cost_budget_exceeded {
+                return Ok(RunTokenUsageReceipt::CostBudgetExceeded(state.aggregate));
             }
             if sampling_index < state.next_sampling {
                 return if state.last == Some((sampling_index, usage))
@@ -1430,6 +1540,7 @@ mod tests {
                 tools: Vec::new(),
                 max_output_tokens: Some(32),
                 rate_card: None,
+                cost_cap: None,
             })
         }
     }
@@ -1444,6 +1555,11 @@ mod tests {
     #[derive(Default)]
     struct DriftingRateContext {
         loads: AtomicUsize,
+    }
+
+    struct CostBudgetContext {
+        rate_currency: Option<&'static str>,
+        cap_currency: &'static str,
     }
 
     #[async_trait]
@@ -1485,6 +1601,33 @@ mod tests {
                     observed_at: datetime!(2026-08-30 12:00 UTC),
                 })
                 .expect("test rate card"),
+            );
+            Ok(request)
+        }
+    }
+
+    #[async_trait]
+    impl AgentContextSource for CostBudgetContext {
+        async fn load(
+            &self,
+            lease: &RunExecutionLease,
+        ) -> Result<ProviderRequest, AgentContextError> {
+            let mut request = FakeContext.load(lease).await?;
+            request.rate_card = self.rate_currency.map(|currency| {
+                ProviderRateCard::new(ProviderRateCardInput {
+                    family: ProviderBillingFamily::OpenAiCompatible,
+                    model: "model-budget".to_owned(),
+                    currency: currency.to_owned(),
+                    max_input_micro_units_per_million_tokens: 1_500_000,
+                    max_output_micro_units_per_million_tokens: 2_000_000,
+                    source_url: "https://prices.example.test/archive/2026-08-30".to_owned(),
+                    source_sha256: "c".repeat(64),
+                    observed_at: datetime!(2026-08-30 12:00 UTC),
+                })
+                .expect("test rate card")
+            });
+            request.cost_cap = Some(
+                RunCostCap::new(self.cap_currency.to_owned(), 2_000_000).expect("test cost cap"),
             );
             Ok(request)
         }
@@ -1947,6 +2090,110 @@ mod tests {
                 1,
                 RunTerminal::Failed(RunFailureCode::RunTokenBudgetExceeded),
             )]
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn user_cost_cap_rejects_unpriced_or_wrong_currency_before_provider_effect() {
+        for (rate_currency, expected, audit_kind, run_id) in [
+            (
+                None,
+                RunFailureCode::RunCostBudgetUnpriced,
+                AgentAuditKind::RunCostBudgetUnpriced,
+                "run-cost-unpriced",
+            ),
+            (
+                Some("EUR"),
+                RunFailureCode::RunCostBudgetCurrencyMismatch,
+                AgentAuditKind::RunCostBudgetCurrencyMismatch,
+                "run-cost-currency",
+            ),
+        ] {
+            let runtime = Arc::new(FakeRuntime::new());
+            let provider = Arc::new(SequencedProvider {
+                sessions: StdMutex::new(VecDeque::new()),
+                starts: AtomicUsize::new(0),
+            });
+            let audit = Arc::new(FakeAudit::default());
+            let agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                Arc::new(CostBudgetContext {
+                    rate_currency,
+                    cap_currency: "USD",
+                }),
+                provider.clone(),
+                Arc::new(NoAgentToolInvoker),
+                audit.clone(),
+                test_config(),
+            )
+            .unwrap();
+            let consumer = agent.consumer();
+            let lease = lease(run_id);
+            assert_eq!(
+                consumer.dispatch(lease.clone()).await,
+                RunDispatchDecision::Accepted
+            );
+            consumer.activate(&lease).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+                .await
+                .unwrap();
+            assert_eq!(provider.starts.load(AtomicOrdering::SeqCst), 0);
+            assert_eq!(
+                runtime.calls(),
+                [RuntimeCall::Finish(1, RunTerminal::Failed(expected))]
+            );
+            assert_eq!(audit.kinds(), [AgentAuditKind::Invoked, audit_kind]);
+            agent.stop().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn user_cost_cap_exhaustion_commits_its_stable_terminal() {
+        let runtime = Arc::new(FakeRuntime::rejecting_cost_budget());
+        let audit = Arc::new(FakeAudit::default());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(CostBudgetContext {
+                rate_currency: Some("USD"),
+                cap_currency: "USD",
+            }),
+            Arc::new(FakeProvider {
+                events: vec![ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 3,
+                    output_tokens: 2,
+                    total_tokens: 5,
+                })],
+                hold: false,
+            }),
+            Arc::new(NoAgentToolInvoker),
+            audit.clone(),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-cost-budget");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.calls(),
+            [RuntimeCall::Finish(
+                1,
+                RunTerminal::Failed(RunFailureCode::RunCostBudgetExceeded),
+            )]
+        );
+        assert_eq!(
+            audit.kinds(),
+            [
+                AgentAuditKind::Invoked,
+                AgentAuditKind::RunCostBudgetExceeded,
+            ]
         );
         agent.stop().await;
     }
