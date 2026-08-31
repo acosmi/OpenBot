@@ -139,8 +139,17 @@ pub const NATIVE_0024_NAME: &str = "native_0024_run_token_usage";
 /// 0024 SQL source.
 pub const NATIVE_0024_SQL: &str = include_str!("../../sql/native_0024.sql");
 
+/// Durable operator-attested provider cost accounting version.
+pub const NATIVE_0025_VERSION: i32 = 25;
+
+/// 0025 stable name.
+pub const NATIVE_0025_NAME: &str = "native_0025_run_provider_cost_upper_bound";
+
+/// 0025 SQL source.
+pub const NATIVE_0025_SQL: &str = include_str!("../../sql/native_0025.sql");
+
 /// 当前二进制认识的最新 native schema 版本。
-pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0024_VERSION;
+pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0025_VERSION;
 
 /// 当前二进制钉住的 native migration 数量。
 pub const NATIVE_MIGRATION_COUNT: usize = MIGRATIONS.len();
@@ -216,6 +225,11 @@ const MIGRATIONS: &[MigrationSpec] = &[
         version: NATIVE_0024_VERSION,
         name: NATIVE_0024_NAME,
         sql: NATIVE_0024_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0025_VERSION,
+        name: NATIVE_0025_NAME,
+        sql: NATIVE_0025_SQL,
     },
 ];
 
@@ -341,6 +355,12 @@ pub fn native_0023_checksum() -> String {
 #[must_use]
 pub fn native_0024_checksum() -> String {
     Sha256Digest::of(NATIVE_0024_SQL.as_bytes()).to_hex()
+}
+
+/// Current 0025 SQL lowercase SHA-256.
+#[must_use]
+pub fn native_0025_checksum() -> String {
+    Sha256Digest::of(NATIVE_0025_SQL.as_bytes()).to_hex()
 }
 
 /// 在一个已到 0012 的数据库上施加当前二进制认识的全部 Rust-owned migrations。
@@ -510,6 +530,7 @@ mod tests {
             .chain(statement_lines(NATIVE_0022_SQL))
             .chain(statement_lines(NATIVE_0023_SQL))
             .chain(statement_lines(NATIVE_0024_SQL))
+            .chain(statement_lines(NATIVE_0025_SQL))
         {
             let uppercase = line.to_ascii_uppercase();
             assert!(
@@ -560,6 +581,8 @@ mod tests {
         assert!(NATIVE_0023_SQL.contains("component_human_decisions_answer_shape"));
         assert!(NATIVE_0024_SQL.contains("ADD COLUMN budget_max_output_tokens bigint"));
         assert!(NATIVE_0024_SQL.contains("runs_usage_last_shape"));
+        assert!(NATIVE_0025_SQL.contains("ADD COLUMN cost_currency text"));
+        assert!(NATIVE_0025_SQL.contains("runs_cost_accounting_shape"));
     }
 
     #[test]
@@ -577,6 +600,7 @@ mod tests {
                 .chain(statement_lines(NATIVE_0022_SQL))
                 .chain(statement_lines(NATIVE_0023_SQL))
                 .chain(statement_lines(NATIVE_0024_SQL))
+                .chain(statement_lines(NATIVE_0025_SQL))
                 .any(|line| line.contains("IF NOT EXISTS"))
         );
         assert!(LEDGER_BOOTSTRAP_SQL.contains("IF NOT EXISTS"));
@@ -627,7 +651,10 @@ mod tests {
         let native_run_usage = native_0024_checksum();
         assert_eq!(native_run_usage.len(), 64);
         assert_ne!(native_component_decisions, native_run_usage);
-        assert_eq!(MIGRATIONS.len(), 12);
-        assert_eq!(MIGRATIONS[11].version, NATIVE_LATEST_VERSION);
+        let native_run_cost = native_0025_checksum();
+        assert_eq!(native_run_cost.len(), 64);
+        assert_ne!(native_run_usage, native_run_cost);
+        assert_eq!(MIGRATIONS.len(), 13);
+        assert_eq!(MIGRATIONS[12].version, NATIVE_LATEST_VERSION);
     }
 }

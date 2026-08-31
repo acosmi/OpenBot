@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openbot_application::{
-    ClaimedRunCancellation, ClaimedRunDispatch, ProviderUsage, RunCancellationDisposition,
+    ClaimedRunCancellation, ClaimedRunDispatch, ProviderBillingFamily, ProviderCostUpperBound,
+    ProviderRateCard, ProviderRateCardInput, ProviderUsage, RunCancellationDisposition,
     RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime,
     RunRuntimeError, RunSemanticChannel, RunTerminal, RunTokenUsage, RunTokenUsageReceipt,
     RunToolExchange, RunWriteReceipt, SEMANTIC_CHUNK_MAX_BYTES,
@@ -347,6 +348,7 @@ impl RunRuntime for PostgresRunRuntime {
         sampling_index: u32,
         usage: ProviderUsage,
         max_run_output_tokens: Option<u64>,
+        rate_card: Option<&ProviderRateCard>,
     ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
         let mut client = self.client().await?;
         let transaction = client
@@ -360,6 +362,7 @@ impl RunRuntime for PostgresRunRuntime {
             sampling_index,
             usage,
             max_run_output_tokens,
+            rate_card,
         )
         .await;
         finish_transaction(transaction, result).await
@@ -1494,6 +1497,89 @@ impl LockedRunTokenUsage {
     }
 }
 
+struct LockedRunCost {
+    currency: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
+    input_rate: Option<i64>,
+    output_rate: Option<i64>,
+    source_url: Option<String>,
+    source_sha256: Option<String>,
+    observed_at: Option<OffsetDateTime>,
+    micro_units: Option<i64>,
+    remainder_millionths: Option<i32>,
+}
+
+impl LockedRunCost {
+    fn decode(
+        self,
+    ) -> Result<(Option<ProviderRateCard>, Option<ProviderCostUpperBound>), RunRuntimeError> {
+        match (
+            self.currency,
+            self.provider,
+            self.model,
+            self.input_rate,
+            self.output_rate,
+            self.source_url,
+            self.source_sha256,
+            self.observed_at,
+            self.micro_units,
+            self.remainder_millionths,
+        ) {
+            (None, None, None, None, None, None, None, None, None, None) => Ok((None, None)),
+            (
+                Some(currency),
+                Some(provider),
+                Some(model),
+                Some(input_rate),
+                Some(output_rate),
+                Some(source_url),
+                Some(source_sha256),
+                Some(observed_at),
+                Some(micro_units),
+                Some(remainder),
+            ) => {
+                let family =
+                    ProviderBillingFamily::parse(&provider).ok_or(RunRuntimeError::Corrupt {
+                        field: "cost_provider",
+                    })?;
+                let rate = ProviderRateCard::new(ProviderRateCardInput {
+                    family,
+                    model,
+                    currency,
+                    max_input_micro_units_per_million_tokens: sequence_u64(
+                        input_rate,
+                        "cost_input_rate",
+                    )?,
+                    max_output_micro_units_per_million_tokens: sequence_u64(
+                        output_rate,
+                        "cost_output_rate",
+                    )?,
+                    source_url,
+                    source_sha256,
+                    observed_at,
+                })
+                .map_err(|_| RunRuntimeError::Corrupt {
+                    field: "cost_rate_card",
+                })?;
+                let cost = ProviderCostUpperBound::from_parts(
+                    sequence_u64(micro_units, "usage_cost_upper_bound_micro_units")?,
+                    u32::try_from(remainder).map_err(|_| RunRuntimeError::Corrupt {
+                        field: "usage_cost_upper_bound_remainder_millionths",
+                    })?,
+                )
+                .map_err(|_| RunRuntimeError::Corrupt {
+                    field: "run_provider_cost",
+                })?;
+                Ok((Some(rate), Some(cost)))
+            }
+            _ => Err(RunRuntimeError::Corrupt {
+                field: "run_provider_cost_shape",
+            }),
+        }
+    }
+}
+
 async fn record_provider_usage_in_transaction(
     transaction: &Transaction<'_>,
     owner: &str,
@@ -1501,7 +1587,9 @@ async fn record_provider_usage_in_transaction(
     sampling_index: u32,
     usage: ProviderUsage,
     max_run_output_tokens: Option<u64>,
+    rate_card: Option<&ProviderRateCard>,
 ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
+    let rate_card = rate_card.cloned();
     let known = usage.input_tokens.checked_add(usage.output_tokens).ok_or(
         RunRuntimeError::InvalidInput {
             field: "provider_usage",
@@ -1532,12 +1620,25 @@ async fn record_provider_usage_in_transaction(
     }
     let now = database_now(transaction).await?;
     validate_active_lease(&locked, owner, lease, now)?;
+    if rate_card
+        .as_ref()
+        .is_some_and(|rate| rate.observed_at() > now)
+    {
+        return Err(RunRuntimeError::InvalidInput {
+            field: "provider_rate_observed_at",
+        });
+    }
 
     let row = transaction
         .query_one(
             "SELECT budget_max_output_tokens,usage_input_tokens,usage_output_tokens, \
                     usage_total_tokens,usage_next_sampling,usage_last_sampling, \
-                    usage_last_input_tokens,usage_last_output_tokens,usage_last_total_tokens \
+                    usage_last_input_tokens,usage_last_output_tokens,usage_last_total_tokens, \
+                    cost_currency,cost_provider,cost_model, \
+                    cost_max_input_micro_units_per_million_tokens, \
+                    cost_max_output_micro_units_per_million_tokens,cost_source_url, \
+                    cost_source_sha256,cost_observed_at,usage_cost_upper_bound_micro_units, \
+                    usage_cost_upper_bound_remainder_millionths \
              FROM public.runs WHERE run_id=$1",
             &[&lease.run_id().as_str()],
         )
@@ -1555,6 +1656,19 @@ async fn record_provider_usage_in_transaction(
         last_total_tokens: decode(&row, "usage_last_total_tokens")?,
     };
     let aggregate = stored.aggregate()?;
+    let (stored_rate_card, stored_cost) = LockedRunCost {
+        currency: decode(&row, "cost_currency")?,
+        provider: decode(&row, "cost_provider")?,
+        model: decode(&row, "cost_model")?,
+        input_rate: decode(&row, "cost_max_input_micro_units_per_million_tokens")?,
+        output_rate: decode(&row, "cost_max_output_micro_units_per_million_tokens")?,
+        source_url: decode(&row, "cost_source_url")?,
+        source_sha256: decode(&row, "cost_source_sha256")?,
+        observed_at: decode(&row, "cost_observed_at")?,
+        micro_units: decode(&row, "usage_cost_upper_bound_micro_units")?,
+        remainder_millionths: decode(&row, "usage_cost_upper_bound_remainder_millionths")?,
+    }
+    .decode()?;
     let last_shape_is_valid = if stored.next_sampling == 0 {
         stored.last_sampling.is_none()
             && stored.last_input_tokens.is_none()
@@ -1586,7 +1700,12 @@ async fn record_provider_usage_in_transaction(
         if stored.max_output_tokens.is_some() && stored.max_output_tokens != max_output_tokens {
             return Err(RunRuntimeError::Conflict);
         }
-    } else if stored.max_output_tokens != max_output_tokens {
+        if stored_rate_card.is_some() || stored_cost.is_some() {
+            return Err(RunRuntimeError::Corrupt {
+                field: "run_provider_cost_before_usage",
+            });
+        }
+    } else if stored.max_output_tokens != max_output_tokens || stored_rate_card != rate_card {
         return Err(RunRuntimeError::Conflict);
     }
 
@@ -1596,7 +1715,8 @@ async fn record_provider_usage_in_transaction(
             && stored.last_input_tokens == Some(input_tokens)
             && stored.last_output_tokens == Some(output_tokens)
             && stored.last_total_tokens == Some(total_tokens)
-            && stored.max_output_tokens == max_output_tokens;
+            && stored.max_output_tokens == max_output_tokens
+            && stored_rate_card == rate_card;
         return if exact_last {
             if stored
                 .max_output_tokens
@@ -1645,6 +1765,25 @@ async fn record_provider_usage_in_transaction(
             field: "provider_usage",
         });
     }
+    let next_cost = match (stored_cost, rate_card.as_ref()) {
+        (None, None) => None,
+        (None, Some(rate)) if stored.next_sampling == 0 => Some(
+            ProviderCostUpperBound::default()
+                .accrue(usage, rate)
+                .map_err(|_| RunRuntimeError::InvalidInput {
+                    field: "provider_cost",
+                })?,
+        ),
+        (Some(cost), Some(rate)) => {
+            Some(
+                cost.accrue(usage, rate)
+                    .map_err(|_| RunRuntimeError::InvalidInput {
+                        field: "provider_cost",
+                    })?,
+            )
+        }
+        _ => return Err(RunRuntimeError::Conflict),
+    };
     let budget_exceeded = max_output_tokens.is_some_and(|limit| next_output > limit);
     let next_sampling = stored
         .next_sampling
@@ -1652,12 +1791,44 @@ async fn record_provider_usage_in_transaction(
         .ok_or(RunRuntimeError::Corrupt {
             field: "usage_next_sampling",
         })?;
+    let cost_currency = rate_card.as_ref().map(ProviderRateCard::currency);
+    let cost_provider = rate_card.as_ref().map(|rate| rate.family().as_str());
+    let cost_model = rate_card.as_ref().map(ProviderRateCard::model);
+    let cost_input_rate = rate_card
+        .as_ref()
+        .map(|rate| token_i64(rate.max_input_rate(), "cost_input_rate"))
+        .transpose()?;
+    let cost_output_rate = rate_card
+        .as_ref()
+        .map(|rate| token_i64(rate.max_output_rate(), "cost_output_rate"))
+        .transpose()?;
+    let cost_source_url = rate_card.as_ref().map(ProviderRateCard::source_url);
+    let cost_source_sha256 = rate_card.as_ref().map(ProviderRateCard::source_sha256);
+    let cost_observed_at = rate_card.as_ref().map(ProviderRateCard::observed_at);
+    let usage_cost_upper_bound_micro_units = next_cost
+        .map(ProviderCostUpperBound::micro_units)
+        .map(|value| token_i64(value, "usage_cost_upper_bound_micro_units"))
+        .transpose()?;
+    let usage_cost_upper_bound_remainder = next_cost
+        .map(ProviderCostUpperBound::remainder_millionths)
+        .map(|value| {
+            i32::try_from(value).map_err(|_| RunRuntimeError::InvalidInput {
+                field: "usage_cost_upper_bound_remainder_millionths",
+            })
+        })
+        .transpose()?;
     let updated = transaction
         .execute(
             "UPDATE public.runs SET budget_max_output_tokens=$2,usage_input_tokens=$3, \
                     usage_output_tokens=$4,usage_total_tokens=$5,usage_next_sampling=$6, \
                     usage_last_sampling=$7,usage_last_input_tokens=$8, \
-                    usage_last_output_tokens=$9,usage_last_total_tokens=$10 \
+                    usage_last_output_tokens=$9,usage_last_total_tokens=$10, \
+                    cost_currency=$11,cost_provider=$12,cost_model=$13, \
+                    cost_max_input_micro_units_per_million_tokens=$14, \
+                    cost_max_output_micro_units_per_million_tokens=$15,cost_source_url=$16, \
+                    cost_source_sha256=$17,cost_observed_at=$18, \
+                    usage_cost_upper_bound_micro_units=$19, \
+                    usage_cost_upper_bound_remainder_millionths=$20 \
              WHERE run_id=$1",
             &[
                 &lease.run_id().as_str(),
@@ -1670,6 +1841,16 @@ async fn record_provider_usage_in_transaction(
                 &input_tokens,
                 &output_tokens,
                 &total_tokens,
+                &cost_currency,
+                &cost_provider,
+                &cost_model,
+                &cost_input_rate,
+                &cost_output_rate,
+                &cost_source_url,
+                &cost_source_sha256,
+                &cost_observed_at,
+                &usage_cost_upper_bound_micro_units,
+                &usage_cost_upper_bound_remainder,
             ],
         )
         .await

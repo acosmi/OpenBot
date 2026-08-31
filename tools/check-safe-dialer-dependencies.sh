@@ -50,18 +50,26 @@ grep -qF 'openidconnect = { version = "4.0.1", default-features = false }' Cargo
   || fail 'openidconnect 必须继续关闭自带 reqwest/rustls'
 
 network_callers=$(rg -l 'TcpStream::connect|lookup_host\(|TlsConnector|http1::handshake|reqwest::|hyper::client|tokio_rustls' crates/*/src --glob '*.rs' | sort)
-expected_callers=$'crates/openbot-infra/src/net/safe_http.rs\ncrates/openbot-server/src/http/threads.rs'
+expected_callers=$'crates/openbot-desktop/src/postgres_sidecar.rs\ncrates/openbot-infra/src/net/safe_http.rs\ncrates/openbot-server/src/http/approvals.rs\ncrates/openbot-server/src/http/channels.rs\ncrates/openbot-server/src/http/threads.rs'
 [[ "$network_callers" == "$expected_callers" ]] \
   || fail "socket/DNS/TLS/HTTP client 调用面不再唯一：[$network_callers]"
 
-# R67 WebSocket 真 socket 测试在 Server 源文件的 `#[cfg(test)] mod tests` 内有且只有一处
-# loopback client。逐行锁边界，不能因为允许测试就放行该文件 production 部分的第二 HTTP client。
-thread_test_module_line=$(rg -n '^#\[cfg\(test\)\]$' crates/openbot-server/src/http/threads.rs | cut -d: -f1)
-thread_client_lines=$(rg -n 'TcpStream::connect|lookup_host\(|TlsConnector|http1::handshake|reqwest::|hyper::client|tokio_rustls' crates/openbot-server/src/http/threads.rs | cut -d: -f1)
-[[ "$thread_test_module_line" =~ ^[0-9]+$ && "$thread_client_lines" =~ ^[0-9]+$ ]] \
-  || fail "WebSocket test-only loopback client 数量漂移：cfg=[$thread_test_module_line] callers=[$thread_client_lines]"
-(( thread_client_lines > thread_test_module_line )) \
-  || fail "WebSocket loopback client 越出 cfg(test)：cfg=$thread_test_module_line caller=$thread_client_lines"
+# R67/R130/R146/R156 的四个真 socket harness各有且只有一个test-only loopback client。
+# 逐文件锁唯一cfg与唯一caller，并要求caller严格位于cfg之后；不能因允许测试而放行production第二client。
+test_only_network_files=(
+  crates/openbot-desktop/src/postgres_sidecar.rs
+  crates/openbot-server/src/http/approvals.rs
+  crates/openbot-server/src/http/channels.rs
+  crates/openbot-server/src/http/threads.rs
+)
+for file in "${test_only_network_files[@]}"; do
+  test_module_line=$(rg -n '^#\[cfg\(test\)\]$' "$file" | cut -d: -f1)
+  client_line=$(rg -n 'TcpStream::connect|lookup_host\(|TlsConnector|http1::handshake|reqwest::|hyper::client|tokio_rustls' "$file" | cut -d: -f1)
+  [[ "$test_module_line" =~ ^[0-9]+$ && "$client_line" =~ ^[0-9]+$ ]] \
+    || fail "test-only loopback client 数量漂移：file=$file cfg=[$test_module_line] callers=[$client_line]"
+  (( client_line > test_module_line )) \
+    || fail "loopback client 越出 cfg(test)：file=$file cfg=$test_module_line caller=$client_line"
+done
 
 metadata=$(cargo metadata --format-version 1 --locked)
 ring_manifest=$(printf '%s' "$metadata" | python3 -c 'import json,sys;d=json.load(sys.stdin);m=[p["manifest_path"] for p in d["packages"] if p["name"]=="ring" and p["version"]=="0.17.14"];assert len(m)==1,m;print(m[0])')

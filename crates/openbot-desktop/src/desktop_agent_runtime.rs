@@ -302,6 +302,7 @@ pub(crate) fn start_desktop_agent_host(
                 Some(budgets.max_output_tokens),
             )
             .map_err(|_| DesktopAgentRuntimeError::Assembly)?
+            .with_rate_cards(package.package.model.rate_card.clone(), None)
             .with_tools(vec![remember_provider_tool()])
             .with_remote_assertions(remote_assertions)
             .with_mcp_catalog(mcp_catalog)

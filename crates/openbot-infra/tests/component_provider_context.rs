@@ -5,7 +5,10 @@ mod harness;
 use std::sync::Arc;
 
 use harness::{admin_config, with_temp_database};
-use openbot_application::{AgentContextSource, ComponentAdministration, RunExecutionLease};
+use openbot_application::{
+    AgentContextSource, ComponentAdministration, ProviderBillingFamily, ProviderRateCard,
+    ProviderRateCardInput, ProviderRoute, RunExecutionLease,
+};
 use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::components::{
     SHOW_NOTICE_COMPONENT_NAME, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
@@ -16,6 +19,7 @@ use openbot_domain::thread::FencingToken;
 use openbot_infra::component_catalogue::PostgresComponentAdministration;
 use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::provider::context::PostgresAgentContextSource;
+use time::macros::datetime;
 
 #[tokio::test]
 #[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
@@ -99,6 +103,28 @@ async fn fresh_component_grants_are_exact_provider_definitions_and_revocation_is
                 .map_err(|error| error.to_string())?;
             drop(client);
 
+            let package_rate = ProviderRateCard::new(ProviderRateCardInput {
+                family: ProviderBillingFamily::OpenAiCompatible,
+                model: "package-model".to_owned(),
+                currency: "USD".to_owned(),
+                max_input_micro_units_per_million_tokens: 1,
+                max_output_micro_units_per_million_tokens: 2,
+                source_url: "https://prices.example.test/package".to_owned(),
+                source_sha256: "a".repeat(64),
+                observed_at: datetime!(2026-08-30 12:00 UTC),
+            })
+            .map_err(|error| error.to_string())?;
+            let managed_rate = ProviderRateCard::new(ProviderRateCardInput {
+                family: ProviderBillingFamily::Anthropic,
+                model: "managed-model".to_owned(),
+                currency: "USD".to_owned(),
+                max_input_micro_units_per_million_tokens: 3,
+                max_output_micro_units_per_million_tokens: 4,
+                source_url: "https://prices.example.test/managed".to_owned(),
+                source_sha256: "b".repeat(64),
+                observed_at: datetime!(2026-08-30 12:00 UTC),
+            })
+            .map_err(|error| error.to_string())?;
             let context = PostgresAgentContextSource::new(
                 pool.clone(),
                 DeploymentId::new("deployment-a"),
@@ -106,6 +132,7 @@ async fn fresh_component_grants_are_exact_provider_definitions_and_revocation_is
                 Some(256),
             )
             .map_err(|error| error.to_string())?
+            .with_rate_cards(Some(package_rate.clone()), Some(managed_rate.clone()))
             .with_components(components);
             let lease = RunExecutionLease::new(
                 RunId::new("run-1"),
@@ -120,6 +147,9 @@ async fn fresh_component_grants_are_exact_provider_definitions_and_revocation_is
                 .load(&lease)
                 .await
                 .map_err(|error| error.to_string())?;
+            if first.rate_card.as_ref() != Some(&package_rate) {
+                return Err("package provider did not receive its exact rate snapshot".to_owned());
+            }
             let expected = compiled_component_manifest()
                 .into_iter()
                 .filter(|entry| {
@@ -161,6 +191,52 @@ async fn fresh_component_grants_are_exact_provider_definitions_and_revocation_is
                 || second.tools.iter().any(|tool| tool.name == "showBarChart")
             {
                 return Err(format!("component revocation was not fresh: {:?}", second.tools));
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "UPDATE public.agents SET configuration= \
+                       '{\"systemPrompt\":\"Test role.\",\"providerSource\":\"managed\"}' \
+                     WHERE id='bot-1'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            drop(client);
+            let managed = context
+                .load(&lease)
+                .await
+                .map_err(|error| error.to_string())?;
+            if managed.route != ProviderRoute::Managed
+                || managed.rate_card.as_ref() != Some(&managed_rate)
+            {
+                return Err("managed provider did not receive its exact rate snapshot".to_owned());
+            }
+            let future_rate = ProviderRateCard::new(ProviderRateCardInput {
+                family: ProviderBillingFamily::Anthropic,
+                model: "managed-model".to_owned(),
+                currency: "USD".to_owned(),
+                max_input_micro_units_per_million_tokens: 3,
+                max_output_micro_units_per_million_tokens: 4,
+                source_url: "https://prices.example.test/future".to_owned(),
+                source_sha256: "c".repeat(64),
+                observed_at: datetime!(9999-01-01 0:00 UTC),
+            })
+            .map_err(|error| error.to_string())?;
+            let future_context = PostgresAgentContextSource::new(
+                pool.clone(),
+                DeploymentId::new("deployment-a"),
+                TenantId::new("tenant-a"),
+                Some(256),
+            )
+            .map_err(|error| error.to_string())?
+            .with_rate_cards(None, Some(future_rate));
+            if future_context.load(&lease).await
+                != Err(openbot_application::AgentContextError::Corrupt {
+                    field: "provider_rate_observed_at",
+                })
+            {
+                return Err("future rate snapshot must fail before provider start".to_owned());
             }
             Ok(())
         }

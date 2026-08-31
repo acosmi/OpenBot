@@ -220,6 +220,16 @@ pub const SECRET_SCAN_EXEMPTIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "runs",
+        "cost_max_input_micro_units_per_million_tokens",
+        "bigint：输入 token 的公开计价比率，不含 prompt 或可认证 token 字节",
+    ),
+    (
+        "runs",
+        "cost_max_output_micro_units_per_million_tokens",
+        "bigint：输出 token 的公开计价比率，不含回复或可认证 token 字节",
+    ),
+    (
+        "runs",
         "usage_input_tokens",
         "bigint：provider 输入 token 的累计数量，不含 prompt 或可认证 token 字节",
     ),
@@ -517,7 +527,7 @@ pub mod thread_memberships;
 pub mod threads;
 
 /// Native 0016 的十张 thread/realtime/memory 表，按表名升序；`runs` 的 typed row
-/// 同步包含 0024 expand-only usage suffix。
+/// 同步包含 0024 usage 与 0025 maximum-rate cost-upper-bound expand-only suffix。
 pub const NATIVE_0016_TABLES: &[TableSpec] = &[
     TableSpec {
         name: intelligence_import_cursors::TABLE_NAME,
@@ -979,7 +989,7 @@ mod tests {
             .count();
         assert_eq!(hits, registered_root_hits + exemption_root_hits);
         assert_eq!(SECRET_COLUMNS.len(), 32);
-        assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 18);
+        assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 20);
     }
 
     /// 两张名单都必须指向真实存在的 `(表, 列)`，且互不重叠。

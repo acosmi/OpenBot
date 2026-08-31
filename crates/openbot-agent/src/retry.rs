@@ -237,6 +237,7 @@ mod tests {
             }],
             tools: Vec::new(),
             max_output_tokens: None,
+            rate_card: None,
         }
     }
 

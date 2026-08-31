@@ -241,6 +241,16 @@ async fn native_constraints_and_repositories_enforce_fencing_replay_outbox_and_m
                 usage_last_input_tokens: None,
                 usage_last_output_tokens: None,
                 usage_last_total_tokens: None,
+                cost_currency: None,
+                cost_provider: None,
+                cost_model: None,
+                cost_max_input_micro_units_per_million_tokens: None,
+                cost_max_output_micro_units_per_million_tokens: None,
+                cost_source_url: None,
+                cost_source_sha256: None,
+                cost_observed_at: None,
+                usage_cost_upper_bound_micro_units: None,
+                usage_cost_upper_bound_remainder_millionths: None,
             };
             RunRepo::new(pool.clone())
                 .insert(&run)

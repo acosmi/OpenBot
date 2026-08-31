@@ -61,6 +61,8 @@ pub enum Expectation {
     WholeTokensOneToMillion,
     /// Selected provider key must be nonempty after trim。
     NonEmptySecret,
+    /// Complete operator-attested provider price snapshot.
+    ProviderRateCard,
 }
 
 impl Expectation {
@@ -81,6 +83,7 @@ impl Expectation {
             Self::WholeMillisecondsOrZero => "whole_milliseconds_or_zero",
             Self::WholeTokensOneToMillion => "whole_tokens_one_to_million",
             Self::NonEmptySecret => "non_empty_secret",
+            Self::ProviderRateCard => "provider_rate_card",
         }
     }
 }

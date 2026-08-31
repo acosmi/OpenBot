@@ -14,6 +14,10 @@ use openbot_domain::identity::groups::{
     IdpGroupMapping, validate_audience,
 };
 use serde::Deserialize;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+
+use crate::provider::{ProviderBillingFamily, ProviderRateCard, ProviderRateCardInput};
 
 /// Tenant Package 唯一允许读取的五个文件；runtime `theme.css` 刻意不在其中。
 pub const TENANT_PACKAGE_FILENAMES: [&str; 5] = [
@@ -386,6 +390,8 @@ pub struct TenantModel {
     pub credential_secret_ref: String,
     /// 默认模型 id。
     pub default_model: String,
+    /// Optional operator-attested rate snapshot; absence remains explicitly unpriced.
+    pub rate_card: Option<ProviderRateCard>,
 }
 
 /// 兼容解析但不执行本地索引的 knowledge source。
@@ -539,16 +545,46 @@ pub fn validate_tenant_package(
         });
     }
 
-    if model_file.model.provider != "openai" {
+    let RawModel {
+        provider,
+        credential_secret_ref,
+        default_model,
+        pricing,
+    } = model_file.model;
+    if provider != "openai" {
         return Err(TenantPackageError::ModelProviderUnsupported);
     }
+    let default_model = required(default_model, "model.default_model")?;
+    let rate_card = pricing
+        .map(|pricing| {
+            let observed_at =
+                OffsetDateTime::parse(&pricing.observed_at, &Rfc3339).map_err(|_| {
+                    TenantPackageError::ShapeInvalid {
+                        field: "model.pricing.observed_at",
+                    }
+                })?;
+            ProviderRateCard::new(ProviderRateCardInput {
+                family: ProviderBillingFamily::OpenAiCompatible,
+                model: default_model.clone(),
+                currency: pricing.currency,
+                max_input_micro_units_per_million_tokens: pricing
+                    .max_input_micro_units_per_million_tokens,
+                max_output_micro_units_per_million_tokens: pricing
+                    .max_output_micro_units_per_million_tokens,
+                source_url: pricing.source_url,
+                source_sha256: pricing.source_sha256,
+                observed_at,
+            })
+            .map_err(|_| TenantPackageError::ShapeInvalid {
+                field: "model.pricing",
+            })
+        })
+        .transpose()?;
     let model = TenantModel {
-        provider: model_file.model.provider,
-        credential_secret_ref: required(
-            model_file.model.credential_secret_ref,
-            "model.credential_secret_ref",
-        )?,
-        default_model: required(model_file.model.default_model, "model.default_model")?,
+        provider,
+        credential_secret_ref: required(credential_secret_ref, "model.credential_secret_ref")?,
+        default_model,
+        rate_card,
     };
     let mut knowledge_sources = Vec::new();
     for source in knowledge_file.sources {
@@ -990,6 +1026,19 @@ struct RawModel {
     credential_secret_ref: Option<String>,
     #[serde(default)]
     default_model: Option<String>,
+    #[serde(default)]
+    pricing: Option<RawPricing>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPricing {
+    currency: String,
+    max_input_micro_units_per_million_tokens: u64,
+    max_output_micro_units_per_million_tokens: u64,
+    source_url: String,
+    source_sha256: String,
+    observed_at: String,
 }
 
 #[derive(Deserialize)]
@@ -1020,6 +1069,35 @@ mod tests {
             model: "model: { provider: openai, credential_secret_ref: openai-key, default_model: gpt-4.1 }".to_owned(),
             knowledge: "sources: []".to_owned(),
         }
+    }
+
+    #[test]
+    fn model_pricing_is_optional_but_when_present_is_an_exact_attested_snapshot() {
+        let mut files = valid_files();
+        files.model = format!(
+            "model:\n  provider: openai\n  credential_secret_ref: openai-key\n  default_model: gpt-4.1\n  pricing:\n    currency: USD\n    max_input_micro_units_per_million_tokens: 1500000\n    max_output_micro_units_per_million_tokens: 2000000\n    source_url: https://prices.example.test/archive/2026-08-30\n    source_sha256: {}\n    observed_at: 2026-08-30T12:00:00Z",
+            "a".repeat(64)
+        );
+        let package = validate_tenant_package(files).unwrap();
+        let rate = package.model.rate_card.expect("rate card");
+        assert_eq!(rate.family(), ProviderBillingFamily::OpenAiCompatible);
+        assert_eq!(rate.model(), "gpt-4.1");
+        assert_eq!(rate.currency(), "USD");
+        assert_eq!(rate.max_input_rate(), 1_500_000);
+        assert_eq!(rate.max_output_rate(), 2_000_000);
+        assert_eq!(rate.source_sha256(), "a".repeat(64));
+
+        let mut invalid = valid_files();
+        invalid.model = invalid.model.replace(
+            "default_model: gpt-4.1",
+            "default_model: gpt-4.1, pricing: { max_input_micro_units_per_million_tokens: 1 }",
+        );
+        assert_eq!(
+            validate_tenant_package(invalid).unwrap_err(),
+            TenantPackageError::YamlInvalid {
+                file: TenantPackageFile::Model,
+            },
+        );
     }
 
     #[test]
