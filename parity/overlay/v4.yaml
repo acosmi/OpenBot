@@ -5,6 +5,25 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  # Added mechanically because Batch87 extends the Agent failure enum in the same source file.
+  - id: T-TEST-0298
+    disposition: revalidate
+    notes: "Batch87 reruns all openbot-domain tests after adding the run-wide token budget failure."
+  - id: T-TEST-0299
+    disposition: revalidate
+    notes: "Batch87 reruns all openbot-domain tests after adding the run-wide token budget failure."
+  - id: T-TEST-0300
+    disposition: revalidate
+    notes: "Batch87 reruns all openbot-domain tests after adding the run-wide token budget failure."
+  - id: T-TEST-0301
+    disposition: revalidate
+    notes: "Batch87 reruns all openbot-domain tests after adding the run-wide token budget failure."
+  - id: T-TEST-0302
+    disposition: revalidate
+    notes: "Batch87 reruns all openbot-domain tests after adding the run-wide token budget failure."
+  - id: T-TEST-0303
+    disposition: revalidate
+    notes: "Batch87 reruns all openbot-domain tests after adding the run-wide token budget failure."
   # Added mechanically for this batch because the control.rs diff matches these done targets.
   - id: T-BROP-0005
     disposition: revalidate

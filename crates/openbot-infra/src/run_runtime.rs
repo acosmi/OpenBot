@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openbot_application::{
-    ClaimedRunCancellation, ClaimedRunDispatch, RunCancellationDisposition, RunDispatchConsumer,
-    RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError,
-    RunSemanticChannel, RunTerminal, RunToolExchange, RunWriteReceipt, SEMANTIC_CHUNK_MAX_BYTES,
+    ClaimedRunCancellation, ClaimedRunDispatch, ProviderUsage, RunCancellationDisposition,
+    RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime,
+    RunRuntimeError, RunSemanticChannel, RunTerminal, RunTokenUsage, RunTokenUsageReceipt,
+    RunToolExchange, RunWriteReceipt, SEMANTIC_CHUNK_MAX_BYTES,
 };
 use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId};
 use openbot_domain::audit::hash::Sha256Digest;
@@ -335,6 +336,30 @@ impl RunRuntime for PostgresRunRuntime {
             lease,
             expected_sequence,
             exchange,
+        )
+        .await;
+        finish_transaction(transaction, result).await
+    }
+
+    async fn record_provider_usage(
+        &self,
+        lease: &RunExecutionLease,
+        sampling_index: u32,
+        usage: ProviderUsage,
+        max_run_output_tokens: Option<u64>,
+    ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
+        let mut client = self.client().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|error| unavailable("开始 provider usage 事务", error))?;
+        let result = record_provider_usage_in_transaction(
+            &transaction,
+            &self.owner_id,
+            lease,
+            sampling_index,
+            usage,
+            max_run_output_tokens,
         )
         .await;
         finish_transaction(transaction, result).await
@@ -1430,6 +1455,240 @@ async fn append_tool_exchange_in_transaction(
     })
 }
 
+#[derive(Clone, Copy)]
+struct LockedRunTokenUsage {
+    max_output_tokens: Option<i64>,
+    input_tokens: i64,
+    output_tokens: i64,
+    total_tokens: i64,
+    next_sampling: i32,
+    last_sampling: Option<i32>,
+    last_input_tokens: Option<i64>,
+    last_output_tokens: Option<i64>,
+    last_total_tokens: Option<i64>,
+}
+
+impl LockedRunTokenUsage {
+    fn aggregate(self) -> Result<RunTokenUsage, RunRuntimeError> {
+        let known =
+            self.input_tokens
+                .checked_add(self.output_tokens)
+                .ok_or(RunRuntimeError::Corrupt {
+                    field: "usage_known_tokens",
+                })?;
+        if self.input_tokens < 0
+            || self.output_tokens < 0
+            || self.total_tokens < known
+            || self.next_sampling < 0
+            || self.max_output_tokens.is_some_and(|value| value <= 0)
+        {
+            return Err(RunRuntimeError::Corrupt {
+                field: "run_token_usage",
+            });
+        }
+        Ok(RunTokenUsage {
+            input_tokens: sequence_u64(self.input_tokens, "usage_input_tokens")?,
+            output_tokens: sequence_u64(self.output_tokens, "usage_output_tokens")?,
+            total_tokens: sequence_u64(self.total_tokens, "usage_total_tokens")?,
+        })
+    }
+}
+
+async fn record_provider_usage_in_transaction(
+    transaction: &Transaction<'_>,
+    owner: &str,
+    lease: &RunExecutionLease,
+    sampling_index: u32,
+    usage: ProviderUsage,
+    max_run_output_tokens: Option<u64>,
+) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
+    let known = usage.input_tokens.checked_add(usage.output_tokens).ok_or(
+        RunRuntimeError::InvalidInput {
+            field: "provider_usage",
+        },
+    )?;
+    if usage.total_tokens < known || max_run_output_tokens == Some(0) {
+        return Err(RunRuntimeError::InvalidInput {
+            field: "provider_usage",
+        });
+    }
+    let sampling_index =
+        i32::try_from(sampling_index).map_err(|_| RunRuntimeError::InvalidInput {
+            field: "sampling_index",
+        })?;
+    let input_tokens = token_i64(usage.input_tokens, "provider_input_tokens")?;
+    let output_tokens = token_i64(usage.output_tokens, "provider_output_tokens")?;
+    let total_tokens = token_i64(usage.total_tokens, "provider_total_tokens")?;
+    let max_output_tokens = max_run_output_tokens
+        .map(|value| token_i64(value, "max_run_output_tokens"))
+        .transpose()?;
+
+    let Some(locked) = lock_run(transaction, lease.run_id().as_str()).await? else {
+        return Err(RunRuntimeError::StaleLease);
+    };
+    validate_lease_identity(&locked, lease)?;
+    if locked.status != "running" {
+        return Err(RunRuntimeError::StaleLease);
+    }
+    let now = database_now(transaction).await?;
+    validate_active_lease(&locked, owner, lease, now)?;
+
+    let row = transaction
+        .query_one(
+            "SELECT budget_max_output_tokens,usage_input_tokens,usage_output_tokens, \
+                    usage_total_tokens,usage_next_sampling,usage_last_sampling, \
+                    usage_last_input_tokens,usage_last_output_tokens,usage_last_total_tokens \
+             FROM public.runs WHERE run_id=$1",
+            &[&lease.run_id().as_str()],
+        )
+        .await
+        .map_err(|error| unavailable("读取 run provider usage", error))?;
+    let stored = LockedRunTokenUsage {
+        max_output_tokens: decode(&row, "budget_max_output_tokens")?,
+        input_tokens: decode(&row, "usage_input_tokens")?,
+        output_tokens: decode(&row, "usage_output_tokens")?,
+        total_tokens: decode(&row, "usage_total_tokens")?,
+        next_sampling: decode(&row, "usage_next_sampling")?,
+        last_sampling: decode(&row, "usage_last_sampling")?,
+        last_input_tokens: decode(&row, "usage_last_input_tokens")?,
+        last_output_tokens: decode(&row, "usage_last_output_tokens")?,
+        last_total_tokens: decode(&row, "usage_last_total_tokens")?,
+    };
+    let aggregate = stored.aggregate()?;
+    let last_shape_is_valid = if stored.next_sampling == 0 {
+        stored.last_sampling.is_none()
+            && stored.last_input_tokens.is_none()
+            && stored.last_output_tokens.is_none()
+            && stored.last_total_tokens.is_none()
+    } else {
+        match (
+            stored.last_input_tokens,
+            stored.last_output_tokens,
+            stored.last_total_tokens,
+        ) {
+            (Some(input), Some(output), Some(total)) => {
+                stored.last_sampling == Some(stored.next_sampling - 1)
+                    && input >= 0
+                    && output >= 0
+                    && input
+                        .checked_add(output)
+                        .is_some_and(|known| total >= known)
+            }
+            _ => false,
+        }
+    };
+    if !last_shape_is_valid {
+        return Err(RunRuntimeError::Corrupt {
+            field: "run_token_usage_last",
+        });
+    }
+    if stored.next_sampling == 0 {
+        if stored.max_output_tokens.is_some() && stored.max_output_tokens != max_output_tokens {
+            return Err(RunRuntimeError::Conflict);
+        }
+    } else if stored.max_output_tokens != max_output_tokens {
+        return Err(RunRuntimeError::Conflict);
+    }
+
+    if sampling_index < stored.next_sampling {
+        let exact_last = sampling_index.checked_add(1) == Some(stored.next_sampling)
+            && stored.last_sampling == Some(sampling_index)
+            && stored.last_input_tokens == Some(input_tokens)
+            && stored.last_output_tokens == Some(output_tokens)
+            && stored.last_total_tokens == Some(total_tokens)
+            && stored.max_output_tokens == max_output_tokens;
+        return if exact_last {
+            if stored
+                .max_output_tokens
+                .is_some_and(|limit| stored.output_tokens > limit)
+            {
+                Ok(RunTokenUsageReceipt::BudgetExceeded(aggregate))
+            } else {
+                Ok(RunTokenUsageReceipt::Replayed(aggregate))
+            }
+        } else {
+            Err(RunRuntimeError::Conflict)
+        };
+    }
+    if sampling_index != stored.next_sampling {
+        return Err(RunRuntimeError::Conflict);
+    }
+
+    let next_input =
+        stored
+            .input_tokens
+            .checked_add(input_tokens)
+            .ok_or(RunRuntimeError::InvalidInput {
+                field: "provider_input_tokens",
+            })?;
+    let next_output =
+        stored
+            .output_tokens
+            .checked_add(output_tokens)
+            .ok_or(RunRuntimeError::InvalidInput {
+                field: "provider_output_tokens",
+            })?;
+    let next_total =
+        stored
+            .total_tokens
+            .checked_add(total_tokens)
+            .ok_or(RunRuntimeError::InvalidInput {
+                field: "provider_total_tokens",
+            })?;
+    let next_known = next_input
+        .checked_add(next_output)
+        .ok_or(RunRuntimeError::InvalidInput {
+            field: "provider_usage",
+        })?;
+    if next_total < next_known {
+        return Err(RunRuntimeError::InvalidInput {
+            field: "provider_usage",
+        });
+    }
+    let budget_exceeded = max_output_tokens.is_some_and(|limit| next_output > limit);
+    let next_sampling = stored
+        .next_sampling
+        .checked_add(1)
+        .ok_or(RunRuntimeError::Corrupt {
+            field: "usage_next_sampling",
+        })?;
+    let updated = transaction
+        .execute(
+            "UPDATE public.runs SET budget_max_output_tokens=$2,usage_input_tokens=$3, \
+                    usage_output_tokens=$4,usage_total_tokens=$5,usage_next_sampling=$6, \
+                    usage_last_sampling=$7,usage_last_input_tokens=$8, \
+                    usage_last_output_tokens=$9,usage_last_total_tokens=$10 \
+             WHERE run_id=$1",
+            &[
+                &lease.run_id().as_str(),
+                &max_output_tokens,
+                &next_input,
+                &next_output,
+                &next_total,
+                &next_sampling,
+                &sampling_index,
+                &input_tokens,
+                &output_tokens,
+                &total_tokens,
+            ],
+        )
+        .await
+        .map_err(|error| write_error("写 run provider usage", error))?;
+    if updated != 1 {
+        return Err(RunRuntimeError::StaleLease);
+    }
+    let aggregate = RunTokenUsage {
+        input_tokens: sequence_u64(next_input, "usage_input_tokens")?,
+        output_tokens: sequence_u64(next_output, "usage_output_tokens")?,
+        total_tokens: sequence_u64(next_total, "usage_total_tokens")?,
+    };
+    if budget_exceeded {
+        Ok(RunTokenUsageReceipt::BudgetExceeded(aggregate))
+    } else {
+        Ok(RunTokenUsageReceipt::Recorded(aggregate))
+    }
+}
+
 async fn replay_tool_messages(
     transaction: &Transaction<'_>,
     lease: &RunExecutionLease,
@@ -2038,6 +2297,10 @@ fn sequence_i64(value: u64) -> Result<i64, RunRuntimeError> {
     i64::try_from(value).map_err(|_| RunRuntimeError::InvalidInput {
         field: "event_sequence",
     })
+}
+
+fn token_i64(value: u64, field: &'static str) -> Result<i64, RunRuntimeError> {
+    i64::try_from(value).map_err(|_| RunRuntimeError::InvalidInput { field })
 }
 
 fn sequence_u64(value: i64, field: &'static str) -> Result<u64, RunRuntimeError> {

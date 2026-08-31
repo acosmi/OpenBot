@@ -13,6 +13,7 @@ use openbot_domain::thread::FencingToken;
 use serde_json::Value;
 
 use crate::chunk::{SEMANTIC_CHUNK_MAX_BYTES, SemanticChunkAccumulator};
+use crate::provider::ProviderUsage;
 
 /// Run runtime 的稳定内部错误域；不得携带数据库/provider 原文。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -70,6 +71,8 @@ pub enum RunFailureCode {
     ProviderGenerationFailed,
     /// Provider output token usage exceeded configured cap。
     ProviderTokenBudgetExceeded,
+    /// Cumulative output usage across this run exceeded its derived run-wide ceiling.
+    RunTokenBudgetExceeded,
     /// Built-in Agent tool sampling step cap reached。
     ToolStepLimit,
     /// G4 tool loop not yet available for this requested call。
@@ -99,6 +102,7 @@ impl RunFailureCode {
             Self::ProviderStreamStalled => "agent_stream_stalled",
             Self::ProviderGenerationFailed => "provider_generation_failed",
             Self::ProviderTokenBudgetExceeded => "provider_token_budget_exceeded",
+            Self::RunTokenBudgetExceeded => "run_token_budget_exceeded",
             Self::ToolStepLimit => "tool_step_limit",
             Self::ToolLoopUnavailable => "tool_loop_unavailable",
             Self::ToolDenied => "tool_denied",
@@ -476,6 +480,28 @@ pub enum RunCancellationDisposition {
     NoLocalChild,
 }
 
+/// Durable aggregate after one normalized provider usage record.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RunTokenUsage {
+    /// Sum of normalized provider input tokens across committed samplings.
+    pub input_tokens: u64,
+    /// Sum of normalized provider output tokens across committed samplings.
+    pub output_tokens: u64,
+    /// Sum of provider-reported total tokens across committed samplings.
+    pub total_tokens: u64,
+}
+
+/// Idempotent result of recording one sampling's normalized usage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunTokenUsageReceipt {
+    /// New sampling usage was added to the durable aggregate.
+    Recorded(RunTokenUsage),
+    /// The exact last sampling was replayed after an unknown commit.
+    Replayed(RunTokenUsage),
+    /// This sampling was recorded and made the aggregate exceed the immutable run ceiling.
+    BudgetExceeded(RunTokenUsage),
+}
+
 /// Built-in/remote Agent 的 in-process dispatch 边界。
 #[async_trait]
 pub trait RunDispatchConsumer: Send + Sync {
@@ -570,6 +596,17 @@ pub trait RunRuntime: Send + Sync {
         _expected_sequence: u64,
         _exchange: &RunToolExchange,
     ) -> Result<RunWriteReceipt, RunRuntimeError> {
+        Err(RunRuntimeError::Unavailable)
+    }
+
+    /// Record one sampling's normalized usage with exact-index replay and a fixed run ceiling.
+    async fn record_provider_usage(
+        &self,
+        _lease: &RunExecutionLease,
+        _sampling_index: u32,
+        _usage: ProviderUsage,
+        _max_run_output_tokens: Option<u64>,
+    ) -> Result<RunTokenUsageReceipt, RunRuntimeError> {
         Err(RunRuntimeError::Unavailable)
     }
 

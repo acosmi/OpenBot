@@ -159,8 +159,8 @@ pub use provider::{
 pub use run_runtime::{
     ClaimedRunCancellation, ClaimedRunDispatch, DurableTextRun, NoRunDispatchConsumer,
     RunCancellationDisposition, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease,
-    RunFailureCode, RunRuntime, RunRuntimeError, RunSemanticChannel, RunTerminal, RunToolExchange,
-    RunWriteReceipt,
+    RunFailureCode, RunRuntime, RunRuntimeError, RunSemanticChannel, RunTerminal, RunTokenUsage,
+    RunTokenUsageReceipt, RunToolExchange, RunWriteReceipt,
 };
 pub use sandboxed_components::{
     GrantedSandboxedComponent, GrantedSandboxedComponents, MAX_SANDBOXED_COMPONENT_DRAFT_BYTES,

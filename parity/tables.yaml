@@ -665,9 +665,9 @@ entries:
     test_id: "T-TBL-0045"
     migration_rule: "n/a: 新表，无上游数据"
     status: "done"
-    done_evidence: "native 0016 真库：run PK/thread FK、状态/terminal/fencing/time CHECK；部分唯一索引实证第二个 active foreground run 命中拒绝；Run/RunStatus 纯状态机 terminal exactly-once 测试全绿"
+    done_evidence: "native 0016 真库：run PK/thread FK、状态/terminal/fencing/time CHECK；部分唯一索引实证第二个 active foreground run 命中拒绝；Run/RunStatus 纯状态机 terminal exactly-once 测试全绿。Batch87 native0024再以expand-only追加9列/3具名CHECK；PG实证run-wide normalized input/output/total按sampling原子累加、exact replay、异值/跳号/cap漂移conflict；超预算sampling仍如实记账并稳定返回BudgetExceeded。"
     evidence: "cat server/src/db/schema/*.ts | tr '\\n' ' ' | grep -oE 'pgTable\\(\\s*\"[a-z_]+\"' | grep -cE '\"runs\"' == 0（正向对照 users|channels == 2）"
-    notes: "repo=openbot-infra::repo::run::RunRepo（表 openbot-infra::db::tables::runs） | PK=run_id；FK thread cascade | `runs_one_foreground_active_per_thread` 覆盖 queued/running/reconciliation_required，unknown commit 继续占 slot | terminal_event_seq/status/finished_at 同形 CHECK，failed/reconciliation 必须 error_code | fencing_token Debug 脱敏 | tool_calls→runs 为 NOT VALID staged FK：不扫描历史但约束新写 | retention 不猜固定天数；operational checkpoint 归 run_events，不进 memory"
+    notes: "repo=openbot-infra::repo::run::RunRepo（表 openbot-infra::db::tables::runs） | PK=run_id；FK thread cascade | `runs_one_foreground_active_per_thread` 覆盖 queued/running/reconciliation_required，unknown commit 继续占 slot | terminal_event_seq/status/finished_at 同形 CHECK，failed/reconciliation 必须 error_code | fencing_token Debug 脱敏 | 0024 usage suffix按run保存immutable output ceiling、input/output/total aggregate与exact last-sampling replay；它不冒充尚无权威价格来源的费用账本 | tool_calls→runs 为 NOT VALID staged FK：不扫描历史但约束新写 | retention 不猜固定天数；operational checkpoint 归 run_events，不进 memory"
 
   - id: "native-run-events"
     upstream: "-"
