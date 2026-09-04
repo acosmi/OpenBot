@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R185，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R186，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1143,6 +1143,13 @@ every1、max-in-flight1与send-last；Rust完整验帧并publish进size-one late
 多次实得received=ack且drop>0，T-BROP-0030–0032/T-FIX-0025 done。viewer ticket/WS、多viewer、fps/
 latency、fallback与production assembly仍todo，不能称完整ScreenHub/G7。
 
+Batch111再把唯一`EngineScreenSource`接入Rust `ScreenHub`：launch-time `ScreenAudience`与stream key绑定
+tenant/actor/auth generation和完整scope/computer/generation/tab；Hub在engine ingress之外再保留一份共享
+latest，多个viewer拿同一`Arc`且各自sequence gap证明旧帧coalesce。128-bit CSPRNG ticket只存SHA-256、
+30秒、一次消费并精确绑定Server origin或Desktop origin/window/binding generation；auth generation推进可关闭
+旧stream/viewer。T-FIX-0051 done。Server/Desktop真实WS、production失效hook、连接限额/fps/p95/最后viewer
+停流/fallback/assembly与跨平台仍todo，所以T-BROP-0027和完整G7不变。
+
 ### 12.3 Frame contract
 
 ```rust
@@ -1176,6 +1183,11 @@ screencast session ID供Rust-after-publish ACK；deviceScale不在官方Screenca
 Desktop Leptos 先用 Tauri typed command 申请 `ScreenSession`。Rust 返回 loopback 地址和 128-bit、30 秒有效、一次性 ticket；WebSocket 通过 `Sec-WebSocket-Protocol` 携带 ticket，不放 URL/query/log。服务端同时校验精确 Tauri origin、window label、actor、computer、tab、generation 和 auth generation。
 
 Server 使用同源 `wss` 与 session cookie/CSRF-style origin check；不能把 computer token交给浏览器。每个 viewer 有连接数、帧大小、带宽和 idle limit。
+
+Batch111已实现不依赖transport的ticket authority核心：base protocol与秘密ticket protocol分离，ticket不进
+URL/query/Debug；pending map只有SHA-256 digest。viewer binary为`OBSCRN01`/68-byte header + JPEG，不携
+scope/computer/tab/ticket/CDP session。当前`verified_server`/`verified_desktop`构造器要求可信host先完成
+origin/window验证；真实Axum/Tauri upgrade尚未接，不能由构造器名称反推production handshake已完成。
 
 ### 12.5 Input
 
@@ -2103,6 +2115,11 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] Batch110 protocol-v3正式screencast子证据：Page start/stop/ACK、完整metadata header、Rust
     size-one latest buffer与ACK-after-publish在双真实role通过；慢消费者received=ack且drop>0，stop exact
     replay、无listener/orphan。T-BROP-0030–0032/T-FIX-0025 done；viewer/production/Windows/runsc仍todo。
+  - [x] Batch111 Engine-backed ScreenHub/ticket核心子证据：Engine session只交出一个source，Rust Hub双viewer
+    共享latest分配并各自统计coalesced sequence gap；128-bit/30秒/hash-only/single-use ticket绑定actor、
+    auth generation、完整stream与Server/Desktop origin/window，generation推进关闭双viewer。真实macOS
+    Browser/Component role均通过；T-FIX-0051 done。Server/Desktop WS、production hook、连接限额/停流、
+    fps/p95/fallback/assembly与跨平台仍todo，不把T-BROP-0027或G5/G7整关勾选。
   - [ ] **P1 整阶段仍未通过**：Batch54 已落 Windows 可执行探针代码（当前用户+Restricted-Code/low-label 双 Named Pipe、PID+100ns creation FILETIME、suspended `DISABLE_MAX_PRIVILEGE|LUA_TOKEN|WRITE_RESTRICTED` medium-integrity token、Job 32 processes/4 GiB/kill-on-close、profile/temp ACL、renderer Job membership、PE `Integrity/ElectronAsar` exact resource）并在 macOS 对 `x86_64-pc-windows-msvc` check/Clippy；但 Windows 真机 bundle、两个 role、ACL negative、renderer sandbox/no-listener/no-orphan **均未运行**。Batch55 又落 Ubuntu 24.04 x86_64 runsc OCI harness与容器内真实双 role probe：完整 release tarball sha、sidecar release ALWAYS + usage STRICT、network/host-UDS/FIFO none、gVisor marker、只读root/bind、零capability；R129补齐Electron Linux必需的容器内Xvfb（fixed :99/1280×800×24、`-nolisten tcp`、版本+binary hash候选），renderer要求main `Seccomp!=2`负对照、renderer `Seccomp:2` + `NoNewPrivs:1`、PID+network或user namespace layer-1、frame/listener/orphan/lock全绿后才打印pin candidate。但本机macOS只能做Linux target check/Clippy，**没有运行runsc/Xvfb、没有版本pin**；R63禁止未授权派发Actions，不能伪造两平台结论。P2/P3/P4未进入，G5A–G5F仍不勾。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
@@ -2218,12 +2235,13 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     1440/1024/900双列与600单列均overflow0、duplicate/alerts/console0；其余settings route仍todo；
   - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及AppSidebar总项+其余32业务组件/9 route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
   - [ ] Tauri target-aware bans/sources 已绿；macOS/Windows 各仍有 5 个 MPL-2.0、5 个 runtime UNIC unmaintained（无 patched 版）；Batch81 macOS-only Keychain两包使Cargo Vet为macOS **272** / Windows **269** unvetted（Batch16为270/269），config/exemption仍0改，故供应链与G6整关均不勾。
-- [ ] **G7**：HumanLease fencing、普通真engine input及Batch110正式screencast/ACK/单consumer latest-buffer
-  已落；仍缺production ScreenHub、多viewer、viewer ticket/WS、fps/latency、coordinates/DPI/zoom/letterbox、
-  drag/IME完整journey与跨scope注入矩阵，故整关不勾。
+- [ ] **G7**：HumanLease fencing、普通真engine input、Batch110正式screencast/ACK/engine latest-buffer及
+  Batch111 Engine-backed ScreenHub/multi-viewer/ticket核心已落；仍缺Server/Desktop production WS与装配、
+  auth失效hook、每连接frame/bandwidth/idle cap、fps/latency/最后viewer停流/fallback、coordinates/DPI/zoom/
+  letterbox、drag/IME完整journey及跨scope注入矩阵，故整关不勾。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账（`cargo xtask parity-check` 复算）：parity **848/1710 done（862 todo）**，fixtures **25/47 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1299/403/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账（`cargo xtask parity-check` 复算）：parity **871/1710 done（839 todo）**，fixtures **30/51 done（21 todo）**；v4 overlay carry/revalidate/split/superseded = **1273/429/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -2597,6 +2615,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R184 | §10.3 / §11.1–§11.3 / §12.2、§12.5–§12.6 / §19.1 P1、P2 / §24 G5、G7（2026-09-04 Batch109：engine protocol-v2 live input） | Batch108只有pure plan，engine descriptor仍v1且commands仅start/stop/shutdown；shim启动截图后detach debugger。若在v1偷加input会制造同version不兼容wire；若把HumanLease字段传给shim会下放authority；若input API直接返回capture frame又会把过渡证据耦合成最终Screen设计。候选键语义虽已修正，仍没有页面observable effect、跨scope/expiry pipe前拒绝或literal CDP method棘轮。 | 不兼容扩展显式升级protocol/release epoch2；descriptor/generated hash/bundle manifest/runtime handshake同值。Rust only receipt由ControlService fresh铸造且不可Clone/serde，EngineProcess消费后再核computer/generation/active-tab/execution-time expiry；wire无actor/lease/secret/free method。input八kind映射shim exact-key payload与三条literal Input CDP；ACK只回operation/tab/kind，frame独立`next_frame`。cross-scope/expired/ordinary-secret在operation/pipe前拒绝。shim保持debugger至stop并统一detach；静态checker拒动态或额外CDP。macOS两个真实role在固定surface逐项观察hover/active/text/Backspace/F1=0/insert/scroll。 | implementation=`71e7feb7005100accf190e16b4bb3f4c79209149`。protocol hash=`ef213bb4…`，shim=`483/600 LOC`；官方archive=`122102881 B`/`ee939d…`，v2 ASAR=`22819 B`/header `cb289d04…`/fuses `000011001`，bundle/verify绿。Contracts=`104/0/0`，Computer lib/default=`56+1/0/2 ignored`，真实conformance=`3/0/0`（role2），xtask=`103/0/0`；native/Windows Clippy与Windows check绿。新增T-FIX-0050，T-BROP-0037–0043 done；parity=`868/842/1710`、browser=`14/36/50`、fixtures=`28/22/50`、overlay=`1276/426/2/6`、0违反/警告；recount=`71/0/89 skipped`且strict未跑。无schema/native/API/route/UI/Web bundle/dependency/Cargo/env变化，未跑CI/Actions。T-BROP-0044、正式screencast/ScreenHub、production assembly、Windows/runsc runtime与P1/P2/G5/G7仍todo；详见Batch109文档。 |
 
 | R185 | §11.2–§11.3 / §12.1–§12.6 / §19.1 P2 / §24 G5、G7（2026-09-04 Batch110：formal screencast/backpressure） | R184的input效果仍靠per-input captureScreenshot，未实现第一真源钉死的Page.start/stop/FrameAck。若shim收到即ACK，慢viewer会在Rust边界前失去backpressure authority；若ACK等待UI消费，慢viewer会卡Chrome；若frame header只留宽高又无法完成§12.3坐标/时间语义。CDP metadata不含deviceScale，不能伪称逐字段已齐。 | 显式升protocol/epoch3与OBFRAME2/76-byte header；descriptor单源钉screencast参数。shim只把CDP frame写authenticated binary pipe，不自行ACK；Rust在分配前验长度并验timestamp/device size+fixed-probe scale/page scale/scroll/CDP session/scope/generation/sequence/JPEG，随后在Mutex保护的size-one watch buffer publish/计算drop，才fire-and-forget exact frame_ack。background ingress持续消费，慢UI只跳旧值。stop先停CDP、撤listener、排frame/ACK、核received=ack，再detach；同tab重放冻结receipt。 | implementation=`c5f22f424efec517f851c3b495d3de215be1e957`。protocol hash=`16cc1f4d…`，shim=`596/600 LOC`；v3 ASAR=`29806 B`/header `02972340…`/fuses `000011001`，bundle/verify绿。Contracts=`104/0/0`，Computer lib/default=`58+2/0/2 ignored`，真实conformance=`4/0/0`（role2），xtask=`103/0/0`；native/Windows Clippy绿。多次slow-consumer实得received=ack 49..52、drop37..40。T-BROP-0030–0032与T-FIX-0025 done；parity=`871/839/1710`、browser=`17/33/50`、fixtures=`29/21/50`、overlay=`1273/429/2/6`、0违反/警告；recount=`71/0/89 skipped`且strict未跑。无schema/native/API/route/UI/Web bundle/dependency/Cargo/env变化，未跑CI/Actions。viewer ticket/WS、多viewer/fps/latency/fallback/production assembly、Windows/runsc及P1/P2/G5/G7仍todo；详见Batch110文档。 |
+
+| R186 | §10.1 / §11.1–§11.3 / §12.2–§12.4、§12.6 / §19.1 P2 / §24 G5、G7（2026-09-04 Batch111：ScreenHub/viewer ticket核心） | R185只有EngineIngress单consumer latest；直接把其receiver交transport会绕过actor/auth-generation authority，按连接复制frame queue会随viewer和帧率放大内存，保存raw ticket或把ticket放URL/response会泄漏。viewer取帧若不反馈共享ingress消费序列，还会把已被Hub消费的帧误计为drop。另一方面，P1仍红且Server/Desktop transport未装配，不能为关闭一条台账而伪造WS。 | `EngineLaunchConfig`强制Rust-minted `ScreenAudience`；component actor和两role tenant在任何effect前核同。active EngineProcess只交出一次带完整scope/computer/generation/tab key与共享ingress state的`EngineScreenSource`。`ScreenHub`持每stream一份watch latest与显式1..256 viewer cap，active+pending共同计数；viewer共享同一Arc并按sequence gap计coalescing。ticket由OS CSPRNG生成16 bytes、发行侧zeroize，Hub只存SHA-256；30秒、一次消费，绑定tenant/actor/auth generation/stream及Server origin或Desktop origin/window/binding generation。viewer wire另造`OBSCRN01`/68-byte header并排除scope/computer/tab/ticket/CDP session；generation invalidation关闭旧viewer/source。真实WS、host验证、生产hook与性能/停流仍保持false。 | implementation=`ddf49ee5b2b09b940528614330a228ab68077c0a`。fixture=`2368 B`/SHA-256 `8559fec9…`；Computer all-features lib/fixture=`60+3/0/2 ignored`，真实macOS conformance=`5/0/0`（role2）：Browser/Component各双viewer同sequence且Arc同分配、两者skip>0、wrong actor/binding/replay与generation close通过；最终Browser/Component received=ack为68/69、engine slow drop均37。native/Windows Clippy、Linux target check、protocol/shim/bundle/verify、Grok/package/workflow guards绿。新增T-FIX-0051；parity/browser仍`871/839/1710`与`17/33/50`，fixtures=`30/21/51`、overlay=`1273/429/2/6`、0违反/警告；recount=`71/0/89 skipped`且strict未跑。无schema/native/API/route/UI/Web bundle/dependency/Cargo/env变化，未跑CI/Actions。T-BROP-0027、Server/Desktop WS、production auth hook、frame/bandwidth/idle cap、fps/p95/2秒停流/fallback/assembly、Windows/runsc及P1/P2/G5/G7仍todo；详见Batch111文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 
