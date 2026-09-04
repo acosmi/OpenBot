@@ -770,6 +770,11 @@ G6 重写后的文本（替换 v3 原四条）：
   CPU/内存硬隔离、具名a11y豁免、admin正式route journey/golden/AX仍todo。Batch51只补其前置
   HumanLease/epoch与closed BrowserInput，browser-operations=`7/39/46`、总parity=`693/993/1686`；没有
   Electron/CDP/ScreenHub实证，不改变上述Desktop renderer与a11y todo；
+- [ ] Plugins/Skills GUI仍不勾：Batch99已给Server/Desktop同一typed ApplicationService补齐
+  `GET /api/plugins`、custom add/delete/general refresh及custom private-egress CIDR后端，管理读面可投影
+  catalogue/server/current tools/current grants/actor-visible skills；但skills/grants/for-agent/legacy-call写面、
+  `/admin/plugins` index/detail/tool与`/admin/skills`四route、AppSidebar/AdminSidebar destination、正式
+  browser journey/golden/AX均未实现。不得用后端API或Desktop framing冒充本GUI项完成；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
