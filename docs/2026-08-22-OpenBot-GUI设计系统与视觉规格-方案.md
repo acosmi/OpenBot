@@ -437,6 +437,12 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 
 数量：Web = 27 × 2 × 2 + 画廊 1 × 2 = **110** 张；Desktop = 27 × 2 = **54** 张 / 平台。
 
+Batch107固定文件名算法，避免“数量正确但页面被换掉”仍通过：从
+`fixtures/ui/seed.json::pages_covered`逐segment替换`golden_param`，根路由=`home`，segment以`--`连接，
+只收ASCII字母数字/连字符/下划线；`$key_`尾下划线只作TanStack路由消歧，参数仍取`key`。画廊键固定
+`design-gallery`且只截1440×900。该算法机械导出245条exact relative path；gate同时校目录数量、完整
+路径集合和文件名末尾viewport对应的真实PNG尺寸，不能用245张任意1×1 PNG占位。
+
 ### 10.2 确定性条件（缺一则 golden 不可信）
 
 - 数据：`openbot-server` 以 `openbot-testkit` 的 fake `ApplicationService` 从 `fixtures/ui/seed.json` 加载（无 PostgreSQL、无模型调用）；seed 含固定用户 / coworker / channel / 消息 / 审计行 / 时间戳。
@@ -453,6 +459,11 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 ### 10.4 比对规则与更新流程
 
 - 比对在 `openbot-testkit` 用 `image` **0.25.10** 实现：逐像素任一通道差 > 16/255 记为差异像素；**失败判据 = 差异像素 > 0.1% 或存在任一 8×8 全差异块**（后者防小区域真回归被比例稀释）。
+- Batch107已落`cargo xtask golden check-manifest|compare|verify`：只启`image`的PNG feature，输入≤16MiB、
+  strict尺寸≤4096、decoder allocation≤64MiB；compare生成确定性review diff，verify要求245条seed-derived
+  exact path、actual/baseline集合相等、无symlink、mask selector/page在reviewed allowlist。容器digest或CJK
+  包版本仍TBD、基线缺件、只数量相等但错名、伪PNG或错误viewport均必须判红；check-manifest显示
+  `ready=false`不等于正式verify通过。
 - golden 更新 = 同 PR 提交新 PNG + harness 生成的 diff 图（`fixtures/ui/golden/_diff/` 不入库、附在 PR）+ 评审批准；禁止 CI 自动覆盖。
 - Desktop：同一 bundle 摘要（`dist/` 的 sha256 清单）在三平台相等 + 各平台对自己的 golden 基线比对；**不做跨引擎逐像素比对**（WKWebView / WebView2 / Chromium 的字体栅格化不同，逐像素相等构造上不可达）。这就是 v3 G6 "web/desktop visual parity" 的可判定定义。
 - Desktop 截图用 `xcap` **0.9.8**（Apache-2.0，仅 testkit 依赖）捕获窗口。
@@ -786,6 +797,10 @@ G6 重写后的文本（替换 v3 原四条）：
   尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
+- [x] Batch107已闭合Golden **比较/闸门工具本身**：RGBA core 18条、PNG/manifest/diff gate 7条，
+  testkit all-features=`137/0/10 ignored`；`check-manifest=matrix245/masks0/ready=false`，真实1024×1024
+  PNG自比0差异，formal verify因TBD容器/font按预期红。`image 0.25.10`只在testkit xtask optional图，
+  产品图0；这不勾上一条245张基线/AX/reduced-motion，也不冒充xcap/Web CDP capture已接；
 - [ ] Tauri 图的 MPL-2.0×5、runtime UNIC unmaintained×5、Cargo Vet macOS 270/Windows 269
   仍红；不得把 bans/sources 已绿写成供应链整关已绿。
 - [x] 2026-08-28 R123：`xtask bundle-budget` 的 `CSS_LIMIT` 96 → 128 KiB 并新增 `CSS_WARN` 120 KiB
@@ -841,6 +856,7 @@ G6 整关继续不勾。
 - WAI-ARIA Authoring Practices Guide（键盘模式）：<https://www.w3.org/WAI/ARIA/apg/patterns/>
 - WCAG 2.2 对比度（1.4.3 / 1.4.11）：<https://www.w3.org/TR/WCAG22/#contrast-minimum>
 - CDP `Emulation.setEmulatedMedia` / `Accessibility.getFullAXTree` / `Page.captureScreenshot`：<https://chromedevtools.github.io/devtools-protocol/>
+- image 0.25.10（PNG-only golden decoder/encoder）：<https://github.com/image-rs/image/tree/v0.25.10>
 
 ---
 
