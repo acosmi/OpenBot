@@ -5,6 +5,47 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  # Batch106 adds the fixed-upstream browser-residency selector and reruns all thirteen mapped
+  # browser-eviction tests plus two Rust hardening boundaries.
+  - id: T-TEST-0034
+    disposition: revalidate
+    notes: "Batch106 runs the exact room-below-cap browser eviction vector."
+  - id: T-TEST-0035
+    disposition: revalidate
+    notes: "Batch106 runs the exact-at-cap boundary vector."
+  - id: T-TEST-0036
+    disposition: revalidate
+    notes: "Batch106 runs the least-recently-used ordering vector."
+  - id: T-TEST-0037
+    disposition: revalidate
+    notes: "Batch106 runs the multi-eviction len-minus-cap vector."
+  - id: T-TEST-0038
+    disposition: revalidate
+    notes: "Batch106 proves the just-used browser is not selected."
+  - id: T-TEST-0039
+    disposition: revalidate
+    notes: "Batch106 runs the cap-of-one newest-survives boundary."
+  - id: T-TEST-0040
+    disposition: revalidate
+    notes: "Batch106 runs the stale-versus-fresh idle vector."
+  - id: T-TEST-0041
+    disposition: revalidate
+    notes: "Batch106 runs the exact idle cutoff and one-millisecond-inside boundary."
+  - id: T-TEST-0042
+    disposition: revalidate
+    notes: "Batch106 proves non-positive pure idle timeouts disable selection."
+  - id: T-TEST-0043
+    disposition: revalidate
+    notes: "Batch106 runs the multiple-idle-browser vector."
+  - id: T-TEST-0044
+    disposition: revalidate
+    notes: "Batch106 runs both selectors over an empty runtime."
+  - id: T-TEST-0045
+    disposition: revalidate
+    notes: "Batch106 preserves the cap-zero negative control."
+  - id: T-TEST-0046
+    disposition: revalidate
+    notes: "Batch106 locks the fixed defaults and no-eviction default vector."
   # Added mechanically because Batch87 extends the Agent failure enum in the same source file.
   - id: T-TEST-0298
     disposition: revalidate

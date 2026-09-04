@@ -29,9 +29,10 @@
 //! Batch53 adds a real macOS Electron P1 baseline: dual-role scope, digest-before-spawn bundle,
 //! authenticated UDS boot/control/frame paths, SBPL confinement and two host conformance loops.
 //! Batch54/55 add executable Windows and runsc probes, but P1 is still open because neither has
-//! corresponding machine evidence. ScreenHub, product CDP mappings, file/shell executors and
-//! supervisor remain separate unfinished boundaries; the fixture page is not a browser product
-//! operation.
+//! corresponding machine evidence. The fixed-upstream browser LRU/idle residency selector is now
+//! present, but no production ComputerManager consumes it yet. ScreenHub, product CDP mappings,
+//! file/shell executors and supervisor remain separate unfinished boundaries; the fixture page is
+//! not a browser product operation.
 
 pub mod browser;
 pub mod control;

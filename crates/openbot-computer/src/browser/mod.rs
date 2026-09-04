@@ -1,5 +1,7 @@
-//! Closed browser-engine protocol. No free CDP method or host path crosses this boundary.
+//! Closed browser-engine protocol and authority-owned residency decisions. No free CDP method or
+//! host path crosses this boundary.
 
+pub mod eviction;
 pub mod protocol;
 
 pub use protocol::{
