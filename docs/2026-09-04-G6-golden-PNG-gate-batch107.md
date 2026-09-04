@@ -78,7 +78,7 @@ manifest还同步把已经裁决的CSS hard/warn预算校正为128/120 KiB，并
 | 检查 | 结果 |
 |---|---|
 | `cargo test -p openbot-testkit --lib --locked` | `19/0/0`；其中Golden core 18条，既有fintech 1条 |
-| `cargo test -p openbot-testkit --bin xtask --locked golden_gate` | Golden gate `7/0/0` |
+| `cargo test -p openbot-testkit --bin xtask --features xtask --locked golden_gate` | Golden gate `7/0/0` |
 | `cargo test -p openbot-testkit --all-features --locked` | 聚合`137/0/10 ignored` |
 | `cargo clippy -p openbot-testkit --all-targets --all-features --locked -- -D warnings` | 通过 |
 | `cargo xtask golden check-manifest` | `matrix=245; masks=0; ready=false` |
