@@ -181,6 +181,50 @@ pub struct HumanInputTicket {
     expires_at: OffsetDateTime,
 }
 
+/// Single-use, non-serializable proof that fresh Rust authority accepted one queued human input.
+///
+/// Fields are private and the type is not `Clone`, so transport/renderer code cannot mint or replay
+/// it. The engine consumes it immediately before writing the input command.
+pub struct AuthorizedHumanInput {
+    computer_id: ComputerId,
+    tab_id: TabId,
+    computer_generation: ComputerGeneration,
+    epoch: HumanLeaseEpoch,
+    expires_at: OffsetDateTime,
+}
+
+impl AuthorizedHumanInput {
+    /// Exact computer accepted by the current lease.
+    #[must_use]
+    pub fn computer_id(&self) -> &ComputerId {
+        &self.computer_id
+    }
+
+    /// Exact active tab accepted by the current lease.
+    #[must_use]
+    pub fn tab_id(&self) -> &TabId {
+        &self.tab_id
+    }
+
+    /// Computer generation accepted by the current lease.
+    #[must_use]
+    pub const fn computer_generation(&self) -> ComputerGeneration {
+        self.computer_generation
+    }
+
+    /// HumanLease epoch checked immediately before engine dispatch.
+    #[must_use]
+    pub const fn epoch(&self) -> HumanLeaseEpoch {
+        self.epoch
+    }
+
+    /// Absolute lease expiry checked by the authority layer.
+    #[must_use]
+    pub const fn expires_at(&self) -> OffsetDateTime {
+        self.expires_at
+    }
+}
+
 impl HumanInputTicket {
     /// Computer bound to the ticket.
     #[must_use]
@@ -448,6 +492,23 @@ impl ControlService {
         Ok(())
     }
 
+    /// Re-authorize and mint a non-forgeable receipt consumed by the engine input boundary.
+    pub fn authorize_human_input_receipt(
+        &mut self,
+        auth: &AuthContext,
+        ticket: &HumanInputTicket,
+        now: OffsetDateTime,
+    ) -> Result<AuthorizedHumanInput, ControlError> {
+        self.authorize_human_input(auth, ticket, now)?;
+        Ok(AuthorizedHumanInput {
+            computer_id: ticket.computer_id.clone(),
+            tab_id: ticket.tab_id.clone(),
+            computer_generation: ticket.computer_generation,
+            epoch: ticket.epoch,
+            expires_at: ticket.expires_at,
+        })
+    }
+
     /// Navigation invalidates already queued input while preserving a current person's handover.
     pub fn document_navigated(&mut self) -> Result<ControlSnapshot, ControlError> {
         self.ensure_not_poisoned()?;
@@ -672,6 +733,17 @@ mod tests {
         service
             .authorize_human_input(&actor_a, &ticket_a, START)
             .expect("owner can drive");
+        let receipt = service
+            .authorize_human_input_receipt(&actor_a, &ticket_a, START)
+            .expect("fresh engine receipt");
+        assert_eq!(receipt.computer_id(), ticket_a.computer_id());
+        assert_eq!(receipt.tab_id(), ticket_a.tab_id());
+        assert_eq!(
+            receipt.computer_generation(),
+            ticket_a.computer_generation()
+        );
+        assert_eq!(receipt.epoch(), ticket_a.epoch());
+        assert_eq!(receipt.expires_at(), ticket_a.expires_at());
         assert_eq!(
             service.authorize_human_input(&auth("actor-b", 5), &ticket_a, START),
             Err(ControlError::StaleOrWrongScope)

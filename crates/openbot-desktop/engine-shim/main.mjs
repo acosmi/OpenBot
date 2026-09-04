@@ -176,7 +176,7 @@ function internalDocument(request, scheme, role) {
     return new Response("", { status: 404 });
   }
   const label = role === "browser_computer" ? "Browser engine ready" : "Component engine ready";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'none'; style-src 'unsafe-inline'; img-src data: blob:"><style>html,body{margin:0;width:100%;height:100%;background:#f4f4f2;color:#202020;font:16px system-ui}main{display:grid;place-items:center;width:100%;height:100%}</style></head><body><main>${label}</main></body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'none'; style-src 'unsafe-inline'; img-src data: blob:"><style>html,body{margin:0;width:100%;height:100%;background:#f4f4f2;color:#202020;font:16px system-ui}#label{position:absolute;left:760px;top:40px}#hover{position:absolute;left:40px;top:40px;width:160px;height:64px;background:#b42318}#hover:hover{background:#175cd3}#press{position:absolute;left:40px;top:136px;width:160px;height:64px;border:0;background:#067647;color:white}#press:active{background:#9333ea}#typing{position:absolute;left:40px;top:232px;width:280px;height:48px;font:28px monospace}#scroll{position:absolute;left:400px;top:40px;width:280px;height:220px;overflow:auto;border:4px solid #202020}#scroll-fill{height:1000px;background:repeating-linear-gradient(#fdb022 0 100px,#7f56d9 100px 200px)}</style></head><body><div id="hover"></div><button id="press">Press target</button><input id="typing" aria-label="Typing target" autofocus><div id="scroll"><div id="scroll-fill"></div></div><strong id="label">${label}</strong></body></html>`;
   return new Response(html, {
     status: 200,
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
@@ -204,6 +204,18 @@ async function handleCommand(command) {
       return;
     }
     await startSession(command);
+    return;
+  }
+  if (command.kind === "input") {
+    validateScope(command);
+    if (!isBoundedString(command.operation_id, 128) || !isBoundedString(command.tab_id, 256)) {
+      throw new Error("input_invalid");
+    }
+    if (active === null || active.tabId !== command.tab_id) {
+      sendControl(control, { kind: "error", operation_id: command.operation_id, code: "session_stale" });
+      return;
+    }
+    await applyInput(command);
     return;
   }
   if (command.kind === "stop") {
@@ -266,6 +278,7 @@ async function startSession(command) {
   });
   await withDeadline(window.loadURL(target), "load_timeout");
   contents.debugger.attach("1.3");
+  let keepDebugger = false;
   try {
     await withDeadline(contents.debugger.sendCommand("Page.enable"), "page_enable_timeout");
     const probe = await withDeadline(
@@ -279,16 +292,7 @@ async function startSession(command) {
     if (value?.processType !== "undefined" || value?.requireType !== "undefined") {
       throw new Error("renderer_node_exposed");
     }
-    const capture = await withDeadline(
-      contents.debugger.sendCommand("Page.captureScreenshot", {
-        format: "jpeg",
-        quality: JPEG_QUALITY,
-        fromSurface: true,
-      }),
-      "capture_timeout",
-    );
-    const image = Buffer.from(capture.data, "base64");
-    await sendFrame(image, command.tab_id, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+    await captureAndSendFrame(contents, command.tab_id);
     const rendererPid = contents.getOSProcessId();
     const metric = app.getAppMetrics().find((entry) => entry.pid === rendererPid);
     const electronSandboxSignal = metric?.sandboxed === true;
@@ -305,9 +309,64 @@ async function startSession(command) {
       node_exposed: false,
       origin: value.origin,
     });
+    keepDebugger = true;
   } finally {
-    if (contents.debugger.isAttached()) contents.debugger.detach();
+    if (!keepDebugger && contents.debugger.isAttached()) contents.debugger.detach();
   }
+}
+
+async function captureAndSendFrame(contents, tabId) {
+  const capture = await withDeadline(
+    contents.debugger.sendCommand("Page.captureScreenshot", {
+      format: "jpeg",
+      quality: JPEG_QUALITY,
+      fromSurface: true,
+    }),
+    "capture_timeout",
+  );
+  const image = Buffer.from(capture.data, "base64");
+  await sendFrame(image, tabId, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+}
+
+async function applyInput(command) {
+  if (!PROTOCOL.input_kinds.includes(command.input_kind)) throw new EngineFailure("input_kind_invalid");
+  const current = active;
+  if (current === null || current.window.isDestroyed()) throw new EngineFailure("session_stale");
+  const common = ["computer_id", "generation", "input_kind", "kind", "operation_id", "tab_id"];
+  let dispatch;
+  if (["mouse_move", "mouse_down", "mouse_up"].includes(command.input_kind)) {
+    requireExactKeys(command, [...common, "button", "click_count", "modifiers", "x", "y"]);
+    if (!finite(command.x) || !finite(command.y) || !button(command.button) || !uint32(command.click_count) || !modifiers(command.modifiers)) {
+      throw new EngineFailure("input_mouse_invalid");
+    }
+    const type = command.input_kind === "mouse_move" ? "mouseMoved" : command.input_kind === "mouse_down" ? "mousePressed" : "mouseReleased";
+    if ((type === "mouseMoved") !== (command.click_count === 0)) throw new EngineFailure("input_click_count_invalid");
+    dispatch = current.window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type, x: command.x, y: command.y, button: command.button, clickCount: command.click_count, modifiers: command.modifiers });
+  } else if (command.input_kind === "wheel") {
+    requireExactKeys(command, [...common, "delta_x", "delta_y", "modifiers", "x", "y"]);
+    if (![command.x, command.y, command.delta_x, command.delta_y].every(finite) || !modifiers(command.modifiers)) {
+      throw new EngineFailure("input_wheel_invalid");
+    }
+    dispatch = current.window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", x: command.x, y: command.y, deltaX: command.delta_x, deltaY: command.delta_y, modifiers: command.modifiers });
+  } else if (["key_down", "raw_key_down", "key_up"].includes(command.input_kind)) {
+    const textKeys = command.input_kind === "key_down" ? ["text"] : [];
+    requireExactKeys(command, [...common, "code", "key", "modifiers", "native_virtual_key_code", ...textKeys, "windows_virtual_key_code"]);
+    if (!isBoundedString(command.key, 4096) || !isBoundedString(command.code, 4096) || !uint32(command.windows_virtual_key_code) || command.native_virtual_key_code !== command.windows_virtual_key_code || !modifiers(command.modifiers)) {
+      throw new EngineFailure("input_key_invalid");
+    }
+    if (command.input_kind === "key_down" && !isBoundedString(command.text, 60000)) throw new EngineFailure("input_text_invalid");
+    const type = command.input_kind === "key_down" ? "keyDown" : command.input_kind === "raw_key_down" ? "rawKeyDown" : "keyUp";
+    const params = { type, key: command.key, code: command.code, windowsVirtualKeyCode: command.windows_virtual_key_code, nativeVirtualKeyCode: command.native_virtual_key_code, modifiers: command.modifiers };
+    if (command.input_kind === "key_down") params.text = command.text;
+    dispatch = current.window.webContents.debugger.sendCommand("Input.dispatchKeyEvent", params);
+  } else {
+    requireExactKeys(command, [...common, "text"]);
+    if (!boundedText(command.text, 60000)) throw new EngineFailure("input_text_invalid");
+    dispatch = current.window.webContents.debugger.sendCommand("Input.insertText", { text: command.text });
+  }
+  await withDeadline(dispatch, "input_cdp_timeout");
+  await captureAndSendFrame(current.window.webContents, command.tab_id);
+  sendControl(control, { kind: "input_applied", operation_id: command.operation_id, tab_id: command.tab_id, input_kind: command.input_kind });
 }
 
 async function sendFrame(image, tabId, width, height) {
@@ -340,7 +399,7 @@ async function sendFrame(image, tabId, width, height) {
 async function stopSession(operationId) {
   const current = active;
   active = null;
-  if (current !== null && !current.window.isDestroyed()) current.window.destroy();
+  destroySession(current);
   sendControl(control, { kind: "stopped", operation_id: operationId });
 }
 
@@ -348,7 +407,7 @@ async function shutdownEngine(acknowledge, operationId = "connection-closed") {
   if (active !== null) {
     const current = active;
     active = null;
-    if (!current.window.isDestroyed()) current.window.destroy();
+    destroySession(current);
   }
   if (acknowledge) sendControl(control, { kind: "shutdown_complete", operation_id: operationId });
   control.end();
@@ -358,6 +417,13 @@ async function shutdownEngine(acknowledge, operationId = "connection-closed") {
 
 function sendControl(socket, value) {
   socket.write(`${JSON.stringify(value)}\n`);
+}
+
+function destroySession(current) {
+  if (current === null || current.window.isDestroyed()) return;
+  const contents = current.window.webContents;
+  if (contents.debugger.isAttached()) contents.debugger.detach();
+  current.window.destroy();
 }
 
 function requireExactKeys(value, expected) {
@@ -370,6 +436,26 @@ function requireExactKeys(value, expected) {
 
 function isBoundedString(value, max) {
   return typeof value === "string" && value.length > 0 && Buffer.byteLength(value, "utf8") <= max;
+}
+
+function boundedText(value, max) {
+  return typeof value === "string" && Buffer.byteLength(value, "utf8") <= max;
+}
+
+function finite(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function uint32(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
+}
+
+function modifiers(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 15;
+}
+
+function button(value) {
+  return ["left", "right", "middle"].includes(value);
 }
 
 class EngineFailure extends Error {
@@ -392,7 +478,7 @@ function reportCommandError(operationId, error) {
   sendControl(control, { kind: "error", operation_id: operationId, code });
   const current = active;
   active = null;
-  if (current !== null && !current.window.isDestroyed()) current.window.destroy();
+  destroySession(current);
 }
 
 function fatal(code) {
@@ -400,7 +486,7 @@ function fatal(code) {
   fatalStarted = true;
   const current = active;
   active = null;
-  if (current !== null && !current.window.isDestroyed()) current.window.destroy();
+  destroySession(current);
   process.exitCode = 1;
   const exit = () => {
     if (frame !== null && !frame.destroyed) frame.end();

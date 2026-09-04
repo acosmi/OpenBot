@@ -5,6 +5,29 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  # Batch109 closes the seven ordinary BrowserInput variants only after protocol-v2 executes each
+  # one in both real macOS Seatbelt Electron roles and observes the exact next frame/effect.
+  - id: T-BROP-0037
+    disposition: revalidate
+    notes: "Batch109 reruns mouseMoved through fresh HumanLease authority and observes the fixed :hover frame change in both real roles."
+  - id: T-BROP-0038
+    disposition: revalidate
+    notes: "Batch109 reruns mousePressed with nonzero click count and observes the fixed :active frame change in both real roles."
+  - id: T-BROP-0039
+    disposition: revalidate
+    notes: "Batch109 reruns mouseReleased and observes :active clear with exact operation/tab/kind acknowledgement."
+  - id: T-BROP-0040
+    disposition: revalidate
+    notes: "Batch109 reruns two-axis mouseWheel and observes the fixed overflow surface scroll in both real roles."
+  - id: T-BROP-0041
+    disposition: revalidate
+    notes: "Batch109 reruns keyDown/rawKeyDown, Backspace, the exact 17-key table and unknown F1 virtual-code zero through literal CDP."
+  - id: T-BROP-0042
+    disposition: revalidate
+    notes: "Batch109 reruns keyUp for printable, editing and unknown multi-unit keys with one exact next frame each."
+  - id: T-BROP-0043
+    disposition: revalidate
+    notes: "Batch109 reruns Input.insertText with Unicode and proves cross-scope/expired/ordinary-secret refusals emit zero frames."
   # Batch107 adds an optional PNG-only testkit edge. R124 maps that package diff to these existing
   # done targets, so the real PostgreSQL/OpenAI vertical and fintech fixture are rerun explicitly.
   - id: T-TEST-0652

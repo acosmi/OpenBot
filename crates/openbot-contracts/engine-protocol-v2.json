@@ -1,7 +1,7 @@
 {
   "schema": "openbot-engine-protocol",
-  "version": 1,
-  "release_epoch": 1,
+  "version": 2,
+  "release_epoch": 2,
   "max_boot_bytes": 4096,
   "max_control_frame_bytes": 65536,
   "max_image_bytes": 8388608,
@@ -14,6 +14,7 @@
   ],
   "commands": [
     "start",
+    "input",
     "stop",
     "shutdown"
   ],
@@ -21,9 +22,20 @@
     "hello",
     "ready",
     "started",
+    "input_applied",
     "stopped",
     "shutdown_complete",
     "error"
+  ],
+  "input_kinds": [
+    "mouse_move",
+    "mouse_down",
+    "mouse_up",
+    "wheel",
+    "key_down",
+    "raw_key_down",
+    "key_up",
+    "insert_text"
   ],
   "image_formats": [
     "jpeg"

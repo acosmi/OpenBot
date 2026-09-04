@@ -257,6 +257,9 @@ fn check_javascript(relative: &str, text: &str) -> Result<()> {
             "setProxy",
             "Page.captureScreenshot",
             "Runtime.evaluate",
+            "Input.dispatchMouseEvent",
+            "Input.dispatchKeyEvent",
+            "Input.insertText",
             "app.getAppMetrics()",
         ] {
             if !text.contains(required) {
@@ -265,6 +268,35 @@ fn check_javascript(relative: &str, text: &str) -> Result<()> {
                 );
             }
         }
+        check_cdp_methods(text)?;
+    }
+    Ok(())
+}
+
+fn check_cdp_methods(text: &str) -> Result<()> {
+    let allowed = [
+        "Input.dispatchKeyEvent",
+        "Input.dispatchMouseEvent",
+        "Input.insertText",
+        "Page.captureScreenshot",
+        "Page.enable",
+        "Runtime.evaluate",
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    let literal = Regex::new(r#"sendCommand\(\s*"([^"]+)""#).expect("constant CDP regex");
+    let methods = literal
+        .captures_iter(text)
+        .map(|capture| capture.get(1).expect("method capture").as_str())
+        .collect::<Vec<_>>();
+    if methods.len() != text.matches("sendCommand(").count() {
+        bail!("electron-shim-check: every CDP sendCommand method must be a string literal");
+    }
+    let actual = methods.into_iter().collect::<BTreeSet<_>>();
+    if actual != allowed {
+        bail!(
+            "electron-shim-check: CDP method allowlist drift: expected {allowed:?}, got {actual:?}"
+        );
     }
     Ok(())
 }
@@ -328,7 +360,7 @@ fn relative(root: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_electron_bindings, check_javascript};
+    use super::{check_cdp_methods, check_electron_bindings, check_javascript};
 
     #[test]
     fn electron_and_node_import_domains_are_closed() {
@@ -357,5 +389,22 @@ mod tests {
         ] {
             assert!(check_javascript("fixture.mjs", source).is_err(), "{source}");
         }
+    }
+
+    #[test]
+    fn cdp_methods_are_literal_and_exactly_allowlisted() {
+        let source = [
+            "Page.enable",
+            "Runtime.evaluate",
+            "Page.captureScreenshot",
+            "Input.dispatchMouseEvent",
+            "Input.dispatchKeyEvent",
+            "Input.insertText",
+        ]
+        .map(|method| format!(r#"debugger.sendCommand("{method}")"#))
+        .join("\n");
+        check_cdp_methods(&source).expect("closed allowlist");
+        assert!(check_cdp_methods("debugger.sendCommand(method)").is_err());
+        assert!(check_cdp_methods("debugger.sendCommand(\"Network.enable\")").is_err());
     }
 }

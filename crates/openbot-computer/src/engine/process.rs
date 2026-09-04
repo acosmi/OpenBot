@@ -17,10 +17,13 @@ use openbot_contracts::ids::{ComputerGeneration, ComputerId, TabId};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
+use crate::browser::{BrowserInput, CdpInputPlan, CdpInputPlanError};
+use crate::control::AuthorizedHumanInput;
+
 use super::frame::{EngineFrame, EngineFrameError, EngineFrameReader, read_frame_hello};
 use super::protocol::{
-    BootCapability, BootToken, EngineCommandWire, EngineEventWire, EngineOperationId,
-    EngineProtocolError, encode_command,
+    BootCapability, BootToken, EngineCommandWire, EngineEventWire, EngineInputKindWire,
+    EngineOperationId, EngineProtocolError, encode_command,
 };
 use super::scope::EngineRole;
 
@@ -321,6 +324,8 @@ pub struct EngineProcess {
     generation: ComputerGeneration,
     _runtime: RuntimeDirectory,
     operation_sequence: AtomicU64,
+    active_tab: Option<TabId>,
+    frame_decoder: Option<EngineFrameReader>,
     fidelity: EngineSandboxFidelity,
 }
 
@@ -452,6 +457,8 @@ impl EngineProcess {
             generation: config.generation,
             _runtime: runtime,
             operation_sequence: AtomicU64::new(0),
+            active_tab: None,
+            frame_decoder: None,
             fidelity,
         })
     }
@@ -491,39 +498,13 @@ impl EngineProcess {
             self.generation,
             tab_id.clone(),
         );
-        let (event, frame) = tokio::time::timeout(COMMAND_TIMEOUT, async {
-            let event = read_event(&mut self.control_reader);
-            let frame = decoder.read(&mut self.frame_reader);
-            tokio::pin!(event);
-            tokio::pin!(frame);
-            tokio::select! {
-                event = &mut event => {
-                    let event = event?;
-                    if let EngineEventWire::Error { operation_id, code } = &event {
-                        return Err(reported_for(&operation, operation_id.clone(), code.clone()));
-                    }
-                    let frame = frame.await?;
-                    Ok((event, frame))
-                }
-                frame = &mut frame => {
-                    let frame = match frame {
-                        Ok(frame) => frame,
-                        Err(frame_error) => {
-                            if let Ok(Ok(EngineEventWire::Error { operation_id, code })) =
-                                tokio::time::timeout(Duration::from_secs(1), &mut event).await
-                            {
-                                return Err(reported_for(&operation, operation_id, code));
-                            }
-                            return Err(frame_error.into());
-                        }
-                    };
-                    let event = event.await?;
-                    Ok((event, frame))
-                }
-            }
-        })
-        .await
-        .map_err(|_| EngineProcessError::CommandTimeout)??;
+        let (event, frame) = read_operation_frame(
+            &mut self.control_reader,
+            &mut self.frame_reader,
+            &mut decoder,
+            &operation,
+        )
+        .await?;
         match event {
             EngineEventWire::Started {
                 operation_id,
@@ -541,6 +522,8 @@ impl EngineProcess {
                 && !node_exposed
                 && internal_origin_matches(self.role.kind(), &origin) =>
             {
+                self.active_tab = Some(tab_id);
+                self.frame_decoder = Some(decoder);
                 Ok(StartedSession {
                     frame,
                     renderer_pid,
@@ -551,6 +534,69 @@ impl EngineProcess {
             }
             _ => Err(EngineProcessError::StartedIdentity),
         }
+    }
+
+    /// Apply one freshly authorized ordinary input through protocol-v2 and require an exact
+    /// operation-bound acknowledgement. Frames remain on the independent [`Self::next_frame`]
+    /// channel. `SecretInsert` is rejected before any control-pipe write.
+    pub async fn apply_human_input(
+        &mut self,
+        authorization: AuthorizedHumanInput,
+        input: &BrowserInput,
+        now: time::OffsetDateTime,
+    ) -> Result<(), EngineProcessError> {
+        if authorization.computer_id() != &self.computer_id
+            || authorization.computer_generation() != self.generation
+            || self.active_tab.as_ref() != Some(authorization.tab_id())
+            || now >= authorization.expires_at()
+        {
+            return Err(EngineProcessError::InputAuthority);
+        }
+        let plan = CdpInputPlan::try_from(input).map_err(EngineProcessError::InputPlan)?;
+        let expected_kind = EngineInputKindWire::from_plan(&plan);
+        let operation = self.next_operation()?;
+        let command = EngineCommandWire::input(
+            &operation,
+            &self.computer_id,
+            self.generation,
+            authorization.tab_id(),
+            &plan,
+        );
+        let bytes = encode_command(&command)?;
+        self.control_writer.write_all(&bytes).await?;
+        let event = tokio::time::timeout(COMMAND_TIMEOUT, read_event(&mut self.control_reader))
+            .await
+            .map_err(|_| EngineProcessError::CommandTimeout)??;
+        match event {
+            EngineEventWire::InputApplied {
+                operation_id,
+                tab_id,
+                input_kind,
+            } if operation_id == operation.as_str()
+                && tab_id == authorization.tab_id().as_str()
+                && input_kind == expected_kind =>
+            {
+                Ok(())
+            }
+            EngineEventWire::Error { operation_id, code } => {
+                Err(reported_for(&operation, operation_id, code))
+            }
+            _ => Err(EngineProcessError::InputAppliedIdentity),
+        }
+    }
+
+    /// Read the next independently framed image for the active session. Input acknowledgements and
+    /// Screen delivery intentionally remain separate channels so Page.startScreencast can replace
+    /// the current conformance capture without changing the authority API.
+    pub async fn next_frame(&mut self) -> Result<EngineFrame, EngineProcessError> {
+        let decoder = self
+            .frame_decoder
+            .as_mut()
+            .ok_or(EngineProcessError::InputAuthority)?;
+        decoder
+            .read(&mut self.frame_reader)
+            .await
+            .map_err(Into::into)
     }
 
     /// Stop one exact tab and require an operation-bound acknowledgement.
@@ -566,6 +612,8 @@ impl EngineProcess {
             .map_err(|_| EngineProcessError::CommandTimeout)??;
         match event {
             EngineEventWire::Stopped { operation_id } if operation_id == operation.as_str() => {
+                self.active_tab = None;
+                self.frame_decoder = None;
                 Ok(())
             }
             EngineEventWire::Error { operation_id, code } => {
@@ -615,6 +663,48 @@ impl EngineProcess {
             .map_err(|_| EngineProcessError::OperationExhausted)?;
         EngineOperationId::new(format!("op-{}", previous + 1)).map_err(Into::into)
     }
+}
+
+#[cfg(any(unix, windows))]
+async fn read_operation_frame(
+    control_reader: &mut BufReader<EnginePipeReadHalf>,
+    frame_reader: &mut BufReader<EnginePipeReadHalf>,
+    decoder: &mut EngineFrameReader,
+    operation: &EngineOperationId,
+) -> Result<(EngineEventWire, EngineFrame), EngineProcessError> {
+    tokio::time::timeout(COMMAND_TIMEOUT, async {
+        let event = read_event(control_reader);
+        let frame = decoder.read(frame_reader);
+        tokio::pin!(event);
+        tokio::pin!(frame);
+        tokio::select! {
+            event = &mut event => {
+                let event = event?;
+                if let EngineEventWire::Error { operation_id, code } = &event {
+                    return Err(reported_for(operation, operation_id.clone(), code.clone()));
+                }
+                let frame = frame.await?;
+                Ok((event, frame))
+            }
+            frame = &mut frame => {
+                let frame = match frame {
+                    Ok(frame) => frame,
+                    Err(frame_error) => {
+                        if let Ok(Ok(EngineEventWire::Error { operation_id, code })) =
+                            tokio::time::timeout(Duration::from_secs(1), &mut event).await
+                        {
+                            return Err(reported_for(operation, operation_id, code));
+                        }
+                        return Err(frame_error.into());
+                    }
+                };
+                let event = event.await?;
+                Ok((event, frame))
+            }
+        }
+    })
+    .await
+    .map_err(|_| EngineProcessError::CommandTimeout)?
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -1189,6 +1279,9 @@ pub enum EngineProcessError {
     /// Binary frame was malformed, stale, or unauthenticated.
     #[error("engine_frame")]
     Frame(#[from] EngineFrameError),
+    /// Pure BrowserInput→CDP plan rejected a non-ordinary input before any pipe write.
+    #[error("engine_input_plan")]
+    InputPlan(#[source] CdpInputPlanError),
     /// Signed manifest digest or a named file digest did not match.
     #[error("engine_bundle_digest")]
     BundleDigest,
@@ -1240,6 +1333,12 @@ pub enum EngineProcessError {
     /// Started event did not echo the exact operation/tab or exposed Node.
     #[error("engine_started_identity")]
     StartedIdentity,
+    /// Fresh HumanLease receipt did not match this process/generation/active tab.
+    #[error("engine_input_authority")]
+    InputAuthority,
+    /// Input acknowledgement did not echo the exact operation/tab/kind.
+    #[error("engine_input_applied_identity")]
+    InputAppliedIdentity,
     /// Stop acknowledgement did not match the operation.
     #[error("engine_stopped_identity")]
     StoppedIdentity,

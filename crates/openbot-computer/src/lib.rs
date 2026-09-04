@@ -31,10 +31,11 @@
 //! Batch54/55 add executable Windows and runsc probes, but P1 is still open because neither has
 //! corresponding machine evidence. `BrowserRuntimeManager` now makes the fixed-upstream LRU/idle
 //! selector effective over opaque driver handles, but no Server/Desktop production host assembles
-//! that manager with `EngineProcess` yet. The fixed-upstream `BrowserInput` to closed CDP parameter
-//! plan is implemented as a pure mapping, but it is not wired to the engine and proves no live CDP
-//! effect. ScreenHub, product CDP execution, file/shell executors and supervisor remain separate
-//! unfinished boundaries; the fixture page is not a browser product operation.
+//! that manager with `EngineProcess` yet. Protocol v2 now consumes fresh HumanLease receipts and
+//! executes the fixed-upstream ordinary `BrowserInput` plan in both real macOS Electron roles; the
+//! Server/Desktop Computer assembly, secret typed effect, Page.startScreencast/ScreenHub,
+//! file/shell executors and supervisor remain separate unfinished boundaries. The internal page is
+//! conformance evidence, not a production browser destination.
 
 pub mod browser;
 pub mod control;
@@ -42,8 +43,8 @@ pub mod engine;
 pub mod manager;
 
 pub use control::{
-    ControlError, ControlHolder, ControlService, ControlSnapshot, HumanInputTicket,
-    HumanLeaseEpoch, PendingSecretTarget,
+    AuthorizedHumanInput, ControlError, ControlHolder, ControlService, ControlSnapshot,
+    HumanInputTicket, HumanLeaseEpoch, PendingSecretTarget,
 };
 pub use manager::{
     BrowserBudgetError, BrowserDriverFuture, BrowserInstance, BrowserLease,

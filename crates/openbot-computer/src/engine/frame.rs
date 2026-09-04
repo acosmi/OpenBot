@@ -246,7 +246,9 @@ pub enum EngineFrameError {
 
 #[cfg(test)]
 mod tests {
-    use openbot_contracts::engine::{ENGINE_FRAME_FIXED_HEADER_BYTES, ENGINE_FRAME_MAGIC};
+    use openbot_contracts::engine::{
+        ENGINE_FRAME_FIXED_HEADER_BYTES, ENGINE_FRAME_MAGIC, ENGINE_PROTOCOL_VERSION,
+    };
     use openbot_contracts::ids::{ComputerGeneration, ComputerId, TabId};
 
     use super::{EngineFrameError, EngineFrameReader};
@@ -256,7 +258,7 @@ mod tests {
         let image = [0xff, 0xd8, 0xff, 0x01, 0xff, 0xd9];
         let mut fixed = [0_u8; ENGINE_FRAME_FIXED_HEADER_BYTES];
         fixed[..8].copy_from_slice(ENGINE_FRAME_MAGIC);
-        fixed[8..10].copy_from_slice(&1_u16.to_le_bytes());
+        fixed[8..10].copy_from_slice(&ENGINE_PROTOCOL_VERSION.to_le_bytes());
         fixed[10] = 0;
         fixed[11] = 1;
         let header = ENGINE_FRAME_FIXED_HEADER_BYTES + computer.len() + tab.len();

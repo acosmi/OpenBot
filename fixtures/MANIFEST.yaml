@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 49
+    expect: 50
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 22
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 27
+    expect: 28
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 49 49
+    expect: 50 50
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 39 0
+    expect: 10 40 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -409,6 +409,22 @@ entries:
       T-BROP-0037..0044继续todo，直到同一closed plan经authenticated engine真实调用
       Input.dispatchMouseEvent/Input.dispatchKeyEvent/Input.insertText，并覆盖generation/lease拒绝与secret
       typed path；ScreenHub/P2同样不因本fixture勾选。
+
+  - id: browser-engine-input-wire-v2
+    upstream: "CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d:agent-computer/src/screencast.ts"
+    label: 新增
+    target: fixtures/computer/engine-input-wire-v2.json -> openbot_computer::engine::EngineProcess::apply_human_input
+    owner: openbot-computer
+    test_id: T-FIX-0050
+    migration_rule: "preserve: execute the closed BrowserInput CDP plan behind fresh HumanLease authority; version the incompatible engine wire and strengthen with exact frame/effect evidence"
+    status: done
+    evidence: "protocol/release epoch 2生成hash ef213bb4d8f9f66b0854ef4feb9a7718de5bae139348320ed3fe8f6641b9bdf6；macOS arm64官方Electron zip=122102881 bytes/SHA-256 ee939d1564d83d61032b3b3cb23af4e46005a4900c91f0695f7ed793f0ce6e83；bundle ASAR=22819 bytes/header SHA-256 cb289d04fc42ba59622590c0f699933d3b55c4361a39ae92670a056c105a5063/fuses=000011001"
+    done_evidence: "fixture=1764 bytes/SHA-256 f8529f5950f0482e2cb3388899bcab86143dac50475499fe3bcf20808d8a9810；BrowserComputer与SandboxedComponent两真实Seatbelt Electron role include-ignored=2/0/0：fresh non-Clone receipt后逐项执行mouseMoved/Pressed/Released、wheel、keyDown/rawKeyDown/keyUp、insertText；operation-bound input ACK与独立frame channel分离，hover/active/text/Backspace/scroll截图SHA变化，unknown F1 code0成功。cross-scope、expiry exact边界与SecretInsert ordinary path均frame0且后续session继续；主/后代TCP LISTEN0，shutdown PID/profile lock0。fixture自身default test=1/0/0"
+    notes: >-
+      只关闭T-BROP-0037..0043的engine-level实际CDP语义；T-BROP-0044仍缺独立secret typed effect。
+      evidenceBoundary明确Windows/runtime=false、Linux runsc/runtime=false、Server/Desktop Computer assembly=false、
+      ScreenHub=false、Page.startScreencast=false；所以P1/P2/G5/G7仍不勾，captureScreenshot-per-input不冒充
+      正式screencast/backpressure路径。
 
   - id: db-seed-0012
     upstream: "-"

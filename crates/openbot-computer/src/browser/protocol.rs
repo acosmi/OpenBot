@@ -1,8 +1,8 @@
 //! Closed browser and human-input operations from v3 §11.2 / §12.5.
 //!
-//! This is deliberately not a stringly CDP passthrough. The Electron shim will receive one of these
-//! variants through the authenticated engine framing added in a later batch. Until that process and
-//! conformance suite exist, this module proves only the closed type boundary—not live CDP execution.
+//! This is deliberately not a stringly CDP passthrough. Protocol v2 maps the ordinary variants into
+//! the authenticated Electron engine and its literal CDP allowlist; `SecretInsert` remains on a
+//! separate typed path and never enters that ordinary wire.
 
 use core::fmt;
 use core::num::NonZeroU32;
