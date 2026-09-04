@@ -168,12 +168,19 @@ function parseControlLine(line) {
 }
 
 async function handleCommand(command) {
+  if (!isBoundedString(command.operation_id, 128)) throw new Error("operation_invalid");
+  if (command.kind === "shutdown") {
+    requireExactKeys(command, ["kind", "operation_id"]);
+    await shutdownEngine(true, command.operation_id);
+    return;
+  }
+  validateScope(command);
+  if (!isBoundedString(command.tab_id, 256)) throw new Error("tab_invalid");
+  if (command.kind !== "input") {
+    const extra = command.kind === "screencast" ? ["enabled"] : [];
+    requireExactKeys(command, ["computer_id", "generation", "kind", "operation_id", "tab_id", ...extra]);
+  }
   if (command.kind === "start") {
-    requireExactKeys(command, ["computer_id", "generation", "kind", "operation_id", "tab_id"]);
-    validateScope(command);
-    if (!isBoundedString(command.operation_id, 128) || !isBoundedString(command.tab_id, 256)) {
-      throw new Error("start_invalid");
-    }
     if (active !== null) {
       sendControl(control, { kind: "error", operation_id: command.operation_id, code: "session_busy" });
       return;
@@ -181,38 +188,21 @@ async function handleCommand(command) {
     await startSession(command);
     return;
   }
-  if (command.kind === "input") {
-    validateScope(command);
-    if (!isBoundedString(command.operation_id, 128) || !isBoundedString(command.tab_id, 256)) {
-      throw new Error("input_invalid");
-    }
-    if (active === null || active.tabId !== command.tab_id) {
-      sendControl(control, { kind: "error", operation_id: command.operation_id, code: "session_stale" });
-      return;
-    }
-    await applyInput(command);
+  if (command.kind === "stop" && active === null && lastStopped?.tabId === command.tab_id) {
+    sendStopped(command.operation_id, lastStopped, true);
     return;
   }
-  if (command.kind === "stop") {
-    requireExactKeys(command, ["computer_id", "generation", "kind", "operation_id", "tab_id"]);
-    validateScope(command);
-    if (!isBoundedString(command.operation_id, 128) || !isBoundedString(command.tab_id, 256)) {
-      throw new Error("stop_invalid");
-    }
-    if (active === null && lastStopped?.tabId === command.tab_id) {
-      sendStopped(command.operation_id, lastStopped, true);
-      return;
-    }
-    if (active === null || active.tabId !== command.tab_id) {
-      sendControl(control, { kind: "error", operation_id: command.operation_id, code: "session_stale" });
-      return;
-    }
-    await stopSession(command.operation_id);
+  if (active === null || active.tabId !== command.tab_id) {
+    sendControl(control, { kind: "error", operation_id: command.operation_id, code: "session_stale" });
     return;
   }
-  requireExactKeys(command, ["kind", "operation_id"]);
-  if (!isBoundedString(command.operation_id, 128)) throw new Error("shutdown_invalid");
-  await shutdownEngine(true, command.operation_id);
+  if (command.kind === "input") await applyInput(command);
+  else if (command.kind === "stop") await stopSession(command.operation_id);
+  else if (command.kind === "screencast") {
+    if (typeof command.enabled !== "boolean") throw new EngineFailure("screencast_state_invalid");
+    const replayed = await setScreencast(active, command.enabled);
+    sendControl(control, { kind: "screencast_state", operation_id: command.operation_id, tab_id: active.tabId, enabled: command.enabled, received_frames: String(active.receivedFrames), acknowledged_frames: String(active.acknowledgedFrames), replayed });
+  } else throw new EngineFailure("command_invalid");
 }
 
 function validateScope(command) {
@@ -261,6 +251,7 @@ async function startSession(command) {
     firstFrameResolved: false,
     messageHandler: null,
     stopping: false,
+    casting: false,
   };
   lastStopped = null;
   const contents = window.webContents;
@@ -304,16 +295,7 @@ async function startSession(command) {
           if (current.firstFrameResolved) reportCommandError(command.operation_id, error);
         });
     };
-    contents.debugger.on("message", active.messageHandler);
-    await withDeadline(contents.debugger.sendCommand("Page.startScreencast", {
-      format: SCREENCAST.format,
-      quality: SCREENCAST.quality,
-      maxWidth: SCREENCAST.max_width,
-      maxHeight: SCREENCAST.max_height,
-      everyNthFrame: SCREENCAST.every_nth_frame,
-      maxFramesInFlight: SCREENCAST.max_frames_in_flight,
-      sendLastFrame: SCREENCAST.send_last_frame,
-    }), "screencast_start_timeout");
+    await setScreencast(active, true);
     await withDeadline(firstFrame, "screencast_first_frame_timeout");
     const rendererPid = contents.getOSProcessId();
     const metric = app.getAppMetrics().find((entry) => entry.pid === rendererPid);
@@ -484,20 +466,38 @@ async function sendFrame(current, image, metadata) {
   }
 }
 
+async function setScreencast(current, enabled) {
+  if (current.casting === enabled) return true;
+  const contents = current.window.webContents;
+  if (enabled) {
+    contents.debugger.on("message", current.messageHandler);
+    await withDeadline(contents.debugger.sendCommand("Page.startScreencast", {
+      format: SCREENCAST.format,
+      quality: SCREENCAST.quality,
+      maxWidth: SCREENCAST.max_width,
+      maxHeight: SCREENCAST.max_height,
+      everyNthFrame: SCREENCAST.every_nth_frame,
+      maxFramesInFlight: SCREENCAST.max_frames_in_flight,
+      sendLastFrame: SCREENCAST.send_last_frame,
+    }), "screencast_start_timeout");
+  } else {
+    await withDeadline(contents.debugger.sendCommand("Page.stopScreencast"), "screencast_stop_timeout");
+    contents.debugger.off("message", current.messageHandler);
+    await withDeadline(current.frameChain, "screencast_frame_drain_timeout");
+    if (current.pendingAck !== null) await withDeadline(current.pendingAck.promise, "screencast_ack_drain_timeout");
+    if (current.receivedFrames !== current.sentFrames || current.receivedFrames !== current.acknowledgedFrames) {
+      throw new EngineFailure("screencast_accounting_invalid");
+    }
+  }
+  current.casting = enabled;
+  return false;
+}
+
 async function stopSession(operationId) {
   const current = active;
   if (current === null) throw new EngineFailure("session_stale");
-  await withDeadline(current.window.webContents.debugger.sendCommand("Page.stopScreencast"), "screencast_stop_timeout");
-  current.window.webContents.debugger.off("message", current.messageHandler);
-  current.messageHandler = null;
-  await withDeadline(current.frameChain, "screencast_frame_drain_timeout");
+  await setScreencast(current, false);
   current.stopping = true;
-  if (current.pendingAck !== null) {
-    await withDeadline(current.pendingAck.promise, "screencast_ack_drain_timeout");
-  }
-  if (current.receivedFrames !== current.sentFrames || current.receivedFrames !== current.acknowledgedFrames) {
-    throw new EngineFailure("screencast_accounting_invalid");
-  }
   active = null;
   lastStopped = {
     tabId: current.tabId,

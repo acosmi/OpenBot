@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest as _, Sha256};
 
-pub(crate) const DESCRIPTOR_RELPATH: &str = "crates/openbot-contracts/engine-protocol-v3.json";
+pub(crate) const DESCRIPTOR_RELPATH: &str = "crates/openbot-contracts/engine-protocol-v4.json";
 pub(crate) const MODULE_RELPATH: &str = "crates/openbot-desktop/engine-shim/generated/protocol.mjs";
 pub(crate) const HASH_RELPATH: &str = "crates/openbot-contracts/generated/engine-protocol.sha256";
 
@@ -89,13 +89,13 @@ fn validate_descriptor(value: &serde_json::Value) -> Result<()> {
         bail!("engine protocol keys drift: expected {expected:?}, got {actual:?}");
     }
     if value["schema"] != "openbot-engine-protocol"
-        || value["version"] != 3
-        || value["release_epoch"] != 3
+        || value["version"] != 4
+        || value["release_epoch"] != 4
         || value["frame_magic"] != "OBFRAME2"
         || value["frame_hello_magic"] != "OBFHELLO"
         || value["frame_fixed_header_bytes"] != 76
     {
-        bail!("engine protocol fixed v3 values drift");
+        bail!("engine protocol fixed v4 values drift");
     }
     for (key, expected) in [
         (
@@ -104,7 +104,15 @@ fn validate_descriptor(value: &serde_json::Value) -> Result<()> {
         ),
         (
             "commands",
-            ["start", "input", "frame_ack", "stop", "shutdown"].as_slice(),
+            [
+                "start",
+                "input",
+                "frame_ack",
+                "screencast",
+                "stop",
+                "shutdown",
+            ]
+            .as_slice(),
         ),
         (
             "events",
@@ -113,6 +121,7 @@ fn validate_descriptor(value: &serde_json::Value) -> Result<()> {
                 "ready",
                 "started",
                 "input_applied",
+                "screencast_state",
                 "stopped",
                 "shutdown_complete",
                 "error",
@@ -198,7 +207,7 @@ mod tests {
     #[test]
     fn descriptor_domain_is_closed() {
         let value: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../crates/openbot-contracts/engine-protocol-v3.json"
+            "../../../../crates/openbot-contracts/engine-protocol-v4.json"
         ))
         .expect("descriptor");
         validate_descriptor(&value).expect("closed descriptor");

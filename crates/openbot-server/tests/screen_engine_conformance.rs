@@ -11,10 +11,12 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use openbot_application::{
     ApplicationService, ChannelCursor, ChannelReader, OpenBotApplication, PortError,
 };
+use openbot_computer::control::ControlService;
 use openbot_computer::engine::{
     ComputerSecurityScope, EngineBundle, EngineBundleDigest, EngineLaunchConfig, EngineProcess,
     EngineRole, ScreenAudience, WorkspaceScope,
 };
+use openbot_computer::screen::engine_owner::{ScreenEngineOwner, ScreenEngineState};
 use openbot_computer::screen::{SCREEN_VIEWER_PROTOCOL, ScreenHub, ScreenSessionService};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
 use openbot_contracts::command::{AppCommand, AppReply, ChannelSummary};
@@ -120,9 +122,16 @@ async fn real_engine_frame_crosses_ticketed_server_binary_websocket() {
         .expect("engine session");
 
     let hub = ScreenHub::new(2).expect("hub");
-    hub.attach(process.take_screen_source().expect("engine source"))
+    let control = Arc::new(tokio::sync::Mutex::new(ControlService::new(
+        computer_id.clone(),
+        tab_id.clone(),
+        generation,
+        time::OffsetDateTime::now_utc(),
+    )));
+    let owner = ScreenEngineOwner::attach(process, hub.clone(), control)
         .await
-        .expect("attach engine source");
+        .expect("attach engine owner and source");
+    let mut owner_state = owner.observe();
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(EmptyChannels)
             .with_screen_sessions(Arc::new(ScreenSessionService::new(hub.clone()))),
@@ -195,20 +204,41 @@ async fn real_engine_frame_crosses_ticketed_server_binary_websocket() {
     };
     assert_eq!(&bytes[..8], b"OBSCRN01");
     assert_eq!(&bytes[68..71], &[0xff, 0xd8, 0xff]);
-    assert_eq!(
-        u64::from_le_bytes(bytes[28..36].try_into().expect("sequence")),
-        started.frame.sequence()
+    assert!(
+        u64::from_le_bytes(bytes[28..36].try_into().expect("sequence")) >= started.frame.sequence()
     );
 
     // Real engine + production default liveness: a static screen must still get a host Ping.
     // Flush its matching automatic Pong once; stop reading after that, so ongoing engine output
     // cannot substitute for proof that the viewer is consuming the connection.
-    let ping = tokio::time::timeout(std::time::Duration::from_secs(12), socket.next())
-        .await
-        .expect("default heartbeat deadline")
-        .expect("ping")
-        .expect("valid ping");
-    assert!(matches!(ping, ClientMessage::Ping(payload) if payload.len() == 8));
+    tokio::time::timeout(std::time::Duration::from_secs(12), async {
+        let mut sequence = u64::from_le_bytes(bytes[28..36].try_into().expect("sequence"));
+        loop {
+            match socket
+                .next()
+                .await
+                .expect("heartbeat")
+                .expect("valid message")
+            {
+                ClientMessage::Ping(payload) => {
+                    assert_eq!(payload.len(), 8);
+                    break;
+                }
+                ClientMessage::Binary(frame) => {
+                    assert!(frame.starts_with(b"OBSCRN01"));
+                    let next = u64::from_le_bytes(frame[28..36].try_into().expect("sequence"));
+                    assert!(
+                        next > sequence,
+                        "capture resumed with monotonically new frames"
+                    );
+                    sequence = next;
+                }
+                other => panic!("unexpected heartbeat message: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("default heartbeat deadline");
     socket.flush().await.expect("matching automatic pong");
     tokio::time::sleep(std::time::Duration::from_secs(31)).await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -234,10 +264,28 @@ async fn real_engine_frame_crosses_ticketed_server_binary_websocket() {
     })
     .await
     .expect("default idle budget closes connection");
-    // Engine stop is still explicit: socket expiry must not be reported as the unfinished
-    // last-viewer -> Page.stopScreencast lifecycle contract.
-    process.stop_session(&tab_id).await.expect("stop session");
-    process.shutdown().await.expect("shutdown engine");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if *owner_state.borrow_and_update() == ScreenEngineState::Paused {
+                break;
+            }
+            owner_state.changed().await.expect("live owner");
+        }
+    })
+    .await
+    .expect("socket close stops capture within two seconds");
+    let paused = owner.stats().await.expect("paused counters");
+    assert_eq!(paused.received_frames(), paused.acknowledged_frames());
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert_eq!(
+        owner
+            .stats()
+            .await
+            .expect("capture stays stopped")
+            .received_frames(),
+        paused.received_frames()
+    );
+    owner.shutdown().await.expect("shutdown engine owner");
     let _ = stop.send(());
     server.await.expect("server task").expect("server result");
     let _ = fs::remove_dir_all(root);

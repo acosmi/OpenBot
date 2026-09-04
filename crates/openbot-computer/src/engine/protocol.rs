@@ -315,12 +315,35 @@ pub(crate) enum EngineCommandWire<'a> {
         frame_sequence: String,
         screencast_session_id: u32,
     },
+    Screencast {
+        operation_id: &'a str,
+        computer_id: &'a str,
+        generation: String,
+        tab_id: &'a str,
+        enabled: bool,
+    },
     Shutdown {
         operation_id: &'a str,
     },
 }
 
 impl<'a> EngineCommandWire<'a> {
+    pub(crate) fn screencast(
+        operation: &'a EngineOperationId,
+        computer: &'a ComputerId,
+        generation: ComputerGeneration,
+        tab: &'a TabId,
+        enabled: bool,
+    ) -> Self {
+        Self::Screencast {
+            operation_id: operation.as_str(),
+            computer_id: computer.as_str(),
+            generation: generation.get().to_string(),
+            tab_id: tab.as_str(),
+            enabled,
+        }
+    }
+
     pub(crate) fn start(
         operation: &'a EngineOperationId,
         computer: &'a ComputerId,
@@ -412,6 +435,14 @@ pub(crate) enum EngineEventWire {
         operation_id: String,
         tab_id: String,
         input_kind: EngineInputKindWire,
+    },
+    ScreencastState {
+        operation_id: String,
+        tab_id: String,
+        enabled: bool,
+        received_frames: String,
+        acknowledged_frames: String,
+        replayed: bool,
     },
     Stopped {
         operation_id: String,
@@ -527,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_v3_serializes_all_eight_closed_input_kinds_without_a_method_slot() {
+    fn protocol_v4_serializes_all_eight_closed_input_kinds_without_a_method_slot() {
         let none = ModifierMask::new(0).expect("modifiers");
         let inputs = [
             BrowserInput::mouse_move(1.0, 2.0, MouseButton::Left, none).expect("move"),
@@ -583,7 +614,14 @@ mod tests {
         assert_eq!(descriptor["input_kinds"], serde_json::json!(kinds));
         assert_eq!(
             descriptor["commands"],
-            serde_json::json!(["start", "input", "frame_ack", "stop", "shutdown"])
+            serde_json::json!([
+                "start",
+                "input",
+                "frame_ack",
+                "screencast",
+                "stop",
+                "shutdown"
+            ])
         );
     }
 

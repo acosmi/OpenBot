@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R189，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R190，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1207,6 +1207,13 @@ frame/Ping/Pong写上限1秒，close100ms，write buffer最大一张binary+1KiB�
 不外推kernel buffer saturation。Batch113文档/fixture的16MiB literal已按实际8MiB代码纠正。T-FIX-0054
 只关闭Server transport预算；production source/auth hook、Desktop、last-viewer→Engine的2秒停流及性能仍todo。
 
+Batch115/R190补需求驱动capture生命周期：protocol/epoch4的closed screencast enabled命令只停/恢复采集，
+保留window/document/scroll/sequence；Rust ScreenEngineOwner持唯一process，pending ticket不算viewer，
+最后viewer离开即pause，source/auth-generation失效retire。输入队列只持非权威ticket，在当前ControlService锁
+内重验后才dispatch，旧epoch拒绝；旧source/owner的清理绑定registration，不能删除同key替代源。macOS双role
+及真实Server WS idle→Engine pause已验证<2秒及counter稳定，T-FIX-0055 done；production ComputerManager/
+source与auth hook、Desktop、fps/paint/fallback、Windows/runsc仍todo，T-BROP-0027与G7仍不勾。
+
 ### 12.5 Input
 
 坐标转换使用 frame metadata、DPI、zoom、scroll、canvas letterbox。输入 union 与上游 `/stream` 协议对齐：mouse（move / down / up，含 button 与 modifiers）、wheel、key（down / up，含 modifiers 与 `Input.dispatchKeyEvent` 所需的 keyCode 表）、insertText、secret insert；不提供自由 CDP。不设 "IME composition" 与 "drag" 两个独立变体：IME 合成发生在 viewer 自己的输入元素里，合成完成的文本走 insertText（上游 `/human/type` 正是这样做的）；拖拽就是 down → move → up 序列，engine 不需要知道"这是一次拖拽"。
@@ -2272,11 +2279,11 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G7**：HumanLease fencing、普通真engine input、Batch110正式screencast/ACK/engine latest-buffer、
   Batch111 ScreenHub/multi-viewer/ticket核心、Batch112 coordinate pure+macOS drag/IME及Batch113 Server ticket/
   binary WS已落；仍缺production manager→Engine source、真实PG cookie/TLS、Desktop loopback、auth失效hook、
-  viewer input、fps/latency/最后viewer停流/fallback、Leptos非1 scale硬件/stale-frame/resize/
-  navigation/tab/跨scope矩阵，故整关不勾。Batch114仅补Server bandwidth/control-rate/heartbeat/idle/write预算，真实macOS Engine默认计时已验证，不代表2秒Engine停流。
+  viewer input、fps/latency/fallback、Leptos非1 scale硬件/stale-frame/resize/
+  navigation/tab/跨scope矩阵，故整关不勾。Batch114仅补Server bandwidth/control-rate/heartbeat/idle/write预算，真实macOS Engine默认计时已验证，不代表2秒Engine停流。Batch115随后已闭合已注册source的需求驱动pause/resume与真实Server WS停流；完整产品仍缺上述production装配和性能/平台证据。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账（`cargo xtask parity-check` 复算）：parity **873/1712 done（839 todo）**，fixtures **33/54 done（21 todo）**；v4 overlay carry/revalidate/split/superseded = **1273/431/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账（`cargo xtask parity-check` 复算）：parity **873/1712 done（839 todo）**，fixtures **34/55 done（21 todo）**；v4 overlay carry/revalidate/split/superseded = **1273/431/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -2658,6 +2665,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R188 | §5.2 / §12.2–§12.4、§12.6 / §13.4 / §24 G5、G7（2026-09-04 Batch113：Server ScreenSession/binary WS） | R187之后ticket与frame核心仍无真实transport；若Axum直接铸票会绕过唯一ApplicationService，若ticket进URL或被101回显会进入access log/header，若在upgrade后才鉴权会先建立泄漏通道。直接把ScreenHub塞进Server又可能与发票port不是同一实例；只用synthetic frame也不能证明Engine binary真能跨WS。完整path-stream还包含input/限流/停流/Desktop/production source，不能为关一条台账一并冒充。 | contracts新增只含computer/generation/tab的target、host binding与Debug脱敏/Drop-zeroize ticket；Application新增ScreenSession port并由Computer实现按AuthContext找唯一可见stream。Server新增保留exact verified Origin的extractor；POST body前同源、no-store且binding不来自JSON。WS拒任何query，requested protocol恰base+ticket，在101前消费，response只选base；current/latest binary、1KiB inbound、client data1008、revoked1008，frame上限从Computer单源。Server main构造共享Hub/port与8-viewer默认；Desktop显式No-port。真实ignored测试启动Electron Browser role并跨UDS/Hub/Application/Axum TCP到binary client。 | implementation=`5a7444e1db068d504157260da66ba9696f513dc6`。fixture=`1970 B`/SHA-256 `6e7365a0…`；Contracts/Application/Computer/Server/Desktop=`105/166/65/226/131`（Computer2、Desktop3 ignored），Server screen=`4/0/0`、真实Engine→WSS=`1/0/0`、transport parity=`8/0/0`。workspace locked check、八crate Clippy、Contracts WASM、Computer Windows Clippy/Linux check、WebSocket/Tauri/UI/六target guards及engine verify绿。新增T-API-0175/0176与T-FIX-0053；API=`96/80/176`，parity=`873/839/1712`、fixtures=`32/21/53`、overlay=`1275/429/2/6`，0违反/警告；recount=`71/0/89 skipped`且strict未跑。Cargo package829，只增内部依赖边；无schema/native/UI/shim/npm/Grok/workflow变化，未跑CI/Actions。T-BROP-0027、production manager source、PG cookie/TLS、Desktop/input/限流/停流/跨平台及P1/P2/G5/G7仍todo；详见Batch113文档。 |
 
 | R189 | §12.4、§12.6 / §24 G7 / §25（2026-09-04 Batch114：Server Screen transport budget与实际范围复盘） | R188只有active+pending cap和单帧上限，socket写入无deadline、出帧不证明客户端存活、控制帧和带宽未限。旧文与fixture又把8MiB单源上限误写为16MiB，未有对应常量断言。用户要求先按实际状态重排全范围，再继续实施及外部候选验收。 | 新增host-only整数纳秒byte bucket：8MiB/s、burst=8,388,676；control burst20/10条每秒。10秒Ping与30秒idle仅由当前8-byte challenge的单次matching Pong续期；frame/Ping/Pong写1秒、close100ms、write buffer0/最大一帧+1KiB，首帧发送后释放引用。保持ExactOrigin/ticket/query/base-only/closed failure，超限断线释放permit。纠正旧fixture的字节上限并加单源断言；全范围工作单固定actual R188、全部todo、依赖与外部阻塞；三个外部任务书只预留不冒充执行。 | Server233/0/0（Screen11）；真实macOS Engine默认heartbeat/idle1/0/0，49.92秒；all-target/all-feature Clippy、fmt、WebSocket guard、engine bundle/verify与Grok inventory绿。T-FIX-0054=1301B/SHA256 `2e7a844f…`，修正T-FIX-0053=1969B/`7f9f021c…`。parity仍873/839/1712，fixtures33/21/54，overlay1273/431/2/6，0违反；恢复固定上游后strict160/0/0。中间bind权限、dev-only依赖及fixture错误均修复后重跑。没有kernel send-buffer saturation、PG cookie/TLS、production source/auth hook、Desktop、2秒Engine停流、fps/paint/跨平台证据，T-BROP-0027与完整G7仍红。无Cargo/schema/UI/shim/npm/Grok/workflow变化，未跑CI/Actions；详见Batch114。 |
+
+| R190 | §11.2–§11.3 / §12.4–§12.6 / §24 G7（2026-09-04 Batch115：Screen需求生命周期） | R189关闭socket预算，但last-viewer断开还不触发Engine停流；直接复用stop_session会销毁document。排队前铸input receipt无法保证实际执行时epoch仍有效；旧source/owner只按key清理也会误删同key替代registration。 | protocol/epoch4新增closed screencast enabled与state ACK；pause排frame/ACK且保留window/document，resume继续sequence。ScreenHub以active viewer需求通知唯一ScreenEngineOwner，pending ticket不计；source/owner cleanup比较registration；detach不等旧viewer drop。队列16、操作750ms、shutdown1500ms；只排非权威ticket，执行时持当前ControlService锁重验并写pipe，wire超时后退役不复用。 | Computer lib67/0/0、fixture5/0/0；三条真实host case通过（含双role需求旅程），paused received=ack=4且250ms不增、scroll400/renderer保留、stale epoch拒绝；Server233/0/0、真实WS idle→pause1/0/0（48.21秒），Contracts105、xtask103；Clippy/Windows Clippy/Linux check、fmt、bundle/verify绿。shim595/600，ASAR30069/header d795c804…；T-FIX-0055=1411B/SHA256 2a510ef6…，fixtures34/21/55，parity仍873/839/1712。production ComputerManager/auth hook、Desktop、fps/paint/fallback、Windows/runsc仍缺，不关闭G7或P1/P2。无deps/schema/UI/npm/Grok/workflow变化，未跑CI/Actions或远端写入。详见Batch115。 |
 
 ### 28.2 复核通过、原样保留的断言
 

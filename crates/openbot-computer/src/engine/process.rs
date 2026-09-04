@@ -697,6 +697,7 @@ pub struct EngineProcess {
     session_started: bool,
     screen: Option<ScreenIngress>,
     screen_source_issued: bool,
+    screen_casting: bool,
     last_stop: Option<(TabId, ScreenStopReceipt)>,
     fidelity: EngineSandboxFidelity,
 }
@@ -842,6 +843,7 @@ impl EngineProcess {
             session_started: false,
             screen: None,
             screen_source_issued: false,
+            screen_casting: false,
             last_stop: None,
             fidelity,
         })
@@ -930,6 +932,7 @@ impl EngineProcess {
                 self.active_tab = Some(tab_id);
                 self.session_started = true;
                 self.screen = Some(screen);
+                self.screen_casting = true;
                 Ok(StartedSession {
                     frame,
                     renderer_pid,
@@ -942,7 +945,7 @@ impl EngineProcess {
         }
     }
 
-    /// Apply one freshly authorized ordinary input through protocol-v3 and require an exact
+    /// Apply one freshly authorized ordinary input through protocol-v4 and require an exact
     /// operation-bound acknowledgement. Frames remain on the independent [`Self::next_frame`]
     /// channel. `SecretInsert` is rejected before any control-pipe write.
     pub async fn apply_human_input(
@@ -1009,6 +1012,70 @@ impl EngineProcess {
             .ok_or(EngineProcessError::ScreenIngressClosed)?
             .stats()
             .await
+    }
+
+    /// Pause/resume only capture for this exact live tab. The renderer, document, input state,
+    /// ingress decoder and monotonically increasing frame sequence all survive a pause.
+    pub async fn set_screencast(
+        &mut self,
+        tab_id: &TabId,
+        enabled: bool,
+    ) -> Result<(), EngineProcessError> {
+        if self.active_tab.as_ref() != Some(tab_id) {
+            return Err(EngineProcessError::ScreencastIdentity);
+        }
+        let replay = self.screen_casting == enabled;
+        let operation = self.next_operation()?;
+        let command = EngineCommandWire::screencast(
+            &operation,
+            &self.computer_id,
+            self.generation,
+            tab_id,
+            enabled,
+        );
+        self.control_writer
+            .lock()
+            .await
+            .write_all(&encode_command(&command)?)
+            .await?;
+        let event = tokio::time::timeout(COMMAND_TIMEOUT, read_event(&mut self.control_reader))
+            .await
+            .map_err(|_| EngineProcessError::CommandTimeout)??;
+        match event {
+            EngineEventWire::ScreencastState {
+                operation_id,
+                tab_id: echoed_tab,
+                enabled: echoed_enabled,
+                received_frames,
+                acknowledged_frames,
+                replayed,
+            } if operation_id == operation.as_str()
+                && echoed_tab == tab_id.as_str()
+                && echoed_enabled == enabled
+                && replayed == replay =>
+            {
+                let received = parse_counter(&received_frames)?;
+                let acknowledged = parse_counter(&acknowledged_frames)?;
+                if acknowledged > received {
+                    return Err(EngineProcessError::ScreencastIdentity);
+                }
+                if !enabled {
+                    let local = self.screen_stats().await?;
+                    if received != acknowledged
+                        || received != local.received_frames
+                        || acknowledged != local.acknowledged_frames
+                    {
+                        return Err(EngineProcessError::ScreencastIdentity);
+                    }
+                }
+                self.screen_casting = enabled;
+                Ok(())
+            }
+            EngineEventWire::Error { operation_id, code } => {
+                Err(reported_for(&operation, operation_id, code))
+            }
+            _ => Err(EngineProcessError::ScreencastIdentity),
+        }
     }
 
     /// Take the sole attachable ScreenHub source for this active engine session.
@@ -1112,6 +1179,7 @@ impl EngineProcess {
                     return Err(EngineProcessError::StoppedIdentity);
                 }
                 self.active_tab = None;
+                self.screen_casting = false;
                 let receipt = ScreenStopReceipt {
                     stats: local,
                     replayed: false,
@@ -1791,6 +1859,9 @@ fn hex_nibble(value: u8) -> Result<u8, EngineProcessError> {
 /// Stable lifecycle/bundle failures.
 #[derive(Debug, thiserror::Error)]
 pub enum EngineProcessError {
+    /// Capture state acknowledgement did not bind to the current tab/operation and exact counters.
+    #[error("engine_screencast_identity")]
+    ScreencastIdentity,
     /// Filesystem/socket/process operation failed.
     #[error("engine_io")]
     Io(#[from] std::io::Error),

@@ -31,8 +31,8 @@ generated_at = "2026-08-28"
 # ===========================================================================
 [engines.electron]
 version = "43.3.0"
-release_epoch = 3
-protocol_version = 3
+release_epoch = 4
+protocol_version = 4
 chromium = "150.0.7871.212"
 node = "24.18.1"
 license = "MIT"
@@ -48,7 +48,7 @@ checksums_manifest = "https://github.com/electron/electron/releases/download/v43
 checksums_manifest_http_status = 200
 checksums_manifest_copy = "tools/electron-v43.3.0.SHASUMS256.txt"
 status = "done"
-done_evidence = "五个平台 zip 的 sha256 与上游 SHASUMS256.txt 逐字相等；windows-x64 真下载 144,396,349 B、macos-arm64 真下载 122,102,881 B，二者 `--version` = `v43.3.0`。Batch53/109先取得macOS protocol 1/2基线；Batch110升级到epoch/protocol 3后重跑bundle/verify，ASAR=29806 B/header 02972340…/fuses 000011001，并以双role正式screencast/ACK/latest-buffer 4/0/0闭合本平台证据。Windows/Linux bundle专属证据仍未跑，不冒充三平台已验"
+done_evidence = "五个平台 zip 的 sha256 与上游 SHASUMS256.txt 逐字相等；windows-x64 真下载 144,396,349 B、macos-arm64 真下载 122,102,881 B，二者 `--version` = `v43.3.0`。Batch53/109先取得macOS protocol 1/2基线；Batch110升级到epoch/protocol 3后重跑bundle/verify，ASAR=29806 B/header 02972340…/fuses 000011001，并以双role正式screencast/ACK/latest-buffer 4/0/0闭合本平台证据。Batch115升级epoch/protocol4，ASAR30069 B/header d795c804…/shim595，双role暂停恢复与既有输入回归通过；Windows/Linux bundle专属证据仍未跑，不冒充三平台已验"
 notes = """
 获取渠道只有官方 GitHub release zip（v3 §1.2 / R117）；不经 npm，因此没有 package-lock。
 Electron zip 解压后是未签名的通用二进制：rebrand、shim ASAR、fuses、ASAR integrity 与签名全部在

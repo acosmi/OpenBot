@@ -70,8 +70,8 @@ pub(crate) fn bundle(root: &Path) -> Result<()> {
     let version = crate::engine::string(electron, "version")?;
     let release_epoch = crate::engine::positive_u64(electron, "release_epoch")?;
     let protocol_version = crate::engine::positive_u64(electron, "protocol_version")?;
-    if release_epoch != 3 || protocol_version != 3 {
-        bail!("engine bundle: engine pins release/protocol version drift from v3 contracts");
+    if release_epoch != 4 || protocol_version != 4 {
+        bail!("engine bundle: engine pins release/protocol version drift from v4 contracts");
     }
     let parent = root.join(format!("target/engine/bundle/electron-{version}"));
     fs::create_dir_all(&parent)?;
@@ -113,7 +113,7 @@ pub(crate) fn bundle(root: &Path) -> Result<()> {
     fs::rename(&staging, &destination)
         .with_context(|| format!("publish {}", destination.display()))?;
     println!(
-        "engine bundle: ok ({}; app.asar={} bytes; header_sha256={}; fuse_sentinels={fuse_count}; release_epoch=3)",
+        "engine bundle: ok ({}; app.asar={} bytes; header_sha256={}; fuse_sentinels={fuse_count}; release_epoch=4)",
         destination.display(),
         fs::metadata(destination.join(relative(&layout.root, &layout.app_asar)))?.len(),
         asar.header_sha256
@@ -603,8 +603,8 @@ fn verify_layout(root: &Path, manifest: &BundleManifest) -> Result<()> {
     if manifest.schema != MANIFEST_SCHEMA
         || manifest.schema_version != MANIFEST_VERSION
         || manifest.platform != crate::engine::current_platform()?
-        || manifest.release_epoch != 3
-        || manifest.protocol_version != 3
+        || manifest.release_epoch != 4
+        || manifest.protocol_version != 4
         || manifest.product_name != PRODUCT_NAME
         || manifest.bundle_id != BUNDLE_ID
         || manifest.fuse_wire.as_bytes() != FUSE_WIRE

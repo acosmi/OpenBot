@@ -1,10 +1,10 @@
 //! Engine-backed multi-viewer ScreenHub and one-time viewer-ticket authority.
 
 pub mod coordinates;
+pub mod engine_owner;
 
 use core::fmt;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 use openbot_application::{ScreenSessionAdministration, ScreenSessionAdministrationError};
@@ -122,10 +122,59 @@ struct PendingTicket {
     expires_at: OffsetDateTime,
 }
 
+/// Rust-only viewer demand. Closing a stream is irreversible even while old viewer handles live.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScreenDemand {
+    viewers: usize,
+    closed: bool,
+}
+
+impl ScreenDemand {
+    /// Whether this exact live stream has an attached viewer (pending tickets are not viewers).
+    #[must_use]
+    pub const fn has_viewers(self) -> bool {
+        self.viewers != 0 && !self.closed
+    }
+
+    /// Whether the source was detached, invalidated or ended.
+    #[must_use]
+    pub const fn is_closed(self) -> bool {
+        self.closed
+    }
+}
+
+/// Read-only demand handle minted at source attachment, never from a renderer or a stream ID.
+#[derive(Debug)]
+pub struct ScreenDemandObserver {
+    receiver: watch::Receiver<ScreenDemand>,
+}
+
+impl ScreenDemandObserver {
+    fn is_closed(&self) -> bool {
+        self.receiver.borrow().closed
+    }
+
+    /// Current demand, marking this revision observed.
+    pub fn current(&mut self) -> ScreenDemand {
+        *self.receiver.borrow_and_update()
+    }
+
+    /// Await a viewer-count or terminal change. Producer loss is terminal, not an idle request.
+    pub async fn changed(&mut self) -> ScreenDemand {
+        if self.receiver.changed().await.is_err() {
+            return ScreenDemand {
+                viewers: 0,
+                closed: true,
+            };
+        }
+        self.current()
+    }
+}
+
 struct StreamEntry {
     audience: ScreenAudience,
     sender: watch::Sender<Option<Arc<ScreenViewerFrame>>>,
-    viewers: Arc<AtomicUsize>,
+    viewers: watch::Sender<ScreenDemand>,
     task: Option<JoinHandle<()>>,
 }
 
@@ -133,6 +182,18 @@ struct StreamEntry {
 struct HubState {
     streams: BTreeMap<ScreenStreamKey, StreamEntry>,
     tickets: BTreeMap<[u8; 32], PendingTicket>,
+}
+
+impl Drop for HubState {
+    fn drop(&mut self) {
+        for stream in self.streams.values_mut() {
+            stream.viewers.send_modify(|demand| demand.closed = true);
+            stream.sender.send_replace(None);
+            if let Some(task) = stream.task.take() {
+                task.abort();
+            }
+        }
+    }
 }
 
 /// Process-wide ScreenHub. Each stream owns one latest frame and all viewers clone that same watch
@@ -221,11 +282,15 @@ impl ScreenHub {
     }
 
     /// Attach the sole source minted by one live EngineProcess session.
-    pub async fn attach(&self, mut source: EngineScreenSource) -> Result<(), ScreenHubError> {
+    pub async fn attach(
+        &self,
+        mut source: EngineScreenSource,
+    ) -> Result<ScreenDemandObserver, ScreenHubError> {
         let key = source.key().clone();
         let audience = source.audience().clone();
         let first = ScreenViewerFrame::new(&key, source.latest().await.map_err(source_error)?)?;
         let (sender, _receiver) = watch::channel(Some(Arc::new(first)));
+        let (viewers, demand) = watch::channel(ScreenDemand::default());
         {
             let mut state = self.state.lock().await;
             if state.streams.contains_key(&key) {
@@ -236,7 +301,7 @@ impl ScreenHub {
                 StreamEntry {
                     audience,
                     sender,
-                    viewers: Arc::new(AtomicUsize::new(0)),
+                    viewers: viewers.clone(),
                     task: None,
                 },
             );
@@ -244,6 +309,7 @@ impl ScreenHub {
 
         let weak = Arc::downgrade(&self.state);
         let task_key = key.clone();
+        let task_viewers = viewers.clone();
         let task = tokio::spawn(async move {
             while let Ok(frame) = source.next().await {
                 let Ok(frame) = ScreenViewerFrame::new(&task_key, frame) else {
@@ -256,9 +322,12 @@ impl ScreenHub {
                 let Some(stream) = locked.streams.get(&task_key) else {
                     return;
                 };
+                if !stream.viewers.same_channel(&task_viewers) {
+                    return;
+                }
                 stream.sender.send_replace(Some(Arc::new(frame)));
             }
-            close_source(weak, task_key).await;
+            close_source(weak, task_key, task_viewers).await;
         });
 
         let mut state = self.state.lock().await;
@@ -266,8 +335,12 @@ impl ScreenHub {
             task.abort();
             return Err(ScreenHubError::SourceClosed);
         };
+        if !stream.viewers.same_channel(&viewers) {
+            task.abort();
+            return Err(ScreenHubError::SourceClosed);
+        }
         stream.task = Some(task);
-        Ok(())
+        Ok(ScreenDemandObserver { receiver: demand })
     }
 
     /// Issue a hash-only, 128-bit, 30-second ticket for one exact auth/binding/stream tuple.
@@ -287,7 +360,7 @@ impl ScreenHub {
             .values()
             .filter(|ticket| ticket.key == *key)
             .count();
-        let viewers = stream.viewers.load(Ordering::Acquire);
+        let viewers = stream.viewers.borrow().viewers;
         if viewers
             .checked_add(pending)
             .is_none_or(|count| count >= self.max_viewers_per_stream)
@@ -383,15 +456,18 @@ impl ScreenHub {
             .get(&pending.key)
             .ok_or(ScreenHubError::SourceClosed)?;
         ensure_audience(&stream.audience, auth)?;
-        stream
-            .viewers
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                (current < self.max_viewers_per_stream).then_some(current + 1)
-            })
-            .map_err(|_| ScreenHubError::ViewerLimit)?;
+        if !stream.viewers.send_if_modified(|demand| {
+            if demand.closed || demand.viewers >= self.max_viewers_per_stream {
+                return false;
+            }
+            demand.viewers += 1;
+            true
+        }) {
+            return Err(ScreenHubError::ViewerLimit);
+        }
         let receiver = stream.sender.subscribe();
         let last_sequence = receiver.borrow().as_ref().map(|frame| frame.sequence());
-        let viewers = Arc::clone(&stream.viewers);
+        let viewers = stream.viewers.clone();
         let key = pending.key.clone();
         state.tickets.remove(&digest);
         Ok(ScreenViewer {
@@ -428,6 +504,7 @@ impl ScreenHub {
             .collect::<Vec<_>>();
         for key in &keys {
             if let Some(mut stream) = state.streams.remove(key) {
+                stream.viewers.send_modify(|demand| demand.closed = true);
                 stream.sender.send_replace(None);
                 if let Some(task) = stream.task.take() {
                     task.abort();
@@ -440,24 +517,58 @@ impl ScreenHub {
     /// Detach one exact engine stream and close all viewers.
     pub async fn detach(&self, key: &ScreenStreamKey) -> bool {
         let mut state = self.state.lock().await;
-        state.tickets.retain(|_, ticket| ticket.key != *key);
-        let Some(mut stream) = state.streams.remove(key) else {
+        detach_stream(&mut state, key)
+    }
+
+    async fn detach_registered(
+        &self,
+        key: &ScreenStreamKey,
+        registration: &ScreenDemandObserver,
+    ) -> bool {
+        let mut state = self.state.lock().await;
+        if !state.streams.get(key).is_some_and(|stream| {
+            stream
+                .viewers
+                .subscribe()
+                .same_channel(&registration.receiver)
+        }) {
             return false;
-        };
-        stream.sender.send_replace(None);
-        if let Some(task) = stream.task.take() {
-            task.abort();
         }
-        true
+        detach_stream(&mut state, key)
     }
 }
 
-async fn close_source(state: Weak<Mutex<HubState>>, key: ScreenStreamKey) {
+fn detach_stream(state: &mut HubState, key: &ScreenStreamKey) -> bool {
+    state.tickets.retain(|_, ticket| ticket.key != *key);
+    let Some(mut stream) = state.streams.remove(key) else {
+        return false;
+    };
+    stream.viewers.send_modify(|demand| demand.closed = true);
+    stream.sender.send_replace(None);
+    if let Some(task) = stream.task.take() {
+        task.abort();
+    }
+    true
+}
+
+async fn close_source(
+    state: Weak<Mutex<HubState>>,
+    key: ScreenStreamKey,
+    viewers: watch::Sender<ScreenDemand>,
+) {
     let Some(state) = state.upgrade() else {
         return;
     };
     let mut state = state.lock().await;
+    if !state
+        .streams
+        .get(&key)
+        .is_some_and(|stream| stream.viewers.same_channel(&viewers))
+    {
+        return;
+    }
     if let Some(mut stream) = state.streams.remove(&key) {
+        stream.viewers.send_modify(|demand| demand.closed = true);
         stream.sender.send_replace(None);
         stream.task.take();
     }
@@ -583,7 +694,7 @@ impl fmt::Debug for ScreenViewerFrame {
 pub struct ScreenViewer {
     key: ScreenStreamKey,
     receiver: watch::Receiver<Option<Arc<ScreenViewerFrame>>>,
-    viewers: Arc<AtomicUsize>,
+    viewers: watch::Sender<ScreenDemand>,
     last_sequence: Option<u64>,
     skipped_frames: u64,
 }
@@ -630,11 +741,13 @@ impl ScreenViewer {
 
 impl Drop for ScreenViewer {
     fn drop(&mut self) {
-        let _ = self
-            .viewers
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                current.checked_sub(1)
-            });
+        self.viewers.send_modify(|demand| {
+            if let Some(remaining) = demand.viewers.checked_sub(1) {
+                demand.viewers = remaining;
+            } else {
+                demand.closed = true;
+            }
+        });
     }
 }
 
@@ -862,6 +975,91 @@ mod tests {
             sender,
             key,
         )
+    }
+
+    #[tokio::test]
+    async fn demand_counts_only_consumed_tickets_and_closes_with_live_handles() {
+        let hub = ScreenHub::new(2).expect("hub");
+        let (source, _sender, key) = source("actor", 4);
+        let mut demand = hub.attach(source).await.expect("attach");
+        assert!(!demand.current().has_viewers());
+        let actor = auth("actor", 4);
+        let binding =
+            ScreenViewerBinding::verified_server("https://app.example.test").expect("binding");
+        let first = hub
+            .issue_ticket(&actor, &key, binding.clone(), NOW)
+            .await
+            .expect("ticket");
+        assert!(
+            !demand.current().has_viewers(),
+            "pending ticket is not viewer demand"
+        );
+        let viewer = hub
+            .consume_ticket(&actor, &binding, &first.ticket_protocol(), NOW)
+            .await
+            .expect("viewer");
+        assert!(demand.changed().await.has_viewers());
+        drop(viewer);
+        assert!(!demand.changed().await.has_viewers());
+        let next = hub
+            .issue_ticket(&actor, &key, binding.clone(), NOW)
+            .await
+            .expect("ticket");
+        let viewer = hub
+            .consume_ticket(&actor, &binding, &next.ticket_protocol(), NOW)
+            .await
+            .expect("viewer");
+        assert!(demand.changed().await.has_viewers());
+        hub.detach(&key).await;
+        assert!(
+            demand.changed().await.is_closed(),
+            "detach does not wait for the old viewer to drop"
+        );
+        drop(viewer);
+        assert!(
+            demand.changed().await.is_closed(),
+            "last drop cannot reopen a terminal demand"
+        );
+    }
+
+    #[tokio::test]
+    async fn old_source_completion_cannot_close_or_publish_into_a_replacement() {
+        let hub = ScreenHub::new(2).expect("hub");
+        let (old, old_feed, key) = source("actor", 4);
+        let mut old_demand = hub.attach(old).await.expect("old");
+        let old_sender = hub.state.lock().await.streams[&key].viewers.clone();
+        hub.detach(&key).await;
+        assert!(old_demand.changed().await.is_closed());
+        let (new, _new_feed, _) = source("actor", 5);
+        let mut new_demand = hub.attach(new).await.expect("new");
+        let actor = auth("actor", 5);
+        let binding =
+            ScreenViewerBinding::verified_server("https://app.example.test").expect("binding");
+        let ticket = hub
+            .issue_ticket(&actor, &key, binding.clone(), NOW)
+            .await
+            .expect("new ticket");
+        assert!(
+            !hub.detach_registered(&key, &old_demand).await,
+            "old engine owner cannot detach replacement"
+        );
+        close_source(Arc::downgrade(&hub.state), key, old_sender).await;
+        old_feed.send_replace(Some(Arc::new(EngineFrame::for_test(
+            99,
+            1_788_499_200_100,
+            99.0,
+        ))));
+        let mut viewer = hub
+            .consume_ticket(&actor, &binding, &ticket.ticket_protocol(), NOW)
+            .await
+            .expect("new ticket survives old close");
+        assert!(new_demand.changed().await.has_viewers());
+        assert_eq!(viewer.current().expect("new frame").sequence(), 1);
+        drop(hub);
+        assert!(
+            new_demand.changed().await.is_closed(),
+            "last Hub owner closes its streams"
+        );
     }
 
     #[tokio::test]

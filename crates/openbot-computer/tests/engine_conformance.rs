@@ -35,6 +35,35 @@ const SCREEN_COORDINATE_FIXTURE: &str =
     include_str!("../../../fixtures/computer/screen-coordinate-input-journey-v1.json");
 
 #[test]
+fn demand_fixture_keeps_protocol_and_production_boundary_explicit() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/computer/screen-demand-lifecycle-v4.json"
+    ))
+    .expect("demand fixture");
+    assert_eq!(
+        fixture["protocol"]["version"],
+        openbot_contracts::engine::ENGINE_PROTOCOL_VERSION
+    );
+    assert_eq!(
+        fixture["protocol"]["releaseEpoch"],
+        openbot_contracts::engine::ENGINE_RELEASE_EPOCH
+    );
+    assert_eq!(fixture["owner"]["pendingTicketsCountAsViewers"], false);
+    assert_eq!(fixture["owner"]["queueStoresAuthorityReceipt"], false);
+    assert_eq!(fixture["owner"]["lastViewerPausesWithinTwoSeconds"], true);
+    for unfinished in [
+        "productionComputerManagerAssembly",
+        "productionAuthInvalidationHook",
+        "desktopLoopbackTransport",
+        "fpsAndCaptureToPaintLatency",
+        "windowsRuntime",
+        "linuxRunscRuntime",
+    ] {
+        assert_eq!(fixture["evidenceBoundary"][unfinished], false);
+    }
+}
+
+#[test]
 fn engine_input_fixture_locks_protocol_and_unfinished_platform_boundaries() {
     let fixture = serde_json::from_str::<serde_json::Value>(ENGINE_INPUT_FIXTURE)
         .expect("engine input fixture JSON");
@@ -235,6 +264,365 @@ async fn component_role_start_frame_stop_has_no_debug_listener_or_orphan() {
         DesktopWindowSessionId::new("window-component").expect("window session"),
     )))
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires real confined Electron bundle; proves automatic demand pause/resume in both roles"]
+async fn both_roles_pause_on_last_viewer_and_resume_the_same_document() {
+    for role in [
+        EngineRole::BrowserComputer(ComputerSecurityScope::new(
+            TenantId::new("demand-tenant"),
+            BotId::new("demand-bot"),
+            CredentialPrincipalId::new("demand-principal"),
+            WorkspaceScope::Channel(ChannelId::new("demand-channel")),
+        )),
+        EngineRole::SandboxedComponent(ComponentRenderScope::new(
+            TenantId::new("demand-tenant"),
+            ActorId::new("demand-actor"),
+            DesktopWindowSessionId::new("demand-window").expect("window"),
+        )),
+    ] {
+        run_demand_role(role).await;
+    }
+}
+
+async fn run_demand_role(role: EngineRole) {
+    use openbot_computer::screen::engine_owner::{ScreenEngineOwner, ScreenEngineState};
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("root");
+    let root = workspace.join(format!(
+        "target/engine/bundle/electron-43.3.0/{}",
+        bundle_platform()
+    ));
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(fs::read(root.join("manifest.json")).expect("manifest"))
+    );
+    let bundle = EngineBundle::open(
+        &root,
+        EngineBundleDigest::from_hex(&digest).expect("digest"),
+    )
+    .expect("bundle");
+    let tag = if matches!(&role, EngineRole::BrowserComputer(_)) {
+        "demand-browser"
+    } else {
+        "demand-component"
+    };
+    let dirs = TestDirectories::new(tag);
+    let auth = AuthContext::for_test(
+        DeploymentId::new("demand-deployment"),
+        role.tenant_id().clone(),
+        ActorId::new("demand-actor"),
+        [Role::User],
+        AuthGeneration::new(1),
+        false,
+    );
+    let computer = ComputerId::new(tag);
+    let generation = ComputerGeneration::new(1);
+    let tab = TabId::new("demand-tab");
+    let mut engine = EngineProcess::launch(EngineLaunchConfig::new(
+        bundle,
+        role,
+        ScreenAudience::from_auth(&auth),
+        computer.clone(),
+        generation,
+        &dirs.profile,
+        &dirs.temp,
+    ))
+    .await
+    .expect("engine");
+    let pid = engine.pid();
+    let started = engine.start_session(tab.clone()).await.expect("start");
+    let children = descendant_pids(pid);
+    assert!(children.contains(&started.renderer_pid));
+    let now = OffsetDateTime::now_utc();
+    let mut control = ControlService::new(computer.clone(), tab.clone(), generation, now);
+    control
+        .take(&auth, now + Duration::minutes(5), now)
+        .expect("lease");
+    let ticket = control.issue_human_input_ticket(now).expect("ticket");
+    engine
+        .set_screencast(&tab, false)
+        .await
+        .expect("pause without destroying document");
+    engine
+        .set_screencast(&tab, false)
+        .await
+        .expect("exact pause replay");
+    assert!(
+        engine
+            .set_screencast(&TabId::new("wrong-tab"), true)
+            .await
+            .is_err()
+    );
+    let paused = engine.screen_stats().await.expect("paused counters");
+    engine
+        .apply_human_input(
+            control
+                .authorize_human_input_receipt(&auth, &ticket, now)
+                .expect("receipt"),
+            &BrowserInput::insert_text("screen pause keeps 日本語"),
+            now,
+        )
+        .await
+        .expect("input while paused");
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    assert_eq!(
+        engine
+            .screen_stats()
+            .await
+            .expect("still paused")
+            .received_frames(),
+        paused.received_frames()
+    );
+    engine.set_screencast(&tab, true).await.expect("resume");
+    engine
+        .set_screencast(&tab, true)
+        .await
+        .expect("exact resume replay");
+    let mut sequence = started.frame.sequence();
+    let typed = next_frame(&mut engine, &mut sequence).await;
+    assert_ne!(
+        frame_hash(&typed),
+        frame_hash(&started.frame),
+        "input survives paused capture"
+    );
+    engine
+        .apply_human_input(
+            control
+                .authorize_human_input_receipt(&auth, &ticket, now)
+                .expect("receipt"),
+            &BrowserInput::wheel(
+                900.0,
+                700.0,
+                0.0,
+                400.0,
+                ModifierMask::new(0).expect("modifiers"),
+            )
+            .expect("wheel"),
+            now,
+        )
+        .await
+        .expect("scroll");
+    let scrolled = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let frame = engine.next_frame().await.expect("scroll frame");
+            if frame.scroll_y() > 0.0 {
+                break frame;
+            }
+        }
+    })
+    .await
+    .expect("scroll visible");
+    let hub = ScreenHub::new(2).expect("hub");
+    let control = Arc::new(tokio::sync::Mutex::new(control));
+    let owner = ScreenEngineOwner::attach(engine, hub.clone(), control.clone())
+        .await
+        .expect("sole owner");
+    let mut status = owner.observe();
+    wait_demand_state(&mut status, ScreenEngineState::Paused).await;
+    let before = owner.stats().await.expect("owner ingress stats");
+    assert_eq!(before.received_frames(), before.acknowledged_frames());
+    let mut wrong = ControlService::new(
+        ComputerId::new("other-computer"),
+        tab.clone(),
+        generation,
+        now,
+    );
+    wrong
+        .take(&auth, now + Duration::minutes(5), now)
+        .expect("other control");
+    let wrong_ticket = wrong.issue_human_input_ticket(now).expect("other ticket");
+    assert_eq!(
+        owner
+            .apply_input(
+                auth.clone(),
+                wrong_ticket,
+                BrowserInput::insert_text("must-not-enter-engine"),
+            )
+            .await,
+        Err(openbot_computer::screen::engine_owner::ScreenEngineError::InputRefused)
+    );
+    let ticket = {
+        let mut held = control.lock().await;
+        let pending = owner.apply_input(
+            auth.clone(),
+            ticket.clone(),
+            BrowserInput::wheel(
+                900.0,
+                700.0,
+                0.0,
+                200.0,
+                ModifierMask::new(0).expect("modifiers"),
+            )
+            .expect("queued stale wheel"),
+        );
+        tokio::pin!(pending);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut pending)
+                .await
+                .is_err()
+        );
+        held.document_navigated()
+            .expect("advance lease epoch before queued dispatch");
+        let ticket = held
+            .issue_human_input_ticket(now)
+            .expect("fresh epoch ticket");
+        drop(held);
+        assert_eq!(
+            pending.await,
+            Err(openbot_computer::screen::engine_owner::ScreenEngineError::InputRefused)
+        );
+        ticket
+    };
+    owner
+        .apply_input(
+            auth.clone(),
+            ticket.clone(),
+            BrowserInput::mouse_move(
+                900.0,
+                700.0,
+                MouseButton::Left,
+                ModifierMask::new(0).expect("modifiers"),
+            )
+            .expect("owned pointer input"),
+        )
+        .await
+        .expect("owner serializes valid input");
+    assert_eq!(
+        owner
+            .stats()
+            .await
+            .expect("no capture effect")
+            .received_frames(),
+        before.received_frames()
+    );
+    let mut viewer_a = demand_viewer(&hub, &auth, &computer, &tab).await;
+    let viewer_b = demand_viewer(&hub, &auth, &computer, &tab).await;
+    wait_demand_state(&mut status, ScreenEngineState::Running).await;
+    let resumed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let frame = viewer_a.next().await.expect("resumed frame");
+            if frame.sequence() > scrolled.sequence() {
+                break frame;
+            }
+        }
+    })
+    .await
+    .expect("resumed frame bound");
+    assert_eq!(
+        resumed.scroll_y(),
+        scrolled.scroll_y(),
+        "document scroll survives owner pause/resume"
+    );
+    drop(viewer_a);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(
+        *status.borrow(),
+        ScreenEngineState::Running,
+        "second viewer keeps source running"
+    );
+    let dropped_at = tokio::time::Instant::now();
+    drop(viewer_b);
+    wait_demand_state(&mut status, ScreenEngineState::Paused).await;
+    let elapsed = dropped_at.elapsed();
+    assert!(elapsed < std::time::Duration::from_secs(2));
+    let stopped = owner.stats().await.expect("drained pause");
+    assert_eq!(stopped.received_frames(), stopped.acknowledged_frames());
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert_eq!(
+        owner
+            .stats()
+            .await
+            .expect("paused steady")
+            .received_frames(),
+        stopped.received_frames()
+    );
+    let mut viewer = demand_viewer(&hub, &auth, &computer, &tab).await;
+    wait_demand_state(&mut status, ScreenEngineState::Running).await;
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), viewer.next())
+        .await
+        .expect("reconnect frame")
+        .expect("frame");
+    assert!(frame.sequence() > resumed.sequence());
+    assert_eq!(frame.scroll_y(), scrolled.scroll_y());
+    assert!(
+        descendant_pids(pid).contains(&started.renderer_pid),
+        "same renderer PID survives"
+    );
+    for child in &children {
+        assert_no_tcp_listener(*child);
+    }
+    println!(
+        "screen-demand role={tag} last_viewer_pause_ms={} retained_scroll={} paused_received={} paused_ack={}",
+        elapsed.as_millis(),
+        frame.scroll_y(),
+        stopped.received_frames(),
+        stopped.acknowledged_frames()
+    );
+    assert_eq!(
+        hub.invalidate_actor(auth.tenant(), auth.actor(), AuthGeneration::new(2))
+            .await,
+        1
+    );
+    wait_demand_state(&mut status, ScreenEngineState::Closed).await;
+    assert!(viewer.next().await.is_err());
+    owner
+        .shutdown()
+        .await
+        .expect("collect already retired owner");
+    assert_process_gone(pid);
+    for child in children {
+        assert_process_gone(child);
+    }
+}
+
+async fn wait_demand_state(
+    state: &mut tokio::sync::watch::Receiver<
+        openbot_computer::screen::engine_owner::ScreenEngineState,
+    >,
+    expected: openbot_computer::screen::engine_owner::ScreenEngineState,
+) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if *state.borrow_and_update() == expected {
+                return;
+            }
+            state
+                .changed()
+                .await
+                .expect("owner live while awaiting state");
+        }
+    })
+    .await
+    .expect("demand transition deadline");
+}
+
+async fn demand_viewer(
+    hub: &ScreenHub,
+    auth: &AuthContext,
+    computer: &ComputerId,
+    tab: &TabId,
+) -> openbot_computer::screen::ScreenViewer {
+    let binding =
+        ScreenViewerBinding::verified_server("https://app.example.test").expect("binding");
+    let now = OffsetDateTime::now_utc();
+    let ticket = hub
+        .issue_ticket_for_target(
+            auth,
+            computer,
+            ComputerGeneration::new(1),
+            tab,
+            binding.clone(),
+            now,
+        )
+        .await
+        .expect("viewer ticket");
+    hub.consume_ticket(auth, &binding, &ticket.ticket_protocol(), now)
+        .await
+        .expect("viewer")
 }
 
 async fn run_role(role: EngineRole) {

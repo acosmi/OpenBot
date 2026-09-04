@@ -1,7 +1,7 @@
 {
   "schema": "openbot-engine-protocol",
-  "version": 3,
-  "release_epoch": 3,
+  "version": 4,
+  "release_epoch": 4,
   "max_boot_bytes": 4096,
   "max_control_frame_bytes": 65536,
   "max_image_bytes": 8388608,
@@ -16,6 +16,7 @@
     "start",
     "input",
     "frame_ack",
+    "screencast",
     "stop",
     "shutdown"
   ],
@@ -24,6 +25,7 @@
     "ready",
     "started",
     "input_applied",
+    "screencast_state",
     "stopped",
     "shutdown_complete",
     "error"

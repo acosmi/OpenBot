@@ -36,7 +36,10 @@
 //! Server/Desktop Computer assembly and secret typed effect remain open. Protocol v3 now owns the
 //! formal Page.startScreencast/stop/ACK loop, full frame metadata and a Rust size-one latest buffer;
 //! viewer ticket/WS, multi-viewer fps/latency, file/shell executors and supervisor remain separate
-//! unfinished boundaries. The internal page is conformance evidence, not a production destination.
+//! unfinished boundaries. Protocol v4 adds capture-only pause/resume; a Rust ScreenEngineOwner
+//! reacts to ScreenHub viewer demand, revalidates queued input under the current ControlService
+//! lock and retires failed transports. Production ComputerManager assembly is still pending.
+//! The internal page is conformance evidence, not a production destination.
 
 pub mod browser;
 pub mod control;
