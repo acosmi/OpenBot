@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-03 实施裁决 R126–R166，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-03 实施裁决 R126–R167，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -640,6 +640,8 @@ SHA-256 合成仅用于 trace/correlation 的确定 id，不把它当授权或�
 `openbot-agui` 是 `openbot-agent` 内的边界模块，不把 community Rust SDK 类型暴露进 domain。协议 ID 使用 string newtype。
 
 必须支持固定 AG-UI schema中的 lifecycle、text、tool call/result、state snapshot/delta、messages snapshot、activity、step、reasoning、raw/custom、interrupt/resume 和错误；每个 run 恰好一个 terminal event。R166 固定 error 边界：远端 `RUN_ERROR.message/code` 在 decoder 后不得进入 provider-neutral event、journal、audit、错误响应或 GUI，只映射本地 `provider_generation_failed`；malformed/unknown/sequence-invalid event 只映射 `provider_invalid_response`。两者都必须先有权威 run start，最终只提交一个 failed terminal；远端 prose 不得作为本地 stable code。
+
+R167 固定 reasoning 保留期：只有当前 active run 可为 expected-sequence replay 暂存可见 reasoning delta；任一 completed/failed/cancelled/reconciliation_required terminal 必须在同一 PostgreSQL 事务、对外提交 terminal 前把该 run 的全部 reasoning payload 收敛为固定 `{channel:"reasoning",delta:"",retained:false}`，不删除 event、不改变 run/thread sequence、cursor 或 terminal 事实。native0027 对升级前已经终态的四类 run 施加同一幂等回填，active run 与 text payload 不得改变。`REASONING_ENCRYPTED_VALUE.encryptedValue` 在 decoder 边界直接丢弃，不能进入 provider-neutral event。该裁决只证明数据库当前可见值的逻辑清除；WAL、备份、只读副本与灾备介质的物理保留/擦除仍由 G8 retention/runbook 闭合，不得把本条冒充物理删除证明。
 
 安全链路：
 
@@ -1847,7 +1849,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     跨副本消费。`Cancelling`保持foreground，只有child-stopped后才有唯一`Cancelled`；无local child时
     terminal+cancel+原dispatch outbox同事务收口，exact replay不重复行；
   - [x] Rust Intelligence importer：signed+encrypted neutral bundle、独立 target mapping/claim、逐 thread 原子 cursor/resume、DB 重算 ordered checksum、observable memory provenance 与 staged tool→run FK finalize；最终 runtime 零 Intelligence 调用；
-  - [x] 50ms/8KiB accumulator 已接真实 Rust OpenAI Responses/Chat producer；normalized text/reasoning 以 expected sequence 写 `DurableTextRun`/journal，terminal 只物化 text；
+  - [x] 50ms/8KiB accumulator 已接真实 Rust OpenAI Responses/Chat producer；normalized text/reasoning 以 expected sequence 写 `DurableTextRun`/journal，terminal 只物化 text；R167 后 active run 的 reasoning 可重放，但任一 terminal 在同一事务收敛为无内容 marker，native0027 回填既有四类终态且不改 schema/event identity/sequence；
   - [x] built-in `remember` backend：explicit prompt→provider call→唯一 tool pipeline→`origin=remember_tool` preference/fact+DB provenance→durable tool pair→第二次 sampling；无后台抽取；
   - [x] Memory GUI与全局写入控制：native 0022把tenant/actor runtime control独立于memory记录持久化；
     缺行默认enabled。disabled在同一事务拒绝GUI remember、correct与built-in `remember` tool，
@@ -1895,6 +1897,11 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     ProviderEvent/journal/audit/GUI均无远端正文槽。真实SafeDialer/SSE+PG17.11同一remote Agent连续跑
     success/error/malformed三run，terminal逐项正确，messages/run_events/audit canary=0；Agent=`47/0/0`、
     PG Agent=`9/0/0`、UI closed notice=`1/0/0`。只关闭T-EVT-0011，其余AG-UI族继续todo；
+  - [x] Batch93 AG-UI reasoning retention：固定decoder只把可见reasoning delta送入provider-neutral event，
+    `REASONING_ENCRYPTED_VALUE`正文在边界丢弃。active run按expected sequence保留可重放delta；任一terminal
+    经统一事务把reasoning收敛为固定无内容marker，terminal replay不复活。native0027对四种历史终态做
+    同一回填，active/text/事件identity/sequence/time不变。真实remote SafeDialer/SSE→Agent→PG终态后
+    visible/encrypted canary均为0、marker恰1；只关闭T-EVT-0008，不把WAL/backup物理擦除或其它AG-UI族标完成；
   - [x] 真实 tool host loop：complete batch 按 stable index 串行、跨 sampling 8-step、三家 assistant/tool pair、durable checkpoint/context reload、Rust call identity；首个 production executor `remember` 经 CEL/decision/attempt/capability/outcome/audit，generation race fail-closed；
   - [x] run/user cancellation 的统一host入口：PostgreSQL control outbox跨副本到lease owner，built-in Agent
     watch token沿context/provider/tool child传播；真实PG证明active child先drop、再写唯一Cancelled terminal。
@@ -2065,7 +2072,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G7**：本地 `ControlService` 的 HumanLease actor/auth/computer/tab/generation/epoch fencing 与 poisoned exhaustion 已有 9/0/0 单测；ScreenHub/viewer ticket、真 engine input、fps/latency/backpressure、coordinates/drag/IME 与跨 scope 矩阵仍未实施完成，故整关不勾。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账（`cargo xtask parity-check` 复算）：parity **824/1704 done（880 todo）**，fixtures **20/42 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1293/403/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账（`cargo xtask parity-check` 复算）：parity **825/1704 done（879 todo）**，fixtures **21/43 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1293/403/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -2403,6 +2410,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R164 | §7.2、§7.4 / §13.2 / §19.3 / §24 G4（2026-09-03 Batch90：审计复核与 Agent 并发排队取消） | Batch89 后的外部审计指出两个可复现回归：其一，run 已 reserve/activate、但仍等待 `BuiltInAgentRuntime` semaphore 时，`revoke` 返回 `ChildSignalled`，旧 activation 只 `cleanup` 后退出，未提交 durable terminal；RunRelay 因而等待 child 自行收口。其二，新增 `GetRunCostBudget` / `ReplaceRunCostBudget` 后，`transport_parity.rs` 的无 wildcard `AppCommand` 穷举未同步，真实编译报 `E0004`。同一报告把多用户 isolation readiness 503、Computer 未装配、CEL 六差异、单链 advisory lock与协议栈secret副本混称为新回归，但前两项是§24明确门禁/todo，CEL差异有operator-confirmation preflight，audit生产坐标已在同一事务锁内用`clock_timestamp()`铸造，`SecretBytes`也从未承诺擦除类型边界外副本。 | semaphore 前两条cancel入口统一进入新`cancel_before_execution`：从权威lease构造`Queued`状态与`DurableTextRun`，复用`cancel_and_commit`走`Queued→Cancelling→CommittingResults`写`RunTerminal::Cancelled`，随后释放per-run tool sequence并按exact lease清reservation；不在RunRelay侧乐观造终态。新增`max_concurrency=1`回归以首run占permit、撤销第二个已激活run。transport穷举显式把两个预算命令归到已有专项证据，不加通配。其它审计项按第一真源分类，不删除fail-closed probe、不改CEL裁决、不拆hash chain、不伪造通用堆zeroize。 | implementation=`d97f232bdd497057a028203c63e7394ff9667833`。新Agent回归修前`0/1/0`超时、修后`1/0/0`，完整Agent=`39/0/0`；transport修前`E0004`、修后=`8/0/0`；Agent+testkit与Desktop各自all-target/all-feature Clippy `-D warnings`、fmt绿。CEL corpus=`6/0/0`，SafeDialer total-deadline定向=`1/0/0`。parity仍`823/881/1704`、fixtures=`20/22/42`、overlay=`1293/403/2/6`、0违反；native/schema/API/T-ID/Cargo/Grok/npm/workflow均不变。未跑strict recount（无上游目录）、`cargo xtask ci`或Actions。完整并发tool/computer runtime budget仍todo；详见Batch90与审计复核文档。 |
 | R165 | §7.4 / §8.2 / §13.2 / §24 G4（2026-09-03 Batch91：并发 tool runtime budget） | `ToolMetadata.parallel_safe/resource_locks` 已存在但 built-in host 无消费者，一次 sampling 的完整 batch 无条件串行；另一方面直接把全部call spawn会信任模型/MCP自报并行性、让相同resource并发、把每run并发乘成process无上限。parallel child若取消时一律写Cancelled，又会把已发送但commit unknown的effect伪装成未发生。动态MCP metadata在prepare与execute间还可能漂移，不能凭一次旧读取放行。 | 新增host-only、non-serde `AgentToolScheduling`，default serial；显式allowlist只有11个build-owned ordinary compiled component，human/remember/MCP/Drive/sandbox/unknown均serial，实际invoke仍fresh AuthContext→typed ApplicationService。lock keys canonical sort/dedup，>32保守serial；stable output-index batch形成disjoint waves，跨run keyed semaphore互斥。`BuiltInAgentConfig.max_tool_concurrency`为process-wide独立cap，默认8、只收1..=256。等待permit取消时零effect走Cancelled；parallel任一child开始后cancel/deadline先abort+drain全child再reconciliation；human detached waiter持permit至durable retirement。全部成功结果按原index逐条写exchange后才resample。 | implementation=`f71087fc0aad923a0c94a55578fcb529930587a7`。Contracts=`101/0/0`、Agent=`46/0/0`、testkit=`17/0/9 ignored`；真实PG17.11 `agent_runtime_postgres=9/0/0`，新增production gateway→ApplicationService双component纵向实得并发峰值2、provider/DB tool顺序quote→notice。五crate all-target/all-feature Clippy `-D warnings`、Contracts WASM、fmt、parity均绿；parity=`823/881/1704`、fixtures=`20/22/42`、overlay=`1293/403/2/6`、0违反。native/schema/API/T-ID/Cargo/Grok/npm/workflow不变；strict/CI/Actions未跑。Computer runtime budget仍todo，不关闭完整budget/G4；详见Batch91文档。 |
 | R166 | §2.4 / §7.5 / §15.3 / §24 G4（2026-09-03 Batch92：AG-UI error production vertical） | Decoder虽支持`RUN_ERROR`并拒malformed message，但T-EVT-0011仍无production durable证据；若把远端message/code直接变成本地错误或日志，会让vendor prose/secret穿进DB、audit与GUI。上游issue #44证明malformed `message.content`能崩 transcript；只测decoder不证明RunRelay/PostgreSQL/UI终态不会复制原值。 | `RemoteAguiSession`在decoder边界把合法RUN_ERROR压成无载荷`ProviderFailure::GenerationFailed`，malformed/unknown/sequence-invalid压成`InvalidResponse`；pending先清空，二者都只产生一个本地failed event。Agent host再提交stable `provider_generation_failed`/`provider_invalid_response` terminal；UI继续只收无载荷TerminalNotice。远端message/code不进provider-neutral event、journal/audit/response/GUI。既有SafeDialer真实read-gap stall路径保持独立。 | implementation=`1f684126e38c5ed81ca954e59c2d65c4af4128e7`。Agent=`47/0/0`、UI closed notice=`1/0/0`、testkit=`17/0/9 ignored`；真实PG17.11+SafeDialer/SSE同一remote Agent依次success/RUN_ERROR/malformed，终态completed/provider_generation_failed/provider_invalid_response，三run invoked=3，messages+run_events+audit_events canary=0；完整Agent PG=`9/0/0`。Agent/Testkit Clippy、fmt、parity绿；T-EVT-0011 done后parity=`824/880/1704`、events=`36/52/88`、fixtures=`20/22/42`、overlay=`1293/403/2/6`、0违反。native/schema/API/deps/Cargo/Grok/npm/workflow不变；strict/CI/Actions未跑，其余AG-UI族仍todo；详见Batch92文档。 |
+| R167 | §7.5 / §14.3 / §16.5 / §17.2 / §24 G3、G4、G8（2026-09-03 Batch93：AG-UI reasoning terminal retention） | R69起visible reasoning虽不物化assistant transcript，却与text一样永久留在`run_events.payload`；UI忽略它不等于DB已清除。T-EVT-0008又明确要求单独裁决保留期，不能随transcript默认永久保存。只在decoder丢`REASONING_ENCRYPTED_VALUE`仍会留下visible summary；直接DELETE event会制造sequence/cursor洞，终态后异步清理又会暴露terminal已提交但reasoning仍可读的窗口。历史终态数据若不回填，也不能诚实关闭保留期缺口。 | active run为crash/replay保留reasoning semantic chunk；统一`finish_run_in_transaction`先聚合text、再在同一事务把该run全部reasoning payload替换为固定无内容marker，然后才写terminal并提交。事件行、run/thread sequence、cursor与terminal均不删不改；四种正常/失败/取消/reconciliation终态共用该入口，exact terminal replay不会恢复内容。native0027是native框架唯一具名DML隐私例外，只匹配四种已终态run并施加相同marker；机械guard禁止DDL/DELETE/其它DML。active/text不改，schema0027与0026逐字节相同。该逻辑清除不冒充WAL/backup/replica物理擦除。 | implementation=`d39e6a4bf2c18414bdd6803cb1ca0d321a9c3d48`。PG17.11 native0027 regeneration开/关各`1/0/0`，四终态历史reasoning marker=4、active原值/text/identity/sequence/time不变、ledger=15；run runtime=`5/0/0`，其中active可重放→terminal marker与exact replay闭合。真实remote SafeDialer/SSE→Agent→PG=`1/0/0`：visible summary及encrypted canary在messages/run_events/audit=0、marker=1、text/completed保持。Infra lib=`324/0/0`、Agent=`47/0/0`、testkit=`17/0/9 ignored`、UI reasoning隐藏=`1/0/0`；四crateall-target/all-feature Clippy、fmt、parity与Grok inventory绿。schema仍`46/455/326/253/92`、SHA=`ad5375da9abc5d03f1fa9587f5efda3e76e2cb89edf470e3bc4650a58670ba2c`。T-EVT-0008与T-FIX-0043 done后parity=`825/879/1704`、events=`37/51/88`、fixtures=`21/22/43`、overlay=`1293/403/2/6`、0违反；recount=`71/0/89 skipped`。Cargo825、API/env/UI视觉/npm/workflow/Grok tree不变；strict未跑、按R63未跑CI/Actions，其余AG-UI族与G8物理retention仍todo；详见Batch93文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 
