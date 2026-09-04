@@ -488,6 +488,8 @@ entries:
 
   # ===========================================================================
   # D 段：§12.5 输入 union 成员（T-BROP-0037..0044）
+  # Batch108已落Rust pure CDP parameter plan与17键/fallback fixture，但未接authenticated engine；
+  # 下列八条要求真实CDP effect与authority拒绝证据，故继续todo。
   # ===========================================================================
   - id: input-mouse-move
     upstream: agent-computer/src/screencast.ts::InputMessage
@@ -537,7 +539,7 @@ entries:
     test_id: T-BROP-0041
     migration_rule: "preserve: 有 text 时发 keyDown，无 text 时发 rawKeyDown；windowsVirtualKeyCode 与 nativeVirtualKeyCode 必填"
     status: todo
-    evidence: "grep -oE 'Input\\.(dispatchMouseEvent|dispatchKeyEvent|insertText)' agent-computer/src/screencast.ts | sort -u 得 3，含 dispatchKeyEvent；同文件 VIRTUAL_KEY_CODES 表给 16 个键显式码，其余单字符取 key.toUpperCase().charCodeAt(0)"
+    evidence: "grep -oE 'Input\\.(dispatchMouseEvent|dispatchKeyEvent|insertText)' agent-computer/src/screencast.ts | sort -u 得 3，含 dispatchKeyEvent；同文件 VIRTUAL_KEY_CODES 表给 17 个键显式码（含空格→32），其余单UTF-16单元取 key.toUpperCase().charCodeAt(0)，未知多单元返回0"
     notes: "v3 §12.5 明写「含 modifiers 与 Input.dispatchKeyEvent 所需的 keyCode 表」，指的就是 VIRTUAL_KEY_CODES。上游注释点名了失败模式：只给 key 不给 virtual key code，表单会忽略 Backspace 与 Enter——「字母能打、编辑键不行」正是这个原因。keyDown / rawKeyDown 的二分同理：无文本却发 keyDown，编辑键会变成什么都没发生。这张表是 Rust 侧必须逐条搬的 fixture，不是可以「大致对齐」的东西。"
   - id: input-key-up
     upstream: agent-computer/src/screencast.ts::InputMessage

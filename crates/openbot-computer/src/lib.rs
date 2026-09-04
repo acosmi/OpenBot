@@ -31,9 +31,10 @@
 //! Batch54/55 add executable Windows and runsc probes, but P1 is still open because neither has
 //! corresponding machine evidence. `BrowserRuntimeManager` now makes the fixed-upstream LRU/idle
 //! selector effective over opaque driver handles, but no Server/Desktop production host assembles
-//! that manager with `EngineProcess` yet. ScreenHub, product CDP mappings, file/shell executors and
-//! supervisor remain separate unfinished boundaries; the fixture page is not a browser product
-//! operation.
+//! that manager with `EngineProcess` yet. The fixed-upstream `BrowserInput` to closed CDP parameter
+//! plan is implemented as a pure mapping, but it is not wired to the engine and proves no live CDP
+//! effect. ScreenHub, product CDP execution, file/shell executors and supervisor remain separate
+//! unfinished boundaries; the fixture page is not a browser product operation.
 
 pub mod browser;
 pub mod control;

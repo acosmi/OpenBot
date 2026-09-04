@@ -699,7 +699,7 @@ fn validate_finite(values: &[f64]) -> Result<(), InputProtocolError> {
     }
 }
 
-fn utf16_len(value: &str) -> usize {
+pub(super) fn utf16_len(value: &str) -> usize {
     value.encode_utf16().count()
 }
 

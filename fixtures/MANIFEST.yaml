@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 48
+    expect: 49
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 22
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 26
+    expect: 27
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 48 48
+    expect: 49 49
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 38 0
+    expect: 10 39 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -393,6 +393,22 @@ entries:
       BrowserRuntimeManager接EngineProcess/Supervisor，COMPUTER_MAX_BROWSERS与
       COMPUTER_BROWSER_IDLE_MS配置入口仍todo；因此完整Computer runtime budget、ComputerManager、
       G4/G5及P1/P2均不得勾选。
+
+  - id: browser-cdp-input-plan
+    upstream: "CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d:agent-computer/src/screencast.ts"
+    label: 新增
+    target: fixtures/computer/cdp-input-plan.json -> openbot_computer::browser::cdp_input
+    owner: openbot-computer
+    test_id: T-FIX-0049
+    migration_rule: "preserve: fixed BrowserInput→CDP parameter mapping, including all 17 named virtual-key codes and unknown multi-UTF-16 fallback 0"
+    status: done
+    evidence: "固定上游screencast.ts=6906 bytes、Git blob 9bc27c11fc1b4cd296f7fc9df412aea0bedbbb22、SHA-256 be79bde5007f03f37e3b99a1ef1388ba672d684ba32ec2b9090c417f9f47f566；VIRTUAL_KEY_CODES逐项17条且包含空格→32，未知多UTF-16单元键返回0"
+    done_evidence: "fixtures/computer/cdp-input-plan.json=1315 bytes/SHA-256 e6cf14b947d86cd2bc458adc27b75272b619cc90c4f41558c0a3b1438424463f，与openbot-computer cdp_input 11条单测机械join；move/down/up/wheel、keyDown/rawKeyDown/keyUp、17键表、single-unit uppercase首UTF-16 unit、unknown multi-unit=0、insertText与SecretInsert ordinary-plan拒绝均通过；完整openbot-computer lib=54/0/0"
+    notes: >-
+      本fixture只关闭Rust-owned pure parameter plan，不执行CDP、不修改engine wire、不证明页面收到事件。
+      T-BROP-0037..0044继续todo，直到同一closed plan经authenticated engine真实调用
+      Input.dispatchMouseEvent/Input.dispatchKeyEvent/Input.insertText，并覆盖generation/lease拒绝与secret
+      typed path；ScreenHub/P2同样不因本fixture勾选。
 
   - id: db-seed-0012
     upstream: "-"
