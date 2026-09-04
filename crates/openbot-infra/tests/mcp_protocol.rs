@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use axum::response::IntoResponse as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use openbot_agent::{AgentToolInvoker, AuthorizedAgentToolGateway};
@@ -71,9 +72,9 @@ const TLS_LEAF_DER: &str = "MIIBgDCCATKgAwIBAgIUWFITT9Bap6fPTrUyiQds6m7YbW4wBQYD
 const TLS_LEAF_KEY_DER: &str = "MC4CAQAwBQYDK2VwBCIEIIhvzdQUg5xdTDZfBbx3RK3yTMHjMv2r8AJ5/hgshUDa";
 const RMCP_RUN_CANCELLATION_FIXTURE: &str =
     include_str!("../../../fixtures/mcp/rmcp-run-cancellation.json");
-const RMCP_RUN_CANCELLATION_FIXTURE_BYTES: usize = 806;
+const RMCP_RUN_CANCELLATION_FIXTURE_BYTES: usize = 1_111;
 const RMCP_RUN_CANCELLATION_FIXTURE_SHA256: &str =
-    "23bcd6d0184f729d437c9db08305ce34d9f4f096e90764e1dc5d4466c1d36f0a";
+    "ec9644f41e8b0773e0983efa52179eef1e32387b2bbd0ec69101afd4874e6b56";
 
 fn cancellation_fixture() -> Value {
     serde_json::from_str(RMCP_RUN_CANCELLATION_FIXTURE).expect("valid RMCP cancellation fixture")
@@ -95,6 +96,7 @@ struct CancellationProbe {
     handler_stopped: Notify,
     notification_received: Notify,
     notifications: Mutex<Vec<Value>>,
+    protocol_versions: Mutex<Vec<String>>,
 }
 
 impl RealMcpServer {
@@ -136,6 +138,12 @@ impl ServerHandler for RealMcpServer {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        self.cancellation.protocol_versions.lock().unwrap().push(
+            context.protocol_version().map_or_else(
+                || "missing".to_owned(),
+                |version| version.as_str().to_owned(),
+            ),
+        );
         if self.cancellation.block_list.load(Ordering::Acquire) {
             self.cancellation.list_started.notify_one();
             context.ct.cancelled().await;
@@ -151,6 +159,12 @@ impl ServerHandler for RealMcpServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
+        self.cancellation.protocol_versions.lock().unwrap().push(
+            context.protocol_version().map_or_else(
+                || "missing".to_owned(),
+                |version| version.as_str().to_owned(),
+            ),
+        );
         let arguments = Value::Object(request.arguments.unwrap_or_default());
         let result = match request.name.as_ref() {
             "search_issues" => {
@@ -212,6 +226,36 @@ async fn spawn_server() -> Result<
     ),
     String,
 > {
+    spawn_server_with_mode(false).await
+}
+
+async fn spawn_legacy_server() -> Result<
+    (
+        String,
+        Arc<Mutex<Vec<Value>>>,
+        Arc<Mutex<Vec<Tool>>>,
+        Arc<Mutex<Vec<String>>>,
+        Arc<CancellationProbe>,
+        tokio::task::JoinHandle<()>,
+    ),
+    String,
+> {
+    spawn_server_with_mode(true).await
+}
+
+async fn spawn_server_with_mode(
+    reject_discover: bool,
+) -> Result<
+    (
+        String,
+        Arc<Mutex<Vec<Value>>>,
+        Arc<Mutex<Vec<Tool>>>,
+        Arc<Mutex<Vec<String>>>,
+        Arc<CancellationProbe>,
+        tokio::task::JoinHandle<()>,
+    ),
+    String,
+> {
     let received = Arc::new(Mutex::new(Vec::new()));
     let listed = Arc::new(Mutex::new(RealMcpServer::tools()));
     let traffic = Arc::new(Mutex::new(Vec::new()));
@@ -241,15 +285,34 @@ async fn spawn_server() -> Result<
                     async move {
                         let method = request.method().clone();
                         let path = request.uri().path().to_owned();
+                        let mcp_method = request
+                            .headers()
+                            .get("mcp-method")
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or("-")
+                            .to_owned();
+                        let protocol = request
+                            .headers()
+                            .get("mcp-protocol-version")
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or("-")
+                            .to_owned();
+                        let prefix = format!("{method} {path} mcp={mcp_method} version={protocol}");
+                        traffic.lock().unwrap().push(format!("{prefix} started"));
                         let response = next.run(request).await;
                         traffic
                             .lock()
                             .unwrap()
-                            .push(format!("{method} {path} {}", response.status()));
+                            .push(format!("{prefix} {}", response.status()));
                         response
                     }
                 },
             ));
+    let router = if reject_discover {
+        router.layer(axum::middleware::from_fn(reject_server_discover))
+    } else {
+        router
+    };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|error| error.to_string())?;
@@ -265,6 +328,44 @@ async fn spawn_server() -> Result<
         cancellation,
         handle,
     ))
+}
+
+async fn reject_server_discover(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let (parts, body) = request.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, 4 * 1024 * 1024).await else {
+        return axum::http::StatusCode::BAD_REQUEST.into_response();
+    };
+    let value = serde_json::from_slice::<Value>(&bytes).ok();
+    if value
+        .as_ref()
+        .and_then(|value| value.get("method"))
+        .and_then(Value::as_str)
+        == Some("server/discover")
+    {
+        let id = value
+            .as_ref()
+            .and_then(|value| value.get("id"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        return (
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            axum::Json(json!({
+                "jsonrpc":"2.0",
+                "id":id,
+                "error":{"code":-32601,"message":"Method not found"}
+            })),
+        )
+            .into_response();
+    }
+    next.run(axum::extract::Request::from_parts(
+        parts,
+        axum::body::Body::from(bytes),
+    ))
+    .await
 }
 
 #[derive(Clone)]
@@ -510,8 +611,7 @@ fn rmcp_run_cancellation_fixture_is_closed_and_current() {
             .to_hex(),
         RMCP_RUN_CANCELLATION_FIXTURE_SHA256
     );
-    assert_eq!(fixture["schema"], "openbot-rmcp-run-cancellation-v1");
-    assert_eq!(fixture["protocolVersion"], "2026-07-28");
+    assert_eq!(fixture["schema"], "openbot-rmcp-run-cancellation-v2");
     assert_eq!(fixture["transport"], "streamable-http");
     let mut top = fixture
         .as_object()
@@ -520,7 +620,22 @@ fn rmcp_run_cancellation_fixture_is_closed_and_current() {
         .cloned()
         .collect::<Vec<_>>();
     top.sort();
-    assert_eq!(top, ["cases", "protocolVersion", "schema", "transport"]);
+    assert_eq!(top, ["cases", "protocols", "schema", "transport"]);
+    assert_eq!(fixture["protocols"]["preferredModern"], "2026-07-28");
+    assert_eq!(fixture["protocols"]["legacyFallback"], "2025-11-25");
+    assert_eq!(
+        {
+            let mut keys = fixture["protocols"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            keys.sort();
+            keys
+        },
+        ["legacyFallback", "preferredModern"]
+    );
     let mut cases = fixture["cases"]
         .as_object()
         .unwrap()
@@ -530,7 +645,12 @@ fn rmcp_run_cancellation_fixture_is_closed_and_current() {
     cases.sort();
     assert_eq!(
         cases,
-        ["beforeAnyNetwork", "duringFreshList", "duringToolCall"]
+        [
+            "beforeAnyNetwork",
+            "legacyDuringToolCall",
+            "modernDuringFreshList",
+            "modernDuringToolCall",
+        ]
     );
     let sorted_keys = |value: &Value| {
         let mut keys = value
@@ -547,39 +667,56 @@ fn rmcp_run_cancellation_fixture_is_closed_and_current() {
         ["acceptedSockets", "errorCode"]
     );
     assert_eq!(
-        sorted_keys(&fixture["cases"]["duringFreshList"]),
+        sorted_keys(&fixture["cases"]["modernDuringFreshList"]),
         [
+            "cancellationNotificationPosts",
             "errorCode",
-            "notificationMethod",
-            "reason",
-            "requestIdRequired",
+            "localReason",
+            "signal",
             "toolCalls",
         ]
     );
     assert_eq!(
-        sorted_keys(&fixture["cases"]["duringToolCall"]),
+        sorted_keys(&fixture["cases"]["modernDuringToolCall"]),
         [
             "attemptStatus",
+            "cancellationNotificationPosts",
             "commitState",
             "errorCode",
             "failedAudits",
-            "notificationMethod",
-            "reason",
-            "requestIdRequired",
+            "localReason",
+            "signal",
             "successAudits",
         ]
     );
+    assert_eq!(
+        sorted_keys(&fixture["cases"]["legacyDuringToolCall"]),
+        [
+            "cancellationNotificationPosts",
+            "errorCode",
+            "reason",
+            "requestIdRequired",
+            "signal",
+        ]
+    );
     assert_eq!(fixture["cases"]["beforeAnyNetwork"]["acceptedSockets"], 0);
-    assert_eq!(fixture["cases"]["duringFreshList"]["toolCalls"], 0);
+    assert_eq!(fixture["cases"]["modernDuringFreshList"]["toolCalls"], 0);
     assert_eq!(
-        fixture["cases"]["duringFreshList"]["notificationMethod"],
+        fixture["cases"]["modernDuringFreshList"]["signal"],
+        "close_response_stream"
+    );
+    assert_eq!(
+        fixture["cases"]["modernDuringToolCall"]["signal"],
+        "close_response_stream"
+    );
+    assert_eq!(
+        fixture["cases"]["legacyDuringToolCall"]["signal"],
         "notifications/cancelled"
     );
     assert_eq!(
-        fixture["cases"]["duringToolCall"]["notificationMethod"],
-        "notifications/cancelled"
+        fixture["cases"]["modernDuringToolCall"]["commitState"],
+        "unknown"
     );
-    assert_eq!(fixture["cases"]["duringToolCall"]["commitState"], "unknown");
 }
 
 #[tokio::test]
@@ -615,9 +752,9 @@ async fn cancellation_already_requested_prevents_every_rmcp_network_effect() {
 }
 
 #[tokio::test]
-async fn cancellation_during_fresh_list_sends_exact_protocol_notification_before_tool_call() {
+async fn modern_fresh_list_cancellation_closes_response_stream_without_notification_post() {
     let fixture = cancellation_fixture();
-    let (url, _received, _listed, _traffic, probe, server) = spawn_server().await.unwrap();
+    let (url, _received, _listed, traffic, probe, server) = spawn_server().await.unwrap();
     probe.block_list.store(true, Ordering::Release);
     let (cancel, cancellation) = tool_execution_cancellation();
     let call = tokio::spawn(async move {
@@ -641,29 +778,177 @@ async fn cancellation_during_fresh_list_sends_exact_protocol_notification_before
     assert!(cancel.cancel(ToolCancellationReason::Deadline));
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        probe.notification_received.notified(),
-    )
-    .await
-    .expect("server receives list cancellation");
-    tokio::time::timeout(
-        std::time::Duration::from_secs(1),
         probe.list_stopped.notified(),
     )
     .await
     .expect("list handler stops");
     assert_eq!(
         call.await.unwrap().as_ref().map_err(ToString::to_string),
-        Err(fixture["cases"]["duringFreshList"]["errorCode"]
+        Err(fixture["cases"]["modernDuringFreshList"]["errorCode"]
             .as_str()
             .unwrap()
             .to_owned())
     );
     let notifications = probe.notifications.lock().unwrap().clone();
+    assert!(
+        notifications.is_empty(),
+        "2026-07-28 Streamable HTTP forbids a cancelled notification POST"
+    );
+    assert_eq!(
+        probe.protocol_versions.lock().unwrap().as_slice(),
+        ["2026-07-28"]
+    );
+    let traffic = traffic.lock().unwrap().clone();
+    assert!(traffic.iter().any(|entry| {
+        entry.contains("mcp=server/discover") && entry.contains("version=2026-07-28")
+    }));
+    assert!(
+        traffic.iter().any(|entry| {
+            entry.contains("mcp=tools/list") && entry.contains("version=2026-07-28")
+        })
+    );
+    assert!(
+        !traffic
+            .iter()
+            .any(|entry| entry.contains("notifications/cancelled"))
+    );
+    assert_eq!(
+        fixture["cases"]["modernDuringFreshList"]["signal"],
+        "close_response_stream"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn modern_tool_call_cancellation_closes_response_stream_without_notification_post() {
+    let fixture = cancellation_fixture();
+    let (url, _received, listed, traffic, probe, server) = spawn_server().await.unwrap();
+    let schema = json!({"type":"object","properties":{}})
+        .as_object()
+        .cloned()
+        .unwrap();
+    let schema_hash = openbot_domain::audit::hash::Sha256Digest::of(
+        &serde_json::to_vec(&Value::Object(schema.clone())).unwrap(),
+    );
+    listed.lock().unwrap().push(Tool::new(
+        "wait_for_cancel",
+        "Waits until the modern response stream is closed.",
+        schema,
+    ));
+    let (cancel, cancellation) = tool_execution_cancellation();
+    let call = tokio::spawn(async move {
+        client()
+            .call_tool_bound_cancellable(
+                &url,
+                None,
+                "wait_for_cancel",
+                schema_hash,
+                json!({}),
+                cancellation,
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), probe.started.notified())
+        .await
+        .expect("modern tools/call starts");
+    assert!(cancel.cancel(ToolCancellationReason::User));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        probe.handler_stopped.notified(),
+    )
+    .await
+    .expect("modern call handler stops when its response stream closes");
+    assert_eq!(call.await.unwrap(), Err(McpClientError::CancelledAfterCall));
+    assert!(probe.notifications.lock().unwrap().is_empty());
+    assert_eq!(
+        probe.protocol_versions.lock().unwrap().as_slice(),
+        ["2026-07-28", "2026-07-28"]
+    );
+    let traffic = traffic.lock().unwrap().clone();
+    assert!(
+        traffic.iter().any(|entry| {
+            entry.contains("mcp=tools/call") && entry.contains("version=2026-07-28")
+        })
+    );
+    assert!(
+        !traffic
+            .iter()
+            .any(|entry| entry.contains("notifications/cancelled"))
+    );
+    assert_eq!(
+        fixture["cases"]["modernDuringToolCall"]["signal"],
+        "close_response_stream"
+    );
+    assert_eq!(
+        fixture["cases"]["modernDuringToolCall"]["errorCode"],
+        "mcp_cancelled_after_call"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn legacy_auto_fallback_sends_cancelled_notification_with_exact_request_id() {
+    let fixture = cancellation_fixture();
+    let (url, _received, listed, traffic, probe, server) = spawn_legacy_server().await.unwrap();
+    let schema = json!({"type":"object","properties":{}})
+        .as_object()
+        .cloned()
+        .unwrap();
+    let schema_hash = openbot_domain::audit::hash::Sha256Digest::of(
+        &serde_json::to_vec(&Value::Object(schema.clone())).unwrap(),
+    );
+    listed.lock().unwrap().push(Tool::new(
+        "wait_for_cancel",
+        "Waits until the exact legacy request is cancelled.",
+        schema,
+    ));
+    let (cancel, cancellation) = tool_execution_cancellation();
+    let call = tokio::spawn(async move {
+        client()
+            .call_tool_bound_cancellable(
+                &url,
+                None,
+                "wait_for_cancel",
+                schema_hash,
+                json!({}),
+                cancellation,
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), probe.started.notified())
+        .await
+        .expect("legacy tools/call starts after auto fallback");
+    assert!(cancel.cancel(ToolCancellationReason::User));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        probe.notification_received.notified(),
+    )
+    .await
+    .expect("legacy server receives cancelled notification");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        probe.handler_stopped.notified(),
+    )
+    .await
+    .expect("legacy handler stops");
+    assert_eq!(call.await.unwrap(), Err(McpClientError::CancelledAfterCall));
+    let notifications = probe.notifications.lock().unwrap().clone();
     assert_eq!(notifications.len(), 1);
     assert!(!notifications[0]["requestId"].is_null());
+    assert_eq!(notifications[0]["reason"], "run_cancelled");
     assert_eq!(
-        notifications[0]["reason"],
-        fixture["cases"]["duringFreshList"]["reason"]
+        probe.protocol_versions.lock().unwrap().as_slice(),
+        ["2025-11-25", "2025-11-25"]
+    );
+    let traffic = traffic.lock().unwrap().clone();
+    assert!(
+        traffic
+            .iter()
+            .any(|entry| entry.contains("version=2025-11-25"))
+    );
+    assert_eq!(
+        fixture["cases"]["legacyDuringToolCall"]["signal"],
+        "notifications/cancelled"
     );
     server.abort();
 }
@@ -1291,7 +1576,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             native::apply(&mut pg)
                 .await
                 .map_err(|error| error.to_string())?;
-            let (url, received, listed, _traffic, cancellation, server) =
+            let (url, received, listed, traffic, cancellation, server) =
                 spawn_server().await?;
             pg.execute(
                 "INSERT INTO public.users(id,email,auth_generation)
@@ -1619,6 +1904,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             drop(pg);
 
             let (cancel_handle, cancellation_receiver) = tool_execution_cancellation();
+            let traffic_before_cancel = traffic.lock().unwrap().len();
             let cancelled_call = {
                 let gateway = gateway.clone();
                 let lease = lease.clone();
@@ -1645,12 +1931,6 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             }
             tokio::time::timeout(
                 std::time::Duration::from_secs(3),
-                cancellation.notification_received.notified(),
-            )
-            .await
-            .map_err(|_| "server did not receive notifications/cancelled".to_owned())?;
-            tokio::time::timeout(
-                std::time::Duration::from_secs(3),
                 cancellation.handler_stopped.notified(),
             )
             .await
@@ -1665,14 +1945,24 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 ));
             }
             let notifications = cancellation.notifications.lock().unwrap().clone();
-            if notifications.len() != 1
-                || notifications[0]["requestId"].is_null()
-                || notifications[0]["reason"]
-                    != cancellation_contract["cases"]["duringToolCall"]["reason"]
-                || notifications[0].get("_meta").is_some()
+            let cancellation_traffic = traffic.lock().unwrap()[traffic_before_cancel..].to_vec();
+            if !notifications.is_empty()
+                || !cancellation
+                    .protocol_versions
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|version| version == "2026-07-28")
+                || cancellation_traffic
+                    .iter()
+                    .any(|entry| entry.contains("notifications/cancelled"))
+                || !cancellation_traffic
+                    .iter()
+                    .any(|entry| entry.contains("mcp=tools/call")
+                        && entry.contains("version=2026-07-28"))
             {
                 return Err(format!(
-                    "MCP cancellation notification drifted: {notifications:?}"
+                    "modern MCP stream-close cancellation drifted: notifications={notifications:?}; traffic={cancellation_traffic:?}"
                 ));
             }
             let pg = pool.get().await.map_err(|error| error.to_string())?;
@@ -1714,19 +2004,20 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 .try_get(5)
                 .map_err(|error| error.to_string())?;
             if cancelled_status
-                != cancellation_contract["cases"]["duringToolCall"]["attemptStatus"]
+                != cancellation_contract["cases"]["modernDuringToolCall"]["attemptStatus"]
                     .as_str()
                     .unwrap()
                 || cancelled_commit.as_deref()
-                    != cancellation_contract["cases"]["duringToolCall"]["commitState"].as_str()
+                    != cancellation_contract["cases"]["modernDuringToolCall"]["commitState"]
+                        .as_str()
                 || cancelled_code.as_deref()
-                    != cancellation_contract["cases"]["duringToolCall"]["errorCode"].as_str()
+                    != cancellation_contract["cases"]["modernDuringToolCall"]["errorCode"].as_str()
                 || failed_audits
-                    != cancellation_contract["cases"]["duringToolCall"]["failedAudits"]
+                    != cancellation_contract["cases"]["modernDuringToolCall"]["failedAudits"]
                         .as_i64()
                         .unwrap()
                 || false_success_audits
-                    != cancellation_contract["cases"]["duringToolCall"]["successAudits"]
+                    != cancellation_contract["cases"]["modernDuringToolCall"]["successAudits"]
                         .as_i64()
                         .unwrap()
                 || tool_cancellations

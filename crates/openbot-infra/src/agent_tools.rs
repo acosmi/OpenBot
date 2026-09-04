@@ -885,13 +885,13 @@ where
                     started.elapsed(),
                     Some("mcp_cancelled_after_call"),
                 ),
-                Err(McpClientError::CancelNotificationUnknown) => ToolExecutionReport::new(
+                Err(McpClientError::CancelSignalUnknown) => ToolExecutionReport::new(
                     redeemed,
-                    "That tool call was cancelled, but cancellation delivery could not be confirmed."
+                    "That tool call was cancelled, but its cancellation signal could not be confirmed."
                         .to_owned(),
                     CommitState::Unknown,
                     started.elapsed(),
-                    Some("mcp_cancel_notification_unknown"),
+                    Some("mcp_cancel_signal_unknown"),
                 ),
                 Err(McpClientError::CancelledBeforeCall) => ToolExecutionReport::new(
                     redeemed,

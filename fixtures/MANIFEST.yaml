@@ -364,11 +364,13 @@ entries:
     test_id: T-FIX-0047
     migration_rule: "n/a: v4 §7.4/§9.1 Rust-owned run cancellation向RMCP tools/list与tools/call传播的协议级安全闭包"
     status: done
-    evidence: "closed fixture固定MCP 2026-07-28 Streamable HTTP三态：信号已存在时socket=0；fresh tools/list在deadline时发送带exact requestId的notifications/cancelled且tool call=0；tools/call已开始后的user cancel先发protocol notification、等待server RequestContext停止，再按unknown进入reconciliation"
-    done_evidence: "fixture=806 bytes/SHA-256 23bcd6d0184f729d437c9db08305ce34d9f4f096e90764e1dc5d4466c1d36f0a；Application cancellation registry=1/0/0；Agent user/deadline cooperative stop=2/0/0且child stopped先于reconciliation terminal；RMCP非PG=6/0/3 ignored，PG17.11 SCRAM+official RMCP server完整=9/0/0。真实server分别收到reason=run_deadline_exceeded/run_cancelled且requestId非空；call取消后tool_attempt=reconciliation_required/unknown/mcp_cancelled_after_call，mcp.call_failed=1、success=0、registry残留0；pre-cancel socket accept=0"
+    evidence: "closed fixture固定MCP Streamable HTTP四态：信号已存在时socket=0；2026-07-28 fresh tools/list与tools/call取消均关闭exact request response stream且notifications/cancelled POST=0；自动降级2025-11-25时tools/call发送带exact requestId的notifications/cancelled；post-send call始终按unknown进入reconciliation"
+    done_evidence: "fixture=1111 bytes/SHA-256 ec9644f41e8b0773e0983efa52179eef1e32387b2bbd0ec69101afd4874e6b56；Application cancellation registry=1/0/0；Agent user/deadline cooperative stop=2/0/0且child stopped先于reconciliation terminal；RMCP非PG=8/0/3 ignored，PG17.11 SCRAM+official RMCP server完整=11/0/0。modern list/call均协作停止且protocol=2026-07-28、notification POST=0；legacy fallback记录protocol=2025-11-25、reason=run_cancelled与非空requestId；call取消后tool_attempt=reconciliation_required/unknown/mcp_cancelled_after_call，mcp.call_failed=1、success=0、registry残留0；pre-cancel socket accept=0"
     notes: >-
       sender/receiver与registry均private/non-serde；外部ToolInvocation即使自报同callId也不能插入
-      cancellation authority。取消通知发送失败单独落mcp_cancel_notification_unknown，绝不冒充已送达；
+      cancellation authority。现代response-stream关闭或旧版取消通知无法确认时单独落
+      mcp_cancel_signal_unknown，绝不冒充已送达；SafeDialer在modern request尚无首个SSE event时直接
+      drop exact request future，规避固定rmcp 3.1.4上游#1193且不改变旧版notification规则；
       5秒合作收口窗耗尽后仍abort并reconciliation。该fixture只关闭Rust run→RMCP list/call cancel纵向；
       T-FIX-0018仍需完整官方conformance的initialize/capability/list/call/cancel/timeout/progress全套，
       computer/file/shell进程树与各自协议取消继续todo。

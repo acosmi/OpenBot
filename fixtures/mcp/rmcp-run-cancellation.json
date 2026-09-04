@@ -1,28 +1,38 @@
 {
-  "schema": "openbot-rmcp-run-cancellation-v1",
-  "protocolVersion": "2026-07-28",
+  "schema": "openbot-rmcp-run-cancellation-v2",
   "transport": "streamable-http",
+  "protocols": {
+    "preferredModern": "2026-07-28",
+    "legacyFallback": "2025-11-25"
+  },
   "cases": {
     "beforeAnyNetwork": {
       "acceptedSockets": 0,
       "errorCode": "mcp_cancelled_before_call"
     },
-    "duringFreshList": {
-      "notificationMethod": "notifications/cancelled",
-      "reason": "run_deadline_exceeded",
-      "requestIdRequired": true,
+    "modernDuringFreshList": {
+      "signal": "close_response_stream",
+      "cancellationNotificationPosts": 0,
+      "localReason": "run_deadline_exceeded",
       "toolCalls": 0,
       "errorCode": "mcp_cancelled_before_call"
     },
-    "duringToolCall": {
-      "notificationMethod": "notifications/cancelled",
-      "reason": "run_cancelled",
-      "requestIdRequired": true,
+    "modernDuringToolCall": {
+      "signal": "close_response_stream",
+      "cancellationNotificationPosts": 0,
+      "localReason": "run_cancelled",
       "attemptStatus": "reconciliation_required",
       "commitState": "unknown",
       "errorCode": "mcp_cancelled_after_call",
       "failedAudits": 1,
       "successAudits": 0
+    },
+    "legacyDuringToolCall": {
+      "signal": "notifications/cancelled",
+      "cancellationNotificationPosts": 1,
+      "reason": "run_cancelled",
+      "requestIdRequired": true,
+      "errorCode": "mcp_cancelled_after_call"
     }
   }
 }

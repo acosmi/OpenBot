@@ -15,7 +15,8 @@ use http::{HeaderMap, StatusCode};
 use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CancelledNotificationParam, ClientCapabilities,
     ClientInfo, ClientJsonRpcMessage, ClientRequest, ContentBlock, Implementation,
-    ListToolsRequest, ListToolsResult, PaginatedRequestParams, ServerJsonRpcMessage, ServerResult,
+    ListToolsRequest, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+    ServerJsonRpcMessage, ServerResult,
 };
 use rmcp::service::PeerRequestOptions;
 use rmcp::transport::StreamableHttpClientTransport;
@@ -24,7 +25,7 @@ use rmcp::transport::streamable_http_client::{
     AuthRequiredError, InsufficientScopeError, SseError, StreamableHttpClient,
     StreamableHttpClientTransportConfig, StreamableHttpError, StreamableHttpPostResponse,
 };
-use rmcp::{RoleClient, ServiceExt as _};
+use rmcp::{ClientLifecycleMode, ClientServiceExt as _, RoleClient};
 use serde_json::Value;
 use sse_stream::{Sse, SseStream};
 use url::Url;
@@ -76,9 +77,9 @@ pub enum McpClientError {
     /// The vendor call was sent and a protocol cancellation was transmitted; commit is unknown.
     #[error("mcp_cancelled_after_call")]
     CancelledAfterCall,
-    /// The vendor call was sent but cancellation delivery could not be confirmed; commit is unknown.
-    #[error("mcp_cancel_notification_unknown")]
-    CancelNotificationUnknown,
+    /// The vendor call was sent but transport-aware cancellation could not be confirmed.
+    #[error("mcp_cancel_signal_unknown")]
+    CancelSignalUnknown,
     /// Server lacks tools capability or returned an invalid/oversized catalog.
     #[error("mcp_catalog_invalid")]
     InvalidCatalog,
@@ -217,7 +218,7 @@ impl SafeRmcpClient {
         endpoint: &str,
         bearer: Option<McpBearerToken>,
     ) -> Result<Vec<McpListedTool>, McpClientError> {
-        let mut client = self.connect(endpoint, bearer).await?;
+        let mut client = self.connect(endpoint, bearer, None).await?;
         let result = list_all_tools(&client, None).await;
         let _ = client.close_with_timeout(MCP_CLOSE_TIMEOUT).await;
         result
@@ -257,8 +258,9 @@ impl SafeRmcpClient {
 
     /// Execute one schema-bound call with a private Rust-host cancellation receiver.
     ///
-    /// Once the request has been sent, cancellation transmits MCP
-    /// `notifications/cancelled` with the exact RMCP request ID before the service is closed.
+    /// Once sent, the adapter applies the negotiated transport's cancellation rule: modern
+    /// `2026-07-28` closes the request-scoped response stream, while legacy fallback uses
+    /// `notifications/cancelled` with the exact request ID.
     pub async fn call_tool_bound_cancellable(
         &self,
         endpoint: &str,
@@ -306,7 +308,7 @@ impl SafeRmcpClient {
             .as_object()
             .cloned()
             .ok_or(McpClientError::InvalidCatalog)?;
-        let mut client = self.connect(endpoint, bearer).await?;
+        let mut client = self.connect(endpoint, bearer, cancellation.clone()).await?;
         let tools = match list_all_tools(&client, cancellation.as_mut()).await {
             Ok(tools) => tools,
             Err(error) => {
@@ -362,7 +364,7 @@ impl SafeRmcpClient {
                                     Some(reason.stable_code().to_owned()),
                                 )).await {
                                     Ok(()) => Err(McpClientError::CancelledAfterCall),
-                                    Err(_) => Err(McpClientError::CancelNotificationUnknown),
+                                    Err(_) => Err(McpClientError::CancelSignalUnknown),
                                 }
                             }
                         }
@@ -380,6 +382,7 @@ impl SafeRmcpClient {
         &self,
         endpoint: &str,
         bearer: Option<McpBearerToken>,
+        cancellation: Option<ToolExecutionCancellation>,
     ) -> Result<RunningRmcpClient, McpClientError> {
         let url = Url::parse(endpoint).map_err(|_| McpClientError::Transport)?;
         if !matches!(url.scheme(), "https" | "http") {
@@ -390,6 +393,7 @@ impl SafeRmcpClient {
             scheme_policy: self.scheme_policy,
             stall_timeout: self.stall_timeout,
             bearer,
+            cancellation,
         };
         let mut config = StreamableHttpClientTransportConfig::with_uri(endpoint.to_owned());
         config.retry_config = Arc::new(NeverRetry::default());
@@ -401,10 +405,17 @@ impl SafeRmcpClient {
             ClientCapabilities::default(),
             Implementation::new("openbot-rs", env!("CARGO_PKG_VERSION")),
         );
-        tokio::time::timeout(MCP_LIST_TIMEOUT, client_info.serve(transport))
-            .await
-            .map_err(|_| McpClientError::Timeout)?
-            .map_err(map_initialize_error)
+        let lifecycle = ClientLifecycleMode::Auto {
+            preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            legacy_version: Some(ProtocolVersion::V_2025_11_25),
+        };
+        tokio::time::timeout(
+            MCP_LIST_TIMEOUT,
+            client_info.serve_with_lifecycle(transport, lifecycle),
+        )
+        .await
+        .map_err(|_| McpClientError::Timeout)?
+        .map_err(map_initialize_error)
     }
 }
 
@@ -525,8 +536,8 @@ async fn await_list_response(
                         Some(reason.stable_code().to_owned()),
                     )).await.is_err() {
                         tracing::warn!(
-                            code = "mcp_list_cancel_notification_unknown",
-                            "RMCP tools/list cancellation delivery could not be confirmed"
+                            code = "mcp_list_cancel_signal_unknown",
+                            "RMCP tools/list transport cancellation could not be confirmed"
                         );
                     }
                     return Err(McpClientError::CancelledBeforeCall);
@@ -552,6 +563,12 @@ fn map_service_error(error: rmcp::service::ServiceError) -> McpClientError {
         return match error {
             StreamableHttpError::AuthRequired(_) => McpClientError::AuthRequired,
             StreamableHttpError::InsufficientScope(_) => McpClientError::InsufficientScope,
+            StreamableHttpError::Client(SafeRmcpHttpError::CancelledBeforeCall) => {
+                McpClientError::CancelledBeforeCall
+            }
+            StreamableHttpError::Client(SafeRmcpHttpError::CancelledAfterCall) => {
+                McpClientError::CancelledAfterCall
+            }
             _ => McpClientError::Transport,
         };
     }
@@ -623,6 +640,7 @@ struct SafeRmcpHttpClient {
     scheme_policy: SchemePolicy,
     stall_timeout: Option<Duration>,
     bearer: Option<McpBearerToken>,
+    cancellation: Option<ToolExecutionCancellation>,
 }
 
 impl core::fmt::Debug for SafeRmcpHttpClient {
@@ -632,6 +650,7 @@ impl core::fmt::Debug for SafeRmcpHttpClient {
             .field("scheme_policy", &self.scheme_policy)
             .field("stall_timeout", &self.stall_timeout)
             .field("bearer", &self.bearer.is_some())
+            .field("cancellable", &self.cancellation.is_some())
             .finish()
     }
 }
@@ -642,6 +661,10 @@ enum SafeRmcpHttpError {
     Transport,
     #[error("safe_rmcp_sse_event_too_large")]
     EventTooLarge,
+    #[error("safe_rmcp_cancelled_before_call")]
+    CancelledBeforeCall,
+    #[error("safe_rmcp_cancelled_after_call")]
+    CancelledAfterCall,
 }
 
 impl SafeRmcpHttpClient {
@@ -706,6 +729,28 @@ impl SafeRmcpHttpClient {
         SafeHttpBudget::new(bytes, timeout).map_err(|_| SafeRmcpHttpError::Transport)
     }
 
+    fn cancellation_error(
+        &self,
+        message: &ClientJsonRpcMessage,
+        custom_headers: &HashMap<HeaderName, HeaderValue>,
+    ) -> Result<Option<SafeRmcpHttpError>, SafeRmcpHttpError> {
+        let is_modern_streamable_http = custom_headers
+            .get(&HeaderName::from_static("mcp-protocol-version"))
+            .and_then(|value| value.to_str().ok())
+            == Some(ProtocolVersion::V_2026_07_28.as_str());
+        if self.cancellation.is_none() || !is_modern_streamable_http {
+            return Ok(None);
+        }
+        let value = serde_json::to_value(message).map_err(|_| SafeRmcpHttpError::Transport)?;
+        Ok(match value.get("method").and_then(Value::as_str) {
+            Some("tools/list") => Some(SafeRmcpHttpError::CancelledBeforeCall),
+            // Starting the transport future is the conservative external-effect boundary.
+            Some("tools/call") => Some(SafeRmcpHttpError::CancelledAfterCall),
+            // Never cancel negotiation, lifecycle notifications, or session cleanup.
+            _ => None,
+        })
+    }
+
     async fn post(
         &self,
         uri: Arc<str>,
@@ -719,6 +764,9 @@ impl SafeRmcpHttpClient {
             .map_err(|_| StreamableHttpError::Client(SafeRmcpHttpError::Transport))?;
         let body = serde_json::to_vec(&message)?;
         let budget = self.budget(&message).map_err(StreamableHttpError::Client)?;
+        let cancellation_error = self
+            .cancellation_error(&message, &custom_headers)
+            .map_err(StreamableHttpError::Client)?;
         let had_session = session_id.is_some();
         let headers = self
             .headers(custom_headers, session_id, None)
@@ -734,11 +782,23 @@ impl SafeRmcpHttpClient {
             budget,
         )
         .map_err(|_| StreamableHttpError::Client(SafeRmcpHttpError::Transport))?;
-        let response = self
-            .dialer
-            .execute_stream(request)
-            .await
-            .map_err(map_safe_http)?;
+        let execute = self.dialer.execute_stream(request);
+        tokio::pin!(execute);
+        let response = match (cancellation_error, self.cancellation.clone()) {
+            (Some(error), Some(mut cancellation)) => {
+                tokio::select! {
+                    biased;
+                    response = &mut execute => response.map_err(map_safe_http)?,
+                    _ = cancellation.cancelled() => {
+                        // Dropping the exact in-flight SafeDialer future closes this request's
+                        // HTTP response stream. This is the 2026-07-28 Streamable HTTP cancel
+                        // signal and also avoids rmcp 3.1.4's pre-first-event worker stall.
+                        return Err(StreamableHttpError::Client(error));
+                    }
+                }
+            }
+            _ => execute.await.map_err(map_safe_http)?,
+        };
         classify_auth(&response)?;
         let status = response.status();
         if matches!(status, StatusCode::ACCEPTED | StatusCode::NO_CONTENT) {
