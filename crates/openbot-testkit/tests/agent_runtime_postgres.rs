@@ -1454,6 +1454,25 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
             .map_err(|error| error.to_string())?;
         let result = async {
             provision(&pool).await?;
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let auth = AuthContextBuilder::from_verified_session(
+                deployment.clone(),
+                tenant.clone(),
+                ActorId::new("actor-a"),
+                AuthGeneration::new(0),
+                false,
+            )
+            .with_roles([Role::User])
+            .build();
+            let components = Arc::new(
+                PostgresComponentAdministration::new(pool.clone(), vec![0xa6; 32])
+                    .map_err(|error| error.to_string())?,
+            );
+            components
+                .sync_catalogue(&auth, &compiled_component_manifest())
+                .await
+                .map_err(|error| error.to_string())?;
             let listener = TcpListener::bind("127.0.0.1:0")
                 .await
                 .map_err(|error| error.to_string())?;
@@ -1501,9 +1520,20 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                         .ok_or_else(|| "remote request body missing".to_owned())?,
                 )
                 .map_err(|error| error.to_string())?;
+                let tools = body["tools"]
+                    .as_array()
+                    .ok_or_else(|| "remote tools missing".to_owned())?;
+                let offered_quote = tools.iter().any(|tool| {
+                    tool["name"] == SHOW_QUOTE_COMPONENT_NAME && tool["parameters"].is_object()
+                });
                 if body["runId"] != "run-remote"
                     || body["forwardedProps"]["openbotBotId"] != "bot-remote"
-                    || body["tools"] != serde_json::json!([])
+                    || !offered_quote
+                    || !body["forwardedProps"]["openbotDeploymentTools"]
+                        .as_array()
+                        .is_some_and(|tools| {
+                            tools.iter().any(|tool| tool == SHOW_QUOTE_COMPONENT_NAME)
+                        })
                     || body["messages"][0]["role"] != "system"
                     || !body["messages"][0]["content"]
                         .as_str()
@@ -1539,6 +1569,10 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                     serde_json::json!({"type":"MESSAGES_SNAPSHOT","messages":[{"id":"u","role":"user","content":"hello"}]}),
                     serde_json::json!({"type":"ACTIVITY_SNAPSHOT","messageId":"a","activityType":"PLAN","content":{"done":false}}),
                     serde_json::json!({"type":"ACTIVITY_DELTA","messageId":"a","activityType":"PLAN","patch":[{"op":"replace","path":"/done","value":true}]}),
+                    serde_json::json!({"type":"TOOL_CALL_START","toolCallId":"remote-result-call","toolCallName":SHOW_QUOTE_COMPONENT_NAME}),
+                    serde_json::json!({"type":"TOOL_CALL_ARGS","toolCallId":"remote-result-call","delta":"{\"quote\":\"Remote result only.\",\"attribution\":\"remote\"}"}),
+                    serde_json::json!({"type":"TOOL_CALL_END","toolCallId":"remote-result-call"}),
+                    serde_json::json!({"type":"TOOL_CALL_RESULT","messageId":"remote-result-message","toolCallId":"remote-result-call","content":"REMOTE_TOOL_RESULT_SECRET_CANARY"}),
                     serde_json::json!({"type":"RAW","event":{"untrusted":true,"canary":"REMOTE_PROJECTION_SECRET_CANARY"},"source":"remote"}),
                     serde_json::json!({"type":"CUSTOM","name":"future","value":{"permission":"none"}}),
                     serde_json::json!({"type":"REASONING_START","messageId":"reason"}),
@@ -1590,8 +1624,6 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 Ok::<_, String>(())
             });
 
-            let deployment = DeploymentId::new("dep-a");
-            let tenant = TenantId::new("tenant-a");
             let owner = "runtime-remote".to_owned();
             let directory = PostgresThreadDirectory::with_runtime(
                 pool.clone(),
@@ -1640,6 +1672,7 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 )
                 .map_err(|error| error.to_string())?
                 .with_tools(vec![remember_provider_tool()])
+                .with_components(components)
                 .with_remote_assertions(assertion_signer),
             );
             let agent = BuiltInAgentRuntime::start(
@@ -1683,7 +1716,7 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 .await
                 .map_err(|_| "remote preterminal write timed out".to_owned())?
                 .map_err(|_| "remote preterminal server ended".to_owned())?;
-            wait_for_remote_projection_count(&pool, "run-remote", 9).await?;
+            wait_for_remote_projection_count(&pool, "run-remote", 10).await?;
             let client = pool.get().await.map_err(|error| error.to_string())?;
             let active_projection = client
                 .query_one(
@@ -1695,7 +1728,11 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                             count(*) FILTER (WHERE payload->>'family'='activity' \
                               AND payload->'untrustedValue'->>'done'='true')::bigint, \
                             count(*) FILTER (WHERE payload::text LIKE \
-                              '%REMOTE_PROJECTION_SECRET_CANARY%')::bigint \
+                              '%REMOTE_PROJECTION_SECRET_CANARY%')::bigint, \
+                            count(*) FILTER (WHERE payload->>'family'='tool_result' \
+                              AND payload->>'untrustedKey'='remote-result-call' \
+                              AND payload->>'untrustedType'='remote-result-message' \
+                              AND payload->>'untrustedValue'='REMOTE_TOOL_RESULT_SECRET_CANARY')::bigint \
                      FROM public.run_events WHERE run_id='run-remote' \
                        AND event_type='checkpoint' \
                        AND payload->>'kind'='remote_agui_projection'",
@@ -1718,6 +1755,9 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
             let active_canary: i64 = active_projection
                 .try_get(4)
                 .map_err(|error| error.to_string())?;
+            let tool_result: i64 = active_projection
+                .try_get(5)
+                .map_err(|error| error.to_string())?;
             if families
                 != [
                     "step_started",
@@ -1726,17 +1766,19 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                     "messages",
                     "activity",
                     "activity",
+                    "tool_result",
                     "raw",
                     "custom",
                     "step_finished",
                 ]
-                || untrusted != 9
+                || untrusted != 10
                 || patched_state != 1
                 || patched_activity != 1
                 || active_canary != 1
+                || tool_result != 1
             {
                 return Err(format!(
-                    "active remote projections drifted: families={families:?} untrusted={untrusted} state={patched_state} activity={patched_activity} canary={active_canary}"
+                    "active remote projections drifted: families={families:?} untrusted={untrusted} state={patched_state} activity={patched_activity} canary={active_canary} toolResult={tool_result}"
                 ));
             }
             drop(client);
@@ -1850,7 +1892,20 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                      ) AS persisted WHERE value LIKE '%REMOTE_ERROR_SECRET_CANARY%'
                                       OR value LIKE '%ENCRYPTED_REASONING_CANARY%'
                                       OR value LIKE '%checked evidence%'
-                                      OR value LIKE '%REMOTE_PROJECTION_SECRET_CANARY%'",
+                                      OR value LIKE '%REMOTE_PROJECTION_SECRET_CANARY%'
+                                      OR value LIKE '%REMOTE_TOOL_RESULT_SECRET_CANARY%'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            let local_tool_effects: i64 = client
+                .query_one(
+                    "SELECT (SELECT count(*) FROM public.messages \
+                              WHERE run_id='run-remote' AND role='tool') \
+                          + (SELECT count(*) FROM public.tool_calls \
+                              WHERE run_id='run-remote')",
                     &[],
                 )
                 .await
@@ -1858,12 +1913,13 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 .try_get(0)
                 .map_err(|error| error.to_string())?;
             if reasoning_markers != 1
-                || projection_markers != 9
+                || projection_markers != 10
                 || invoked != 3
                 || canary_rows != 0
+                || local_tool_effects != 0
             {
                 return Err(format!(
-                    "remote durable projection 漂移：reasoningMarkers={reasoning_markers} projectionMarkers={projection_markers} invoked={invoked} canary={canary_rows}"
+                    "remote durable projection 漂移：reasoningMarkers={reasoning_markers} projectionMarkers={projection_markers} invoked={invoked} canary={canary_rows} localToolEffects={local_tool_effects}"
                 ));
             }
             Ok(())
