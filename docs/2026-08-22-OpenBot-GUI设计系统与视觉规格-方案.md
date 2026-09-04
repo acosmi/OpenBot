@@ -773,8 +773,9 @@ G6 重写后的文本（替换 v3 原四条）：
 - [ ] Plugins/Skills GUI仍不勾：Batch99–100已给Server/Desktop同一typed ApplicationService补齐
   `GET /api/plugins`、custom add/delete/general refresh、custom private-egress CIDR、personal/deployment
   skills、MCP/skill grants与actor-specific for-Agent后端；管理页的`grantedTo`按tenant与actor-visible
-  Agent收窄，skill正文Debug脱敏。但legacy-call、`/admin/plugins` index/detail/tool与`/admin/skills`
-  四route、AppSidebar/AdminSidebar destination、正式
+  Agent收窄，skill正文Debug脱敏。Batch101又以固定上游无调用者与真实typed run替代证据退役legacy
+  browser call；但`/admin/plugins` index/detail/tool与`/admin/skills`四route、AppSidebar/AdminSidebar
+  destination、正式
   browser journey/golden/AX均未实现。不得用后端API或Desktop framing冒充本GUI项完成；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
