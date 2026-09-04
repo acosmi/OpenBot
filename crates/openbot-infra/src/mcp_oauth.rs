@@ -218,6 +218,14 @@ impl McpOAuthClient {
         }
     }
 
+    /// Validate a retained client registration without performing discovery or any network I/O.
+    /// Admin server removal uses this before deciding that automatic RFC 7009 compensation is
+    /// possible; malformed retained material must become operator work instead of an endless
+    /// retry loop.
+    pub(crate) fn validate_stored_client(&self, oauth_client: &[u8]) -> Result<(), McpOAuthError> {
+        ParsedOAuthClient::parse(oauth_client, self.scheme_policy).map(|_| ())
+    }
+
     /// Discover and validate PRM + AS metadata for a stored client registration.
     pub async fn discover(
         &self,

@@ -748,6 +748,10 @@ async fn custom_admin_private_egress_is_db_bound_refreshes_and_retires_atomicall
                          WHERE ref='private-notes/search_issues') AS grants,
                        (SELECT count(*)::bigint FROM public.credentials
                          WHERE id IN ($1,$2) AND revoked_at IS NOT NULL) AS retired,
+                       (SELECT count(*)::bigint FROM public.credentials
+                         WHERE id=$2 AND metadata->>'revocation_status'='operator_required'
+                           AND metadata ? 'operator_required_at'
+                           AND metadata ? 'server_removal_revocation') AS operator_required,
                        (SELECT count(*)::bigint FROM public.audit_events
                          WHERE event_type='configuration.changed'
                            AND target_type='mcp_server' AND target_id='private-notes'
@@ -761,9 +765,12 @@ async fn custom_admin_private_egress_is_db_bound_refreshes_and_retires_atomicall
                 counts.try_get::<_, i64>("tools").unwrap_or(-1),
                 counts.try_get::<_, i64>("grants").unwrap_or(-1),
                 counts.try_get::<_, i64>("retired").unwrap_or(-1),
+                counts
+                    .try_get::<_, i64>("operator_required")
+                    .unwrap_or(-1),
                 counts.try_get::<_, i64>("audits").unwrap_or(-1),
             );
-            if observed != (0, 0, 0, 2, 4) {
+            if observed != (0, 0, 0, 2, 1, 4) {
                 return Err(format!("removal/audit closure drift: {observed:?}"));
             }
             tls_server.abort();

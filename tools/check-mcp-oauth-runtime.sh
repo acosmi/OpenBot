@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# G4 Batch 12/102: MCP OAuth must stay on per-server SafeDialer authority, exact issuer/resource
-# and local-first revocation.
+# G4 Batch 12/102/103: MCP OAuth must stay on per-server SafeDialer authority, exact
+# issuer/resource, local-first revocation and retained admin-removal compensation.
 set -euo pipefail
 
 fail() {
@@ -69,6 +69,27 @@ grep -qF 'const ATTEMPT_VERSION: u8 = 3;' crates/openbot-infra/src/mcp_connectio
 grep -qF 'material.egress_allow_cidrs != attempt.egress_allow_cidrs' \
   crates/openbot-infra/src/mcp_connections.rs \
   || fail 'OAuth callback no longer rejects egress authority drift before token exchange'
+grep -qF 'validate_stored_client' crates/openbot-infra/src/mcp_oauth.rs \
+  || fail 'admin removal no longer validates retained OAuth client material without network'
+grep -qF 'struct RemovedServerRevocationContext' crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'versioned admin-removal revocation context disappeared'
+grep -qF 'removed_server_client_material' crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'admin removal no longer reloads its exact retained client/context'
+grep -qF 'match self.removed_server_client_material(&claim).await' \
+  crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'removed-server claim no longer routes through its retained context'
+if grep -qF 'let material = if removed_server' crates/openbot-infra/src/mcp_connections.rs; then
+  fail 'removed-server tombstones can fall back to a re-added same-id server'
+fi
+grep -qF "'revocation_status','operator_required'" crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'irrecoverable retained revocation material no longer exits the retry loop'
+grep -qF "metadata=metadata-'server_removal_revocation'" \
+  crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'successful user-token revoke no longer scrubs retained network context'
+grep -qF "split_part(g.ref,'/',1)=\$1" crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'admin removal no longer deletes stale/orphan grants by exact server prefix'
+test -f docs/runbooks/mcp-server-removal-vendor-revocation.md \
+  || fail 'admin-removal vendor compensation runbook disappeared'
 
 grep -qF 'ADD COLUMN credential_generation bigint' crates/openbot-infra/sql/native_0018.sql \
   || fail 'credential generation migration disappeared'
@@ -84,4 +105,4 @@ fi
 grep -qF '.field("client_secret", &"[redacted]")' crates/openbot-contracts/src/mcp.rs \
   || fail 'admin OAuth client Debug redaction disappeared'
 
-printf 'MCP OAuth runtime guard: ok (per-server egress + rotation CAS; SafeDialer PRM/issuer/resource; HMAC+AEAD state v3; credential generation; local-first revoke)\n'
+printf 'MCP OAuth runtime guard: ok (per-server egress + rotation CAS; SafeDialer PRM/issuer/resource; HMAC+AEAD state v3; credential generation; local-first + admin-removal compensation)\n'
