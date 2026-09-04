@@ -1077,6 +1077,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unused_legacy_browser_tool_call_route_is_intentionally_not_mounted() {
+        let connections = FakeConnections::default();
+        let response = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/call",
+            Some("https://app.example.test"),
+            r#"{"ref":"notes/search","args":{"query":"private"},"agentId":"bot-1"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(connections.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn callback_is_public_uniform_bodyless_no_store_redirect() {
         let callback = Arc::new(FakeCallback {
             calls: Mutex::new(Vec::new()),

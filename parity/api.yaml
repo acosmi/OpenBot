@@ -60,10 +60,10 @@ recount:
     expect: 174
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
-    expect: 139
+    expect: 138
   - command: "grep -c 'label: \"替代\"' parity/api.yaml"
     cwd: "repo"
-    expect: 7
+    expect: 8
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
     expect: 28
@@ -1198,14 +1198,15 @@ entries:
     notes: "session。错误码：401 未登录 / 404 不可见（Bot、channel、component 一律 404 不区分不存在与无权）/ 400 malformed / 403 policy refusal + stable rule id / 502 vendor failure / 503 MCP server 不可达。被 app.ts 的 routing 挂载复用，回答某 coworker 能触达哪些 vendor"
   - id: "api-plugins-call-post"
     upstream: "server/src/plugins/routes.ts::createPluginRoutes"
-    label: "parity"
-    target: "openbot-server::http::plugins::call_post (POST /api/plugins/call)"
+    label: "替代"
+    target: "removed legacy browser route; openbot-agent::AgentToolGateway -> AppCommand::InvokeTool"
     owner: "openbot-server"
     test_id: "T-API-0094"
-    migration_rule: "preserve"
-    status: "todo"
-    evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
-    notes: "session。错误码：401 未登录 / 404 不可见（Bot、channel、component 一律 404 不区分不存在与无权）/ 400 malformed / 403 policy refusal + stable rule id / 502 vendor failure / 503 MCP server 不可达。缺陷修正，不照译：上游 plugins/store.ts 的 mcp.call_succeeded/failed 写在 vendor() 之后（只有 call_rejected 在之前）；§2.4 定为 action 前持久化 decision+attempt、action 后持久化 outcome+commit state。MAX_RESULT_CHARS=20_000 截断保持"
+    migration_rule: "remove: 固定上游明确无仓内调用者，旧 browser tool loop 已迁到 server-owned runtime；三字段 wire 无法承载 v4 run/call/sequence/fencing/budget authority"
+    status: "done"
+    done_evidence: "Batch101：固定上游 routes.ts 原文声明 NOTHING IN THIS REPOSITORY CALLS IT，plugins/tools.ts 说明旧 useFrontendTool/browser handler 已迁到 server-owned grantedTools；全仓只有 route、历史注释与 bot-access route 测试引用。Rust Server `unused_legacy_browser_tool_call_route_is_intentionally_not_mounted` 与 Desktop plugin protocol 均证明 authenticated valid POST 得 404，McpConnectionAdministration calls=0；真实执行仍只有 AgentToolGateway 铸 run/call/sequence 后发 typed InvokeTool，复用已有 decision+attempt/capability/outcome/audit/budget 管线。"
+    evidence: "server/src/plugins/routes.ts::createPluginRoutes（NOTHING IN THIS REPOSITORY CALLS IT）+ server/src/plugins/tools.ts::grantedTools；git grep '/api/plugins/call' 只命中历史说明与 bot-access route tests，无 production client"
+    notes: "刻意不做 410 compatibility handler：挂一个 handler 仍需从 ref/args/agentId 猜当前 run 或新建旁路身份。未知路径统一404，既不暴露资源也不触达catalog/policy/vault/vendor。20,000 scalar result normalization保留在真实RMCP/Drive executor，不依赖本endpoint。"
   - id: "api-route-post"
     upstream: "server/src/routing/routes.ts::createRoutingRoutes"
     label: "parity"

@@ -5485,6 +5485,20 @@ mod tests {
             )
             .await;
         assert_eq!(stale_grant.status(), StatusCode::UNAUTHORIZED);
+        let removed_legacy_call = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/call")
+                    .body(
+                        br#"{"ref":"notes/search","args":{"query":"private"},"agentId":"agent-one"}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(removed_legacy_call.status(), StatusCode::NOT_FOUND);
         fs::remove_dir_all(root).unwrap();
     }
 
