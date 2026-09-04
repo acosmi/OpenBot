@@ -643,14 +643,17 @@ fixture 是供应链登记的离线证据，不改变“生产不持久化原始
 - 一次 sampling 先收齐 complete tool-call batch，再按稳定 output index 排序；`parallel_safe=false`（首个 `remember` 即此类）严格串行。provider call id 只配对 assistant call/result，Rust gateway 另铸 UUIDv7 + per-run sequence 作为 decision/attempt/capability 的唯一身份。每个确定 outcome 先以 assistant/tool 两条 message + `tool_exchange` checkpoint 同事务持久化，context 重读成功后才开始下一次 sampling；exact expected-sequence replay 返回原 receipt，任何参数/结果篡改 conflict。batch 跨 sampling 累计仍受 8-step cap，超过上限时一个新 effect 都不执行；
 - budget 同时限制 absolute deadline、idle deadline、provider token、tool steps、并发 tool、computer runtime 和用户配置的费用上限；首版新增 `OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS`，缺省 16384，只接受 1..=1000000，0 不能静默关闭；它是**每次 sampling 输出上限**，三家 request 和 host 的 normalized usage 双重校验。R161–R163 已闭合 run-wide token/cost/user cap；R165 的 process-wide tool concurrency 独立于 provider-run concurrency，默认 8、typed config 只收 `1..=256`，无新环境变量。等待 tool permit 时取消且 effect=0 走普通 Cancelled；任一 parallel child 已开始后取消/期限则先停全 child再进 reconciliation。完整 budget 仍缺 computer runtime，不得以 tool budget 冒充 Computer 已接入；
 - Agent durable activate 后、读取 context/provider 前写 `agent.invoked`；真实 body read gap 到点时先停止 session，再写 `agent.stream_stalled`，最后 failed terminal；absolute deadline 到点时先停止 child，再写新增 `agent.run_deadline_exceeded`，最后走 `Cancelling → Cancelled`。三类 audit 只带权威 run/actor 与 allowlisted stable code，任一 audit 写失败都进入 reconciliation，不继续 sampling/提交普通终态；
-- Batch105把同一run cancellation继续向串行RMCP effect传播：Agent host持有private/non-serde sender，
-  gateway按Rust铸造的ToolCallId在共享process-local registry登记receiver；Server/Desktop Local与production
-  tool control plane都从同一Application assembly取得该registry。取消在任何网络前已存在时socket=0；
-  fresh `tools/list`或已开始`tools/call`时先发送带exact requestId与stable user/deadline reason的
-  `notifications/cancelled`，有界等待child stop后才写deadline audit/terminal。call一旦发出，无论通知送达
-  与否都只能落Unknown/reconciliation；通知投递失败使用独立stable code，不冒充送达。该纵向只关闭
-  Rust run→RMCP protocol cancel；computer/file/shell process-tree cancel与完整RMCP官方conformance仍todo。
-  （§28.1 R179）
+- Batch105/R180把同一run cancellation继续向串行RMCP effect传播：Agent host持有private/non-serde
+  sender，gateway按Rust铸造的ToolCallId在共享process-local registry登记receiver；Server/Desktop Local
+  与production tool control plane都从同一Application assembly取得该registry。取消在任何网络前已存在时
+  socket=0。client Auto lifecycle首选`server/discover`/2026-07-28：fresh `tools/list`与已开始
+  `tools/call`通过关闭各自exact HTTP/SSE response stream取消，网络上`notifications/cancelled` POST=0；
+  server拒绝discover后才回落2025-11-25 initialize/session并由RMCP发送带exact requestId与stable reason的
+  旧版notification。固定rmcp 3.1.4在首个SSE event前的worker stall由SafeDialer仅对modern tool request
+  drop exact future规避；协商/lifecycle/session cleanup不可被该路径取消。有界等待child stop后才写deadline
+  audit/terminal；call一旦进入transport边界，无论signal确认与否都只能落Unknown/reconciliation，无法确认
+  使用`mcp_cancel_signal_unknown`。该纵向只关闭Rust run→RMCP protocol cancel；computer/file/shell
+  process-tree cancel与完整RMCP官方conformance仍todo。（§28.1 R179–R180）
 - 上下文压缩保留 system/standing role、未完成 tool pair、最近对话和 provenance；压缩摘要带 source range。
 
 ### 7.5 Remote AG-UI
@@ -1981,17 +1984,19 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] run/user cancellation 的统一host入口：PostgreSQL control outbox跨副本到lease owner，built-in Agent
     watch token沿context/provider/tool child传播；真实PG证明active child先drop、再写唯一Cancelled terminal。
     computer/file/shell各协议级notification/process-tree仍独立todo；
-  - [x] Batch105 RMCP run protocol cancel：private/non-serde sender→Rust-minted ToolCallId→共享
-    process-local registry→同一ApplicationService/tool pipeline；pre-cancel socket0，fresh `tools/list` deadline
-    与started `tools/call` user cancel都让钉版RMCP server收到exact requestId `notifications/cancelled`并停止
-    RequestContext。call已发后即使通知成功仍落`reconciliation_required/unknown`，delivery失败有独立stable
-    code；Server/Desktop共用assembly registry，5秒合作收口后才audit/terminal。PG+official RMCP=`9/0/0`，
-    T-FIX-0047 done；T-FIX-0018完整conformance与computer/file/shell cancel保持todo；
+  - [x] Batch105/R180 RMCP run protocol cancel：private/non-serde sender→Rust-minted ToolCallId→共享
+    process-local registry→同一ApplicationService/tool pipeline；pre-cancel socket0。Auto lifecycle首选
+    `server/discover`/2026-07-28，fresh `tools/list`与started `tools/call`均关闭exact response stream且
+    cancel notification POST=0；拒discover后才回落2025-11-25并发送exact requestId/reason的旧版
+    `notifications/cancelled`。固定rmcp 3.1.4首event前stall由SafeDialer仅对modern tool request drop exact
+    future规避。call transport boundary后始终`reconciliation_required/unknown`，signal失败使用
+    `mcp_cancel_signal_unknown`；Server/Desktop共用assembly registry，5秒合作收口后才audit/terminal。
+    PG+official RMCP=`11/0/0`，T-FIX-0047 done；T-FIX-0018完整conformance与computer/file/shell cancel保持todo；
   - [x] 固定 `@ag-ui/core@0.0.57` 的 33 个 event literal、RunAgentInput、stateful lifecycle/text/tool/state/messages/activity/step/reasoning/raw/custom/interrupt/error decoder 与原子 RFC 6902；开放 payload 只保留为 bounded untrusted data；
   - [x] package-backed `remote_ag_ui` lifecycle/text 生产竖切：权威 route→唯一 SafeDialer POST/SSE→decoder→durable semantic chunk/assistant/terminal；RunAgentInput 以 DB clock 铸 10 分钟 assertion，并从 current grant 投影同一 whole tool set；
   - [x] per-Agent callback token issue/rotate/revoke：`obot_agt_`+32-byte CSPRNG、DB hash-only、fresh Origin、owner/admin/fresh generation、mutation+audit 同事务；callback 同验 token/assertion/Bot/actor/run/lease/current tool-set，并经同一 PostgreSQL sequence + ApplicationService 执行真实 RMCP outcome；共享 `AGENT_TOOL_TOKEN` 构造性不存在；
   - [x] native 0017：PostgreSQL durable per-run tool sequence、catalog generation/schema/effect/availability、grant state 与 endpoint+vendor+provenance fingerprint；missing/changed 同事务 suspended_missing+audit，重新出现不自动启用；
-  - [x] pinned RMCP 3.1.4 / MCP 2026-07-28 client：SafeDialer-only Streamable HTTP、per-operation initialize/list/call/close、1000/4KiB/256KiB/20k limits、progress-aware timeout cancellation、live schema binding 与 commit-unknown reconciliation；
+  - [x] pinned RMCP 3.1.4 / MCP 2026-07-28 client：SafeDialer-only Streamable HTTP、per-operation modern discover或legacy initialize/list/call/close、1000/4KiB/256KiB/20k limits、progress-aware timeout cancellation、live schema binding 与 commit-unknown reconciliation；
   - [x] server-side-tools 五条 production 竖切：无 grant 零工具、vendor 原 schema、official RMCP HTTP 真调用、Bot audit、CEL refusal marker；另有 definite failure、secret content block、acting approval refusal 与 two-replica sequence 证据；
   - [x] native 0018 + credential identity：OAuth client 登记/轮换推进 server credential generation，旧 grant 固定旧代际并在 refresh 转 suspended_missing，永不把权限静默搬到新 client；
   - [x] Server/Desktop Remote MCP OAuth：401 PRM→exact issuer/S256 discovery、RFC8707 resource、HMAC+AEAD single-use state、PKCE/code callback、v2 refresh pointer/rotation、actor catalog/runtime、401 单次 refresh/retry 与 typed HTTP 四面；
