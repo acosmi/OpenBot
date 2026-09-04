@@ -5,6 +5,7 @@ mod harness {
 }
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -13,10 +14,11 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use openbot_agent::{AgentToolInvoker, AuthorizedAgentToolGateway};
 use openbot_application::{
     AgentContextSource, ApplicationService, McpConnectionAdministration, OpenBotApplication,
-    RunExecutionLease, ToolApprovalAdministration, ToolCallSequence,
+    RunExecutionLease, ToolApprovalAdministration, ToolCallSequence, ToolCancellationReason,
+    ToolCancellationRegistry, tool_execution_cancellation,
 };
 use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
-use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId};
+use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId, ToolCallId};
 use openbot_contracts::mcp::McpCustomServerRegistration;
 use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_domain::policy::{ActionPolicy, PolicyMode};
@@ -47,10 +49,11 @@ use openbot_infra::vault::CredentialRecordVault;
 use rmcp::ErrorData as McpError;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-    ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResponse, CallToolResult, CancelledNotificationParam,
+    ContentBlock, Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+    ServerCapabilities, ServerInfo, Tool,
 };
-use rmcp::service::{RequestContext, RoleServer};
+use rmcp::service::{NotificationContext, RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
@@ -58,6 +61,7 @@ use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
 
 // Long-lived test-only Ed25519 CA/leaf for `idp.test`; copied from the repository's W-7 TLS
@@ -65,11 +69,32 @@ use tokio_rustls::TlsAcceptor;
 const TLS_CA_DER: &str = "MIIBYTCCAROgAwIBAgIUV2Gyaxvee9eFEK3h9B3MJM3RdHMwBQYDK2VwMB0xGzAZBgNVBAMMEk9wZW5Cb3QgVzcgVGVzdCBDQTAgFw0yNjA4MjMxNzIxNTNaGA8yMTI2MDczMDE3MjE1M1owHTEbMBkGA1UEAwwST3BlbkJvdCBXNyBUZXN0IENBMCowBQYDK2VwAyEApgBzSV/LoqKcnUaH8XyHAyeVHmSdWzs/pG1QLsZtLXujYzBhMB0GA1UdDgQWBBRGuULlFEmfV4B1pDoFKLlyG87ckjAfBgNVHSMEGDAWgBRGuULlFEmfV4B1pDoFKLlyG87ckjAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjAFBgMrZXADQQAhZqm1u2PwIPUkIhbQpjQhEbNUYoF2Abyx+fdXyy5b0QRLqnEK/8DY350B6fiQHd7a6BEa+qN+qhUQNauulgwB";
 const TLS_LEAF_DER: &str = "MIIBgDCCATKgAwIBAgIUWFITT9Bap6fPTrUyiQds6m7YbW4wBQYDK2VwMB0xGzAZBgNVBAMMEk9wZW5Cb3QgVzcgVGVzdCBDQTAgFw0yNjA4MjMxNzIxNTNaGA8yMTI2MDczMDE3MjE1M1owEzERMA8GA1UEAwwIaWRwLnRlc3QwKjAFBgMrZXADIQDUfQYU3Rio5WectHhNXvjIzi67mD9xT6HD7WzyBqMdIKOBizCBiDAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATATBgNVHREEDDAKgghpZHAudGVzdDAdBgNVHQ4EFgQU7WAFDj1TPql991Rys+6HvGt+f2kwHwYDVR0jBBgwFoAURrlC5RRJn1eAdaQ6BSi5chvO3JIwBQYDK2VwA0EAhqOV0ZqpgZsjy3YMiwb4D94mGVQmVikza22FtbWfcC2F4b1GV0YKYCOwdIN9ruFVxguKPy//7tlCnuSzoUzkBQ==";
 const TLS_LEAF_KEY_DER: &str = "MC4CAQAwBQYDK2VwBCIEIIhvzdQUg5xdTDZfBbx3RK3yTMHjMv2r8AJ5/hgshUDa";
+const RMCP_RUN_CANCELLATION_FIXTURE: &str =
+    include_str!("../../../fixtures/mcp/rmcp-run-cancellation.json");
+const RMCP_RUN_CANCELLATION_FIXTURE_BYTES: usize = 806;
+const RMCP_RUN_CANCELLATION_FIXTURE_SHA256: &str =
+    "23bcd6d0184f729d437c9db08305ce34d9f4f096e90764e1dc5d4466c1d36f0a";
+
+fn cancellation_fixture() -> Value {
+    serde_json::from_str(RMCP_RUN_CANCELLATION_FIXTURE).expect("valid RMCP cancellation fixture")
+}
 
 #[derive(Clone)]
 struct RealMcpServer {
     received: Arc<Mutex<Vec<Value>>>,
     listed: Arc<Mutex<Vec<Tool>>>,
+    cancellation: Arc<CancellationProbe>,
+}
+
+#[derive(Default)]
+struct CancellationProbe {
+    block_list: AtomicBool,
+    list_started: Notify,
+    list_stopped: Notify,
+    started: Notify,
+    handler_stopped: Notify,
+    notification_received: Notify,
+    notifications: Mutex<Vec<Value>>,
 }
 
 impl RealMcpServer {
@@ -109,8 +134,13 @@ impl ServerHandler for RealMcpServer {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        if self.cancellation.block_list.load(Ordering::Acquire) {
+            self.cancellation.list_started.notify_one();
+            context.ct.cancelled().await;
+            self.cancellation.list_stopped.notify_one();
+        }
         Ok(ListToolsResult::with_all_items(
             self.listed.lock().unwrap().clone(),
         ))
@@ -119,7 +149,7 @@ impl ServerHandler for RealMcpServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let arguments = Value::Object(request.arguments.unwrap_or_default());
         let result = match request.name.as_ref() {
@@ -146,9 +176,28 @@ impl ServerHandler for RealMcpServer {
                 ContentBlock::image("AA==", "image/png"),
             ]),
             "always_fails" => CallToolResult::error(vec![ContentBlock::text("vendor said no")]),
+            "wait_for_cancel" => {
+                self.cancellation.started.notify_one();
+                context.ct.cancelled().await;
+                self.cancellation.handler_stopped.notify_one();
+                CallToolResult::success(vec![ContentBlock::text("cancelled")])
+            }
             _ => return Err(McpError::invalid_params("unknown tool", None)),
         };
         Ok(CallToolResponse::Complete(result))
+    }
+
+    async fn on_cancelled(
+        &self,
+        notification: CancelledNotificationParam,
+        _context: NotificationContext<RoleServer>,
+    ) {
+        self.cancellation
+            .notifications
+            .lock()
+            .unwrap()
+            .push(serde_json::to_value(notification).unwrap());
+        self.cancellation.notification_received.notify_one();
     }
 }
 
@@ -158,6 +207,7 @@ async fn spawn_server() -> Result<
         Arc<Mutex<Vec<Value>>>,
         Arc<Mutex<Vec<Tool>>>,
         Arc<Mutex<Vec<String>>>,
+        Arc<CancellationProbe>,
         tokio::task::JoinHandle<()>,
     ),
     String,
@@ -165,9 +215,11 @@ async fn spawn_server() -> Result<
     let received = Arc::new(Mutex::new(Vec::new()));
     let listed = Arc::new(Mutex::new(RealMcpServer::tools()));
     let traffic = Arc::new(Mutex::new(Vec::new()));
+    let cancellation = Arc::new(CancellationProbe::default());
     let server = RealMcpServer {
         received: received.clone(),
         listed: listed.clone(),
+        cancellation: cancellation.clone(),
     };
     let service = StreamableHttpService::new(
         move || Ok::<_, std::io::Error>(server.clone()),
@@ -210,6 +262,7 @@ async fn spawn_server() -> Result<
         received,
         listed,
         traffic,
+        cancellation,
         handle,
     ))
 }
@@ -237,7 +290,8 @@ async fn spawn_tls_server() -> Result<
     ),
     String,
 > {
-    let (backend_url, received, _listed, traffic, backend_handle) = spawn_server().await?;
+    let (backend_url, received, _listed, traffic, _cancellation, backend_handle) =
+        spawn_server().await?;
     let backend = url::Url::parse(&backend_url).map_err(|error| error.to_string())?;
     let backend_address = SocketAddr::new(
         backend
@@ -330,7 +384,7 @@ fn client() -> SafeRmcpClient {
 
 #[tokio::test]
 async fn real_rmcp_server_lists_calls_normalizes_and_closes_per_operation() {
-    let (url, received, listed, _traffic, server) = spawn_server().await.unwrap();
+    let (url, received, listed, _traffic, _cancellation, server) = spawn_server().await.unwrap();
     let client = client();
     let tools = client.list_tools(&url, None).await.unwrap();
     assert_eq!(tools.len(), 6);
@@ -442,6 +496,176 @@ async fn unreachable_server_is_an_error_not_an_empty_catalog() {
             .await
             .is_err()
     );
+}
+
+#[test]
+fn rmcp_run_cancellation_fixture_is_closed_and_current() {
+    let fixture = cancellation_fixture();
+    assert_eq!(
+        RMCP_RUN_CANCELLATION_FIXTURE.len(),
+        RMCP_RUN_CANCELLATION_FIXTURE_BYTES
+    );
+    assert_eq!(
+        openbot_domain::audit::hash::Sha256Digest::of(RMCP_RUN_CANCELLATION_FIXTURE.as_bytes())
+            .to_hex(),
+        RMCP_RUN_CANCELLATION_FIXTURE_SHA256
+    );
+    assert_eq!(fixture["schema"], "openbot-rmcp-run-cancellation-v1");
+    assert_eq!(fixture["protocolVersion"], "2026-07-28");
+    assert_eq!(fixture["transport"], "streamable-http");
+    let mut top = fixture
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    top.sort();
+    assert_eq!(top, ["cases", "protocolVersion", "schema", "transport"]);
+    let mut cases = fixture["cases"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    cases.sort();
+    assert_eq!(
+        cases,
+        ["beforeAnyNetwork", "duringFreshList", "duringToolCall"]
+    );
+    let sorted_keys = |value: &Value| {
+        let mut keys = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys
+    };
+    assert_eq!(
+        sorted_keys(&fixture["cases"]["beforeAnyNetwork"]),
+        ["acceptedSockets", "errorCode"]
+    );
+    assert_eq!(
+        sorted_keys(&fixture["cases"]["duringFreshList"]),
+        [
+            "errorCode",
+            "notificationMethod",
+            "reason",
+            "requestIdRequired",
+            "toolCalls",
+        ]
+    );
+    assert_eq!(
+        sorted_keys(&fixture["cases"]["duringToolCall"]),
+        [
+            "attemptStatus",
+            "commitState",
+            "errorCode",
+            "failedAudits",
+            "notificationMethod",
+            "reason",
+            "requestIdRequired",
+            "successAudits",
+        ]
+    );
+    assert_eq!(fixture["cases"]["beforeAnyNetwork"]["acceptedSockets"], 0);
+    assert_eq!(fixture["cases"]["duringFreshList"]["toolCalls"], 0);
+    assert_eq!(
+        fixture["cases"]["duringFreshList"]["notificationMethod"],
+        "notifications/cancelled"
+    );
+    assert_eq!(
+        fixture["cases"]["duringToolCall"]["notificationMethod"],
+        "notifications/cancelled"
+    );
+    assert_eq!(fixture["cases"]["duringToolCall"]["commitState"], "unknown");
+}
+
+#[tokio::test]
+async fn cancellation_already_requested_prevents_every_rmcp_network_effect() {
+    let fixture = cancellation_fixture();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (cancel, cancellation) = tool_execution_cancellation();
+    assert!(cancel.cancel(ToolCancellationReason::User));
+    let result = client()
+        .call_tool_bound_cancellable(
+            &format!("http://{address}/mcp"),
+            None,
+            "must_not_send",
+            openbot_domain::audit::hash::Sha256Digest::of(b"must-not-matter"),
+            json!({}),
+            cancellation,
+        )
+        .await;
+    assert_eq!(
+        result.as_ref().map_err(ToString::to_string),
+        Err(fixture["cases"]["beforeAnyNetwork"]["errorCode"]
+            .as_str()
+            .unwrap()
+            .to_owned())
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept())
+            .await
+            .is_err(),
+        "pre-cancelled call must not open a socket"
+    );
+}
+
+#[tokio::test]
+async fn cancellation_during_fresh_list_sends_exact_protocol_notification_before_tool_call() {
+    let fixture = cancellation_fixture();
+    let (url, _received, _listed, _traffic, probe, server) = spawn_server().await.unwrap();
+    probe.block_list.store(true, Ordering::Release);
+    let (cancel, cancellation) = tool_execution_cancellation();
+    let call = tokio::spawn(async move {
+        client()
+            .call_tool_bound_cancellable(
+                &url,
+                None,
+                "must_not_reach_call",
+                openbot_domain::audit::hash::Sha256Digest::of(b"must-not-matter"),
+                json!({}),
+                cancellation,
+            )
+            .await
+    });
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        probe.list_started.notified(),
+    )
+    .await
+    .expect("fresh tools/list starts");
+    assert!(cancel.cancel(ToolCancellationReason::Deadline));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        probe.notification_received.notified(),
+    )
+    .await
+    .expect("server receives list cancellation");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        probe.list_stopped.notified(),
+    )
+    .await
+    .expect("list handler stops");
+    assert_eq!(
+        call.await.unwrap().as_ref().map_err(ToString::to_string),
+        Err(fixture["cases"]["duringFreshList"]["errorCode"]
+            .as_str()
+            .unwrap()
+            .to_owned())
+    );
+    let notifications = probe.notifications.lock().unwrap().clone();
+    assert_eq!(notifications.len(), 1);
+    assert!(!notifications[0]["requestId"].is_null());
+    assert_eq!(
+        notifications[0]["reason"],
+        fixture["cases"]["duringFreshList"]["reason"]
+    );
+    server.abort();
 }
 
 #[tokio::test]
@@ -817,7 +1041,8 @@ async fn catalog_generation_suspends_missing_and_changed_grants_without_auto_rev
             native::apply(&mut pg)
                 .await
                 .map_err(|error| error.to_string())?;
-            let (url, _received, listed, _traffic, server) = spawn_server().await?;
+            let (url, _received, listed, _traffic, _cancellation, server) =
+                spawn_server().await?;
             let search = RealMcpServer::tools().remove(0);
             let schema = Value::Object((*search.input_schema).clone());
             let schema_hash = openbot_domain::audit::hash::Sha256Digest::of(
@@ -1058,6 +1283,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             .await
             .map_err(|error| error.to_string())?;
         let result = async {
+            let cancellation_contract = cancellation_fixture();
             let mut pg = pool.get().await.map_err(|error| error.to_string())?;
             baseline::apply(&pg)
                 .await
@@ -1065,7 +1291,8 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             native::apply(&mut pg)
                 .await
                 .map_err(|error| error.to_string())?;
-            let (url, received, _listed, _traffic, server) = spawn_server().await?;
+            let (url, received, listed, _traffic, cancellation, server) =
+                spawn_server().await?;
             pg.execute(
                 "INSERT INTO public.users(id,email,auth_generation)
                    VALUES('actor-mcp','actor-mcp@example.test',0)",
@@ -1264,6 +1491,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 .map_err(|error| error.to_string())?,
             );
             let memory = PostgresMemoryAdministration::new(pool.clone());
+            let tool_cancellations = Arc::new(ToolCancellationRegistry::default());
             let control = PostgresBuiltInToolControlPlane::new(
                 pool.clone(),
                 DeploymentId::new("deployment-mcp"),
@@ -1272,6 +1500,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 Arc::new(memory.clone()),
             )
             .with_mcp(catalog.clone(), rmcp)
+            .with_tool_cancellations(tool_cancellations.clone())
             .with_tool_approvals(approvals.clone());
             let application: Arc<dyn ApplicationService> = Arc::new(
                 OpenBotApplication::new(ChannelRepo::new(pool.clone()))
@@ -1284,7 +1513,8 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                     .with_memory(memory)
                     .with_tool_approvals(approvals.clone()),
             );
-            let gateway = Arc::new(AuthorizedAgentToolGateway::with_sequence(
+            let gateway = Arc::new(
+                AuthorizedAgentToolGateway::with_sequence_and_cancellations(
                 application,
                 Arc::new(PostgresAgentAuthorizationSource::new(
                     pool.clone(),
@@ -1293,6 +1523,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                     false,
                 )),
                 Arc::new(PostgresAgentToolSequence::new(pool.clone())),
+                tool_cancellations.clone(),
             ));
             let reply = gateway
                 .invoke(
@@ -1333,6 +1564,177 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             {
                 return Err(format!(
                     "MCP audit/sequence drift: {audit_actor:?}/{audit_bot:?}/{next_sequence:?}"
+                ));
+            }
+            drop(pg);
+
+            listed.lock().unwrap().push(Tool::new(
+                "wait_for_cancel",
+                "Waits until the exact MCP request is cancelled.",
+                {
+                    json!({"type":"object","properties":{}})
+                        .as_object()
+                        .cloned()
+                        .unwrap()
+                },
+            ));
+            catalog
+                .refresh("notes", None)
+                .await
+                .map_err(|error| error.to_string())?;
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.mcp_tools SET effect='read'
+                   WHERE server_id='notes' AND name='wait_for_cancel'",
+                &[],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            pg.execute(
+                "INSERT INTO public.plugin_grants(kind,ref,agent_id,granted_by)
+                   VALUES('mcp','notes/wait_for_cancel','holder-mcp','admin-mcp')",
+                &[],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            catalog
+                .refresh("notes", None)
+                .await
+                .map_err(|error| error.to_string())?;
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.plugin_grants g SET state='active',
+                   catalog_generation=s.catalog_generation,schema_hash=t.schema_hash,
+                   effect=t.effect,transport_fingerprint=s.catalog_transport_fingerprint,
+                   updated_at=clock_timestamp()
+                  FROM public.mcp_tools t JOIN public.mcp_servers s ON s.id=t.server_id
+                 WHERE g.kind='mcp' AND g.ref='notes/wait_for_cancel'
+                   AND g.agent_id='holder-mcp' AND t.server_id='notes'
+                   AND t.name='wait_for_cancel'",
+                &[],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+
+            let (cancel_handle, cancellation_receiver) = tool_execution_cancellation();
+            let cancelled_call = {
+                let gateway = gateway.clone();
+                let lease = lease.clone();
+                tokio::spawn(async move {
+                    gateway
+                        .invoke_cancellable(
+                            &lease,
+                            "provider-mcp-protocol-cancel",
+                            "mcp__notes__wait_for_cancel",
+                            json!({}),
+                            cancellation_receiver,
+                        )
+                        .await
+                })
+            };
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                cancellation.started.notified(),
+            )
+            .await
+            .map_err(|_| "RMCP cancellation tool never started".to_owned())?;
+            if !cancel_handle.cancel(ToolCancellationReason::User) {
+                return Err("first tool cancellation signal was not accepted".to_owned());
+            }
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                cancellation.notification_received.notified(),
+            )
+            .await
+            .map_err(|_| "server did not receive notifications/cancelled".to_owned())?;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                cancellation.handler_stopped.notified(),
+            )
+            .await
+            .map_err(|_| "server tool handler did not stop after protocol cancellation".to_owned())?;
+            let cancelled_result = cancelled_call
+                .await
+                .map_err(|error| error.to_string())?;
+            if cancelled_result != Err(openbot_agent::AgentToolInvokeError::ReconciliationRequired)
+            {
+                return Err(format!(
+                    "cancelled MCP result was not reconciliation: {cancelled_result:?}"
+                ));
+            }
+            let notifications = cancellation.notifications.lock().unwrap().clone();
+            if notifications.len() != 1
+                || notifications[0]["requestId"].is_null()
+                || notifications[0]["reason"]
+                    != cancellation_contract["cases"]["duringToolCall"]["reason"]
+                || notifications[0].get("_meta").is_some()
+            {
+                return Err(format!(
+                    "MCP cancellation notification drifted: {notifications:?}"
+                ));
+            }
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            let cancelled_evidence = pg
+                .query_one(
+                    "SELECT tc.tool_call_id,ta.status,ta.commit_state,ta.error_code,
+                            (SELECT count(*)::bigint FROM public.audit_events
+                              WHERE event_type='mcp.call_failed'
+                                AND target_id='notes/wait_for_cancel'
+                                AND payload->>'error_code'='mcp_cancelled_after_call'),
+                            (SELECT count(*)::bigint FROM public.audit_events
+                              WHERE event_type='mcp.call_succeeded'
+                                AND target_id='notes/wait_for_cancel')
+                       FROM public.tool_calls tc
+                       JOIN public.tool_attempts ta ON ta.tool_call_id=tc.tool_call_id
+                      WHERE tc.run_id='run-mcp'
+                        AND tc.tool_name='mcp__notes__wait_for_cancel'
+                      ORDER BY tc.call_seq DESC LIMIT 1",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let cancelled_call_id: String = cancelled_evidence
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            let cancelled_status: String = cancelled_evidence
+                .try_get(1)
+                .map_err(|error| error.to_string())?;
+            let cancelled_commit: Option<String> = cancelled_evidence
+                .try_get(2)
+                .map_err(|error| error.to_string())?;
+            let cancelled_code: Option<String> = cancelled_evidence
+                .try_get(3)
+                .map_err(|error| error.to_string())?;
+            let failed_audits: i64 = cancelled_evidence
+                .try_get(4)
+                .map_err(|error| error.to_string())?;
+            let false_success_audits: i64 = cancelled_evidence
+                .try_get(5)
+                .map_err(|error| error.to_string())?;
+            if cancelled_status
+                != cancellation_contract["cases"]["duringToolCall"]["attemptStatus"]
+                    .as_str()
+                    .unwrap()
+                || cancelled_commit.as_deref()
+                    != cancellation_contract["cases"]["duringToolCall"]["commitState"].as_str()
+                || cancelled_code.as_deref()
+                    != cancellation_contract["cases"]["duringToolCall"]["errorCode"].as_str()
+                || failed_audits
+                    != cancellation_contract["cases"]["duringToolCall"]["failedAudits"]
+                        .as_i64()
+                        .unwrap()
+                || false_success_audits
+                    != cancellation_contract["cases"]["duringToolCall"]["successAudits"]
+                        .as_i64()
+                        .unwrap()
+                || tool_cancellations
+                    .cancellation_for(&ToolCallId::new(cancelled_call_id))
+                    .is_some()
+            {
+                return Err(format!(
+                    "cancelled MCP durable evidence drifted: {cancelled_status}/{cancelled_commit:?}/{cancelled_code:?}/{failed_audits}/{false_success_audits}"
                 ));
             }
             drop(pg);
@@ -1685,7 +2087,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 .map_err(|error| error.to_string())?
                 .try_get(0)
                 .map_err(|error| error.to_string())?;
-            if rejected != 1 || sequence != Some(6) {
+            if rejected != 1 || sequence != Some(7) {
                 return Err(format!(
                     "policy audit/durable sequence drift: {rejected}/{sequence:?}"
                 ));
@@ -1707,7 +2109,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
                 .next(&sequence_run)
                 .await
                 .map_err(|error| error.to_string())?;
-            if allocated != [6, 7] || after_reconstruction != 8 {
+            if allocated != [7, 8] || after_reconstruction != 9 {
                 return Err(format!(
                     "cross-replica sequence allocation drift: {allocated:?}/{after_reconstruction}"
                 ));

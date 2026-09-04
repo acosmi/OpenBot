@@ -13,9 +13,9 @@ use futures_util::{StreamExt as _, stream};
 use http::header::{CONTENT_TYPE, HeaderName, HeaderValue, WWW_AUTHENTICATE};
 use http::{HeaderMap, StatusCode};
 use rmcp::model::{
-    CallToolRequest, CallToolRequestParams, ClientCapabilities, ClientInfo, ClientJsonRpcMessage,
-    ClientRequest, ContentBlock, Implementation, PaginatedRequestParams, ServerJsonRpcMessage,
-    ServerResult,
+    CallToolRequest, CallToolRequestParams, CancelledNotificationParam, ClientCapabilities,
+    ClientInfo, ClientJsonRpcMessage, ClientRequest, ContentBlock, Implementation,
+    ListToolsRequest, ListToolsResult, PaginatedRequestParams, ServerJsonRpcMessage, ServerResult,
 };
 use rmcp::service::PeerRequestOptions;
 use rmcp::transport::StreamableHttpClientTransport;
@@ -30,6 +30,7 @@ use sse_stream::{Sse, SseStream};
 use url::Url;
 use zeroize::Zeroizing;
 
+use openbot_application::ToolExecutionCancellation;
 use openbot_domain::audit::hash::Sha256Digest;
 
 use crate::net::safe_http::{
@@ -69,6 +70,15 @@ pub enum McpClientError {
     /// `tools/call` may have crossed the transport boundary, but no trustworthy outcome arrived.
     #[error("mcp_commit_unknown")]
     CommitUnknown,
+    /// The run was cancelled before the vendor `tools/call` request was sent.
+    #[error("mcp_cancelled_before_call")]
+    CancelledBeforeCall,
+    /// The vendor call was sent and a protocol cancellation was transmitted; commit is unknown.
+    #[error("mcp_cancelled_after_call")]
+    CancelledAfterCall,
+    /// The vendor call was sent but cancellation delivery could not be confirmed; commit is unknown.
+    #[error("mcp_cancel_notification_unknown")]
+    CancelNotificationUnknown,
     /// Server lacks tools capability or returned an invalid/oversized catalog.
     #[error("mcp_catalog_invalid")]
     InvalidCatalog,
@@ -208,12 +218,9 @@ impl SafeRmcpClient {
         bearer: Option<McpBearerToken>,
     ) -> Result<Vec<McpListedTool>, McpClientError> {
         let mut client = self.connect(endpoint, bearer).await?;
-        let result = tokio::time::timeout(MCP_LIST_TIMEOUT, list_all_tools(&client)).await;
+        let result = list_all_tools(&client, None).await;
         let _ = client.close_with_timeout(MCP_CLOSE_TIMEOUT).await;
-        match result {
-            Ok(result) => result,
-            Err(_) => Err(McpClientError::Timeout),
-        }
+        result
     }
 
     /// Per-call initialize → fresh list membership check → tools/call → close.
@@ -224,7 +231,7 @@ impl SafeRmcpClient {
         tool_name: &str,
         arguments: Value,
     ) -> Result<McpCallOutcome, McpClientError> {
-        self.call_tool_inner(endpoint, bearer, tool_name, None, arguments)
+        self.call_tool_inner(endpoint, bearer, tool_name, None, arguments, None)
             .await
     }
 
@@ -243,6 +250,31 @@ impl SafeRmcpClient {
             tool_name,
             Some(expected_schema_hash),
             arguments,
+            None,
+        )
+        .await
+    }
+
+    /// Execute one schema-bound call with a private Rust-host cancellation receiver.
+    ///
+    /// Once the request has been sent, cancellation transmits MCP
+    /// `notifications/cancelled` with the exact RMCP request ID before the service is closed.
+    pub async fn call_tool_bound_cancellable(
+        &self,
+        endpoint: &str,
+        bearer: Option<McpBearerToken>,
+        tool_name: &str,
+        expected_schema_hash: Sha256Digest,
+        arguments: Value,
+        cancellation: ToolExecutionCancellation,
+    ) -> Result<McpCallOutcome, McpClientError> {
+        self.call_tool_inner(
+            endpoint,
+            bearer,
+            tool_name,
+            Some(expected_schema_hash),
+            arguments,
+            Some(cancellation),
         )
         .await
     }
@@ -254,7 +286,15 @@ impl SafeRmcpClient {
         tool_name: &str,
         expected_schema_hash: Option<Sha256Digest>,
         arguments: Value,
+        mut cancellation: Option<ToolExecutionCancellation>,
     ) -> Result<McpCallOutcome, McpClientError> {
+        if cancellation
+            .as_ref()
+            .and_then(ToolExecutionCancellation::requested)
+            .is_some()
+        {
+            return Err(McpClientError::CancelledBeforeCall);
+        }
         if tool_name.is_empty()
             || tool_name.len() > 512
             || tool_name.as_bytes().contains(&0)
@@ -267,15 +307,11 @@ impl SafeRmcpClient {
             .cloned()
             .ok_or(McpClientError::InvalidCatalog)?;
         let mut client = self.connect(endpoint, bearer).await?;
-        let tools = match tokio::time::timeout(MCP_LIST_TIMEOUT, list_all_tools(&client)).await {
-            Ok(Ok(tools)) => tools,
-            Ok(Err(error)) => {
+        let tools = match list_all_tools(&client, cancellation.as_mut()).await {
+            Ok(tools) => tools,
+            Err(error) => {
                 let _ = client.close_with_timeout(MCP_CLOSE_TIMEOUT).await;
                 return Err(error);
-            }
-            Err(_) => {
-                let _ = client.close_with_timeout(MCP_CLOSE_TIMEOUT).await;
-                return Err(McpClientError::Timeout);
             }
         };
         let Some(live_tool) = tools.iter().find(|tool| tool.name == tool_name) else {
@@ -290,6 +326,14 @@ impl SafeRmcpClient {
             let _ = client.close_with_timeout(MCP_CLOSE_TIMEOUT).await;
             return Err(McpClientError::CatalogChanged);
         }
+        if cancellation
+            .as_ref()
+            .and_then(ToolExecutionCancellation::requested)
+            .is_some()
+        {
+            let _ = client.close_with_timeout(MCP_CLOSE_TIMEOUT).await;
+            return Err(McpClientError::CancelledBeforeCall);
+        }
         // From this await onward, a transport error or timeout cannot prove the vendor did not
         // receive a non-idempotent call. Keep that fact distinct from pre-call list/connect errors.
         let params = CallToolRequestParams::new(tool_name.to_owned()).with_arguments(arguments);
@@ -302,18 +346,30 @@ impl SafeRmcpClient {
             .send_cancellable_request(request, options)
             .await
         {
-            Ok(handle) => match handle.await_response().await {
-                Ok(ServerResult::CallToolResult(result)) => {
-                    normalize_result(&result.content, result.is_error == Some(true))
-                        .map_err(|_| McpClientError::CommitUnknown)
+            Ok(handle) => {
+                let request_id = handle.id.clone();
+                let peer = handle.peer.clone();
+                match cancellation.as_mut() {
+                    Some(cancellation) => {
+                        let response = handle.await_response();
+                        tokio::pin!(response);
+                        tokio::select! {
+                            biased;
+                            response = &mut response => map_call_response(response),
+                            reason = cancellation.cancelled() => {
+                                match peer.notify_cancelled(CancelledNotificationParam::new(
+                                    Some(request_id),
+                                    Some(reason.stable_code().to_owned()),
+                                )).await {
+                                    Ok(()) => Err(McpClientError::CancelledAfterCall),
+                                    Err(_) => Err(McpClientError::CancelNotificationUnknown),
+                                }
+                            }
+                        }
+                    }
+                    None => map_call_response(handle.await_response().await),
                 }
-                Ok(_) => Err(McpClientError::CommitUnknown),
-                Err(error) => match map_service_error(error) {
-                    McpClientError::AuthRequired => Err(McpClientError::AuthRequired),
-                    McpClientError::InsufficientScope => Err(McpClientError::InsufficientScope),
-                    _ => Err(McpClientError::CommitUnknown),
-                },
-            },
+            }
             Err(error) => Err(map_service_error(error)),
         };
         let _ = client.close_with_timeout(MCP_CLOSE_TIMEOUT).await;
@@ -352,9 +408,29 @@ impl SafeRmcpClient {
     }
 }
 
+fn map_call_response(
+    response: Result<ServerResult, rmcp::service::ServiceError>,
+) -> Result<McpCallOutcome, McpClientError> {
+    match response {
+        Ok(ServerResult::CallToolResult(result)) => {
+            normalize_result(&result.content, result.is_error == Some(true))
+                .map_err(|_| McpClientError::CommitUnknown)
+        }
+        Ok(_) => Err(McpClientError::CommitUnknown),
+        Err(error) => match map_service_error(error) {
+            McpClientError::AuthRequired => Err(McpClientError::AuthRequired),
+            McpClientError::InsufficientScope => Err(McpClientError::InsufficientScope),
+            _ => Err(McpClientError::CommitUnknown),
+        },
+    }
+}
+
 type RunningRmcpClient = rmcp::service::RunningService<RoleClient, ClientInfo>;
 
-async fn list_all_tools(client: &RunningRmcpClient) -> Result<Vec<McpListedTool>, McpClientError> {
+async fn list_all_tools(
+    client: &RunningRmcpClient,
+    mut cancellation: Option<&mut ToolExecutionCancellation>,
+) -> Result<Vec<McpListedTool>, McpClientError> {
     if client
         .peer_info()
         .as_ref()
@@ -365,15 +441,34 @@ async fn list_all_tools(client: &RunningRmcpClient) -> Result<Vec<McpListedTool>
     let mut cursor = None;
     let mut output = Vec::new();
     let mut names = BTreeSet::new();
+    let deadline = tokio::time::Instant::now() + MCP_LIST_TIMEOUT;
     loop {
-        let page = client
-            .list_tools(
-                cursor
-                    .clone()
-                    .map(|value| PaginatedRequestParams::default().with_cursor(Some(value))),
-            )
+        if cancellation
+            .as_deref()
+            .and_then(ToolExecutionCancellation::requested)
+            .is_some()
+        {
+            return Err(McpClientError::CancelledBeforeCall);
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(McpClientError::Timeout);
+        }
+        let params = cursor
+            .clone()
+            .map(|value| PaginatedRequestParams::default().with_cursor(Some(value)));
+        let request = ClientRequest::ListToolsRequest(ListToolsRequest {
+            method: Default::default(),
+            params,
+            extensions: Default::default(),
+        });
+        let options = PeerRequestOptions::with_timeout(remaining).with_max_total_timeout(remaining);
+        let handle = client
+            .peer()
+            .send_cancellable_request(request, options)
             .await
             .map_err(map_service_error)?;
+        let page = await_list_response(handle, cancellation.as_deref_mut()).await?;
         for tool in page.tools {
             if output.len() >= MAX_MCP_TOOLS {
                 return Err(McpClientError::InvalidCatalog);
@@ -409,6 +504,43 @@ async fn list_all_tools(client: &RunningRmcpClient) -> Result<Vec<McpListedTool>
         }
     }
     Ok(output)
+}
+
+async fn await_list_response(
+    handle: rmcp::service::RequestHandle<RoleClient>,
+    cancellation: Option<&mut ToolExecutionCancellation>,
+) -> Result<ListToolsResult, McpClientError> {
+    let response = match cancellation {
+        Some(cancellation) => {
+            let request_id = handle.id.clone();
+            let peer = handle.peer.clone();
+            let response = handle.await_response();
+            tokio::pin!(response);
+            tokio::select! {
+                biased;
+                response = &mut response => response,
+                reason = cancellation.cancelled() => {
+                    if peer.notify_cancelled(CancelledNotificationParam::new(
+                        Some(request_id),
+                        Some(reason.stable_code().to_owned()),
+                    )).await.is_err() {
+                        tracing::warn!(
+                            code = "mcp_list_cancel_notification_unknown",
+                            "RMCP tools/list cancellation delivery could not be confirmed"
+                        );
+                    }
+                    return Err(McpClientError::CancelledBeforeCall);
+                }
+            }
+        }
+        None => handle.await_response().await,
+    };
+    match response {
+        Ok(ServerResult::ListToolsResult(page)) => Ok(page),
+        Ok(_) => Err(McpClientError::InvalidCatalog),
+        Err(rmcp::service::ServiceError::Timeout { .. }) => Err(McpClientError::Timeout),
+        Err(error) => Err(map_service_error(error)),
+    }
 }
 
 fn map_service_error(error: rmcp::service::ServiceError) -> McpClientError {

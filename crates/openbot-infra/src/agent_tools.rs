@@ -9,8 +9,9 @@ use openbot_application::{
     AgentAuthorizationError, AgentAuthorizationSource, AuthorizedToolCall, ExecutableToolCall,
     REMEMBER_TOOL_NAME, RememberToolArguments, RememberToolMemory, RememberToolMemoryRequest,
     ResolvedToolScope, ToolApprovalPresentation, ToolApprovalRequest, ToolCallSequence,
-    ToolCallSequenceError, ToolControlPlane, ToolExecutionReport, ToolPolicyEvaluation,
-    ToolPortError, ToolPreflightRefusal, parse_remember_tool_arguments, remember_tool_metadata,
+    ToolCallSequenceError, ToolCancellationRegistry, ToolControlPlane, ToolExecutionCancellation,
+    ToolExecutionReport, ToolPolicyEvaluation, ToolPortError, ToolPreflightRefusal,
+    parse_remember_tool_arguments, remember_tool_metadata,
 };
 use openbot_contracts::auth::{AuthContext, AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::ids::{ActorId, ComputerGeneration, DeploymentId, RunId, TenantId};
@@ -241,6 +242,7 @@ pub struct PostgresBuiltInToolControlPlane<M> {
     mcp: Option<McpToolRuntime>,
     drive: Option<GoogleDriveRestTransport>,
     approvals: Option<Arc<PostgresToolApprovalCoordinator>>,
+    cancellations: Option<Arc<ToolCancellationRegistry>>,
 }
 
 #[derive(Clone)]
@@ -274,6 +276,7 @@ impl<M> PostgresBuiltInToolControlPlane<M> {
             mcp: None,
             drive: None,
             approvals: None,
+            cancellations: None,
         }
     }
 
@@ -302,6 +305,13 @@ impl<M> PostgresBuiltInToolControlPlane<M> {
         self
     }
 
+    /// Attach the process-local registry shared with the Rust Agent gateway.
+    #[must_use]
+    pub fn with_tool_cancellations(mut self, cancellations: Arc<ToolCancellationRegistry>) -> Self {
+        self.cancellations = Some(cancellations);
+        self
+    }
+
     /// Attach fresh Vault-backed credential selection after the protocol runtime is present.
     #[must_use]
     pub fn with_mcp_credentials(mut self, credentials: Arc<PostgresMcpCredentialBroker>) -> Self {
@@ -322,6 +332,7 @@ impl<M> core::fmt::Debug for PostgresBuiltInToolControlPlane<M> {
             .field("mcp", &self.mcp.is_some())
             .field("drive", &self.drive.is_some())
             .field("approvals", &self.approvals.is_some())
+            .field("cancellations", &self.cancellations.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -759,6 +770,23 @@ where
                     Some("mcp_scope_stale"),
                 );
             }
+            let cancellation = self
+                .cancellations
+                .as_ref()
+                .and_then(|registry| registry.cancellation_for(call.call_id()));
+            if cancellation
+                .as_ref()
+                .and_then(ToolExecutionCancellation::requested)
+                .is_some()
+            {
+                return ToolExecutionReport::new(
+                    redeemed,
+                    "That tool call was cancelled before it reached the vendor.".to_owned(),
+                    CommitState::NotCommitted,
+                    started.elapsed(),
+                    Some("mcp_cancelled_before_call"),
+                );
+            }
             let bearer = match resolve_mcp_bearer(runtime, &tool, call.actor().actor()).await {
                 Ok(bearer) => bearer,
                 Err(error) => {
@@ -780,6 +808,7 @@ where
                 &tool,
                 bearer,
                 arguments.clone(),
+                cancellation.clone(),
             )
             .await;
             // §9.4 permits exactly one controlled refresh after a resource-server 401. The broker
@@ -815,6 +844,7 @@ where
                     &tool,
                     Some(retry_bearer),
                     arguments,
+                    cancellation,
                 )
                 .await;
             }
@@ -847,6 +877,28 @@ where
                     CommitState::Unknown,
                     started.elapsed(),
                     Some("mcp_commit_unknown"),
+                ),
+                Err(McpClientError::CancelledAfterCall) => ToolExecutionReport::new(
+                    redeemed,
+                    "That tool call was cancelled after it may have reached the vendor.".to_owned(),
+                    CommitState::Unknown,
+                    started.elapsed(),
+                    Some("mcp_cancelled_after_call"),
+                ),
+                Err(McpClientError::CancelNotificationUnknown) => ToolExecutionReport::new(
+                    redeemed,
+                    "That tool call was cancelled, but cancellation delivery could not be confirmed."
+                        .to_owned(),
+                    CommitState::Unknown,
+                    started.elapsed(),
+                    Some("mcp_cancel_notification_unknown"),
+                ),
+                Err(McpClientError::CancelledBeforeCall) => ToolExecutionReport::new(
+                    redeemed,
+                    "That tool call was cancelled before it reached the vendor.".to_owned(),
+                    CommitState::NotCommitted,
+                    started.elapsed(),
+                    Some("mcp_cancelled_before_call"),
                 ),
                 Err(McpClientError::AuthRequired) => ToolExecutionReport::new(
                     redeemed,
@@ -984,20 +1036,38 @@ async fn call_vendor_tool(
     tool: &GrantedMcpTool,
     bearer: Option<crate::mcp::McpBearerToken>,
     arguments: serde_json::Value,
+    cancellation: Option<ToolExecutionCancellation>,
 ) -> Result<crate::mcp::McpCallOutcome, McpClientError> {
     match tool.transport {
         VendorTransportKind::Mcp => {
-            runtime
+            let client = runtime
                 .client
-                .with_egress_allowlist(tool.egress_allowlist.clone())
-                .call_tool_bound(
-                    &tool.endpoint,
-                    bearer,
-                    &tool.raw_name,
-                    tool.schema_hash,
-                    arguments,
-                )
-                .await
+                .with_egress_allowlist(tool.egress_allowlist.clone());
+            match cancellation {
+                Some(cancellation) => {
+                    client
+                        .call_tool_bound_cancellable(
+                            &tool.endpoint,
+                            bearer,
+                            &tool.raw_name,
+                            tool.schema_hash,
+                            arguments,
+                            cancellation,
+                        )
+                        .await
+                }
+                None => {
+                    client
+                        .call_tool_bound(
+                            &tool.endpoint,
+                            bearer,
+                            &tool.raw_name,
+                            tool.schema_hash,
+                            arguments,
+                        )
+                        .await
+                }
+            }
         }
         VendorTransportKind::GoogleDriveRest => {
             let drive = drive.ok_or(McpClientError::ToolMissing)?;

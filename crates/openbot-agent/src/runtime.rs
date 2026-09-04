@@ -14,6 +14,7 @@ use openbot_application::{
     ProviderRoute, RemoteInterruptCoordinator, RemoteInterruptError, RunCancellationDisposition,
     RunCostCap, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode,
     RunRuntime, RunRuntimeError, RunTerminal, RunTokenUsageReceipt, RunToolExchange,
+    ToolCancellationHandle, ToolCancellationReason, tool_execution_cancellation,
 };
 use openbot_contracts::components::is_component_human_decision_name;
 use openbot_domain::agent::{
@@ -41,6 +42,8 @@ pub const DEFAULT_AGENT_CONCURRENCY: usize = 8;
 pub const DEFAULT_AGENT_TOOL_CONCURRENCY: usize = 8;
 /// Hard configuration ceiling for process-wide tool concurrency.
 pub const MAX_AGENT_TOOL_CONCURRENCY: usize = 256;
+/// Bounded grace for a protocol-aware tool to transmit cancellation and stop its child.
+const TOOL_CANCELLATION_GRACE: Duration = Duration::from_secs(5);
 
 /// Built-in runtime configuration。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1171,10 +1174,17 @@ async fn invoke_serial_tool(
     let invocation_lease = lease.clone();
     let provider_call_id = call.call_id.clone();
     let tool_name = call.name.clone();
+    let (tool_cancel, tool_cancellation) = tool_execution_cancellation();
     let invocation = async move {
         let _budget = budget;
         tools
-            .invoke(&invocation_lease, &provider_call_id, &tool_name, arguments)
+            .invoke_cancellable(
+                &invocation_lease,
+                &provider_call_id,
+                &tool_name,
+                arguments,
+                tool_cancellation,
+            )
             .await
     };
     let outcome = if waits_for_human {
@@ -1202,8 +1212,9 @@ async fn invoke_serial_tool(
             ControlledChild::LeaseLost => ControlledChild::LeaseLost,
         }
     } else {
-        await_run_child(
-            invocation,
+        match await_cancellable_tool_task(
+            tokio::spawn(invocation),
+            &tool_cancel,
             control.cancel,
             control.renew,
             control.deadline,
@@ -1211,6 +1222,18 @@ async fn invoke_serial_tool(
             lease,
         )
         .await
+        {
+            ControlledChild::Ready(Ok(result)) => ControlledChild::Ready(result),
+            ControlledChild::Ready(Err(error)) => {
+                tracing::error!(
+                    cancelled = error.is_cancelled(),
+                    "tool invocation task ended without a result"
+                );
+                ControlledChild::Ready(Err(AgentToolInvokeError::Unavailable))
+            }
+            ControlledChild::Cancelled(source) => ControlledChild::Cancelled(source),
+            ControlledChild::LeaseLost => ControlledChild::LeaseLost,
+        }
     };
     if waits_for_human && matches!(&outcome, ControlledChild::Ready(_)) {
         let Ok((next, effects)) = reduce(state, AgentEvent::HumanReleased) else {
@@ -1454,6 +1477,68 @@ where
                 }
             }
             result = &mut child => return ControlledChild::Ready(result),
+        }
+    }
+}
+
+async fn await_cancellable_tool_task<T>(
+    mut child: JoinHandle<T>,
+    tool_cancel: &ToolCancellationHandle,
+    cancel: &mut watch::Receiver<bool>,
+    renew: &mut tokio::time::Interval,
+    deadline: Option<tokio::time::Instant>,
+    runtime: &dyn RunRuntime,
+    lease: &RunExecutionLease,
+) -> ControlledChild<Result<T, tokio::task::JoinError>> {
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut child => return ControlledChild::Ready(result),
+            changed = cancel.changed() => {
+                if changed.is_err() || *cancel.borrow() {
+                    tool_cancel.cancel(ToolCancellationReason::User);
+                    stop_cancellable_tool_task(&mut child, renew, runtime, lease).await;
+                    return ControlledChild::Cancelled(CancellationSource::User);
+                }
+            }
+            () = wait_optional(deadline) => {
+                tool_cancel.cancel(ToolCancellationReason::Deadline);
+                stop_cancellable_tool_task(&mut child, renew, runtime, lease).await;
+                return ControlledChild::Cancelled(CancellationSource::Deadline);
+            }
+            _ = renew.tick() => {
+                if runtime.renew_lease(lease).await.is_err() {
+                    tool_cancel.cancel(ToolCancellationReason::LeaseLost);
+                    stop_cancellable_tool_task(&mut child, renew, runtime, lease).await;
+                    return ControlledChild::LeaseLost;
+                }
+            }
+        }
+    }
+}
+
+async fn stop_cancellable_tool_task<T>(
+    child: &mut JoinHandle<T>,
+    renew: &mut tokio::time::Interval,
+    runtime: &dyn RunRuntime,
+    lease: &RunExecutionLease,
+) {
+    let stop_deadline = tokio::time::Instant::now() + TOOL_CANCELLATION_GRACE;
+    loop {
+        tokio::select! {
+            _ = &mut *child => return,
+            () = tokio::time::sleep_until(stop_deadline) => {
+                child.abort();
+                let _ = child.await;
+                return;
+            }
+            _ = renew.tick() => {
+                if runtime.renew_lease(lease).await.is_err() {
+                    child.abort();
+                    let _ = child.await;
+                    return;
+                }
+            }
         }
     }
 }
@@ -2542,6 +2627,47 @@ mod tests {
         second_scheduled: Notify,
     }
 
+    struct CooperativeCancellationToolInvoker {
+        started: Notify,
+        stopped: Arc<AtomicBool>,
+        reason: StdMutex<Option<ToolCancellationReason>>,
+    }
+
+    struct StopAwareDeadlineAudit {
+        stopped: Arc<AtomicBool>,
+        observed: AtomicBool,
+    }
+
+    impl CooperativeCancellationToolInvoker {
+        fn new() -> Self {
+            Self {
+                started: Notify::new(),
+                stopped: Arc::new(AtomicBool::new(false)),
+                reason: StdMutex::new(None),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AgentAudit for StopAwareDeadlineAudit {
+        async fn record(
+            &self,
+            _lease: &RunExecutionLease,
+            kind: AgentAuditKind,
+        ) -> Result<(), AgentAuditError> {
+            if kind == AgentAuditKind::RunDeadlineExceeded {
+                assert!(
+                    self.stopped.load(AtomicOrdering::SeqCst),
+                    "deadline audit must follow cooperative child stop"
+                );
+                self.observed.store(true, AtomicOrdering::SeqCst);
+            } else {
+                assert_eq!(kind, AgentAuditKind::Invoked);
+            }
+            Ok(())
+        }
+    }
+
     impl BudgetBlockingToolInvoker {
         fn new() -> Self {
             Self {
@@ -2681,6 +2807,36 @@ mod tests {
                 self.first_started.notify_one();
             }
             pending().await
+        }
+    }
+
+    #[async_trait]
+    impl AgentToolInvoker for CooperativeCancellationToolInvoker {
+        async fn invoke(
+            &self,
+            _lease: &RunExecutionLease,
+            _provider_call_id: &str,
+            _tool_name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
+            pending().await
+        }
+
+        async fn invoke_cancellable(
+            &self,
+            _lease: &RunExecutionLease,
+            _provider_call_id: &str,
+            tool_name: &str,
+            arguments: serde_json::Value,
+            mut cancellation: openbot_application::ToolExecutionCancellation,
+        ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
+            assert_eq!(tool_name, "remember");
+            assert_eq!(arguments, serde_json::json!({"content":"tea"}));
+            self.started.notify_one();
+            let reason = cancellation.cancelled().await;
+            *self.reason.lock().expect("cancellation reason") = Some(reason);
+            self.stopped.store(true, AtomicOrdering::SeqCst);
+            Err(AgentToolInvokeError::ReconciliationRequired)
         }
     }
 
@@ -3918,6 +4074,152 @@ mod tests {
                 RunTerminal::Failed(RunFailureCode::ProviderInvalidResponse)
             )]
         );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn serial_tool_receives_run_cancel_and_stops_before_reconciliation_terminal() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let provider = Arc::new(SequencedProvider {
+            sessions: StdMutex::new(
+                vec![vec![
+                    ProviderEvent::ToolCallCompleted {
+                        index: 0,
+                        call_id: "provider-cooperative-cancel".to_owned(),
+                        name: "remember".to_owned(),
+                        arguments: serde_json::json!({"content":"tea"}),
+                    },
+                    ProviderEvent::Usage(ProviderUsage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                    }),
+                    ProviderEvent::Completed,
+                ]]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        });
+        let tools = Arc::new(CooperativeCancellationToolInvoker::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            provider,
+            tools.clone(),
+            Arc::new(NoAgentAudit),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-cooperative-tool-cancel");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), tools.started.notified())
+            .await
+            .expect("tool invocation starts");
+
+        assert_eq!(
+            consumer.revoke(&lease).await,
+            RunCancellationDisposition::ChildSignalled
+        );
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .expect("reconciliation terminal");
+        assert!(tools.stopped.load(AtomicOrdering::SeqCst));
+        assert_eq!(
+            *tools.reason.lock().expect("cancellation reason"),
+            Some(ToolCancellationReason::User)
+        );
+        assert!(runtime.calls().iter().any(|call| {
+            matches!(
+                call,
+                RuntimeCall::Finish(
+                    1,
+                    RunTerminal::ReconciliationRequired(RunFailureCode::JournalCommitUnknown)
+                )
+            )
+        }));
+        assert!(
+            !runtime
+                .calls()
+                .iter()
+                .any(|call| matches!(call, RuntimeCall::ToolExchange(..)))
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn serial_tool_receives_deadline_reason_before_reconciliation_terminal() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let provider = Arc::new(SequencedProvider {
+            sessions: StdMutex::new(
+                vec![vec![
+                    ProviderEvent::ToolCallCompleted {
+                        index: 0,
+                        call_id: "provider-cooperative-deadline".to_owned(),
+                        name: "remember".to_owned(),
+                        arguments: serde_json::json!({"content":"tea"}),
+                    },
+                    ProviderEvent::Usage(ProviderUsage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                    }),
+                    ProviderEvent::Completed,
+                ]]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        });
+        let tools = Arc::new(CooperativeCancellationToolInvoker::new());
+        let audit = Arc::new(StopAwareDeadlineAudit {
+            stopped: tools.stopped.clone(),
+            observed: AtomicBool::new(false),
+        });
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            provider,
+            tools.clone(),
+            audit.clone(),
+            BuiltInAgentConfig {
+                run_deadline: Some(Duration::from_millis(100)),
+                ..test_config()
+            },
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-cooperative-tool-deadline");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), tools.started.notified())
+            .await
+            .expect("tool invocation starts before deadline");
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .expect("deadline reconciliation terminal");
+
+        assert!(tools.stopped.load(AtomicOrdering::SeqCst));
+        assert_eq!(
+            *tools.reason.lock().expect("deadline reason"),
+            Some(ToolCancellationReason::Deadline)
+        );
+        assert!(audit.observed.load(AtomicOrdering::SeqCst));
+        assert!(runtime.calls().iter().any(|call| {
+            matches!(
+                call,
+                RuntimeCall::Finish(
+                    1,
+                    RunTerminal::ReconciliationRequired(RunFailureCode::JournalCommitUnknown)
+                )
+            )
+        }));
         agent.stop().await;
     }
 

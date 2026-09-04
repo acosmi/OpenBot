@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 46
+    expect: 47
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 22
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 24
+    expect: 25
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 46 46
+    expect: 47 47
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 36 0
+    expect: 10 37 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -356,6 +356,23 @@ entries:
       没有text/reasoning delta，因此关闭OpenAI的1/3 provider-gate子证据，但不能替代仍todo的
       T-FIX-0013最小text skeleton，也不冒充live credential调用、Anthropic/Google或完整G4。
 
+  - id: mcp-run-protocol-cancellation
+    upstream: "-"
+    label: 新增
+    target: fixtures/mcp/rmcp-run-cancellation.json -> openbot_agent::runtime + openbot_infra::mcp
+    owner: openbot-agent
+    test_id: T-FIX-0047
+    migration_rule: "n/a: v4 §7.4/§9.1 Rust-owned run cancellation向RMCP tools/list与tools/call传播的协议级安全闭包"
+    status: done
+    evidence: "closed fixture固定MCP 2026-07-28 Streamable HTTP三态：信号已存在时socket=0；fresh tools/list在deadline时发送带exact requestId的notifications/cancelled且tool call=0；tools/call已开始后的user cancel先发protocol notification、等待server RequestContext停止，再按unknown进入reconciliation"
+    done_evidence: "fixture=806 bytes/SHA-256 23bcd6d0184f729d437c9db08305ce34d9f4f096e90764e1dc5d4466c1d36f0a；Application cancellation registry=1/0/0；Agent user/deadline cooperative stop=2/0/0且child stopped先于reconciliation terminal；RMCP非PG=6/0/3 ignored，PG17.11 SCRAM+official RMCP server完整=9/0/0。真实server分别收到reason=run_deadline_exceeded/run_cancelled且requestId非空；call取消后tool_attempt=reconciliation_required/unknown/mcp_cancelled_after_call，mcp.call_failed=1、success=0、registry残留0；pre-cancel socket accept=0"
+    notes: >-
+      sender/receiver与registry均private/non-serde；外部ToolInvocation即使自报同callId也不能插入
+      cancellation authority。取消通知发送失败单独落mcp_cancel_notification_unknown，绝不冒充已送达；
+      5秒合作收口窗耗尽后仍abort并reconciliation。该fixture只关闭Rust run→RMCP list/call cancel纵向；
+      T-FIX-0018仍需完整官方conformance的initialize/capability/list/call/cancel/timeout/progress全套，
+      computer/file/shell进程树与各自协议取消继续todo。
+
   - id: db-seed-0012
     upstream: "-"
     label: 新增
@@ -625,8 +642,12 @@ entries:
       需录：RMCP 官方 conformance 套件里与本产品相关的每一条 case 的请求 / 响应对，外加 initialize、capability negotiation、tools/list、tools/call、cancel、timeout、progress 六个面各一组。
       录制前提：RMCP 3.1.4 的官方 conformance 套件与一个符合 MCP 2026-07-28 的测试服务器。
       验收判据：通过率 100%，**且不允许存在 expected-failure baseline 文件**——有豁免名单就等于没有闸门（这条判据本身要有正向对照：故意打坏一条 case 必须判红）。
-      阻塞原因：本机没有 RMCP conformance 套件副本，crates/openbot-agent 是空骨架，且本轮不联网取证。
-      解除条件：把 conformance 套件以固定版本 vendored 进仓并写进 tools/pins.toml（含 sha256），随后离线可跑。
+      当前部分证据：T-FIX-0047已用钉版RMCP 3.1.4官方server真实覆盖run→tools/list与
+      tools/call的protocol cancellation、requestId、deadline/user reason与unknown commit；既有测试也覆盖
+      initialize/list/call/close与progress-aware timeout配置。但这不是官方conformance套件全量结果，不能勾本项。
+      阻塞原因：仓内尚无固定版本、固定hash、可离线运行的RMCP官方conformance套件与逐case结果。
+      解除条件：把conformance套件以固定版本vendored进仓并写进tools/pins.toml（含sha256），随后对
+      initialize/capability/list/call/cancel/timeout/progress全套实跑100%，故意破坏任一case必须判红。
   - id: mcp-catalog-generation-drift
     upstream: server/src/plugins/store.ts
     label: parity

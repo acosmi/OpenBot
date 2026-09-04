@@ -192,9 +192,11 @@ pub use service::{
 pub use tool::{
     AuthorizedToolCall, ExecutableToolCall, NoToolControlPlane, NoToolJournal, ResolvedToolScope,
     ToolApprovalPresentation, ToolApprovalRequest, ToolAuditDraftError, ToolCallSequence,
-    ToolCallSequenceError, ToolControlPlane, ToolDecisionDraft, ToolExecutionReport, ToolJournal,
-    ToolOutcomeDraft, ToolPolicyEvaluation, ToolPortError, ToolPreflightRefusal, ToolRefusalDraft,
-    invoke_tool,
+    ToolCallSequenceError, ToolCancellationHandle, ToolCancellationReason,
+    ToolCancellationRegistration, ToolCancellationRegistry, ToolControlPlane, ToolDecisionDraft,
+    ToolExecutionCancellation, ToolExecutionReport, ToolJournal, ToolOutcomeDraft,
+    ToolPolicyEvaluation, ToolPortError, ToolPreflightRefusal, ToolRefusalDraft, invoke_tool,
+    tool_execution_cancellation,
 };
 pub use ui_preferences::{
     NoUiPreferenceAdministration, UiPreferenceAdministration, UiPreferenceAdministrationError,

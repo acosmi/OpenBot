@@ -1,0 +1,28 @@
+{
+  "schema": "openbot-rmcp-run-cancellation-v1",
+  "protocolVersion": "2026-07-28",
+  "transport": "streamable-http",
+  "cases": {
+    "beforeAnyNetwork": {
+      "acceptedSockets": 0,
+      "errorCode": "mcp_cancelled_before_call"
+    },
+    "duringFreshList": {
+      "notificationMethod": "notifications/cancelled",
+      "reason": "run_deadline_exceeded",
+      "requestIdRequired": true,
+      "toolCalls": 0,
+      "errorCode": "mcp_cancelled_before_call"
+    },
+    "duringToolCall": {
+      "notificationMethod": "notifications/cancelled",
+      "reason": "run_cancelled",
+      "requestIdRequired": true,
+      "attemptStatus": "reconciliation_required",
+      "commitState": "unknown",
+      "errorCode": "mcp_cancelled_after_call",
+      "failedAudits": 1,
+      "successAudits": 0
+    }
+  }
+}

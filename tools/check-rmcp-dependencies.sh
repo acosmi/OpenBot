@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# G4 Batch 11: pinned RMCP/schema feature graph, provenance, build scripts and Vet delta.
+# G4 RMCP gate: pinned graph/provenance plus Batch105 protocol-cancellation wiring.
 set -euo pipefail
 
 fail() {
@@ -31,6 +31,21 @@ done
 
 rmcp_callers=$(rg -l 'rmcp::' crates/*/src --glob '*.rs' | sort)
 [[ "$rmcp_callers" == 'crates/openbot-infra/src/mcp.rs' ]] || fail "rmcp types escaped the single infra boundary: [$rmcp_callers]"
+for anchor in \
+  'send_cancellable_request(request, options)' \
+  'notify_cancelled(CancelledNotificationParam::new(' \
+  '.reset_timeout_on_progress()' \
+  '.with_max_total_timeout(MCP_CALL_TIMEOUT)'; do
+  grep -qF "$anchor" crates/openbot-infra/src/mcp.rs \
+    || fail "RMCP request cancellation/progress boundary drifted: $anchor"
+done
+grep -qF '.with_tool_cancellations(tool_cancellations.clone())' \
+  crates/openbot-infra/src/application_assembly.rs \
+  || fail 'shared ApplicationService assembly no longer binds exact-call cancellation'
+for host in crates/openbot-server/src/main.rs crates/openbot-desktop/src/desktop_agent_runtime.rs; do
+  grep -qF 'AuthorizedAgentToolGateway::with_sequence_and_cancellations(' "$host" \
+    || fail "$host bypasses the shared tool cancellation registry"
+done
 grep -qF 'jsonschema::PatternOptions::regex()' crates/openbot-infra/src/mcp_catalog.rs || fail 'untrusted JSON Schema patterns must use the linear regex engine'
 if rg -q 'jsonschema::validator_for|jsonschema::draft[0-9]+::validator_for' crates/openbot-infra/src; then
   fail 'a JSON Schema compile path bypasses the bounded compile_schema configuration'
@@ -86,10 +101,12 @@ d=json.load(open("provenance/sources.spdx.json"))
 expected={
  "SPDXRef-Package-rmcp":("3.1.4","Apache-2.0"),
  "SPDXRef-Package-jsonschema":("0.51.0","MIT"),
+ "SPDXRef-Package-openai-dotnet-recorded-trace":("19d0a3cb8e0cf0f3137a5c56c3c70a0c3f6c96f5","MIT"),
 }
 seen={p["SPDXID"]:(p.get("versionInfo"),p.get("licenseDeclared")) for p in d["packages"] if p["SPDXID"] in expected}
 assert seen==expected,(seen,expected)
-assert len(d["packages"])==55,len(d["packages"])
+ids=[p["SPDXID"] for p in d["packages"]]
+assert len(d["packages"])==56 and len(ids)==len(set(ids)),(len(d["packages"]),len(set(ids)))
 ' || fail 'RMCP/schema SPDX identity, license declaration or package count drifted'
 
-printf 'RMCP dependency guard: ok (rmcp 3.1.4 commit 4a738b9d; no reqwest; 4 pinned build.rs; 32 explicit non-audit exemptions)\n'
+printf 'RMCP dependency guard: ok (rmcp 3.1.4 commit 4a738b9d; protocol cancel/progress; no reqwest; 4 pinned build.rs; 32 explicit non-audit exemptions)\n'

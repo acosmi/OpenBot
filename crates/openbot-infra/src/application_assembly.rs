@@ -11,7 +11,8 @@ use std::time::Duration;
 use deadpool_postgres::Pool;
 use openbot_application::provider::RemoteAguiTransport;
 use openbot_application::{
-    ApplicationService, OpenBotApplication, ProviderAdapter, RunRuntime, UiPreferenceAdministration,
+    ApplicationService, OpenBotApplication, ProviderAdapter, RunRuntime, ToolCancellationRegistry,
+    UiPreferenceAdministration,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use openbot_domain::identity::roles::AdminFloor;
@@ -140,6 +141,7 @@ pub struct PostgresApplicationAssembly {
     pub sandboxed_components: Arc<PostgresSandboxedComponentAdministration>,
     pub mcp_connections: Arc<PostgresMcpConnections>,
     pub remote_callback_auth: Arc<PostgresRemoteCallbackAuthenticator>,
+    pub tool_cancellations: Arc<ToolCancellationRegistry>,
     pub mcp_revocation_reconciler: McpRevocationReconciler,
 }
 
@@ -161,6 +163,7 @@ impl core::fmt::Debug for PostgresApplicationAssembly {
                 "remote_callback_auth",
                 &"PostgresRemoteCallbackAuthenticator",
             )
+            .field("tool_cancellations", &self.tool_cancellations)
             .field("mcp_revocation_reconciler", &"running")
             .finish()
     }
@@ -329,6 +332,7 @@ pub async fn assemble_postgres_application(
         )
         .map_err(|_| fail("tool_approvals"))?,
     );
+    let tool_cancellations = Arc::new(ToolCancellationRegistry::default());
     let tool_control = PostgresBuiltInToolControlPlane::new(
         pool.clone(),
         deployment.clone(),
@@ -339,6 +343,7 @@ pub async fn assemble_postgres_application(
     .with_mcp(mcp_catalog.clone(), mcp_client)
     .with_google_drive(drive_transport)
     .with_tool_approvals(tool_approvals.clone())
+    .with_tool_cancellations(tool_cancellations.clone())
     .with_mcp_credentials(mcp_credentials);
     let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.to_vec())
         .map_err(|_| fail("tool_journal"))?;
@@ -412,6 +417,7 @@ pub async fn assemble_postgres_application(
         sandboxed_components,
         mcp_connections,
         remote_callback_auth,
+        tool_cancellations,
         mcp_revocation_reconciler,
     })
 }

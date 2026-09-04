@@ -155,10 +155,12 @@ expected={
  "SPDXRef-Package-libxml2-native":("2.15.3","MIT"),
  "SPDXRef-Package-xmlsec-native":("1.3.12","MIT"),
  "SPDXRef-Package-openssl-native":("3.6.3","Apache-2.0"),
+ "SPDXRef-Package-openai-dotnet-recorded-trace":("19d0a3cb8e0cf0f3137a5c56c3c70a0c3f6c96f5","MIT"),
 }
 seen={p["SPDXID"]:(p.get("versionInfo"),p.get("licenseConcluded")) for p in d["packages"] if p["SPDXID"] in expected}
 assert seen==expected,(seen,expected)
-assert len(d["packages"])==55,len(d["packages"])  # G4 Batch 11 adds jsonschema direct dependency
+ids=[p["SPDXID"] for p in d["packages"]]
+assert len(d["packages"])==56 and len(ids)==len(set(ids)),(len(d["packages"]),len(set(ids)))
 ' || fail 'SAML/native SPDX package 集合、版本、许可或总数漂移'
 
 case "$(uname -s)" in

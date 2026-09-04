@@ -365,8 +365,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mcp_connections = application_assembly.mcp_connections.clone();
     let remote_callback_auth = application_assembly.remote_callback_auth.clone();
     let remote_interrupts = application_assembly.remote_interrupts.clone();
+    let tool_cancellations = application_assembly.tool_cancellations.clone();
     let mcp_revocation_reconciler = application_assembly.mcp_revocation_reconciler;
-    let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence(
+    let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence_and_cancellations(
         application.clone(),
         Arc::new(PostgresAgentAuthorizationSource::new(
             pool.clone(),
@@ -375,6 +376,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             single_user,
         )),
         Arc::new(PostgresAgentToolSequence::new(pool.clone())),
+        tool_cancellations,
     ));
     let agent_tools: Arc<dyn AgentToolInvoker> = governed_tools.clone();
     let remote_callback_tools: Arc<dyn RemoteAgentToolInvoker> = governed_tools;
