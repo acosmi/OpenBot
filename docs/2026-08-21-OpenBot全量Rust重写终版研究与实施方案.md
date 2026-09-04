@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R183，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R184，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1049,6 +1049,12 @@ pub enum RenderSessionOperation {
 
 boot handshake（R119，三平台统一）：Rust 先创建 pipe endpoint（macOS/Linux 为随机路径、`0600` 的 UDS；Windows 为随机名、仅当前用户 SID 可访问的 Named Pipe），再 spawn engine，并向其 stdin 恰写入一行 ≤ 4 KiB 的 boot capability（pipe 名、`EngineRole`、protocol version、release epoch、一次性 128-bit token），随后关闭 stdin；engine 连接 pipe 后发送 `hello{token}`，Rust 校验 token **与 peer credential**（UDS：`SO_PEERCRED` / `getpeereid`；Named Pipe：`GetNamedPipeClientProcessId` 等于 spawn 得到的 PID 且进程创建时间一致），二者任一不符即 kill 并推进 `ComputerGeneration`。engine 二进制、shim ASAR 与协议 hash 的 digest 由 Rust 在 spawn **之前**校验（§16.2），engine 不自报。
 
+Batch109把不兼容input扩展显式升级为protocol/release epoch **2/2**：descriptor commands固定
+`start/input/stop/shutdown`，input八种ordinary kind与`input_applied` ACK均closed；动态/自由CDP仍不存在。
+fresh、non-Clone/non-serde `AuthorizedHumanInput`在Rust重验scope/generation/active tab及执行时expiry后才
+写pipe。ACK与独立binary frame读取解耦；当前macOS双role用captureScreenshot逐input产效果证据，但正式
+`Page.startScreencast`/ScreenHub仍todo，R126的v1/1只作历史基线、不得再当当前wire。
+
 ### 11.3 Browser 安全配置
 
 - 全部不可信 renderer（remote page 与 component render session）：`nodeIntegration=false`、`contextIsolation=true`、`sandbox=true`、`webSecurity=true`、`webviewTag=false`、无 preload、production 无 devtools；shim 在 `app.ready` 之前调用全局 sandbox（`app.enableSandbox()`），`--no-sandbox` / `sandbox:false` / `webviewTag:true` 在任何配置禁止（R119；参考源 `grok-bot/source/electron-main/main.ts` 三者俱全，见 §11.5，不得照搬）；
@@ -1184,6 +1190,11 @@ Batch108固定pure CDP parameter plan与上游键语义：`VIRTUAL_KEY_CODES`是
 `UnknownKey`拒绝。该plan只把closed `BrowserInput`映射到mouse/wheel/key/insertText参数，普通路径
 构造性拒绝`SecretInsert`；尚未接authenticated engine或产生live CDP effect，故T-BROP-0037–0044、
 P2/G5A/G7仍todo。
+
+Batch109已把七种ordinary BrowserInput经protocol v2接入两个真实macOS Seatbelt Electron role：
+mouse hover/active、key text/raw Backspace、unknown F1=0、insertText与wheel均有后续frame可观察效果；
+cross-scope、expiry exact边界与ordinary SecretInsert均在pipe前拒绝且frame0。T-BROP-0037–0043据此done，
+T-BROP-0044独立secret effect与Page.startScreencast/ScreenHub仍todo；P1未绿，不能称P2进入或G5/G7完成。
 
 ### 12.6 性能目标与降级
 
@@ -2075,6 +2086,10 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] Batch108固定`BrowserInput→CdpInputPlan`纯映射前置：17项键码逐项相等、unknown multi-unit=0、
     mouse/wheel/key/insertText与SecretInsert隔离共11条，Computer=`54/0/2 ignored`；fixture明确
     engine wire/live CDP/ScreenHub=false，T-BROP-0037–0044继续todo，且P1红时不冒充已进入P2。
+  - [x] Batch109 protocol-v2 macOS实际input子证据：protocol/epoch2、fresh receipt、literal CDP闭集与
+    ACK/frame双通道；Browser/Component两真实role以hover/active/text/Backspace/F1/insert/scroll证明
+    T-BROP-0037–0043，cross-scope/expiry/ordinary-secret frame0。Computer lib=`56/0/0`、真实=
+    `2/0/0`；T-BROP-0044、Page.startScreencast/ScreenHub、production assembly及Windows/runsc runtime仍todo。
   - [ ] **P1 整阶段仍未通过**：Batch54 已落 Windows 可执行探针代码（当前用户+Restricted-Code/low-label 双 Named Pipe、PID+100ns creation FILETIME、suspended `DISABLE_MAX_PRIVILEGE|LUA_TOKEN|WRITE_RESTRICTED` medium-integrity token、Job 32 processes/4 GiB/kill-on-close、profile/temp ACL、renderer Job membership、PE `Integrity/ElectronAsar` exact resource）并在 macOS 对 `x86_64-pc-windows-msvc` check/Clippy；但 Windows 真机 bundle、两个 role、ACL negative、renderer sandbox/no-listener/no-orphan **均未运行**。Batch55 又落 Ubuntu 24.04 x86_64 runsc OCI harness与容器内真实双 role probe：完整 release tarball sha、sidecar release ALWAYS + usage STRICT、network/host-UDS/FIFO none、gVisor marker、只读root/bind、零capability；R129补齐Electron Linux必需的容器内Xvfb（fixed :99/1280×800×24、`-nolisten tcp`、版本+binary hash候选），renderer要求main `Seccomp!=2`负对照、renderer `Seccomp:2` + `NoNewPrivs:1`、PID+network或user namespace layer-1、frame/listener/orphan/lock全绿后才打印pin candidate。但本机macOS只能做Linux target check/Clippy，**没有运行runsc/Xvfb、没有版本pin**；R63禁止未授权派发Actions，不能伪造两平台结论。P2/P3/P4未进入，G5A–G5F仍不勾。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
@@ -2563,6 +2578,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R182 | §16.3 / §19.3 / §24 G0、G6、G8 / §25 与GUI第一真源§10（2026-09-04 Batch107：Golden PNG gate） | GUI §10.4已固定逐通道16/255、0.1%与8×8判据，但此前只有纸面manifest；外部候选也仅比较已解码RGBA。若没有exact页面身份，245张任意1×1 PNG也能凑数；若不限制decoder/路径/mask，压缩炸弹、symlink或未评审遮罩会绕过gate；`check-manifest`结构绿又可能被误写为正式golden绿。旧manifest还保留96KiB CSS预算、crate为空/Windows host等过期阻塞。 | 只择取候选pure comparator单commit；新增`cargo xtask golden check-manifest|compare|verify`。manifest v2从seed route+golden_param机械导出137 Web+54 macOS+54 Windows exact path，文件名viewport必须等于PNG尺寸；只接受≤16MiB PNG、≤4096维、≤64MiB allocation，无symlink。mask必须在reviewed page/selector allowlist，diff只写ignored目录。formal verify先要求固定容器sha256/CJK包版本、baseline/actual集合相等；`ready=false`时只允许结构检查，绝不放行正式verify。`image 0.25.10`关闭默认feature、只启PNG且仅testkit xtask optional edge，锁四包license/build.rs/checksum。 | comparator=`79d849f0db7a4b822a56ec4369e638b229345c8a`，gate=`a69b3efcf41edd1c7dd0e089885fbd6143fa02a7`。core/gate/all-features=`18+7+137/0/10 ignored`，xtask全套=`102/0/0`，Clippy、UI dependency与六target deny guard绿；1024×1024真实PNG自比`0/1048576`差异。formal verify因TBD provenance按预期exit1。T-FIX-0003 evidence重验证，无新增fixture；parity=`861/849/1710`、tests=`470/577/1047`、fixtures=`26/22/48`、overlay=`1283/419/2/6`、0违反/警告；recount=`71/0/89 skipped`，strict未配置上游而未跑。Cargo.lock四个developer-only新增包、总829；cargo-vet仍373 unvetted且未加exemption。无schema/native/API/route/UI/bundle/npm/Grok/workflow变化，未跑CI/Actions。245张baseline、固定Linux/CJK、CDP/xcap、AX/键盘/reduced-motion与G6/G8仍todo；详见Batch107文档。 |
 
 | R183 | §11.2 / §12.5–§12.6 / §19.1 P2 / §24 G5、G7（2026-09-04 Batch108：BrowserInput→CDP pure plan） | 外部候选的closed plan与secret隔离方向正确，但把固定上游17项`VIRTUAL_KEY_CODES`写成16项并删掉显式空格，且把上游对未知多UTF-16单元键返回0的行为收窄为`UnknownKey`。其10条测试把两项偏差固化成期望；测试绿不能替代fixed-source fidelity。P1仍红时也不能把pure mapping冒充已进入P2或live CDP。 | 从R182以`cherry-pick --no-commit`导入，先修正再一次提交：同时保留Batch106 eviction module；键表逐项17条含空格，single-unit按uppercase首UTF-16 unit，unknown multi-unit=0。closed plan只表达mouseMoved/Pressed/Released、mouseWheel、keyDown/rawKeyDown/keyUp与insertText；native/windows code相等；key/code/text Debug脱敏。SecretInsert普通plan稳定拒绝。新增source-identity fixture，明确engine wire/live effect/ScreenHub=false；T-BROP-0037–0044保持todo。 | candidate=`1ca08993f725310e97c16c9bb77cdd14f1f61a4e`，corrected implementation=`b9e464013072b4d190e204aebc0f8afd861ba223`。上游`screencast.ts`=`6906 B`/blob `9bc27c11…`/SHA-256 `be79bde5…`；fixture=`1315 B`/SHA-256 `e6cf14b9…`。mapping=`11/0/0`，Computer=`54/0/2 ignored`，all-target/all-feature Clippy与fmt/diff绿。新增T-FIX-0049；parity/browser仍`861/849/1710`与`7/43/50`，fixtures=`27/22/49`、overlay=`1283/419/2/6`、0违反/警告；recount=`71/0/89 skipped`，strict未配置上游而未跑。无schema/native/API/route/UI/bundle/dependency/Cargo/env/npm/Grok/workflow变化，未跑CI/Actions。authenticated engine/live effect、坐标/ScreenHub、T-BROP八条、P1/P2/G5/G7仍todo；详见Batch108文档。 |
+
+| R184 | §10.3 / §11.1–§11.3 / §12.2、§12.5–§12.6 / §19.1 P1、P2 / §24 G5、G7（2026-09-04 Batch109：engine protocol-v2 live input） | Batch108只有pure plan，engine descriptor仍v1且commands仅start/stop/shutdown；shim启动截图后detach debugger。若在v1偷加input会制造同version不兼容wire；若把HumanLease字段传给shim会下放authority；若input API直接返回capture frame又会把过渡证据耦合成最终Screen设计。候选键语义虽已修正，仍没有页面observable effect、跨scope/expiry pipe前拒绝或literal CDP method棘轮。 | 不兼容扩展显式升级protocol/release epoch2；descriptor/generated hash/bundle manifest/runtime handshake同值。Rust only receipt由ControlService fresh铸造且不可Clone/serde，EngineProcess消费后再核computer/generation/active-tab/execution-time expiry；wire无actor/lease/secret/free method。input八kind映射shim exact-key payload与三条literal Input CDP；ACK只回operation/tab/kind，frame独立`next_frame`。cross-scope/expired/ordinary-secret在operation/pipe前拒绝。shim保持debugger至stop并统一detach；静态checker拒动态或额外CDP。macOS两个真实role在固定surface逐项观察hover/active/text/Backspace/F1=0/insert/scroll。 | implementation=`71e7feb7005100accf190e16b4bb3f4c79209149`。protocol hash=`ef213bb4…`，shim=`483/600 LOC`；官方archive=`122102881 B`/`ee939d…`，v2 ASAR=`22819 B`/header `cb289d04…`/fuses `000011001`，bundle/verify绿。Contracts=`104/0/0`，Computer lib/default=`56+1/0/2 ignored`，真实conformance=`3/0/0`（role2），xtask=`103/0/0`；native/Windows Clippy与Windows check绿。新增T-FIX-0050，T-BROP-0037–0043 done；parity=`868/842/1710`、browser=`14/36/50`、fixtures=`28/22/50`、overlay=`1276/426/2/6`、0违反/警告；recount=`71/0/89 skipped`且strict未跑。无schema/native/API/route/UI/Web bundle/dependency/Cargo/env变化，未跑CI/Actions。T-BROP-0044、正式screencast/ScreenHub、production assembly、Windows/runsc runtime与P1/P2/G5/G7仍todo；详见Batch109文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 
