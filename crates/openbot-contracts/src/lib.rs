@@ -42,6 +42,7 @@
 //! | [`memory`] | explicit memory scope/provenance/lifecycle/recall DTO；wire 无 owner/origin 自报 | §4.3 / R66 |
 //! | [`components`] | compiled component治理record、build manifest/catalogue与Quote+Cards+Charts参数schema | §3.3 / R103–R105 |
 //! | [`sandboxed`] | sandboxed draft/published source、sample与发布响应的closed wire | §3.3 / R112 |
+//! | [`screen`] | actor/generation/host-bound ScreenSession request与Debug脱敏ticket | §12.2–§12.4 / R188 |
 //! | [`telemetry`] | 关联字段、metrics label 白名单、[`telemetry::Redacted`] | §16.4 |
 //!
 //! 「没有 parity ledger 条目背书的类型不进这里」这条规矩**继续有效**：W-3a 只在 G1 的
@@ -89,6 +90,7 @@ pub mod people;
 pub mod policy;
 pub mod remote_interrupt;
 pub mod sandboxed;
+pub mod screen;
 pub mod telemetry;
 pub mod text;
 pub mod tool;

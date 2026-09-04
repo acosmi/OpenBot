@@ -37,6 +37,7 @@
 //! | [`use_cases`] | health/channel、people/audit、thread/history、remember/list/correct/forbid/delete/recall | §4.1–§4.3 / R56 / R64–R66 |
 //! | [`chunk`] | 50ms/8KiB UTF-8 semantic chunk accumulator；真实 provider 接线仍待 G4 | §4.3 / R65 |
 //! | [`run_runtime`] | 非 serde dispatch/lease、expected-sequence writer 与 accumulator→durable journal | §4.3 / §7.2 / R67 |
+//! | [`screen_sessions`] | 经唯一ApplicationService发放actor/generation/host-bound viewer ticket | §12.4 / R188 |
 //! | [`intelligence_import`] | verified neutral bundle、mapping/claim、ordered checksum、cursor resume | §20.3 / R68 |
 //! | [`tool`] | metadata→scope→policy→approval→journal→capability→execute→outcome/audit | §8.1 / R41 |
 //!
@@ -86,6 +87,7 @@ pub mod remote_interrupt;
 pub mod run_cost_budget;
 pub mod run_runtime;
 pub mod sandboxed_components;
+pub mod screen_sessions;
 pub mod service;
 pub mod tenant;
 pub mod tool;
@@ -184,6 +186,10 @@ pub use sandboxed_components::{
     SandboxedComponentAdministrationError, SandboxedComponentDraft, authorize_sandboxed_component,
     delete_sandboxed_component, list_published_sandboxed_components, list_sandboxed_components,
     publish_sandboxed_component, save_sandboxed_component,
+};
+pub use screen_sessions::{
+    NoScreenSessionAdministration, ScreenSessionAdministration, ScreenSessionAdministrationError,
+    issue_screen_session,
 };
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,

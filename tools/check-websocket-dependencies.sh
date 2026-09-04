@@ -24,10 +24,10 @@ fi
 
 grep -qF 'axum = { version = "0.8.9", features = ["macros", "ws"] }' Cargo.toml \
   || fail 'Axum 版本或 ws feature 漂移'
-expected_callers=$'crates/openbot-server/src/http/approvals.rs\ncrates/openbot-server/src/http/channels.rs\ncrates/openbot-server/src/http/threads.rs'
+expected_callers=$'crates/openbot-server/src/http/approvals.rs\ncrates/openbot-server/src/http/channels.rs\ncrates/openbot-server/src/http/screen.rs\ncrates/openbot-server/src/http/threads.rs'
 [[ $(rg -l 'WebSocketUpgrade|drive_thread_websocket' crates --glob '*.rs' | sort) == \
    "$expected_callers" ]] \
-  || fail 'WebSocket server 调用面越出 thread/channel/approval typed transports'
+  || fail 'WebSocket server 调用面越出 thread/channel/approval/screen typed transports'
 if rg -n 'sha1::|Sha1' crates --glob '*.rs'; then
   fail '第一方代码不得把 RFC6455 handshake SHA-1 复用为凭据/业务摘要'
 fi
@@ -49,6 +49,16 @@ grep -qF 'OriginAuthenticated(auth): OriginAuthenticated' \
   crates/openbot-server/src/http/approvals.rs || fail 'approval WebSocket trusted Origin extractor 缺失'
 grep -qF 'reason: "tool_approval_activity_read_only".into()' \
   crates/openbot-server/src/http/approvals.rs || fail 'approval read-only 1008 close 边界缺失'
+grep -qF 'const SCREEN_WS_INPUT_LIMIT: usize = 1024;' \
+  crates/openbot-server/src/http/screen.rs || fail 'screen WebSocket 1KiB inbound cap 漂移'
+grep -qF 'bound: OriginBoundAuthenticated' \
+  crates/openbot-server/src/http/screen.rs || fail 'screen exact verified Origin binding缺失'
+grep -qF 'if uri.query().is_some()' \
+  crates/openbot-server/src/http/screen.rs || fail 'screen ticket URL/query拒绝边界缺失'
+grep -qF '.protocols([SCREEN_VIEWER_PROTOCOL])' \
+  crates/openbot-server/src/http/screen.rs || fail 'screen upgrade base-only protocol选择漂移'
+grep -qF '"screen_input_not_enabled"' \
+  crates/openbot-server/src/http/screen.rs || fail 'screen read-only 1008 close边界缺失'
 
 metadata=$(cargo metadata --format-version 1 --locked)
 printf '%s' "$metadata" | python3 -c '
@@ -87,4 +97,4 @@ for name,entries in config.get("exemptions",{}).items():
 assert seen=={name:value[0] for name,value in expected.items()},seen
 ' || fail '锁文件/checksum/build.rs/unsafe/exemption 精确 delta 漂移'
 
-printf 'websocket dependency guard: ok (3 typed server callers; 3 exact packages; build.rs=0; unsafe tokens=4/0/5; 3 explicit non-audit exemptions)\n'
+printf 'websocket dependency guard: ok (4 typed server callers; 3 exact packages; build.rs=0; unsafe tokens=4/0/5; 3 explicit non-audit exemptions)\n'

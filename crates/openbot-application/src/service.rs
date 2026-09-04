@@ -174,6 +174,7 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::UpdateUiPreferences(_) => "update_ui_preferences",
         AppCommand::GetRunCostBudget => "get_run_cost_budget",
         AppCommand::ReplaceRunCostBudget(_) => "replace_run_cost_budget",
+        AppCommand::IssueScreenSession(_) => "issue_screen_session",
     }
 }
 

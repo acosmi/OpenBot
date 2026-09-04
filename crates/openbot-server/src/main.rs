@@ -18,6 +18,9 @@ use openbot_application::{
     AgentAudit, NoRunDispatchConsumer, ProviderAdapter, ProviderRateCard,
     RemoteInterruptCoordinator, RunDispatchConsumer, RunRuntime, remember_provider_tool,
 };
+use openbot_computer::screen::{
+    DEFAULT_SCREEN_VIEWERS_PER_STREAM, ScreenHub, ScreenSessionService,
+};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
 use openbot_domain::identity::session::TrustedOrigins;
@@ -328,6 +331,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "MCP OAuth Server callback 要求 HTTPS public URL；connect 保持不可用"
         );
     }
+    let screen_hub = ScreenHub::new(DEFAULT_SCREEN_VIEWERS_PER_STREAM)?;
+    let screen_sessions = Arc::new(ScreenSessionService::new(screen_hub.clone()));
     let application_assembly = assemble_postgres_application(PostgresApplicationAssemblyInput {
         pool: pool.clone(),
         listener_database: database.clone().into(),
@@ -343,6 +348,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         mcp_oauth_state_key: SecretBytes::new(mcp_oauth_state_key.expose().to_vec()),
         policy_store: policy_store.clone(),
         ui_preferences: Arc::new(PostgresUiPreferenceAdministration::new(pool.clone())),
+        screen_sessions,
         remote_agent_probe,
         managed_slot_available: managed_provider_for_slot(&server).is_some(),
         channel_routing_provider: ChannelRoutingProviderInput {
@@ -443,6 +449,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_insecure_transport(server.public_transport().insecure_transport())
         .with_remote_callback_authenticator(remote_callback_auth)
         .with_remote_callback_tools(remote_callback_tools)
+        .with_screen_hub(screen_hub)
         .with_readiness_probe(Arc::new(db_probe));
     if let Some(dist) = server.app_dist_dir.as_deref() {
         builder = builder.with_static_app(StaticApp::open(dist)?);

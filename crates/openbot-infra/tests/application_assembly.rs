@@ -97,6 +97,7 @@ async fn shared_postgres_application_assembly_executes_real_command() {
                 mcp_oauth_state_key: SecretBytes::new(vec![0x53; 32]),
                 policy_store,
                 ui_preferences: Arc::new(PostgresUiPreferenceAdministration::new(pool.clone())),
+                screen_sessions: Arc::new(openbot_application::NoScreenSessionAdministration),
                 remote_agent_probe: Arc::new(ClosedRemoteProbe),
                 managed_slot_available: false,
                 channel_routing_provider: ChannelRoutingProviderInput {

@@ -539,6 +539,7 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::UpdateUiPreferences(_)
         | AppCommand::GetRunCostBudget
         | AppCommand::ReplaceRunCostBudget(_)
+        | AppCommand::IssueScreenSession(_)
         | AppCommand::ListPendingRemoteInterrupts
         | AppCommand::ResolveRemoteInterrupt { .. } => None,
     }

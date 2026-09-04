@@ -60,6 +60,9 @@ use crate::sandboxed_components::{
     authorize_sandboxed_component, delete_sandboxed_component, list_published_sandboxed_components,
     list_sandboxed_components, publish_sandboxed_component, save_sandboxed_component,
 };
+use crate::screen_sessions::{
+    NoScreenSessionAdministration, ScreenSessionAdministration, issue_screen_session,
+};
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
 use crate::ui_preferences::{
@@ -114,6 +117,7 @@ pub struct OpenBotApplication<
     ui_preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
     run_cost_budgets: std::sync::Arc<dyn RunCostBudgetAdministration>,
     remote_interrupts: std::sync::Arc<dyn RemoteInterruptCoordinator>,
+    screen_sessions: std::sync::Arc<dyn ScreenSessionAdministration>,
     heartbeat_period: Duration,
 }
 
@@ -153,6 +157,7 @@ impl<R>
             ui_preferences: std::sync::Arc::new(NoUiPreferenceAdministration),
             run_cost_budgets: std::sync::Arc::new(NoRunCostBudgetAdministration),
             remote_interrupts: std::sync::Arc::new(NoRemoteInterruptCoordinator),
+            screen_sessions: std::sync::Arc::new(NoScreenSessionAdministration),
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
@@ -183,6 +188,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
             remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -211,6 +217,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
             remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -239,6 +246,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
             remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -271,6 +279,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
             remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -299,6 +308,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
             remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -327,6 +337,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
             remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -358,6 +369,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
             remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -466,6 +478,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
         remote_interrupts: std::sync::Arc<dyn RemoteInterruptCoordinator>,
     ) -> Self {
         self.remote_interrupts = remote_interrupts;
+        self
+    }
+
+    /// Attach the shared Computer-owned ScreenSession ticket authority.
+    #[must_use]
+    pub fn with_screen_sessions(
+        mut self,
+        screen_sessions: std::sync::Arc<dyn ScreenSessionAdministration>,
+    ) -> Self {
+        self.screen_sessions = screen_sessions;
         self
     }
 
@@ -841,6 +863,9 @@ where
             )),
             AppCommand::ReplaceRunCostBudget(preference) => Ok(AppReply::RunCostBudget(
                 replace_run_cost_budget(self.run_cost_budgets.as_ref(), auth, preference).await?,
+            )),
+            AppCommand::IssueScreenSession(request) => Ok(AppReply::ScreenSession(
+                issue_screen_session(self.screen_sessions.as_ref(), auth, request).await?,
             )),
         }
     }

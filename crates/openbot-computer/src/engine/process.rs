@@ -359,7 +359,7 @@ pub struct ScreenStreamKey {
 }
 
 impl ScreenStreamKey {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub(crate) fn for_test(
         scope_digest: [u8; 32],
         computer_id: ComputerId,
@@ -416,7 +416,7 @@ impl EngineScreenSource {
         &self.key
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub(crate) fn for_test(
         key: ScreenStreamKey,
         audience: ScreenAudience,

@@ -16,6 +16,9 @@ path = "examples/engine-runsc-probe.rs"
 required-features = ["runsc-spike"]
 
 [features]
+# Test-only constructors for cross-crate real transport fixtures. Default/product builds cannot
+# synthesize EngineScreenSource or AuthContext.
+testkit = []
 # P1-only diagnostic example executed as PID 1 inside an authority-created runsc OCI bundle. An
 # example is structurally absent from default/product bins and cannot launch on host Linux without
 # RunscAttestation.
@@ -24,6 +27,9 @@ runsc-spike = []
 [dependencies]
 # Authority-owned IDs/AuthContext and the one canonical ECMAScript TrimString implementation.
 openbot-contracts.workspace = true
+# ScreenSession tickets are issued only through the single typed ApplicationService port.
+openbot-application.workspace = true
+async-trait.workspace = true
 # SecretInsert reuses the repository's non-Clone, zeroizing, redacted secret container instead of
 # inventing a second plaintext holder inside the engine boundary.
 openbot-domain.workspace = true

@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 174
+    expect: 176
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 138
@@ -66,10 +66,10 @@ recount:
     expect: 8
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 28
+    expect: 30
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 174
+    expect: 176
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1921,3 +1921,25 @@ entries:
     done_evidence: "Batch98 path只收Rust-minted canonical UUIDv7 handle，body只收resolved+可选≤64KiB JSON或cancelled+无payload；trusted Origin先于body parse。PostgreSQL serializable事务复核current actor/generation/membership/run/lease，answer与hash-chain audit原子提交后才唤醒第二次SafeDialer；same answer replay、异值409。Server1/0/0、Desktop typed framing、真实PG ApplicationService纵向1/0/0。"
     evidence: "固定上游无独立durable resume endpoint；AG-UI 0.0.57 ResumeEntry fixed wire与v4 audit-before-effect"
     notes: "新增。remote interrupt id不能作path authority；错误码：401/403 Origin/400/404/409/503/reconciliation。"
+  - id: "api-screen-session-post"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::screen::issue_session (POST /api/screen/sessions)"
+    owner: "openbot-server"
+    test_id: "T-API-0175"
+    migration_rule: "n/a: v4 §12.4 requires an actor/generation/origin-bound one-time viewer ticket"
+    status: "done"
+    done_evidence: "Batch113 typed AppCommand/Reply经唯一ApplicationService与Computer ScreenSessionService发票；JSON只含computerId/computerGeneration/tabId，Server从已验证Origin构造binding，错误Origin在坏JSON解析前403。响应no-store，ticket Debug脱敏。Server unit4/0/0、Computer port1/0/0、真实Electron→WSS纵切1/0/0。"
+    evidence: "固定上游95条静态route无/api/screen/sessions；v4 §12.4 Desktop/Server viewer ticket与auth generation要求"
+    notes: "新增发票面，不接受actor/tenant/auth generation/origin/window/ticket自报。生产manager尚未attach Engine source时目标统一404；错误码：401/403 Origin/400/404/409/503。"
+  - id: "api-screen-websocket-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::screen::websocket (GET /api/screen, WebSocket upgrade)"
+    owner: "openbot-server"
+    test_id: "T-API-0176"
+    migration_rule: "rename: fixed upstream /stream JSON/base64 socket becomes same-origin binary WSS with one-time requested-subprotocol ticket"
+    status: "done"
+    done_evidence: "Batch113 upgrade前same-origin auth、query拒绝、base+ticket恰两项并在ScreenHub消费single-use ticket；101只选择openbot.screen.v1不回显ticket。首帧立即binary，后续watch latest；Text/Binary inbound 1008、generation撤权1008。真实受管Electron Browser frame经TCP WSS收到OBSCRN01/JPEG且sequence一致。"
+    evidence: "上游agent-computer/src/index.ts::serve.websocket与v4 §12.2–§12.4 replacement path"
+    notes: "本条只关闭Server frame transport；viewer input、bandwidth/idle、last-viewer stop、Desktop loopback、PG cookie浏览器/TLS和production Engine source仍分别todo，T-BROP-0027不随本条关闭。"

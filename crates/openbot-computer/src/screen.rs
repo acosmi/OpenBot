@@ -7,8 +7,13 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
+use openbot_application::{ScreenSessionAdministration, ScreenSessionAdministrationError};
 use openbot_contracts::auth::{AuthContext, AuthGeneration};
-use openbot_contracts::ids::{ActorId, TenantId};
+use openbot_contracts::engine::MAX_ENGINE_IMAGE_BYTES;
+use openbot_contracts::ids::{ActorId, ComputerGeneration, ComputerId, TabId, TenantId};
+use openbot_contracts::screen::{
+    ScreenSessionRequest, ScreenSessionTicket, ScreenViewerBindingRequest,
+};
 use openbot_domain::vault::SecretBytes;
 use sha2::{Digest as _, Sha256};
 use time::{Duration, OffsetDateTime};
@@ -22,10 +27,16 @@ use crate::engine::{EngineFrame, EngineScreenSource, ScreenAudience, ScreenStrea
 pub const SCREEN_VIEWER_PROTOCOL: &str = "openbot.screen.v1";
 /// Fixed first-source viewer ticket lifetime.
 pub const SCREEN_TICKET_TTL: Duration = Duration::seconds(30);
+/// Conservative Server production default; explicit hosts remain bounded by the closed ceiling.
+pub const DEFAULT_SCREEN_VIEWERS_PER_STREAM: usize = 8;
 const TICKET_PREFIX: &str = "obot_screen_";
 const VIEWER_FRAME_MAGIC: &[u8; 8] = b"OBSCRN01";
 const VIEWER_FRAME_VERSION: u16 = 1;
-const VIEWER_FRAME_HEADER_BYTES: usize = 68;
+/// Fixed binary viewer header size.
+pub const SCREEN_VIEWER_HEADER_BYTES: usize = 68;
+/// Maximum authenticated viewer binary frame including its fixed header.
+pub const SCREEN_VIEWER_MAX_BINARY_BYTES: usize =
+    MAX_ENGINE_IMAGE_BYTES + SCREEN_VIEWER_HEADER_BYTES;
 const MAX_VIEWERS_PER_STREAM: usize = 256;
 
 /// Host-verified binding carried by one ticket and exact viewer connection.
@@ -130,6 +141,70 @@ struct HubState {
 pub struct ScreenHub {
     state: Arc<Mutex<HubState>>,
     max_viewers_per_stream: usize,
+}
+
+/// Computer-owned ApplicationService port for issuing ScreenHub tickets.
+#[derive(Clone)]
+pub struct ScreenSessionService {
+    hub: ScreenHub,
+}
+
+impl ScreenSessionService {
+    /// Bind ticket issuance to the exact process-wide ScreenHub used by the frame transport.
+    #[must_use]
+    pub const fn new(hub: ScreenHub) -> Self {
+        Self { hub }
+    }
+
+    async fn issue_at(
+        &self,
+        auth: &AuthContext,
+        request: ScreenSessionRequest,
+        now: OffsetDateTime,
+    ) -> Result<ScreenSessionTicket, ScreenSessionAdministrationError> {
+        let binding = match request.binding {
+            ScreenViewerBindingRequest::Server { origin } => {
+                ScreenViewerBinding::verified_server(origin)
+            }
+            ScreenViewerBindingRequest::Desktop {
+                origin,
+                window_label,
+                window_binding,
+            } => ScreenViewerBinding::verified_desktop(origin, window_label, window_binding),
+        }
+        .map_err(|_| ScreenSessionAdministrationError::InvalidInput { field: "binding" })?;
+        let issued = self
+            .hub
+            .issue_ticket_for_target(
+                auth,
+                &request.target.computer_id,
+                request.target.computer_generation,
+                &request.target.tab_id,
+                binding,
+                now,
+            )
+            .await
+            .map_err(screen_session_error)?;
+        let expires_at_ms = i64::try_from(issued.expires_at().unix_timestamp_nanos() / 1_000_000)
+            .map_err(|_| ScreenSessionAdministrationError::Unavailable)?;
+        Ok(ScreenSessionTicket::new(
+            issued.base_protocol(),
+            issued.ticket_protocol(),
+            expires_at_ms,
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl ScreenSessionAdministration for ScreenSessionService {
+    async fn issue(
+        &self,
+        auth: &AuthContext,
+        request: ScreenSessionRequest,
+    ) -> Result<ScreenSessionTicket, ScreenSessionAdministrationError> {
+        self.issue_at(auth, request, OffsetDateTime::now_utc())
+            .await
+    }
 }
 
 impl ScreenHub {
@@ -246,6 +321,35 @@ impl ScreenHub {
             });
         }
         Err(ScreenHubError::RandomCollision)
+    }
+
+    /// Resolve one caller-visible stream without accepting its opaque scope digest from transport.
+    pub async fn issue_ticket_for_target(
+        &self,
+        auth: &AuthContext,
+        computer_id: &ComputerId,
+        generation: ComputerGeneration,
+        tab_id: &TabId,
+        binding: ScreenViewerBinding,
+        now: OffsetDateTime,
+    ) -> Result<IssuedScreenTicket, ScreenHubError> {
+        let key = {
+            let state = self.state.lock().await;
+            let mut visible = state.streams.iter().filter(|(key, stream)| {
+                key.computer_id() == computer_id
+                    && key.generation() == generation
+                    && key.tab_id() == tab_id
+                    && ensure_audience(&stream.audience, auth).is_ok()
+            });
+            let Some((key, _)) = visible.next() else {
+                return Err(ScreenHubError::NotVisible);
+            };
+            if visible.next().is_some() {
+                return Err(ScreenHubError::NotVisible);
+            }
+            key.clone()
+        };
+        self.issue_ticket(auth, &key, binding, now).await
     }
 
     /// Consume a ticket exactly once after the live connection repeats the same authority tuple.
@@ -376,12 +480,12 @@ pub struct ScreenViewerFrame {
 impl ScreenViewerFrame {
     fn new(key: &ScreenStreamKey, frame: Arc<EngineFrame>) -> Result<Self, ScreenHubError> {
         let payload_len = u32::try_from(frame.bytes().len()).map_err(|_| ScreenHubError::Frame)?;
-        let mut bytes = vec![0_u8; VIEWER_FRAME_HEADER_BYTES];
+        let mut bytes = vec![0_u8; SCREEN_VIEWER_HEADER_BYTES];
         bytes[..8].copy_from_slice(VIEWER_FRAME_MAGIC);
         bytes[8..10].copy_from_slice(&VIEWER_FRAME_VERSION.to_le_bytes());
         bytes[10] = 1;
         bytes[12..16].copy_from_slice(
-            &u32::try_from(VIEWER_FRAME_HEADER_BYTES)
+            &u32::try_from(SCREEN_VIEWER_HEADER_BYTES)
                 .map_err(|_| ScreenHubError::Frame)?
                 .to_le_bytes(),
         );
@@ -637,6 +741,79 @@ fn source_error(_error: crate::engine::EngineProcessError) -> ScreenHubError {
     ScreenHubError::SourceClosed
 }
 
+fn screen_session_error(error: ScreenHubError) -> ScreenSessionAdministrationError {
+    match error {
+        ScreenHubError::InvalidBinding | ScreenHubError::InvalidViewerLimit => {
+            ScreenSessionAdministrationError::InvalidInput { field: "binding" }
+        }
+        ScreenHubError::NotVisible
+        | ScreenHubError::SourceClosed
+        | ScreenHubError::TicketInvalid
+        | ScreenHubError::TicketExpired
+        | ScreenHubError::ViewerRevoked => ScreenSessionAdministrationError::NotVisible,
+        ScreenHubError::ViewerLimit => ScreenSessionAdministrationError::ViewerLimit,
+        ScreenHubError::DuplicateStream
+        | ScreenHubError::RandomFailed
+        | ScreenHubError::RandomCollision
+        | ScreenHubError::ClockOverflow
+        | ScreenHubError::Frame => ScreenSessionAdministrationError::Unavailable,
+    }
+}
+
+/// Cross-crate source fixture, absent from default/product feature graphs.
+#[cfg(any(test, feature = "testkit"))]
+pub mod testing {
+    use std::sync::Arc;
+
+    use openbot_contracts::auth::AuthContext;
+    use openbot_contracts::ids::{ComputerGeneration, ComputerId, TabId};
+    use tokio::sync::watch;
+
+    use super::{ScreenHub, ScreenHubError};
+    use crate::engine::{EngineFrame, EngineScreenSource, ScreenAudience, ScreenStreamKey};
+
+    /// Sender half retained by a transport test to advance the exact shared latest frame.
+    pub struct TestScreenFeed {
+        sender: watch::Sender<Option<Arc<EngineFrame>>>,
+    }
+
+    impl TestScreenFeed {
+        /// Publish one deterministic JPEG-shaped frame with a monotonic sequence.
+        pub fn publish(&self, sequence: u64, scroll_y: f32) {
+            self.sender
+                .send_replace(Some(Arc::new(EngineFrame::for_test(
+                    sequence,
+                    1_788_499_200_000_i64
+                        .saturating_add(i64::try_from(sequence).unwrap_or(i64::MAX)),
+                    scroll_y,
+                ))));
+        }
+    }
+
+    /// Attach a deterministic Engine-shaped source to the real ScreenHub implementation.
+    pub async fn attach_test_stream(
+        hub: &ScreenHub,
+        auth: &AuthContext,
+        computer_id: ComputerId,
+        generation: ComputerGeneration,
+        tab_id: TabId,
+    ) -> Result<TestScreenFeed, ScreenHubError> {
+        let key = ScreenStreamKey::for_test([7; 32], computer_id, generation, tab_id);
+        let (sender, receiver) = watch::channel(Some(Arc::new(EngineFrame::for_test(
+            1,
+            1_788_499_200_000,
+            0.0,
+        ))));
+        hub.attach(EngineScreenSource::for_test(
+            key,
+            ScreenAudience::from_auth(auth),
+            receiver,
+        ))
+        .await?;
+        Ok(TestScreenFeed { sender })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
@@ -823,5 +1000,49 @@ mod tests {
                 .await,
             Err(ScreenHubError::NotVisible)
         ));
+    }
+
+    #[tokio::test]
+    async fn application_port_resolves_target_and_never_logs_issued_protocol() {
+        let hub = ScreenHub::new(3).expect("hub");
+        let (source, _sender, key) = source("actor", 4);
+        hub.attach(source).await.expect("attach");
+        let service = ScreenSessionService::new(hub);
+        let actor = auth("actor", 4);
+        let request = ScreenSessionRequest {
+            target: openbot_contracts::screen::ScreenSessionTarget {
+                computer_id: key.computer_id().clone(),
+                computer_generation: key.generation(),
+                tab_id: key.tab_id().clone(),
+            },
+            binding: ScreenViewerBindingRequest::Server {
+                origin: "https://app.example.test".to_owned(),
+            },
+        };
+        let ticket = service
+            .issue_at(&actor, request.clone(), NOW)
+            .await
+            .expect("application ticket");
+        assert_eq!(ticket.base_protocol(), SCREEN_VIEWER_PROTOCOL);
+        assert_eq!(
+            ticket.expires_at_ms(),
+            (NOW + SCREEN_TICKET_TTL).unix_timestamp() * 1000
+        );
+        assert!(!format!("{ticket:?}").contains(ticket.ticket_protocol()));
+
+        let mut stale = request.clone();
+        stale.target.computer_generation = ComputerGeneration::new(4);
+        assert_eq!(
+            service.issue_at(&actor, stale, NOW).await,
+            Err(ScreenSessionAdministrationError::NotVisible)
+        );
+        let mut invalid = request;
+        invalid.binding = ScreenViewerBindingRequest::Server {
+            origin: String::new(),
+        };
+        assert_eq!(
+            service.issue_at(&actor, invalid, NOW).await,
+            Err(ScreenSessionAdministrationError::InvalidInput { field: "binding" })
+        );
     }
 }

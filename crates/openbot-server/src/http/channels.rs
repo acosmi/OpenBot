@@ -187,6 +187,7 @@ pub async fn list(
         | AppReply::ToolApprovalResolved(_)
         | AppReply::UiPreferences(_)
         | AppReply::RunCostBudget(_)
+        | AppReply::ScreenSession(_)
         | AppReply::PendingRemoteInterrupts(_)
         | AppReply::RemoteInterruptResolved(_) => {
             tracing::error!(
@@ -270,6 +271,7 @@ pub async fn get(
         | AppReply::ToolApprovalResolved(_)
         | AppReply::UiPreferences(_)
         | AppReply::RunCostBudget(_)
+        | AppReply::ScreenSession(_)
         | AppReply::PendingRemoteInterrupts(_)
         | AppReply::RemoteInterruptResolved(_) => {
             tracing::error!("GetVisibleChannel received a non-Channel application reply");
@@ -359,6 +361,7 @@ pub async fn create(
         | AppReply::ToolApprovalResolved(_)
         | AppReply::UiPreferences(_)
         | AppReply::RunCostBudget(_)
+        | AppReply::ScreenSession(_)
         | AppReply::PendingRemoteInterrupts(_)
         | AppReply::RemoteInterruptResolved(_) => {
             tracing::error!("CreateChannel received a non-Channel application reply");

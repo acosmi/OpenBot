@@ -4535,7 +4535,9 @@ dependencies = [
 name = "openbot-computer"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "getrandom 0.4.3",
+ "openbot-application",
  "openbot-contracts",
  "openbot-domain",
  "openbot-windows-sandbox",
@@ -4679,6 +4681,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "openbot-agent",
  "openbot-application",
+ "openbot-computer",
  "openbot-contracts",
  "openbot-domain",
  "openbot-infra",

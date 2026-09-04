@@ -34,7 +34,7 @@ pub struct EngineFrame {
 }
 
 impl EngineFrame {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub(crate) fn for_test(sequence: u64, captured_at_ms: i64, scroll_y: f32) -> Self {
         Self {
             sequence,

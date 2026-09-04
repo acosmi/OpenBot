@@ -748,6 +748,7 @@ pub(crate) async fn prepare_desktop_local_runtime(
         ui_preferences: Arc::new(DesktopUiPreferenceStore::new(
             app_data_root.as_path().join(DESKTOP_UI_PREFERENCES_FILE),
         )),
+        screen_sessions: Arc::new(openbot_application::NoScreenSessionAdministration),
         remote_agent_probe: remote_agent_probe.clone(),
         managed_slot_available: false,
         channel_routing_provider,

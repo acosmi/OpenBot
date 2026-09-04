@@ -400,7 +400,8 @@ impl AgentToolGateway {
                 | AppReply::PendingToolApprovals(_)
                 | AppReply::ToolApprovalResolved(_)
                 | AppReply::UiPreferences(_)
-                | AppReply::RunCostBudget(_),
+                | AppReply::RunCostBudget(_)
+                | AppReply::ScreenSession(_),
             ) => Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }),

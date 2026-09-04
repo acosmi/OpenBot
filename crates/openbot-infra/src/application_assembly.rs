@@ -11,8 +11,8 @@ use std::time::Duration;
 use deadpool_postgres::Pool;
 use openbot_application::provider::RemoteAguiTransport;
 use openbot_application::{
-    ApplicationService, OpenBotApplication, ProviderAdapter, RunRuntime, ToolCancellationRegistry,
-    UiPreferenceAdministration,
+    ApplicationService, OpenBotApplication, ProviderAdapter, RunRuntime,
+    ScreenSessionAdministration, ToolCancellationRegistry, UiPreferenceAdministration,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use openbot_domain::identity::roles::AdminFloor;
@@ -100,6 +100,7 @@ pub struct PostgresApplicationAssemblyInput {
     pub mcp_oauth_state_key: SecretBytes,
     pub policy_store: PolicyStore,
     pub ui_preferences: Arc<dyn UiPreferenceAdministration>,
+    pub screen_sessions: Arc<dyn ScreenSessionAdministration>,
     pub remote_agent_probe: Arc<dyn RemoteAguiTransport>,
     pub managed_slot_available: bool,
     pub channel_routing_provider: ChannelRoutingProviderInput,
@@ -122,6 +123,7 @@ impl core::fmt::Debug for PostgresApplicationAssemblyInput {
             .field("remote_assertions", &self.remote_assertions)
             .field("mcp_oauth_state_key", &"[REDACTED]")
             .field("ui_preferences", &"Arc<dyn UiPreferenceAdministration>")
+            .field("screen_sessions", &"Arc<dyn ScreenSessionAdministration>")
             .field("managed_slot_available", &self.managed_slot_available)
             .field("channel_routing_provider", &self.channel_routing_provider)
             .field("stall_timeout", &self.stall_timeout)
@@ -201,6 +203,7 @@ pub async fn assemble_postgres_application(
         mcp_oauth_state_key,
         policy_store,
         ui_preferences,
+        screen_sessions,
         remote_agent_probe,
         managed_slot_available,
         channel_routing_provider,
@@ -405,7 +408,8 @@ pub async fn assemble_postgres_application(
         .with_run_cost_budgets(Arc::new(PostgresRunCostBudgetAdministration::new(
             pool.clone(),
         )))
-        .with_remote_interrupts(remote_interrupts.clone());
+        .with_remote_interrupts(remote_interrupts.clone())
+        .with_screen_sessions(screen_sessions);
     let application: Arc<dyn ApplicationService> = Arc::new(application);
     let mcp_revocation_reconciler = McpRevocationReconciler::start(mcp_connections.clone());
     Ok(PostgresApplicationAssembly {

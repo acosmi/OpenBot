@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 52
+    expect: 53
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 21
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 31
+    expect: 32
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 52 52
+    expect: 53 53
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 42 0
+    expect: 10 43 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -457,6 +457,22 @@ entries:
       evidenceBoundary明确非1 DPR/非1 pageScale/nonzero-scroll pointer仍只有pure vector，Leptos canvas事件接线、
       stale displayed-frame transport拒绝、Server/Desktop WS、production assembly、resize/navigation/tab switch、
       Windows与runsc runtime均false；这些后续必须真跑，不能由macOS DSF=1/pageScale=1外推。
+
+  - id: server-screen-websocket-v1
+    upstream: "CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d:agent-computer/src/index.ts::serve.websocket"
+    label: 新增
+    target: fixtures/computer/server-screen-websocket-v1.json -> openbot_server::http::screen + openbot_computer::screen::ScreenSessionService
+    owner: openbot-server
+    test_id: T-FIX-0053
+    migration_rule: "preserve: authenticated latest screen stream; replace shared JSON/base64 socket with same-origin binary WebSocket and ApplicationService-issued one-time subprotocol ticket"
+    status: done
+    evidence: "v4 §12.2–§12.4；POST /api/screen/sessions在trusted Origin/body前置后只接computer/generation/tab，binding由Rust header构造；GET /api/screen拒query并要求base+ticket恰两项，upgrade只选择base。ScreenHub在101前消费ticket，binary只出OBSCRN01，client Text/Binary以1008关闭"
+    done_evidence: "fixture=1970 bytes/SHA-256 6e7365a084c8ee9b33ed916ccfbd5e5cca399a23189a8cdd0be5ec784bfb2a2d；Server screen unit=4/0/0：错误Origin先于坏JSON、protocol缺失/多余/query、base-only response、ticket replay、binary latest、client input1008、generation close1008；Computer port=1/0/0；macOS真实受管Electron Browser role经authenticated pipe→ScreenHub→ApplicationService ticket→Axum TCP WebSocket收到sequence一致的OBSCRN01+JPEG，1/0/0并bounded shutdown"
+    notes: >-
+      本fixture关闭Server ticket与binary WebSocket transport，不关闭T-BROP-0027或完整G7。
+      production Server main已注入同一Hub/port，但BrowserRuntimeManager尚未把生产Engine source attach进去；
+      真实PG session-cookie浏览器、外部TLS终止、Desktop loopback、WS输入、bandwidth/idle、最后viewer 2秒停流、
+      Windows与runsc均false，不能由Fixed/ExactAuth loopback测试外推。
 
   - id: db-seed-0012
     upstream: "-"

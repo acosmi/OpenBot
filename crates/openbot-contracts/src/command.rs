@@ -64,6 +64,7 @@ use crate::sandboxed::{
     PublishedSandboxedComponents, SandboxedComponentDeleted, SandboxedComponentResponse,
     SandboxedComponents, SaveSandboxedComponentRequest,
 };
+use crate::screen::{ScreenSessionRequest, ScreenSessionTicket};
 use crate::tool::{
     PendingToolApprovals, ToolApprovalActivityEvent, ToolApprovalDecision, ToolApprovalResolved,
     ToolInvocation, ToolResult,
@@ -515,6 +516,9 @@ pub enum AppCommand {
 
     /// Fully replace the authenticated actor's per-run provider cost cap.
     ReplaceRunCostBudget(RunCostBudgetPreference),
+
+    /// Issue one actor/generation/host-bound ScreenSession ticket.
+    IssueScreenSession(ScreenSessionRequest),
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -636,6 +640,8 @@ pub enum AppReply {
     UiPreferences(UiPreferences),
     /// Per-run cost budget read/replacement response.
     RunCostBudget(RunCostBudgetPreference),
+    /// One-time screen viewer ticket; its `Debug` implementation redacts the secret protocol.
+    ScreenSession(ScreenSessionTicket),
 }
 
 /// 探活结果。
