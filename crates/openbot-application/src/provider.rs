@@ -5,6 +5,7 @@ use core::time::Duration;
 use openbot_contracts::auth::AuthContext;
 use openbot_domain::vault::SecretBytes;
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use url::Url;
@@ -41,7 +42,10 @@ pub trait AgentAuthorizationSource: Send + Sync {
 pub struct RemoteAguiRoute {
     endpoint: String,
     thread_id: String,
-    run_id: String,
+    local_run_id: String,
+    protocol_run_id: String,
+    parent_protocol_run_id: Option<String>,
+    resume: Option<Box<ProviderRemoteResume>>,
     bot_id: String,
     run_assertion: Option<String>,
     authorization: Option<RemoteAguiAuthorization>,
@@ -70,7 +74,10 @@ impl RemoteAguiRoute {
         Ok(Self {
             endpoint,
             thread_id,
-            run_id,
+            local_run_id: run_id.clone(),
+            protocol_run_id: run_id,
+            parent_protocol_run_id: None,
+            resume: None,
             bot_id,
             run_assertion,
             authorization: None,
@@ -99,7 +106,45 @@ impl RemoteAguiRoute {
     /// Authoritative run id.
     #[must_use]
     pub fn run_id(&self) -> &str {
-        &self.run_id
+        &self.protocol_run_id
+    }
+
+    /// Authoritative local durable run id; unlike protocol run id, it never changes on resume.
+    #[must_use]
+    pub fn local_run_id(&self) -> &str {
+        &self.local_run_id
+    }
+
+    /// Previous AG-UI protocol run id when this request resumes an interrupt.
+    #[must_use]
+    pub fn parent_protocol_run_id(&self) -> Option<&str> {
+        self.parent_protocol_run_id.as_deref()
+    }
+
+    /// Bounded resume entries for the next AG-UI request.
+    #[must_use]
+    pub fn resume(&self) -> Option<&ProviderRemoteResume> {
+        self.resume.as_deref()
+    }
+
+    /// Advance only the remote protocol invocation while retaining local run authority.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a resume whose parent does not equal the current protocol run id.
+    pub fn with_resume(mut self, resume: ProviderRemoteResume) -> Result<Self, AgentContextError> {
+        if resume.parent_protocol_run_id() != self.protocol_run_id {
+            return Err(AgentContextError::Corrupt {
+                field: "remote_resume_parent",
+            });
+        }
+        let parent_protocol_run_id = std::mem::replace(
+            &mut self.protocol_run_id,
+            resume.protocol_run_id().to_owned(),
+        );
+        self.parent_protocol_run_id = Some(parent_protocol_run_id);
+        self.resume = Some(Box::new(resume));
+        Ok(self)
     }
 
     /// Authoritative Bot id.
@@ -126,7 +171,13 @@ impl core::fmt::Debug for RemoteAguiRoute {
         f.debug_struct("RemoteAguiRoute")
             .field("endpoint", &"<redacted-origin>")
             .field("thread_id", &self.thread_id)
-            .field("run_id", &self.run_id)
+            .field("local_run_id", &self.local_run_id)
+            .field("protocol_run_id", &self.protocol_run_id)
+            .field("parent_protocol_run_id", &self.parent_protocol_run_id)
+            .field(
+                "resume",
+                &self.resume.as_ref().map(|value| value.entries().len()),
+            )
             .field("bot_id", &self.bot_id)
             .field("has_run_assertion", &self.run_assertion.is_some())
             .field("has_authorization", &self.authorization.is_some())
@@ -594,6 +645,385 @@ impl core::fmt::Debug for ProviderToolDefinition {
     }
 }
 
+/// Maximum interrupts accepted from one fixed-schema terminal outcome.
+pub const PROVIDER_REMOTE_INTERRUPT_MAX_ITEMS: usize = 256;
+/// Maximum encoded bytes accepted for one human resume payload.
+pub const PROVIDER_REMOTE_RESUME_PAYLOAD_MAX_BYTES: usize = 64 * 1024;
+
+/// Checked construction input for one AG-UI interrupt descriptor.
+pub struct ProviderRemoteInterruptInput {
+    /// Remote interrupt id; pairing only, never local authority.
+    pub id: String,
+    /// Remote categorical reason.
+    pub reason: String,
+    /// Optional user-facing remote message.
+    pub message: Option<String>,
+    /// Optional remote tool-call pairing id.
+    pub tool_call_id: Option<String>,
+    /// Optional untrusted response JSON Schema.
+    pub response_schema: Option<Value>,
+    /// Optional remote RFC3339-looking expiry string; database time validates it later.
+    pub expires_at: Option<String>,
+    /// Optional untrusted metadata object.
+    pub metadata: Option<Value>,
+}
+
+/// One bounded, structurally validated AG-UI interrupt. It is deliberately non-serde.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProviderRemoteInterrupt {
+    id: String,
+    untrusted_payload: Value,
+}
+
+impl ProviderRemoteInterrupt {
+    /// Normalize known 0.0.57 fields and drop all unknown remote keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns a content-free error for empty/NUL labels, non-object schema/metadata, or >1 MiB.
+    pub fn new(input: ProviderRemoteInterruptInput) -> Result<Self, ProviderRemoteProjectionError> {
+        if [&input.id, &input.reason]
+            .into_iter()
+            .any(|value| value.is_empty() || value.as_bytes().contains(&0))
+            || [
+                input.message.as_deref(),
+                input.tool_call_id.as_deref(),
+                input.expires_at.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|value| value.is_empty() || value.as_bytes().contains(&0))
+            || input
+                .response_schema
+                .as_ref()
+                .is_some_and(|value| !value.is_object() || value_contains_nul(value))
+            || input
+                .metadata
+                .as_ref()
+                .is_some_and(|value| !value.is_object() || value_contains_nul(value))
+        {
+            return Err(ProviderRemoteProjectionError::Invalid);
+        }
+        let mut payload = serde_json::Map::new();
+        payload.insert("id".to_owned(), Value::String(input.id.clone()));
+        payload.insert("reason".to_owned(), Value::String(input.reason));
+        if let Some(value) = input.message {
+            payload.insert("message".to_owned(), Value::String(value));
+        }
+        if let Some(value) = input.tool_call_id {
+            payload.insert("toolCallId".to_owned(), Value::String(value));
+        }
+        if let Some(value) = input.response_schema {
+            payload.insert("responseSchema".to_owned(), value);
+        }
+        if let Some(value) = input.expires_at {
+            payload.insert("expiresAt".to_owned(), Value::String(value));
+        }
+        if let Some(value) = input.metadata {
+            payload.insert("metadata".to_owned(), value);
+        }
+        let untrusted_payload = Value::Object(payload);
+        if serde_json::to_vec(&untrusted_payload)
+            .map_err(|_| ProviderRemoteProjectionError::Invalid)?
+            .len()
+            > PROVIDER_REMOTE_PROJECTION_MAX_BYTES
+        {
+            return Err(ProviderRemoteProjectionError::TooLarge);
+        }
+        Ok(Self {
+            id: input.id,
+            untrusted_payload,
+        })
+    }
+
+    /// Remote pairing id.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Known-field-only untrusted descriptor for durable presentation.
+    #[must_use]
+    pub const fn untrusted_payload(&self) -> &Value {
+        &self.untrusted_payload
+    }
+}
+
+impl core::fmt::Debug for ProviderRemoteInterrupt {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProviderRemoteInterrupt")
+            .field("id", &self.id)
+            .field("untrusted_payload", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Non-empty interrupt outcome bound to one completed remote protocol run.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProviderRemoteInterruptBatch {
+    protocol_run_id: String,
+    interrupts: Vec<ProviderRemoteInterrupt>,
+}
+
+impl ProviderRemoteInterruptBatch {
+    /// Construct an exact, unique interrupt batch.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty protocol ids, empty/oversized batches, duplicate ids, NUL, and >1 MiB.
+    pub fn new(
+        protocol_run_id: String,
+        interrupts: Vec<ProviderRemoteInterrupt>,
+    ) -> Result<Self, ProviderRemoteProjectionError> {
+        if protocol_run_id.is_empty()
+            || protocol_run_id.as_bytes().contains(&0)
+            || interrupts.is_empty()
+            || interrupts.len() > PROVIDER_REMOTE_INTERRUPT_MAX_ITEMS
+            || interrupts
+                .iter()
+                .map(ProviderRemoteInterrupt::id)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != interrupts.len()
+        {
+            return Err(ProviderRemoteProjectionError::Invalid);
+        }
+        let payload = Value::Array(
+            interrupts
+                .iter()
+                .map(|interrupt| interrupt.untrusted_payload().clone())
+                .collect(),
+        );
+        if serde_json::to_vec(&payload)
+            .map_err(|_| ProviderRemoteProjectionError::Invalid)?
+            .len()
+            > PROVIDER_REMOTE_PROJECTION_MAX_BYTES
+        {
+            return Err(ProviderRemoteProjectionError::TooLarge);
+        }
+        Ok(Self {
+            protocol_run_id,
+            interrupts,
+        })
+    }
+
+    /// Protocol run that produced this terminal interrupt outcome.
+    #[must_use]
+    pub fn protocol_run_id(&self) -> &str {
+        &self.protocol_run_id
+    }
+
+    /// Exact ordered interrupt descriptors.
+    #[must_use]
+    pub fn interrupts(&self) -> &[ProviderRemoteInterrupt] {
+        &self.interrupts
+    }
+}
+
+impl core::fmt::Debug for ProviderRemoteInterruptBatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProviderRemoteInterruptBatch")
+            .field("protocol_run_id", &self.protocol_run_id)
+            .field("interrupts", &self.interrupts.len())
+            .finish()
+    }
+}
+
+/// Closed AG-UI resume status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderRemoteResumeStatus {
+    /// Human supplied a resolution payload.
+    Resolved,
+    /// Human explicitly cancelled this interrupt.
+    Cancelled,
+}
+
+impl ProviderRemoteResumeStatus {
+    /// Stable 0.0.57 wire literal.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Resolved => "resolved",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// One bounded human response for a prior interrupt. It is deliberately non-serde.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProviderRemoteResumeEntry {
+    interrupt_id: String,
+    status: ProviderRemoteResumeStatus,
+    payload: Option<Value>,
+}
+
+impl ProviderRemoteResumeEntry {
+    /// Construct a bounded resume entry.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty/NUL ids or payloads above 64 KiB.
+    pub fn new(
+        interrupt_id: String,
+        status: ProviderRemoteResumeStatus,
+        payload: Option<Value>,
+    ) -> Result<Self, ProviderRemoteProjectionError> {
+        if interrupt_id.is_empty()
+            || interrupt_id.as_bytes().contains(&0)
+            || payload.as_ref().is_some_and(value_contains_nul)
+        {
+            return Err(ProviderRemoteProjectionError::Invalid);
+        }
+        if payload
+            .as_ref()
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(|_| ProviderRemoteProjectionError::Invalid)?
+            .is_some_and(|value| value.len() > PROVIDER_REMOTE_RESUME_PAYLOAD_MAX_BYTES)
+        {
+            return Err(ProviderRemoteProjectionError::TooLarge);
+        }
+        Ok(Self {
+            interrupt_id,
+            status,
+            payload,
+        })
+    }
+
+    /// Interrupt pairing id.
+    #[must_use]
+    pub fn interrupt_id(&self) -> &str {
+        &self.interrupt_id
+    }
+
+    /// Human resolution status.
+    #[must_use]
+    pub const fn status(&self) -> ProviderRemoteResumeStatus {
+        self.status
+    }
+
+    /// Untrusted answer sent only to the remote Agent.
+    #[must_use]
+    pub const fn payload(&self) -> Option<&Value> {
+        self.payload.as_ref()
+    }
+
+    fn wire_value(&self) -> Value {
+        let mut value = serde_json::Map::new();
+        value.insert(
+            "interruptId".to_owned(),
+            Value::String(self.interrupt_id.clone()),
+        );
+        value.insert(
+            "status".to_owned(),
+            Value::String(self.status.as_str().to_owned()),
+        );
+        if let Some(payload) = &self.payload {
+            value.insert("payload".to_owned(), payload.clone());
+        }
+        Value::Object(value)
+    }
+}
+
+impl core::fmt::Debug for ProviderRemoteResumeEntry {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProviderRemoteResumeEntry")
+            .field("interrupt_id", &self.interrupt_id)
+            .field("status", &self.status)
+            .field("payload", &self.payload.as_ref().map(|_| "[redacted]"))
+            .finish()
+    }
+}
+
+/// A complete next-invocation resume batch with explicit AG-UI lineage.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProviderRemoteResume {
+    parent_protocol_run_id: String,
+    protocol_run_id: String,
+    entries: Vec<ProviderRemoteResumeEntry>,
+    wire_entries: Vec<Value>,
+}
+
+impl ProviderRemoteResume {
+    /// Construct a unique, non-empty resume batch for a new protocol run id.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid/equal run ids, empty/oversized entries, duplicate interrupt ids, or >1 MiB.
+    pub fn new(
+        parent_protocol_run_id: String,
+        protocol_run_id: String,
+        entries: Vec<ProviderRemoteResumeEntry>,
+    ) -> Result<Self, ProviderRemoteProjectionError> {
+        if [&parent_protocol_run_id, &protocol_run_id]
+            .into_iter()
+            .any(|value| value.is_empty() || value.as_bytes().contains(&0))
+            || parent_protocol_run_id == protocol_run_id
+            || entries.is_empty()
+            || entries.len() > PROVIDER_REMOTE_INTERRUPT_MAX_ITEMS
+            || entries
+                .iter()
+                .map(ProviderRemoteResumeEntry::interrupt_id)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != entries.len()
+        {
+            return Err(ProviderRemoteProjectionError::Invalid);
+        }
+        let wire_entries = entries
+            .iter()
+            .map(ProviderRemoteResumeEntry::wire_value)
+            .collect::<Vec<_>>();
+        if serde_json::to_vec(&wire_entries)
+            .map_err(|_| ProviderRemoteProjectionError::Invalid)?
+            .len()
+            > PROVIDER_REMOTE_PROJECTION_MAX_BYTES
+        {
+            return Err(ProviderRemoteProjectionError::TooLarge);
+        }
+        Ok(Self {
+            parent_protocol_run_id,
+            protocol_run_id,
+            entries,
+            wire_entries,
+        })
+    }
+
+    /// Previous protocol run id.
+    #[must_use]
+    pub fn parent_protocol_run_id(&self) -> &str {
+        &self.parent_protocol_run_id
+    }
+
+    /// Fresh protocol run id for the resumed invocation.
+    #[must_use]
+    pub fn protocol_run_id(&self) -> &str {
+        &self.protocol_run_id
+    }
+
+    /// Typed entries.
+    #[must_use]
+    pub fn entries(&self) -> &[ProviderRemoteResumeEntry] {
+        &self.entries
+    }
+
+    /// Exact fixed-schema values encoded into `RunAgentInput.resume`.
+    #[must_use]
+    pub fn wire_entries(&self) -> &[Value] {
+        &self.wire_entries
+    }
+}
+
+impl core::fmt::Debug for ProviderRemoteResume {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProviderRemoteResume")
+            .field("parent_protocol_run_id", &self.parent_protocol_run_id)
+            .field("protocol_run_id", &self.protocol_run_id)
+            .field("entries", &self.entries.len())
+            .finish()
+    }
+}
+
 /// 一次 sampling request；actor/run/API key 不在 model request 自报面。
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderRequest {
@@ -845,6 +1275,8 @@ pub enum ProviderEvent {
     },
     /// Bounded AG-UI state/progress/display data, explicitly non-authoritative.
     RemoteProjection(ProviderRemoteProjection),
+    /// Remote protocol run reached a durable human interrupt outcome.
+    Interrupted(ProviderRemoteInterruptBatch),
     /// Tool skeleton。
     ToolCallStarted {
         /// Stable output/tool index。
@@ -906,6 +1338,9 @@ impl core::fmt::Debug for ProviderEvent {
                 .finish(),
             Self::RemoteProjection(projection) => {
                 f.debug_tuple("RemoteProjection").field(projection).finish()
+            }
+            Self::Interrupted(interrupts) => {
+                f.debug_tuple("Interrupted").field(interrupts).finish()
             }
             Self::ToolCallStarted {
                 index,
@@ -1067,6 +1502,19 @@ mod remote_projection_tests {
 
     use super::*;
 
+    fn interrupt(id: &str) -> ProviderRemoteInterrupt {
+        ProviderRemoteInterrupt::new(ProviderRemoteInterruptInput {
+            id: id.to_owned(),
+            reason: "confirmation".to_owned(),
+            message: Some("REMOTE_INTERRUPT_MESSAGE_CANARY".to_owned()),
+            tool_call_id: Some("call-1".to_owned()),
+            response_schema: Some(json!({"type":"object"})),
+            expires_at: Some("2026-09-04T12:00:00Z".to_owned()),
+            metadata: Some(json!({"remote":"untrusted"})),
+        })
+        .unwrap()
+    }
+
     #[test]
     fn closed_families_are_unique_and_payload_is_explicitly_untrusted() {
         let kinds = [
@@ -1139,6 +1587,110 @@ mod remote_projection_tests {
             ),
             Err(ProviderRemoteProjectionError::TooLarge)
         );
+    }
+
+    #[test]
+    fn interrupt_resume_is_unique_bounded_and_keeps_local_run_authority() {
+        let interrupt = interrupt("interrupt-1");
+        assert_eq!(interrupt.id(), "interrupt-1");
+        assert_eq!(interrupt.untrusted_payload()["reason"], "confirmation");
+        assert!(!format!("{interrupt:?}").contains("REMOTE_INTERRUPT_MESSAGE_CANARY"));
+        assert_eq!(
+            ProviderRemoteInterruptBatch::new(
+                "protocol-run-1".to_owned(),
+                vec![interrupt.clone(), interrupt.clone()],
+            ),
+            Err(ProviderRemoteProjectionError::Invalid)
+        );
+        let batch = ProviderRemoteInterruptBatch::new("protocol-run-1".to_owned(), vec![interrupt])
+            .unwrap();
+        assert_eq!(batch.interrupts().len(), 1);
+
+        let entry = ProviderRemoteResumeEntry::new(
+            "interrupt-1".to_owned(),
+            ProviderRemoteResumeStatus::Resolved,
+            Some(json!({"approved":true,"canary":"REMOTE_RESUME_PAYLOAD_CANARY"})),
+        )
+        .unwrap();
+        let resume = ProviderRemoteResume::new(
+            "protocol-run-1".to_owned(),
+            "protocol-run-2".to_owned(),
+            vec![entry],
+        )
+        .unwrap();
+        assert_eq!(resume.entries().len(), 1);
+        assert_eq!(resume.wire_entries()[0]["status"], "resolved");
+        assert!(!format!("{resume:?}").contains("REMOTE_RESUME_PAYLOAD_CANARY"));
+
+        let route = RemoteAguiRoute::new(
+            "https://agent.example/run".to_owned(),
+            "thread-1".to_owned(),
+            "protocol-run-1".to_owned(),
+            "bot-1".to_owned(),
+            Some("assertion".to_owned()),
+        )
+        .unwrap()
+        .with_resume(resume)
+        .unwrap();
+        assert_eq!(route.local_run_id(), "protocol-run-1");
+        assert_eq!(route.run_id(), "protocol-run-2");
+        assert_eq!(route.parent_protocol_run_id(), Some("protocol-run-1"));
+        assert_eq!(route.resume().unwrap().entries().len(), 1);
+    }
+
+    #[test]
+    fn resume_rejects_duplicate_ids_wrong_lineage_and_oversized_payload() {
+        let entry = ProviderRemoteResumeEntry::new(
+            "interrupt-1".to_owned(),
+            ProviderRemoteResumeStatus::Cancelled,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            ProviderRemoteResume::new(
+                "run-1".to_owned(),
+                "run-2".to_owned(),
+                vec![entry.clone(), entry],
+            ),
+            Err(ProviderRemoteProjectionError::Invalid)
+        );
+        assert_eq!(
+            ProviderRemoteResumeEntry::new(
+                "interrupt-1".to_owned(),
+                ProviderRemoteResumeStatus::Resolved,
+                Some(Value::String(
+                    "x".repeat(PROVIDER_REMOTE_RESUME_PAYLOAD_MAX_BYTES + 1),
+                )),
+            ),
+            Err(ProviderRemoteProjectionError::TooLarge)
+        );
+        let resume = ProviderRemoteResume::new(
+            "other-parent".to_owned(),
+            "run-2".to_owned(),
+            vec![
+                ProviderRemoteResumeEntry::new(
+                    "interrupt-1".to_owned(),
+                    ProviderRemoteResumeStatus::Cancelled,
+                    None,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        assert!(matches!(
+            RemoteAguiRoute::new(
+                "https://agent.example/run".to_owned(),
+                "thread-1".to_owned(),
+                "run-1".to_owned(),
+                "bot-1".to_owned(),
+                Some("assertion".to_owned()),
+            )
+            .unwrap()
+            .with_resume(resume),
+            Err(AgentContextError::Corrupt {
+                field: "remote_resume_parent"
+            })
+        ));
     }
 }
 

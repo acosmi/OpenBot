@@ -151,11 +151,14 @@ pub use ports::{
 };
 pub use provider::{
     AgentAudit, AgentAuditError, AgentAuditKind, AgentAuthorizationError, AgentAuthorizationSource,
-    AgentContextError, AgentContextSource, NoAgentAudit, PROVIDER_REMOTE_PROJECTION_MAX_BYTES,
+    AgentContextError, AgentContextSource, NoAgentAudit, PROVIDER_REMOTE_INTERRUPT_MAX_ITEMS,
+    PROVIDER_REMOTE_PROJECTION_MAX_BYTES, PROVIDER_REMOTE_RESUME_PAYLOAD_MAX_BYTES,
     ProviderAdapter, ProviderBillingFamily, ProviderCostUpperBound, ProviderEvent, ProviderFailure,
     ProviderMessage, ProviderMessageRole, ProviderOutputKind, ProviderPortError, ProviderRateCard,
-    ProviderRateCardError, ProviderRateCardInput, ProviderRemoteProjection,
-    ProviderRemoteProjectionError, ProviderRemoteProjectionKind, ProviderRequest, ProviderRoute,
+    ProviderRateCardError, ProviderRateCardInput, ProviderRemoteInterrupt,
+    ProviderRemoteInterruptBatch, ProviderRemoteInterruptInput, ProviderRemoteProjection,
+    ProviderRemoteProjectionError, ProviderRemoteProjectionKind, ProviderRemoteResume,
+    ProviderRemoteResumeEntry, ProviderRemoteResumeStatus, ProviderRequest, ProviderRoute,
     ProviderSession, ProviderToolCall, ProviderToolDefinition, ProviderUsage,
     RemoteAguiAuthorization, RemoteAguiEventStream, RemoteAguiRoute, RemoteAguiTransport,
     RemoteAguiTransportError,

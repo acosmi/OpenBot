@@ -5,14 +5,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openbot_application::{
-    ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, ProviderRemoteProjection,
+    ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, ProviderRemoteInterrupt,
+    ProviderRemoteInterruptBatch, ProviderRemoteInterruptInput, ProviderRemoteProjection,
     ProviderRemoteProjectionKind, ProviderRequest, ProviderRoute, ProviderSession,
     RemoteAguiEventStream, RemoteAguiTransport, RemoteAguiTransportError,
 };
 use serde_json::{Value, json};
 
 use crate::agui::{
-    AguiDecoder, AguiEvent, AguiRole, MAX_AGUI_COLLECTION_ITEMS, encode_run_agent_input,
+    AguiDecoder, AguiEvent, AguiRole, MAX_AGUI_COLLECTION_ITEMS, encode_run_agent_input_with_resume,
 };
 
 const MAX_REMOTE_PROJECTION_EVENTS: usize = MAX_AGUI_COLLECTION_ITEMS;
@@ -76,12 +77,14 @@ impl ProviderAdapter for RemoteAguiProvider {
                 serde_json::Value::String(assertion.to_owned()),
             );
         }
-        let body = encode_run_agent_input(
+        let body = encode_run_agent_input_with_resume(
             route.thread_id(),
             route.run_id(),
             &request.messages,
             &request.tools,
             serde_json::Value::Object(forwarded),
+            route.parent_protocol_run_id(),
+            route.resume(),
         )
         .map_err(|_| ProviderPortError::InvalidRequest {
             field: "remote_run_input",
@@ -116,6 +119,7 @@ impl ProviderAdapter for RemoteAguiProvider {
             remote_tool_results: BTreeSet::new(),
             offered_tools,
             response_id: format!("remote-agui:{}", route.run_id()),
+            protocol_run_id: route.run_id().to_owned(),
             projection_count: 0,
             projection_bytes: 0,
             terminal: false,
@@ -148,6 +152,7 @@ struct RemoteAguiSession {
     remote_tool_results: BTreeSet<String>,
     offered_tools: BTreeSet<String>,
     response_id: String,
+    protocol_run_id: String,
     projection_count: usize,
     projection_bytes: usize,
     terminal: bool,
@@ -275,9 +280,32 @@ impl RemoteAguiSession {
                 }
             }
             AguiEvent::RunFinished => self.complete(),
-            AguiEvent::RunInterrupted { .. } => {
-                // Decoder supports the pinned interrupt shape; durable human resume is a later G7 slice.
-                self.fail(ProviderFailure::GenerationFailed);
+            AguiEvent::RunInterrupted { interrupts } => {
+                let interrupts = interrupts
+                    .into_iter()
+                    .map(|interrupt| {
+                        ProviderRemoteInterrupt::new(ProviderRemoteInterruptInput {
+                            id: interrupt.id,
+                            reason: interrupt.reason,
+                            message: interrupt.message,
+                            tool_call_id: interrupt.tool_call_id,
+                            response_schema: interrupt.response_schema,
+                            expires_at: interrupt.expires_at,
+                            metadata: interrupt.metadata,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .and_then(|interrupts| {
+                        ProviderRemoteInterruptBatch::new(self.protocol_run_id.clone(), interrupts)
+                    });
+                match interrupts {
+                    Ok(interrupts) => {
+                        self.pending
+                            .push_back(ProviderEvent::Interrupted(interrupts));
+                        self.terminal = true;
+                    }
+                    Err(_) => self.fail(ProviderFailure::InvalidResponse),
+                }
             }
             // Remote prose/code are untrusted display inputs. Collapse them at this boundary so
             // neither the durable run journal nor logs/audit can receive provider-controlled text.
@@ -443,7 +471,8 @@ mod tests {
     use std::sync::Mutex;
 
     use openbot_application::{
-        ProviderMessage, ProviderMessageRole, RemoteAguiRoute, RemoteAguiTransportError,
+        ProviderMessage, ProviderMessageRole, ProviderRemoteResume, ProviderRemoteResumeEntry,
+        ProviderRemoteResumeStatus, RemoteAguiRoute, RemoteAguiTransportError,
     };
 
     use super::*;
@@ -573,6 +602,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interrupt_outcome_becomes_typed_batch_and_drops_unknown_authority_fields() {
+        let transport = Arc::new(FakeTransport {
+            body: Mutex::new(None),
+            events: vec![
+                json!({"type":"RUN_STARTED","threadId":"thread-1","runId":"run-1"}).to_string(),
+                json!({
+                    "type":"RUN_FINISHED",
+                    "threadId":"thread-1",
+                    "runId":"run-1",
+                    "outcome":{
+                        "type":"interrupt",
+                        "interrupts":[{
+                            "id":"interrupt-1",
+                            "reason":"confirmation",
+                            "message":"REMOTE_INTERRUPT_MESSAGE_CANARY",
+                            "responseSchema":{"type":"object"},
+                            "expiresAt":"2026-09-04T12:00:00Z",
+                            "metadata":{"remote":"value"},
+                            "authority":"forged-admin"
+                        }]
+                    }
+                })
+                .to_string(),
+            ],
+        });
+        let provider = RemoteAguiProvider::new(transport);
+        let mut session = provider.start(request(Vec::new())).await.unwrap();
+        assert!(matches!(
+            session.next_event().await.unwrap(),
+            Some(ProviderEvent::ResponseStarted { .. })
+        ));
+        let Some(ProviderEvent::Interrupted(batch)) = session.next_event().await.unwrap() else {
+            panic!("interrupt outcome was not preserved");
+        };
+        assert_eq!(batch.protocol_run_id(), "run-1");
+        assert_eq!(batch.interrupts().len(), 1);
+        let payload = batch.interrupts()[0].untrusted_payload();
+        assert_eq!(payload["id"], "interrupt-1");
+        assert_eq!(payload["reason"], "confirmation");
+        assert!(payload.get("authority").is_none());
+        assert!(!format!("{batch:?}").contains("REMOTE_INTERRUPT_MESSAGE_CANARY"));
+        assert_eq!(session.next_event().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn resumed_route_encodes_new_protocol_run_parent_and_exact_resume_array() {
+        let transport = Arc::new(FakeTransport {
+            body: Mutex::new(None),
+            events: vec![
+                json!({"type":"RUN_STARTED","threadId":"thread-1","runId":"run-2"}).to_string(),
+                json!({"type":"RUN_FINISHED","threadId":"thread-1","runId":"run-2"}).to_string(),
+            ],
+        });
+        let resume = ProviderRemoteResume::new(
+            "run-1".to_owned(),
+            "run-2".to_owned(),
+            vec![
+                ProviderRemoteResumeEntry::new(
+                    "interrupt-1".to_owned(),
+                    ProviderRemoteResumeStatus::Resolved,
+                    Some(json!({"approved":true})),
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let mut request = request_with_assertion(Vec::new());
+        let ProviderRoute::RemoteAgUi(route) = request.route else {
+            unreachable!();
+        };
+        request.route = ProviderRoute::RemoteAgUi(route.with_resume(resume).unwrap());
+        let provider = RemoteAguiProvider::new(transport.clone());
+        let mut session = provider.start(request).await.unwrap();
+        assert!(matches!(
+            session.next_event().await.unwrap(),
+            Some(ProviderEvent::ResponseStarted { response_id })
+                if response_id == "remote-agui:run-2"
+        ));
+        assert_eq!(
+            session.next_event().await.unwrap(),
+            Some(ProviderEvent::Completed)
+        );
+        let body: Value =
+            serde_json::from_slice(transport.body.lock().unwrap().as_ref().unwrap()).unwrap();
+        assert_eq!(body["runId"], "run-2");
+        assert_eq!(body["parentRunId"], "run-1");
+        assert_eq!(body["resume"][0]["interruptId"], "interrupt-1");
+        assert_eq!(body["resume"][0]["status"], "resolved");
+        assert_eq!(body["resume"][0]["payload"]["approved"], true);
+    }
+
+    #[tokio::test]
     async fn remote_open_families_become_bounded_untrusted_projections_in_event_order() {
         let transport = Arc::new(FakeTransport {
             body: Mutex::new(None),
@@ -645,6 +766,7 @@ mod tests {
             remote_tool_results: BTreeSet::new(),
             offered_tools: BTreeSet::new(),
             response_id: "remote-agui:run-1".to_owned(),
+            protocol_run_id: "run-1".to_owned(),
             projection_count: 0,
             projection_bytes: 0,
             terminal: false,

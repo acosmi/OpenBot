@@ -1290,6 +1290,17 @@ async fn handle_provider_event(
                 false
             }
         }
+        ProviderEvent::Interrupted(_) => {
+            // The provider boundary preserves the fixed interrupt contract. Until the durable
+            // human coordinator consumes it, retain the previous fail-closed run behavior.
+            drive_terminal_event(
+                state,
+                journal,
+                AgentEvent::ProviderFailed(AgentFailure::ProviderGenerationFailed),
+            )
+            .await;
+            true
+        }
         ProviderEvent::ToolCallCompleted { .. } => {
             drive_terminal_event(
                 state,
