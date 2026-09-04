@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R182，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R183，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1179,6 +1179,12 @@ lease transfer、release、expiry、navigation 或 computer restart 都递增 ep
 
 paste 使用 `Input.insertText`，不读取系统 clipboard；secret 使用独立 typed command，值不经过普通 key event、frame log 或 transcript。
 
+Batch108固定pure CDP parameter plan与上游键语义：`VIRTUAL_KEY_CODES`是**17项**（包含空格→32），
+其它单UTF-16单元取uppercase结果的首unit，未知多单元键返回0并继续计划；不得把后者擅自收窄成
+`UnknownKey`拒绝。该plan只把closed `BrowserInput`映射到mouse/wheel/key/insertText参数，普通路径
+构造性拒绝`SecretInsert`；尚未接authenticated engine或产生live CDP effect，故T-BROP-0037–0044、
+P2/G5A/G7仍todo。
+
 ### 12.6 性能目标与降级
 
 - 目标：1280×800、JPEG quality 70（与上游 `screencast.ts` 的 `maxWidth 1280 / maxHeight 800 / quality 70` 逐值相同；上游不限 fps、每次变化一帧）；fps 上限是新增背压：10 fps passive / 15 fps driving；component render session 另限 ≤ 5 fps（R118，新增；组件多为静态，`Page.startScreencast` 只在重绘时出帧，静态组件零流量）；
@@ -2066,6 +2072,9 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] Batch106固定上游browser residency选择与Rust manager owner子证据：13条selector、完整scope/代次、
     cold-start合并、active lease保护、LRU/idle actual close、rollback与shutdown共`43/0/2 ignored`；未接production
     EngineProcess/Supervisor、两个COMPUTER配置或CPU/RSS/pids/disk，不勾G5A–G5F。
+  - [x] Batch108固定`BrowserInput→CdpInputPlan`纯映射前置：17项键码逐项相等、unknown multi-unit=0、
+    mouse/wheel/key/insertText与SecretInsert隔离共11条，Computer=`54/0/2 ignored`；fixture明确
+    engine wire/live CDP/ScreenHub=false，T-BROP-0037–0044继续todo，且P1红时不冒充已进入P2。
   - [ ] **P1 整阶段仍未通过**：Batch54 已落 Windows 可执行探针代码（当前用户+Restricted-Code/low-label 双 Named Pipe、PID+100ns creation FILETIME、suspended `DISABLE_MAX_PRIVILEGE|LUA_TOKEN|WRITE_RESTRICTED` medium-integrity token、Job 32 processes/4 GiB/kill-on-close、profile/temp ACL、renderer Job membership、PE `Integrity/ElectronAsar` exact resource）并在 macOS 对 `x86_64-pc-windows-msvc` check/Clippy；但 Windows 真机 bundle、两个 role、ACL negative、renderer sandbox/no-listener/no-orphan **均未运行**。Batch55 又落 Ubuntu 24.04 x86_64 runsc OCI harness与容器内真实双 role probe：完整 release tarball sha、sidecar release ALWAYS + usage STRICT、network/host-UDS/FIFO none、gVisor marker、只读root/bind、零capability；R129补齐Electron Linux必需的容器内Xvfb（fixed :99/1280×800×24、`-nolisten tcp`、版本+binary hash候选），renderer要求main `Seccomp!=2`负对照、renderer `Seccomp:2` + `NoNewPrivs:1`、PID+network或user namespace layer-1、frame/listener/orphan/lock全绿后才打印pin candidate。但本机macOS只能做Linux target check/Clippy，**没有运行runsc/Xvfb、没有版本pin**；R63禁止未授权派发Actions，不能伪造两平台结论。P2/P3/P4未进入，G5A–G5F仍不勾。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
@@ -2552,6 +2561,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R181 | §7.4 / §10.1、§10.6 / §11.1–§11.3 / §17.2–§17.3 / §18 / §24 G4、G5（2026-09-04 Batch106：browser runtime residency budget） | R165只关闭process-wide tool semaphore；Computer仍无runtime owner。固定上游`profiles.ts`已用`COMPUTER_MAX_BROWSERS=8`、30分钟idle sweep与`browser-eviction.ts`稳定LRU防止一Bot一Chromium无限驻留，13条测试全在中央台账todo。只移植pure selector仍可被production忽略；按Bot ID建map又会违反§10.1完整scope；cap直接关闭正在执行的browser会把effect中途切断；先移除LRU再launch若launch失败会无故损失可用实例；并发cold start若各自launch会压同一profile。 | 先逐项实现13条pure selector：cap仅在`len>max`时按stable used-at取`len-max`，idle边界`<=cutoff`，timeout≤0只关闭pure sweep。再新增generic `BrowserRuntimeManager<D>`持有opaque driver handles；instance绑定完整`ComputerSecurityScope` digest+ComputerId+generation。同scope cold start经全局lifecycle gate合并；现有lease操作仍并发。cap/idle/generation/explicit stop只选leases=0；全slot active时effect前稳定`computer_runtime_busy`。选中victim先保留所有权，launch失败原样恢复；launch成功才consume victim并调用driver close。stale generation/scope identity冲突拒绝，touch counter checked，shutdown先关new lease再有界重复收口。driver错误只作source，Display/Debug不含其prose。 | selector=`2385493d5e2c6472b4470e39d167e60f272c4f6f`，manager=`b92c401a540281460c98542a8f29583343746578`。固定上游三文件blob/bytes/SHA写入Batch106；fixture=`1579 B`/SHA-256 `1dc49180…`且closed evidence boundary明确production assembly与CPU/RSS/pids/disk仍false。selector=`15/0/0`、manager=`10/0/0`、Computer=`43/0/2 ignored`，locked Clippy/fmt/diff绿。13条T-TEST转done、新增T-FIX-0048；parity=`861/849/1710`、tests=`470/577/1047`、fixtures=`26/22/48`、overlay=`1286/416/2/6`、0违反/警告。无schema/native/API/route/UI/env/dependency/Cargo/npm/Grok/workflow变化，strict/CI/Actions未跑。由于Server/Desktop尚未接manager→EngineProcess/Supervisor，两个COMPUTER_*配置、CPU/RSS/pids/disk及真实process evidence仍todo，故不称完整Computer runtime budget、ComputerManager、G4/G5/P1/P2完成；详见Batch106文档。 |
 
 | R182 | §16.3 / §19.3 / §24 G0、G6、G8 / §25 与GUI第一真源§10（2026-09-04 Batch107：Golden PNG gate） | GUI §10.4已固定逐通道16/255、0.1%与8×8判据，但此前只有纸面manifest；外部候选也仅比较已解码RGBA。若没有exact页面身份，245张任意1×1 PNG也能凑数；若不限制decoder/路径/mask，压缩炸弹、symlink或未评审遮罩会绕过gate；`check-manifest`结构绿又可能被误写为正式golden绿。旧manifest还保留96KiB CSS预算、crate为空/Windows host等过期阻塞。 | 只择取候选pure comparator单commit；新增`cargo xtask golden check-manifest|compare|verify`。manifest v2从seed route+golden_param机械导出137 Web+54 macOS+54 Windows exact path，文件名viewport必须等于PNG尺寸；只接受≤16MiB PNG、≤4096维、≤64MiB allocation，无symlink。mask必须在reviewed page/selector allowlist，diff只写ignored目录。formal verify先要求固定容器sha256/CJK包版本、baseline/actual集合相等；`ready=false`时只允许结构检查，绝不放行正式verify。`image 0.25.10`关闭默认feature、只启PNG且仅testkit xtask optional edge，锁四包license/build.rs/checksum。 | comparator=`79d849f0db7a4b822a56ec4369e638b229345c8a`，gate=`a69b3efcf41edd1c7dd0e089885fbd6143fa02a7`。core/gate/all-features=`18+7+137/0/10 ignored`，xtask全套=`102/0/0`，Clippy、UI dependency与六target deny guard绿；1024×1024真实PNG自比`0/1048576`差异。formal verify因TBD provenance按预期exit1。T-FIX-0003 evidence重验证，无新增fixture；parity=`861/849/1710`、tests=`470/577/1047`、fixtures=`26/22/48`、overlay=`1283/419/2/6`、0违反/警告；recount=`71/0/89 skipped`，strict未配置上游而未跑。Cargo.lock四个developer-only新增包、总829；cargo-vet仍373 unvetted且未加exemption。无schema/native/API/route/UI/bundle/npm/Grok/workflow变化，未跑CI/Actions。245张baseline、固定Linux/CJK、CDP/xcap、AX/键盘/reduced-motion与G6/G8仍todo；详见Batch107文档。 |
+
+| R183 | §11.2 / §12.5–§12.6 / §19.1 P2 / §24 G5、G7（2026-09-04 Batch108：BrowserInput→CDP pure plan） | 外部候选的closed plan与secret隔离方向正确，但把固定上游17项`VIRTUAL_KEY_CODES`写成16项并删掉显式空格，且把上游对未知多UTF-16单元键返回0的行为收窄为`UnknownKey`。其10条测试把两项偏差固化成期望；测试绿不能替代fixed-source fidelity。P1仍红时也不能把pure mapping冒充已进入P2或live CDP。 | 从R182以`cherry-pick --no-commit`导入，先修正再一次提交：同时保留Batch106 eviction module；键表逐项17条含空格，single-unit按uppercase首UTF-16 unit，unknown multi-unit=0。closed plan只表达mouseMoved/Pressed/Released、mouseWheel、keyDown/rawKeyDown/keyUp与insertText；native/windows code相等；key/code/text Debug脱敏。SecretInsert普通plan稳定拒绝。新增source-identity fixture，明确engine wire/live effect/ScreenHub=false；T-BROP-0037–0044保持todo。 | candidate=`1ca08993f725310e97c16c9bb77cdd14f1f61a4e`，corrected implementation=`b9e464013072b4d190e204aebc0f8afd861ba223`。上游`screencast.ts`=`6906 B`/blob `9bc27c11…`/SHA-256 `be79bde5…`；fixture=`1315 B`/SHA-256 `e6cf14b9…`。mapping=`11/0/0`，Computer=`54/0/2 ignored`，all-target/all-feature Clippy与fmt/diff绿。新增T-FIX-0049；parity/browser仍`861/849/1710`与`7/43/50`，fixtures=`27/22/49`、overlay=`1283/419/2/6`、0违反/警告；recount=`71/0/89 skipped`，strict未配置上游而未跑。无schema/native/API/route/UI/bundle/dependency/Cargo/env/npm/Grok/workflow变化，未跑CI/Actions。authenticated engine/live effect、坐标/ScreenHub、T-BROP八条、P1/P2/G5/G7仍todo；详见Batch108文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 
