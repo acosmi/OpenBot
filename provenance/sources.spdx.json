@@ -522,7 +522,7 @@
       "licenseDeclared": "MIT OR Apache-2.0",
       "copyrightText": "NOASSERTION",
       "comment": "仅 testkit：golden 截图比对（GUI §10）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/image/0.25.10` 的 `.version.license` 字段（原样返回 `MIT OR Apache-2.0`）。",
-      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "sourceInfo": "Batch107 已仅以 openbot-testkit/xtask 的 PNG-only optional edge 引入；Cargo.lock checksum = 85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104。不开 xtask 时不进入任何产品图。",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",

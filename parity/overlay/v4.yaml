@@ -5,6 +5,17 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  # Batch107 adds an optional PNG-only testkit edge. R124 maps that package diff to these existing
+  # done targets, so the real PostgreSQL/OpenAI vertical and fintech fixture are rerun explicitly.
+  - id: T-TEST-0652
+    disposition: revalidate
+    notes: "Batch107 reruns the exact real OpenAI HTTP/PG vertical after the testkit feature graph gains image."
+  - id: T-TEST-0657
+    disposition: revalidate
+    notes: "Batch107 reruns the same three-run fresh credential/config test with the new optional edge absent from product graphs."
+  - id: T-TEST-1040
+    disposition: revalidate
+    notes: "Batch107 reruns the complete fintech package fixture in openbot-testkit lib 19/0/0."
   # Batch106 adds the fixed-upstream browser-residency selector and reruns all thirteen mapped
   # browser-eviction tests plus two Rust hardening boundaries.
   - id: T-TEST-0034

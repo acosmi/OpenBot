@@ -45,6 +45,35 @@ grep -qxF 'leptos_i18n_build = "=0.6.2"' Cargo.toml \
   || fail 'leptos_i18n_build pin drifted'
 grep -qxF 'gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json", "websocket"] }' Cargo.toml \
   || fail 'gloo-net pin/WebSocket feature boundary drifted'
+grep -qxF 'image = { version = "=0.25.10", default-features = false, features = ["png"] }' Cargo.toml \
+  || fail 'golden image pin/PNG-only feature boundary drifted'
+grep -qxF 'image = { workspace = true, optional = true }' crates/openbot-testkit/Cargo.toml \
+  || fail 'golden image edge is not optional and testkit-owned'
+[[ "$(grep -cF '"dep:image"' crates/openbot-testkit/Cargo.toml)" == 1 ]] \
+  || fail 'golden image must be enabled exactly once by the xtask feature'
+for product_manifest in crates/openbot-{contracts,domain,application,infra,agent,computer,server,ui,desktop}/Cargo.toml; do
+  ! grep -qE '^image[[:space:]]*=' "$product_manifest" \
+    || fail "golden image escaped into product manifest $product_manifest"
+done
+golden_image_tree="$(cargo tree -p openbot-testkit --features xtask -i image --locked --offline)"
+[[ "$golden_image_tree" == $'image v0.25.10\n└── openbot-testkit v0.0.0 ('* ]] \
+  || fail "golden image dependency path drifted: $golden_image_tree"
+for package_spec in image-0.25.10 moxcms-0.8.1 pxfm-0.1.30 byteorder-lite-0.1.0; do
+  package_root="$(crate_root "$package_spec")"
+  [[ ! -e "$package_root/build.rs" ]] || fail "$package_spec gained a build script"
+done
+grep -qxF 'license = "MIT OR Apache-2.0"' "$(crate_root image-0.25.10)/Cargo.toml" \
+  || fail 'image license changed'
+grep -qxF 'license = "BSD-3-Clause OR Apache-2.0"' "$(crate_root moxcms-0.8.1)/Cargo.toml" \
+  || fail 'moxcms license changed'
+grep -qxF 'license = "BSD-3-Clause OR Apache-2.0"' "$(crate_root pxfm-0.1.30)/Cargo.toml" \
+  || fail 'pxfm license changed'
+grep -qxF 'license = "Unlicense OR MIT"' "$(crate_root byteorder-lite-0.1.0)/Cargo.toml" \
+  || fail 'byteorder-lite license changed'
+grep -qF '85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104' Cargo.lock \
+  || fail 'image Cargo.lock checksum changed'
+grep -qF 'Cargo.lock checksum = 85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104' provenance/sources.spdx.json \
+  || fail 'image SPDX lock identity is stale'
 grep -qxF 'futures-util.workspace = true' crates/openbot-ui/Cargo.toml \
   || fail 'UI WebSocket StreamExt dependency boundary drifted'
 gloo_net_root="$(crate_root gloo-net-0.6.0)"
@@ -126,4 +155,4 @@ grep -qxF 'ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2026-017
 grep -qF 'cargo audit --deny warnings --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0173' .github/workflows/ci.yml \
   || fail 'manual CI cargo-audit waiver set drifted'
 
-printf '%s\n' 'UI dependency guard: ok (30 build scripts; gloo-net WebSocket exact/no-build.rs; 2 licenses; 2 compile-time unmaintained advisories; 2 Windows archives; 2 unreachable maintainer scripts)'
+printf '%s\n' 'UI dependency guard: ok (30 build scripts; gloo-net WebSocket exact/no-build.rs; golden image 0.25.10 PNG-only/testkit-only + 4 zero-build.rs packages; 6 license identities; 2 compile-time unmaintained advisories; 2 Windows archives; 2 unreachable maintainer scripts)'

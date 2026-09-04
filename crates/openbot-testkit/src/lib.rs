@@ -26,10 +26,12 @@
 //! | target | 内容 | 出处 |
 //! | --- | --- | --- |
 //! | [`golden`] | 已解码 RGBA8 的阈值、比例、8×8 差异块与显式 mask 比较核心 | GUI v2 §10.4 |
-//! | `src/bin/xtask.rs` | 仓库闸门驱动器（`parity-check` / `ci` / `test-inventory`） | §19.3 / §24 G0 |
+//! | `src/bin/xtask.rs` | 仓库闸门驱动器（含PNG-only `golden check-manifest/compare/verify`） | §19.3 / §24 G0/G6 |
 //! | `tests/transport_parity.rs` | **G1 判据第 2 条**的执行面：同一个 `ApplicationService` 经 Axum HTTP 与 in-process 两条 transport，结果一致 | §24 G1 / §5.2 |
 //!
-//! PNG 解码、截图、diff 图、golden gate、golden trace、fault injection 与 fake provider 仍按各自闸门逐步落地。
+//! PNG解码、deterministic diff图、manifest/mask/matrix fail-closed gate已落；Web CDP/desktop xcap
+//! 截图、固定Linux容器/fonts与245张正式基线仍未落。golden trace、fault injection与fake provider继续
+//! 按各自闸门逐步实施。
 //!
 //! ## 为什么对拍装置落在 `tests/` 而不是库面
 //!

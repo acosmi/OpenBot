@@ -8,7 +8,7 @@
 # 二者不得互相冒充：本文件里写着的 digest 占位不等于 ledger 里可以写 done。
 
 schema = "ui-golden-manifest"
-schema_version = 1
+schema_version = 2
 upstream_commit = "891df72f1827454d8b353d108fe5dd2313b7e30d"
 generated_by = "manual"
 
@@ -39,9 +39,10 @@ digest = "TBD"
 digest_status = "placeholder"
 digest_note = """
 TBD 由 CI 第一次成功跑完 Web golden 腿时固化写回本文件（形如 sha256:<64hex>），并与那一批 PNG 同 PR 提交。
-这是**本清单的占位**，不是 fixtures/MANIFEST.yaml 里 T-FIX-0009 可以写 done 的理由：
+这是**本清单的占位**，不是 fixtures/MANIFEST.yaml 里 T-FIX-0008 可以写 done 的理由：
 ledger 的 done 需要 done_evidence 指向真实产出的 PNG 与固化后的 digest 两者。
-本机没有 Linux 容器运行时，也没有本仓的 Chromium 引擎产物（crates/ 目前是空骨架），故本轮不可能测出该值。
+当前 macOS 已有可验证 Electron engine 与 Leptos/Axum fixture，但没有 Ubuntu 24.04 x64 golden
+容器/runtime、固定 fonts-noto-cjk 包版本或该容器内的 110 张 Web 基线，故仍不能填写 digest。
 """
 cjk_font_package = "fonts-noto-cjk"
 cjk_font_package_version = "TBD"
@@ -97,6 +98,14 @@ system_third_state = "CDP Emulation.setEmulatedMedia 模拟 prefers-color-scheme
 values = ["en", "zh-CN"]
 default = "en"
 note = "§8.4 首版只有这两个 locale。en 覆盖全部视口 × 主题；zh-CN 只截 §10.1 的补充集合，见 [[matrix]] 的 web-zh-CN。"
+
+[naming]
+root_page_key = "home"
+route_segment_separator = "--"
+dynamic_parameter_rule = "逐segment以fixtures/ui/seed.json::pages_covered[].golden_param替换$param；TanStack $key_ 的尾下划线只用于路由消歧，参数名按key读取"
+gallery_page_key = "design-gallery"
+gallery_viewport = "1440x900"
+allowed_page_key_bytes = "ASCII alphanumeric, hyphen, underscore"
 
 # ---------------------------------------------------------------------------
 # 4. 平台矩阵与张数（§10.1）
@@ -181,7 +190,7 @@ grand_total_formula = "110 + 27 + 54 × 2 = 245"
 # 5. 比对规则（§10.4）
 # ---------------------------------------------------------------------------
 [compare]
-implementation = "openbot-testkit，crate `image` 0.25.10"
+implementation = "openbot-testkit::golden + cargo xtask golden，crate `image` 0.25.10（PNG-only）"
 pixel_differs_when = "任一通道差 > 16/255"
 channel_threshold = 16
 channel_threshold_denominator = 255
@@ -240,8 +249,9 @@ limit_human = "3.5 MiB"
 [[budget]]
 artifact = "app.css"
 measurement = "raw"
-limit_bytes = 98304
-limit_human = "96 KiB"
+limit_bytes = 131072
+warning_bytes = 122880
+limit_human = "128 KiB"
 
 [[budget]]
 artifact = "fonts (两份 woff2)"

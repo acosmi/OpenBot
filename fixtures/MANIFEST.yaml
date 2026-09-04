@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 47
+    expect: 48
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 22
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 25
+    expect: 26
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 47 47
+    expect: 48 48
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 37 0
+    expect: 10 38 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -60,10 +60,12 @@ entries:
     migration_rule: "n/a: 上游没有视觉 oracle"
     status: done
     evidence: "python3 -c \"import tomllib,pathlib;d=tomllib.loads(...);print(sum(m['count'] for m in d['matrix']))\" => 245；len(d['matrix']) => 4；fonts bytes sum => 740216"
-    done_evidence: "fixtures/ui/golden/MANIFEST.toml；4 条 matrix 合计 245 张、3 条 bundle 预算、mask 清单为空并写明评审规则、比对阈值与失败判据逐条落纸"
+    done_evidence: "fixtures/ui/golden/MANIFEST.toml v2；seed-derived exact 245-path inventory、4条matrix、3条bundle预算（CSS 128KiB/120KiB warning）、mask清单为空；openbot-testkit RGBA core=18/0/0，xtask PNG/manifest/diff gate=7/0/0；check-manifest实得matrix245/masks0/ready=false，formal inventory对空目录/仅数量对但错名及verify对TBD provenance均保持红"
     notes: >-
       image.digest 与 cjk_font_package_version 是 TBD 占位，由 CI 第一次跑完 Web 腿时固化。
       占位不构成 T-FIX-0008 的 done —— 那条要的是固化后的真实 digest 与同批 PNG。
+      T-FIX-0003只关闭清单与可执行gate本身；T-FIX-0004..0008仍分别承载245张PNG和容器来源，
+      所以gate能正确判红不等于golden矩阵完成。
 
   - id: db-schema-0012
     upstream: server/drizzle/0000_schema.sql .. server/drizzle/0012_truncate_is_not_a_way_around_append_only.sql
@@ -430,8 +432,9 @@ entries:
       录制前提：openbot-ui 可构建出 app.wasm/app.css；openbot-server 能在 golden feature 下用 fixtures/ui/seed.json 起 fake ApplicationService；
       本项目 Chromium 引擎（v3 §11）已可通过 CDP Page.captureScreenshot；容器镜像 digest 已固化（T-FIX-0008）。
       验收判据：110 个文件按 MANIFEST.toml::matrix[web-en].path_pattern 命名齐全；每张在同一容器里重截两次逐字节相等（证明确定性条件真的生效，而不是碰巧一致）。
-      阻塞原因：crates/ 目前是空骨架（本仓零实现代码），Chromium 引擎与 Leptos 前端都不存在，本机也无 Linux 容器运行时。
-      解除条件：G6 之前，openbot-ui + openbot-server + 浏览器引擎三者的最小可渲染切片合入 main，且 CI 的 Web golden job 首次绿。
+      当前阻塞：Leptos/Axum fixture与macOS Electron engine已有实现，但没有固定digest的Ubuntu x64
+      golden容器/fonts-noto-cjk、Web capture orchestration或110张经双录逐字节相等的基线。
+      解除条件：固定Linux镜像+字体版本，与T-FIX-0008同批完成CDP截图双录并由本批PNG gate全量验证。
   - id: ui-golden-web-zh-cn
     upstream: "-"
     label: 新增
@@ -446,8 +449,8 @@ entries:
       27 这个数字来自 Phase 0 任务书，§10.1 的矩阵表本身没有 locale 维度；MANIFEST.toml 已把 zh-CN 腿的主题与视口各钉死为一个值来让 27 成立，改任一维度就要同 PR 改 §10.1。
       录制前提：同 T-FIX-0004，另加容器里 fonts-noto-cjk 已装且版本已写进 MANIFEST.toml。
       验收判据：27 张齐全；zh-CN 与 en 同页对比时，除文本区域外的布局盒不得出现新的溢出（§8.6 CJK 排版）。
-      阻塞原因：同 T-FIX-0004，再加 crates/openbot-ui/locales/zh-CN.json 尚不存在。
-      解除条件：locales/en.json 与 zh-CN.json 通过 xtask i18n-check（键集合逐字相等）后，与 T-FIX-0004 同批录制。
+      当前阻塞：en/zh-CN与i18n-check已落；仍缺T-FIX-0004同一固定Linux镜像中的CJK字体版本和27张双录基线。
+      解除条件：与T-FIX-0004同批录制并校CJK布局/overflow，不再以“locale不存在”作为理由。
   - id: ui-golden-desktop-macos-arm64
     upstream: "-"
     label: 新增
@@ -461,8 +464,9 @@ entries:
       需录：27 页 × 2 主题 × 1440×900 = 54 张。
       录制前提：openbot-desktop 的 Tauri 壳可在 macOS arm64 起窗口并加载同一份 dist/；xcap 0.9.8 可捕获该窗口。
       验收判据：54 张齐全；dist/ 的 sha256 清单与 Web 腿、Windows 腿相等（§10.4 的 desktop parity 定义），但**不做**跨引擎逐像素比对。
-      阻塞原因：本机是 Windows，无 macOS arm64 硬件；openbot-desktop 尚不存在。
-      解除条件：拿到 macOS arm64 CI runner 或真机，且 openbot-desktop 能加载 golden feature 的 bundle。
+      当前阻塞：本机已是macOS arm64且Desktop/Tauri代码存在，但正式产品identity/capability/发行窗口、
+      xcap 0.9.8接线与54张双录基线仍缺。
+      解除条件：正式发行窗口加载golden bundle后以钉版xcap捕获并由PNG gate验证；不得用MockRuntime替代。
   - id: ui-golden-desktop-windows-x64
     upstream: "-"
     label: 新增
@@ -475,8 +479,9 @@ entries:
     notes: >-
       需录：27 页 × 2 主题 × 1440×900 = 54 张。
       录制前提与验收判据同 T-FIX-0006，平台换成 Windows x64 / WebView2。
-      阻塞原因：openbot-desktop 尚不存在（crates/openbot-desktop 是空骨架）。
-      解除条件：openbot-desktop 在本机能起窗口并加载 golden bundle 之后即可在本机录制，不需要额外硬件。
+      当前阻塞：Desktop代码存在，但需要Windows x64真机、正式产品identity/capability/发行窗口、钉版
+      xcap接线与54张双录基线；macOS compile或截图不能替代。
+      解除条件：Windows x64正式窗口加载同bundle并完成本平台捕获/比对。
   - id: golden-container-digest-freeze
     upstream: "-"
     label: 新增
@@ -490,7 +495,7 @@ entries:
       需录：Web golden 容器镜像的 sha256 digest，以及镜像里 fonts-noto-cjk 的确切版本。
       录制前提：CI 有一条能跑完 Web golden 的 Linux x64 job。
       验收判据：digest 形如 sha256:<64hex>；用该 digest 重新拉起镜像重截 T-FIX-0004 的 110 张，逐字节相等。
-      阻塞原因：本机无容器运行时，且没有任何东西可截。
+      当前阻塞：本机无Ubuntu x64容器runtime；可渲染实现已存在，但固定镜像/fonts与Web capture orchestration未闭合。
       解除条件：与 T-FIX-0004 同一次 CI 绿，digest 与 PNG 同 PR 写回。
   - id: policy-cel-rust-oracle-diff
     upstream: server/src/computer/policy.ts::evaluateActionPolicy

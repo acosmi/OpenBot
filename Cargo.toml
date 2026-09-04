@@ -86,6 +86,9 @@ zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
 # P1 engine bundle rewrites macOS Info.plist and ASAR integrity metadata without Electron/npm
 # packagers. This package is already locked through Tauri's build graph; xtask adds no new package.
 plist = "=1.10.0"
+# GUI first source §10.4 pins the developer-only golden decoder/encoder. PNG is the sole enabled
+# format; disabling defaults avoids GIF/JPEG/WebP/AVIF codecs that the gate never accepts.
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # `xtask test-inventory`（v3 §24 G0 / G8 点名的 AST 级 test inventory）的 TS/TSX 解析器。
 #
 # **版本 `0.146.0`（2026-08-22 实测最新）。五个 crate 同版本 —— oxc 全家桶同步发版。**

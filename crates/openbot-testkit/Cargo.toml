@@ -39,6 +39,7 @@ xtask = [
     "dep:oxc_parser",
     "dep:oxc_span",
     "dep:openbot-windows-sandbox",
+    "dep:image",
 ]
 
 [dependencies]
@@ -62,6 +63,8 @@ tar = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 plist = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
+# `cargo xtask golden` only. This crate never enters a product dependency graph.
+image = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # `engine bundle` writes and re-reads the official ElectronAsar/Integrity PE resource through the

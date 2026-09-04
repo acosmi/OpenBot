@@ -182,7 +182,7 @@ jq '.native.messages | length' fixtures/ui/seed.json                            
 - zh-CN 的 27 来自 Phase 0 任务书；§10.1 的矩阵表本身没有 locale 维度，所以清单把 zh-CN 腿的主题与视口各钉死为一个值（light / 1440×900）来让 27 成立，改任一维度就要同 PR 改 §10.1。
 - 比对：任一通道差 `> 16/255` 记为差异像素；**失败判据 = 差异像素 > 0.1% 或存在任一 8×8 全差异块**。
 - mask 清单首版为**空**，并写死"新增 mask 需评审"的规则。空不是遗漏：seed + Clock + 确定性头像已覆盖 27 页的全部动态源，实时 screencast 帧不在这 27 页里。
-- bundle 预算三行：`app.wasm` gzip ≤ 3.5 MiB、`app.css` ≤ 96 KiB、两份 woff2 ≤ 800 KiB（实测 740,216 B = 352,240 + 387,976）。
+- bundle 预算三行：`app.wasm` gzip ≤ 3.5 MiB、`app.css` ≤ 128 KiB（120 KiB warning）、两份 woff2 ≤ 800 KiB（实测 740,216 B = 352,240 + 387,976）。
 
 复算：
 
@@ -193,13 +193,16 @@ python3 -c "import tomllib,pathlib;d=tomllib.loads(pathlib.Path('fixtures/ui/gol
 
 ---
 
-## 6. 四类"必须实录"的 fixture 为什么现在录不了
+## 6. 四类“必须实录”fixture 的当前边界
 
-`agui` / `provider` / `mcp` / `browser` 四类是**录像**，不是可静态推导的产物。把它们写成 `done` 会同时骗过校验器与主控，所以它们全部是 `todo`，并在 `MANIFEST.yaml` 里逐条写明解除条件。共同的阻塞面有三个：
+本节最初的“crates 为空、四类全部 todo”已被后续批次推翻，当前状态只认
+`fixtures/MANIFEST.yaml`与v4最新R行。AG-UI十一事件族已有production PostgreSQL纵向；OpenAI recorded
+trace为provider `1/3`；RMCP已有产品协议纵向但完整官方conformance仍todo；Browser/CDP/Screen真实矩阵仍缺。
 
-1. **本仓零实现代码。** `crates/` 下十个 crate 目前是空骨架，`openbot-agent` / `openbot-computer` / `openbot-server` / `openbot-testkit` 都不存在，因此"录下来给谁重放"这一半还没有。`openbot-testkit` 的 fault injection 是 `agui-transport-interruption` 与 `provider-commit-divergence` 两条的硬前提。
-2. **没有上游运行环境。** 本轮的上游克隆是**只读**的：`bun install` 会写 `node_modules`，Playwright 会下载浏览器，`*.integration.test.ts` 需要 PostgreSQL。要录 `browser/*` 与 `upstream-baseline/`，必须先把克隆复制到可写目录并起一个一次性 PostgreSQL。
-3. **没有外部凭据与官方 schema 副本。** `provider/*` 需要一份可用于录制的 provider 凭据；`agui/official-event-family` 需要 AG-UI 官方 schema 的固定版本；`mcp/rmcp-conformance` 需要 RMCP 3.1.4 的 conformance 套件。三者都应按 v3 §16.3 的供应链条目 vendored 进仓并写进 `tools/pins.toml`（含 sha256），之后就能离线重跑——**而不是每次录制时联网现取**。
+尚存的共同外部边界是：Anthropic/Google官方recorded或live credential证据、固定官方RMCP conformance
+runner、Ubuntu runsc/Xvfb与Windows真机，以及Web golden的固定Linux镜像/fonts和Desktop正式发行窗口。
+这些缺口不得用手写事件、compile-only、单元测试或本机另一平台结果替代。Batch107已经提供PNG-only
+比较/diff/manifest gate；容器digest或245张基线缺失时`cargo xtask golden verify`必须判红。
 
 依赖顺序（先做上面的才能做下面的）：
 

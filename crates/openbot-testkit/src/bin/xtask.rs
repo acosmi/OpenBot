@@ -14,6 +14,7 @@
 //! - `design-lint`  —— GUI 反向视觉约束与图标 allowlist。
 //! - `css-check`    —— Rust class 字面量必须存在于实际编译 CSS。
 //! - `bundle-budget`—— WASM gzip、CSS 与字体体积预算。
+//! - `golden`       —— 校清单、比较PNG并生成diff、拒绝缺失或占位的245张正式矩阵。
 //! - `tools`        —— 获取并校验 GUI 构建期钉版二进制。
 //! - `grok-inventory`—— 机械生成或核对 tier-1 文件级参考树 inventory。
 //! - `engine`       —— 获取并校验当前平台的钉版 Electron 官方 zip。
@@ -55,6 +56,9 @@ mod ui_assets;
 
 #[path = "../xtask/ui_finalize.rs"]
 mod ui_finalize;
+
+#[path = "../xtask/golden_gate.rs"]
+mod golden_gate;
 
 #[path = "../xtask/tools.rs"]
 mod tools;
@@ -235,6 +239,7 @@ fn main() -> ExitCode {
         Some("bundle-budget") => {
             workspace_root().and_then(|root| ui_gates::bundle_budget(&root, &args[1..]))
         }
+        Some("golden") => workspace_root().and_then(|root| golden_gate::run(&root, &args[1..])),
         Some("ui-assets") => workspace_root().and_then(|root| ui_assets::run(&root)),
         Some("ui-finalize") => ui_finalize::run(),
         Some("tools") => workspace_root().and_then(|root| tools::run(&root, &args[1..])),
@@ -291,6 +296,8 @@ xtask —— OpenBot 仓库闸门驱动器
                                       断言每个 Rust class 字面量都出现在编译 CSS
   cargo xtask bundle-budget [--dist <Trunk dist 目录>]
                                       检查 app.wasm gzip、CSS 与随包字体预算
+  cargo xtask golden check-manifest | compare | verify
+                                      校验visual manifest；比较PNG/生成diff；正式矩阵缺件或占位即红
   cargo xtask ui-assets               用与 openbot-ui build.rs 同一生成器物化 ignored tokens.css
   cargo xtask ui-finalize             仅供 Trunk post-build 生成外部 WASM bootstrap
   cargo xtask tools fetch            获取当前平台的钉版 Tailwind/wasm-opt，并按 lock 安装
