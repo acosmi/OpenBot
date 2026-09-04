@@ -51,6 +51,7 @@ use crate::mcp_catalog::{
     McpCatalogError, McpCatalogRefresh, PostgresMcpCatalog, VendorTransportKind,
 };
 use crate::mcp_credentials::{McpCredentialError, PostgresMcpCredentialBroker};
+use crate::mcp_egress::{MAX_MCP_EGRESS_CIDR_BYTES, MAX_MCP_EGRESS_CIDRS, parse_stored_mcp_egress};
 use crate::mcp_oauth::{McpOAuthClient, McpOAuthError};
 use crate::net::safe_http::{CidrAllowlist, SchemePolicy};
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
@@ -61,9 +62,9 @@ type HmacSha256 = Hmac<Sha256>;
 const CALLBACK_PATH: &str = "/api/plugins/oauth/callback";
 const ATTEMPT_TTL: Duration = Duration::minutes(10);
 const ATTEMPT_LOCK_KEY: i64 = 0x4f50_4d43_504f_4131; // `OPMCPOA1`
-// v2 binds the reviewed vendor transport into the sealed one-time attempt. Pre-v2 attempts fail
-// closed after an upgrade instead of being reinterpreted under a different protocol adapter.
-const ATTEMPT_VERSION: u8 = 2;
+// v3 binds the reviewed vendor transport and exact private-egress authority into the sealed
+// one-time attempt. Older attempts fail closed after an upgrade instead of being reinterpreted.
+const ATTEMPT_VERSION: u8 = 3;
 const MAX_ATTEMPT_VALUE_BYTES: usize = 32 * 1024;
 const DEFAULT_ATTEMPT_CAPACITY: usize = 4096;
 const REVOCATION_BATCH: i64 = 32;
@@ -71,8 +72,6 @@ const REVOCATION_RETRY_INTERVAL: StdDuration = StdDuration::from_secs(30);
 const MAX_CUSTOM_SERVER_ID_BYTES: usize = 40;
 const MAX_CUSTOM_SERVER_TITLE_BYTES: usize = 256;
 const MAX_CUSTOM_SERVER_URL_BYTES: usize = 8 * 1024;
-const MAX_MCP_EGRESS_CIDRS: usize = 32;
-const MAX_MCP_EGRESS_CIDR_BYTES: usize = 2_048;
 const MAX_SKILL_TITLE_BYTES: usize = 256;
 const MAX_SKILL_SUMMARY_BYTES: usize = 4 * 1024;
 const MAX_SKILL_INSTRUCTIONS_BYTES: usize = 64 * 1024;
@@ -487,6 +486,7 @@ impl PostgresMcpConnections {
         let row = client
             .query_opt(
                 "SELECT s.url,s.vendor,s.provenance,coalesce(s.transport,'mcp') AS transport,
+                        coalesce(s.egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs,
                         s.credential_id,c.kind,c.provider,c.encrypted_value,c.revoked_at
                    FROM public.mcp_servers s
                    LEFT JOIN public.credentials c ON c.id=s.credential_id
@@ -506,11 +506,17 @@ impl PostgresMcpConnections {
                 .map_err(|_| corrupt("transport"))?,
         )
         .map_err(|_| corrupt("transport"))?;
+        let egress_allow_cidrs: Vec<String> = row
+            .try_get("egress_allow_cidrs")
+            .map_err(|_| corrupt("egress_allow_cidrs"))?;
+        let egress_allowlist = parse_stored_mcp_egress(&egress_allow_cidrs)
+            .map_err(|_| corrupt("egress_allow_cidrs"))?;
         if transport == VendorTransportKind::GoogleDriveRest
             && (server_id != GOOGLE_DRIVE_SERVER_ID
                 || endpoint != GOOGLE_DRIVE_API_BASE
                 || vendor != GOOGLE_DRIVE_VENDOR
-                || provenance != GOOGLE_DRIVE_PROVENANCE)
+                || provenance != GOOGLE_DRIVE_PROVENANCE
+                || !egress_allowlist.is_empty())
         {
             return Err(corrupt("transport_identity"));
         }
@@ -561,6 +567,8 @@ impl PostgresMcpConnections {
             endpoint,
             client: secret,
             transport,
+            egress_allow_cidrs,
+            egress_allowlist,
         })
     }
 
@@ -635,17 +643,18 @@ impl PostgresMcpConnections {
                 resource: "mcp_oauth_attempt_capacity",
             });
         }
-        let current: bool = transaction
-            .query_one(
-                "SELECT EXISTS(
-                    SELECT 1 FROM public.users u
-                    JOIN public.mcp_servers s ON s.id=$3
-                     WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
-                       AND s.url=$4 AND s.credential_id=$5
-                       AND coalesce(s.transport,'mcp')=$6
-                       AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
-                       AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
-                                       WHERE ra.email=lower(u.email)))",
+        let current = transaction
+            .query_opt(
+                "SELECT u.id FROM public.users u
+                   JOIN public.mcp_servers s ON s.id=$3
+                  WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
+                    AND s.url=$4 AND s.credential_id=$5
+                    AND coalesce(s.transport,'mcp')=$6
+                    AND coalesce(s.egress_allow_cidrs,ARRAY[]::text[])=$7
+                    AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
+                    AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                    WHERE ra.email=lower(u.email))
+                  FOR SHARE OF u,s",
                 &[
                     &attempt.actor_id,
                     &attempt.auth_generation,
@@ -653,13 +662,12 @@ impl PostgresMcpConnections {
                     &attempt.resource,
                     &attempt.client_credential_id,
                     &attempt.transport,
+                    &attempt.egress_allow_cidrs,
                 ],
             )
             .await
-            .map_err(query_unavailable)?
-            .try_get(0)
-            .map_err(|_| corrupt("attempt_scope"))?;
-        if !current {
+            .map_err(query_unavailable)?;
+        if current.is_none() {
             return Err(McpConnectionError::NotVisible);
         }
         let id = Uuid::now_v7().to_string();
@@ -715,6 +723,7 @@ impl PostgresMcpConnections {
             || attempt_is_expired(attempt.expires_at_unix_seconds, consumed_at)
             || !valid_server_id(&attempt.server_id)
             || !valid_pkce(&attempt.code_verifier)
+            || parse_stored_mcp_egress(&attempt.egress_allow_cidrs).is_err()
         {
             return Err(corrupt("attempt"));
         }
@@ -822,12 +831,14 @@ impl PostgresMcpConnections {
         if material.credential_id != attempt.client_credential_id
             || material.endpoint != attempt.resource
             || material.transport.as_str() != attempt.transport
+            || material.egress_allow_cidrs != attempt.egress_allow_cidrs
         {
             return Err(McpConnectionError::NotVisible);
         }
         let (access, refresh, scope) = match material.transport {
             VendorTransportKind::Mcp => self
                 .oauth
+                .with_egress_allowlist(material.egress_allowlist.clone())
                 .exchange_authorization_code(
                     &material.endpoint,
                     material.client.expose(),
@@ -938,16 +949,17 @@ impl PostgresMcpConnections {
             .map_err(query_unavailable)?
             .try_get(0)
             .map_err(|_| corrupt("clock"))?;
-        let current: bool = transaction
-            .query_one(
-                "SELECT EXISTS(
-                    SELECT 1 FROM public.users u JOIN public.mcp_servers s ON s.id=$3
-                     WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
-                       AND s.url=$4 AND s.credential_id=$5
-                       AND coalesce(s.transport,'mcp')=$6
-                       AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
-                       AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
-                                       WHERE ra.email=lower(u.email)))",
+        let current = transaction
+            .query_opt(
+                "SELECT u.id FROM public.users u JOIN public.mcp_servers s ON s.id=$3
+                  WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
+                    AND s.url=$4 AND s.credential_id=$5
+                    AND coalesce(s.transport,'mcp')=$6
+                    AND coalesce(s.egress_allow_cidrs,ARRAY[]::text[])=$7
+                    AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
+                    AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                    WHERE ra.email=lower(u.email))
+                  FOR SHARE OF u,s",
                 &[
                     &attempt.actor_id,
                     &attempt.auth_generation,
@@ -955,13 +967,12 @@ impl PostgresMcpConnections {
                     &attempt.resource,
                     &attempt.client_credential_id,
                     &attempt.transport,
+                    &attempt.egress_allow_cidrs,
                 ],
             )
             .await
-            .map_err(query_unavailable)?
-            .try_get(0)
-            .map_err(|_| corrupt("callback_scope"))?;
-        if !current {
+            .map_err(query_unavailable)?;
+        if current.is_none() {
             return Err(McpConnectionError::NotVisible);
         }
         let old_row = transaction
@@ -1134,6 +1145,7 @@ impl PostgresMcpConnections {
         let revoked = match material.transport {
             VendorTransportKind::Mcp => self
                 .oauth
+                .with_egress_allowlist(material.egress_allowlist.clone())
                 .revoke_refresh_token(
                     &material.endpoint,
                     material.client.expose(),
@@ -1436,6 +1448,7 @@ impl McpConnectionAdministration for PostgresMcpConnections {
             VendorTransportKind::Mcp => {
                 let plan = self
                     .oauth
+                    .with_egress_allowlist(material.egress_allowlist.clone())
                     .authorization_plan(
                         &material.endpoint,
                         material.client.expose(),
@@ -1482,6 +1495,7 @@ impl McpConnectionAdministration for PostgresMcpConnections {
             client_credential_id: material.credential_id,
             resource: material.endpoint,
             transport: material.transport.as_str().to_owned(),
+            egress_allow_cidrs: material.egress_allow_cidrs,
             code_verifier: verifier,
             redirect_uri: callback_uri.to_owned(),
             issuer,
@@ -1504,14 +1518,9 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         let candidate = self.disconnect_candidate(auth.actor(), server_id).await?;
         self.tombstone_connection(auth, server_id, candidate.credential_id)
             .await?;
-        let vendor_revocation = match (candidate.client, candidate.refresh) {
-            (Some(client), Some(refresh)) => {
-                let material = ServerClientMaterial {
-                    credential_id: candidate.client_credential_id.unwrap_or(Uuid::nil()),
-                    endpoint: candidate.endpoint,
-                    client,
-                    transport: candidate.transport,
-                };
+        let material = self.load_server_client(server_id).await.ok();
+        let vendor_revocation = match (material, candidate.refresh) {
+            (Some(material), Some(refresh)) => {
                 if self
                     .try_vendor_revoke(
                         auth.actor().as_str(),
@@ -1551,7 +1560,8 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         let client = self.pool.get().await.map_err(unavailable)?;
         let server = client
             .query_opt(
-                "SELECT url,vendor,provenance,coalesce(transport,'mcp') AS transport
+                "SELECT url,vendor,provenance,coalesce(transport,'mcp') AS transport,
+                        coalesce(egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs
                    FROM public.mcp_servers WHERE id=$1",
                 &[&server_id],
             )
@@ -1571,11 +1581,17 @@ impl McpConnectionAdministration for PostgresMcpConnections {
                 .map_err(|_| corrupt("transport"))?,
         )
         .map_err(|_| corrupt("transport"))?;
+        let egress_allow_cidrs: Vec<String> = server
+            .try_get("egress_allow_cidrs")
+            .map_err(|_| corrupt("egress_allow_cidrs"))?;
+        let egress_allowlist = parse_stored_mcp_egress(&egress_allow_cidrs)
+            .map_err(|_| corrupt("egress_allow_cidrs"))?;
         drop(client);
         let encoded = encoded_registration(registration)?;
         match transport {
             VendorTransportKind::Mcp => {
                 self.oauth
+                    .with_egress_allowlist(egress_allowlist.clone())
                     .discover(&endpoint, &encoded)
                     .await
                     .map_err(map_oauth_vendor)?;
@@ -1585,6 +1601,7 @@ impl McpConnectionAdministration for PostgresMcpConnections {
                     || endpoint != GOOGLE_DRIVE_API_BASE
                     || vendor != GOOGLE_DRIVE_VENDOR
                     || provenance != GOOGLE_DRIVE_PROVENANCE
+                    || !egress_allowlist.is_empty()
                 {
                     return Err(corrupt("transport_identity"));
                 }
@@ -1609,31 +1626,13 @@ impl McpConnectionAdministration for PostgresMcpConnections {
                 &secret,
             )
             .map_err(|_| corrupt("oauth_client"))?;
-        let generation =
-            i64::try_from(auth.auth_generation().get()).map_err(|_| corrupt("auth_generation"))?;
         let mut client = self.pool.get().await.map_err(unavailable)?;
         let transaction = client.transaction().await.map_err(query_unavailable)?;
-        let current: bool = transaction
-            .query_one(
-                "SELECT EXISTS(
-                    SELECT 1 FROM public.users u
-                     WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
-                       AND EXISTS(SELECT 1 FROM public.user_roles ur
-                                   WHERE ur.user_id=u.id AND ur.role='admin')
-                       AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
-                                       WHERE ra.email=lower(u.email)))",
-                &[&auth.actor().as_str(), &generation],
-            )
-            .await
-            .map_err(query_unavailable)?
-            .try_get(0)
-            .map_err(|_| corrupt("admin_scope"))?;
-        if !current {
-            return Err(McpConnectionError::NotVisible);
-        }
+        ensure_transaction_actor(&transaction, auth, true).await?;
         let server = transaction
             .query_opt(
                 "SELECT s.url,s.vendor,s.provenance,coalesce(s.transport,'mcp') AS transport,
+                        coalesce(s.egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs,
                         s.credential_id,coalesce(s.credential_generation,0)
                         AS credential_generation,s.catalog_generation,
                         c.kind AS old_client_kind,c.provider AS old_client_provider,
@@ -1664,9 +1663,15 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         let locked_provenance: String = server
             .try_get("provenance")
             .map_err(|_| corrupt("provenance"))?;
+        let locked_egress_allow_cidrs: Vec<String> = server
+            .try_get("egress_allow_cidrs")
+            .map_err(|_| corrupt("egress_allow_cidrs"))?;
+        parse_stored_mcp_egress(&locked_egress_allow_cidrs)
+            .map_err(|_| corrupt("egress_allow_cidrs"))?;
         if locked_transport != transport
             || locked_vendor != vendor
             || locked_provenance != provenance
+            || locked_egress_allow_cidrs != egress_allow_cidrs
         {
             return Err(McpConnectionError::Conflict {
                 resource: "mcp_server",
@@ -2594,15 +2599,10 @@ impl PostgresMcpConnections {
         let client = self.pool.get().await.map_err(unavailable)?;
         let row = client
             .query_opt(
-                "SELECT s.url,s.vendor,s.provenance,coalesce(s.transport,'mcp') AS transport,
-                        s.credential_id AS client_credential_id,
-                        dc.kind AS client_kind,dc.provider AS client_provider,
-                        dc.encrypted_value AS client_value,dc.revoked_at AS client_revoked_at,
-                        uc.credential_id,c.kind,c.provider,c.key_id,c.encrypted_value,c.revoked_at
+                "SELECT uc.credential_id,c.kind,c.provider,c.key_id,c.encrypted_value,c.revoked_at
                    FROM public.mcp_user_credentials uc
                    JOIN public.mcp_servers s ON s.id=uc.server_id
                    JOIN public.credentials c ON c.id=uc.credential_id
-                   LEFT JOIN public.credentials dc ON dc.id=s.credential_id
                   WHERE uc.server_id=$1 AND uc.user_id=$2",
                 &[&server_id, &actor.as_str()],
             )
@@ -2634,24 +2634,6 @@ impl PostgresMcpConnections {
         {
             return Err(McpConnectionError::NotVisible);
         }
-        let endpoint: String = row.try_get("url").map_err(|_| corrupt("server_endpoint"))?;
-        let vendor: String = row.try_get("vendor").map_err(|_| corrupt("vendor"))?;
-        let provenance: String = row
-            .try_get("provenance")
-            .map_err(|_| corrupt("provenance"))?;
-        let transport = VendorTransportKind::parse(
-            &row.try_get::<_, String>("transport")
-                .map_err(|_| corrupt("transport"))?,
-        )
-        .map_err(|_| corrupt("transport"))?;
-        if transport == VendorTransportKind::GoogleDriveRest
-            && (server_id != GOOGLE_DRIVE_SERVER_ID
-                || endpoint != GOOGLE_DRIVE_API_BASE
-                || vendor != GOOGLE_DRIVE_VENDOR
-                || provenance != GOOGLE_DRIVE_PROVENANCE)
-        {
-            return Err(corrupt("transport_identity"));
-        }
         let refresh = self
             .vault
             .open(
@@ -2663,53 +2645,9 @@ impl PostgresMcpConnections {
             )
             .ok()
             .map(|value| value.into_secret());
-        let client_credential_id: Option<Uuid> = row
-            .try_get("client_credential_id")
-            .map_err(|_| corrupt("oauth_client_id"))?;
-        let client_secret = match client_credential_id {
-            Some(id)
-                if row
-                    .try_get::<_, Option<crate::db::types::CredentialKind>>("client_kind")
-                    .ok()
-                    .flatten()
-                    == Some(crate::db::types::CredentialKind::McpOauthClient)
-                    && row
-                        .try_get::<_, Option<String>>("client_provider")
-                        .ok()
-                        .flatten()
-                        .as_deref()
-                        == Some(server_id)
-                    && row
-                        .try_get::<_, Option<OffsetDateTime>>("client_revoked_at")
-                        .ok()
-                        .flatten()
-                        .is_none() =>
-            {
-                row.try_get::<_, Option<String>>("client_value")
-                    .ok()
-                    .flatten()
-                    .and_then(|encrypted| {
-                        self.vault
-                            .open(
-                                &id,
-                                SecretKind::McpOauthClient,
-                                SecretPrincipal::Deployment,
-                                SecretPrincipal::Service(ServiceId::new(server_id)),
-                                &encrypted,
-                            )
-                            .ok()
-                            .map(|value| value.into_secret())
-                    })
-            }
-            _ => None,
-        };
         Ok(DisconnectCandidate {
             credential_id,
-            endpoint,
-            client_credential_id,
-            client: client_secret,
             refresh,
-            transport,
         })
     }
 
@@ -2799,6 +2737,8 @@ struct ServerClientMaterial {
     endpoint: String,
     client: SecretBytes,
     transport: VendorTransportKind,
+    egress_allow_cidrs: Vec<String>,
+    egress_allowlist: CidrAllowlist,
 }
 
 struct OldRefresh {
@@ -2808,11 +2748,7 @@ struct OldRefresh {
 
 struct DisconnectCandidate {
     credential_id: Uuid,
-    endpoint: String,
-    client_credential_id: Option<Uuid>,
-    client: Option<SecretBytes>,
     refresh: Option<SecretBytes>,
-    transport: VendorTransportKind,
 }
 
 struct PendingRevocation {
@@ -2834,6 +2770,7 @@ struct StoredAttempt {
     client_credential_id: Uuid,
     resource: String,
     transport: String,
+    egress_allow_cidrs: Vec<String>,
     code_verifier: String,
     redirect_uri: String,
     issuer: String,
@@ -3382,15 +3319,7 @@ fn prepare_custom_server(
 }
 
 fn validate_stored_egress(entries: &[String]) -> Result<(), McpConnectionError> {
-    if entries.len() > MAX_MCP_EGRESS_CIDRS
-        || entries.iter().map(String::len).sum::<usize>() > MAX_MCP_EGRESS_CIDR_BYTES
-        || entries
-            .windows(2)
-            .any(|pair| pair.first().is_some_and(|left| left >= &pair[1]))
-    {
-        return Err(corrupt("egress_allow_cidrs"));
-    }
-    CidrAllowlist::parse_exact(entries.iter().map(String::as_str))
+    parse_stored_mcp_egress(entries)
         .map(|_| ())
         .map_err(|_| corrupt("egress_allow_cidrs"))
 }

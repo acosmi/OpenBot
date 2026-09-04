@@ -19,8 +19,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use openbot_agent::{AgentToolInvoker, AuthorizedAgentToolGateway};
 use openbot_application::{
-    ApplicationService, McpConnectionAdministration, McpOAuthCallback, McpOAuthCallbackInput,
-    OpenBotApplication, RunExecutionLease,
+    ApplicationService, McpConnectionAdministration, McpConnectionError, McpOAuthCallback,
+    McpOAuthCallbackInput, OpenBotApplication, RunExecutionLease,
 };
 use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId};
@@ -530,12 +530,38 @@ async fn actor_oauth_rotates_before_use_and_retries_one_401_exactly_once() {
             let broker = Arc::new(
                 PostgresMcpCredentialBroker::new(pool.clone(), vault.clone())
                     .with_user_oauth(
-                        SafeDialer::new(loopback_policy()),
+                        SafeDialer::new(EgressPolicy::default()),
                         SchemePolicy::HttpOrHttps,
                         AUDIT_KEY.to_vec(),
                     )
                     .map_err(|error| error.to_string())?,
             );
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.mcp_servers SET egress_allow_cidrs=NULL WHERE id=$1",
+                &[&SERVER],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            if !matches!(
+                broker.bearer_for(SERVER, &ActorId::new(ACTOR)).await,
+                Err(McpCredentialError::Unavailable)
+            )
+                || spawned.state.token_calls.load(Ordering::SeqCst) != 0
+            {
+                return Err("runtime OAuth refresh escaped the default deny policy".to_owned());
+            }
+            pool.get()
+                .await
+                .map_err(|error| error.to_string())?
+                .execute(
+                    "UPDATE public.mcp_servers
+                        SET egress_allow_cidrs=ARRAY['127.0.0.1/32'] WHERE id=$1",
+                    &[&SERVER],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
             if !matches!(
                 broker.bearer_for(SERVER, &ActorId::new(OTHER)).await,
                 Err(McpCredentialError::AuthRequired)
@@ -805,10 +831,8 @@ async fn authorization_code_state_pkce_callback_and_local_first_disconnect_are_r
                 WrappingKey::from_bytes(vec![0x55; 32]).map_err(|error| error.to_string())?,
             );
             pg.execute(
-                "INSERT INTO public.mcp_servers(
-                   id,title,vendor,url,provenance,egress_allow_cidrs)
-                   VALUES($1,'OAuth Notes','oauth-notes',$2,'custom',
-                          ARRAY['127.0.0.1/32'])",
+                "INSERT INTO public.mcp_servers(id,title,vendor,url,provenance)
+                   VALUES($1,'OAuth Notes','oauth-notes',$2,'custom')",
                 &[&SERVER, &spawned.resource],
             )
             .await
@@ -832,7 +856,7 @@ async fn authorization_code_state_pkce_callback_and_local_first_disconnect_are_r
                 pool.clone(),
                 vault.clone(),
                 McpOAuthClient::new(
-                    SafeDialer::new(loopback_policy()),
+                    SafeDialer::new(EgressPolicy::default()),
                     SchemePolicy::HttpOrHttps,
                 ),
                 catalog.clone(),
@@ -854,19 +878,52 @@ async fn authorization_code_state_pkce_callback_and_local_first_disconnect_are_r
             )
             .with_roles([Role::User, Role::Admin])
             .build();
-            let registered = connections
+            let registration_input = McpOAuthClientRegistration::new(
+                CLIENT_ID.to_owned(),
+                CLIENT_SECRET.to_owned(),
+                spawned.state.issuer.to_string(),
+                McpOAuthClientAuthMethod::ClientSecretBasic,
+                None,
+            )
+            .map_err(|error| error.to_string())?;
+            if connections
                 .register_oauth_client(
                     &auth,
                     SERVER,
-                    &McpOAuthClientRegistration::new(
-                        CLIENT_ID.to_owned(),
-                        CLIENT_SECRET.to_owned(),
-                        spawned.state.issuer.to_string(),
-                        McpOAuthClientAuthMethod::ClientSecretBasic,
-                        None,
-                    )
-                    .map_err(|error| error.to_string())?,
+                    &registration_input,
                 )
+                .await
+                != Err(McpConnectionError::VendorFailure)
+            {
+                return Err("private OAuth discovery escaped the default deny policy".to_owned());
+            }
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            let denied_writes: i64 = pg
+                .query_one(
+                    "SELECT
+                       (SELECT count(*)::bigint FROM public.credentials
+                         WHERE kind='mcp_oauth_client' AND provider=$1) +
+                       (SELECT count(*)::bigint FROM public.audit_events
+                         WHERE event_type='mcp.oauth_client_registered' AND target_id=$1)",
+                    &[&SERVER],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if denied_writes != 0 {
+                return Err("denied private OAuth discovery wrote credential or audit".to_owned());
+            }
+            pg.execute(
+                "UPDATE public.mcp_servers
+                    SET egress_allow_cidrs=ARRAY['127.0.0.1/32'] WHERE id=$1",
+                &[&SERVER],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            let registered = connections
+                .register_oauth_client(&auth, SERVER, &registration_input)
                 .await
                 .map_err(|error| error.to_string())?;
             if !registered.ok {
@@ -912,6 +969,49 @@ async fn authorization_code_state_pkce_callback_and_local_first_disconnect_are_r
             {
                 return Err("fresh actor unexpectedly had a connection".to_owned());
             }
+
+            let drift_attempt = connections
+                .begin_oauth(&auth, SERVER, McpOAuthReturnTo::Settings)
+                .await
+                .map_err(|error| error.to_string())?;
+            let drift_state = url::Url::parse(&drift_attempt.authorization_url)
+                .map_err(|error| error.to_string())?
+                .query_pairs()
+                .find(|(key, _)| key == "state")
+                .map(|(_, value)| value.into_owned())
+                .ok_or_else(|| "egress-bound state missing".to_owned())?;
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.mcp_servers
+                    SET egress_allow_cidrs=ARRAY['127.0.0.0/8'] WHERE id=$1",
+                &[&SERVER],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            let drifted = connections
+                .complete(McpOAuthCallbackInput::new(
+                    b"authorization-code".to_vec(),
+                    drift_state.into_bytes(),
+                    Some(spawned.state.issuer.to_string()),
+                ))
+                .await;
+            if drifted.redirect_to
+                != "http://app.example.test/settings/connected-accounts?connected=failed"
+                || spawned.state.code_calls.load(Ordering::SeqCst) != 0
+            {
+                return Err("egress authority drift reached the token endpoint".to_owned());
+            }
+            pool.get()
+                .await
+                .map_err(|error| error.to_string())?
+                .execute(
+                    "UPDATE public.mcp_servers
+                        SET egress_allow_cidrs=ARRAY['127.0.0.1/32'] WHERE id=$1",
+                    &[&SERVER],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
 
             let begin = connections
                 .begin_oauth(&auth, SERVER, McpOAuthReturnTo::Settings)
@@ -968,7 +1068,7 @@ async fn authorization_code_state_pkce_callback_and_local_first_disconnect_are_r
                 pool.clone(),
                 vault.clone(),
                 McpOAuthClient::new(
-                    SafeDialer::new(loopback_policy()),
+                    SafeDialer::new(EgressPolicy::default()),
                     SchemePolicy::HttpOrHttps,
                 ),
                 catalog,
@@ -1082,7 +1182,7 @@ async fn authorization_code_state_pkce_callback_and_local_first_disconnect_are_r
             drop(pg);
             let broker = PostgresMcpCredentialBroker::new(pool.clone(), vault.clone())
                 .with_user_oauth(
-                    SafeDialer::new(loopback_policy()),
+                    SafeDialer::new(EgressPolicy::default()),
                     SchemePolicy::HttpOrHttps,
                     AUDIT_KEY.to_vec(),
                 )
@@ -1232,17 +1332,50 @@ async fn authorization_code_state_pkce_callback_and_local_first_disconnect_are_r
             }
 
             spawned.state.revoke_failure.store(false, Ordering::SeqCst);
-            pool.get()
-                .await
-                .map_err(|error| error.to_string())?
-                .execute(
-                    "UPDATE public.credentials SET updated_at=clock_timestamp()-interval '31 seconds'
-                      WHERE kind='mcp_user_token' AND key_id=$1
-                        AND metadata->>'revocation_status'='pending'",
-                    &[&ACTOR],
-                )
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.mcp_servers SET egress_allow_cidrs=NULL WHERE id=$1",
+                &[&SERVER],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.credentials SET updated_at=clock_timestamp()-interval '31 seconds'
+                  WHERE kind='mcp_user_token' AND key_id=$1
+                    AND metadata->>'revocation_status'='pending'",
+                &[&ACTOR],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            let denied_sweep = connections
+                .reconcile_pending_revocations()
                 .await
                 .map_err(|error| error.to_string())?;
+            if denied_sweep.attempted != 1
+                || denied_sweep.revoked != 0
+                || denied_sweep.pending != 1
+                || spawned.state.revoke_calls.load(Ordering::SeqCst) != 1
+            {
+                return Err("revocation retry escaped current private-egress denial".to_owned());
+            }
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.mcp_servers
+                    SET egress_allow_cidrs=ARRAY['127.0.0.1/32'] WHERE id=$1",
+                &[&SERVER],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            pg.execute(
+                "UPDATE public.credentials SET updated_at=clock_timestamp()-interval '31 seconds'
+                  WHERE kind='mcp_user_token' AND key_id=$1
+                    AND metadata->>'revocation_status'='pending'",
+                &[&ACTOR],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
             let sweep = connections
                 .reconcile_pending_revocations()
                 .await

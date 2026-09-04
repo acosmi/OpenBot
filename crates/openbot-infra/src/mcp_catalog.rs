@@ -1,6 +1,6 @@
 //! PostgreSQL MCP catalog generation and stale-grant suspension.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use openbot_application::ProviderToolDefinition;
@@ -19,12 +19,11 @@ use crate::google_drive::{
 };
 use crate::mcp::{McpBearerToken, McpClientError, McpListedTool, SafeRmcpClient};
 use crate::mcp_credentials::PostgresMcpCredentialBroker;
+use crate::mcp_egress::parse_stored_mcp_egress;
 use crate::net::safe_http::CidrAllowlist;
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 
 const MAX_COMPILED_SCHEMA_CACHE_ENTRIES: usize = 4_096;
-const MAX_MCP_EGRESS_CIDRS: usize = 32;
-const MAX_MCP_EGRESS_CIDR_BYTES: usize = 2_048;
 
 /// Catalog refresh/read failure without remote or database payload text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -1331,28 +1330,8 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
 }
 
 fn parse_egress_allowlist(entries: &[String]) -> Result<CidrAllowlist, McpCatalogError> {
-    if entries.len() > MAX_MCP_EGRESS_CIDRS
-        || entries.iter().map(String::len).sum::<usize>() > MAX_MCP_EGRESS_CIDR_BYTES
-    {
-        return Err(McpCatalogError::Corrupt {
-            field: "egress_allow_cidrs",
-        });
-    }
-    let canonical = entries.iter().map(String::as_str).collect::<BTreeSet<_>>();
-    if canonical.len() != entries.len()
-        || !entries
-            .iter()
-            .map(String::as_str)
-            .eq(canonical.iter().copied())
-    {
-        return Err(McpCatalogError::Corrupt {
-            field: "egress_allow_cidrs",
-        });
-    }
-    CidrAllowlist::parse_exact(entries.iter().map(String::as_str)).map_err(|_| {
-        McpCatalogError::Corrupt {
-            field: "egress_allow_cidrs",
-        }
+    parse_stored_mcp_egress(entries).map_err(|_| McpCatalogError::Corrupt {
+        field: "egress_allow_cidrs",
     })
 }
 

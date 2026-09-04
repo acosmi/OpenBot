@@ -110,6 +110,8 @@ pub mod mcp_connections;
 #[cfg(feature = "server-runtime")]
 pub mod mcp_credentials;
 #[cfg(feature = "server-runtime")]
+mod mcp_egress;
+#[cfg(feature = "server-runtime")]
 pub mod mcp_oauth;
 #[cfg(feature = "server-runtime")]
 pub mod memory_admin;

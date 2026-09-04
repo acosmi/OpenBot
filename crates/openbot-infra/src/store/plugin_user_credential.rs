@@ -1,8 +1,8 @@
 //! per-user MCP/OAuth credential 的选择、交换边界与退役（v3 §6.4 / §9.2）。
 //!
-//! 本模块刻意停在 vendor 网络之前：它只回答“这次调用应当用谁的 refresh token、哪个部署
-//! OAuth client”，并把 refresh-token exchange 与 vendor access token 做成两个不同类型。
-//! G4 的 RMCP/Drive executor 尚未实现；这里不搭 test-only executor 冒充。
+//! 本模块在 vendor 网络前回答“这次调用应当用谁的 refresh token、哪个部署 OAuth client、
+//! 哪组 current private-egress authority”，并把 refresh-token exchange 与 vendor access token
+//! 做成两个不同类型。真实 RMCP/Drive executor 只能取得完成选择与 rotation commit 后的 access token。
 
 use std::sync::Arc;
 
@@ -19,6 +19,8 @@ use uuid::Uuid;
 
 use crate::db::InfraError;
 use crate::db::types::CredentialKind;
+use crate::mcp_egress::parse_stored_mcp_egress;
+use crate::net::safe_http::CidrAllowlist;
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 use crate::vault::CredentialRecordVault;
 
@@ -94,9 +96,11 @@ impl From<UserCredentialRefusal> for UserCredentialSelectionError {
 pub struct OAuthRefreshExchange<'a> {
     server_id: &'a str,
     endpoint: &'a str,
+    transport: &'a str,
     granted_scope: &'a str,
     oauth_client: &'a SecretBytes,
     refresh_token: &'a SecretBytes,
+    egress_allowlist: &'a CidrAllowlist,
 }
 
 impl OAuthRefreshExchange<'_> {
@@ -110,6 +114,12 @@ impl OAuthRefreshExchange<'_> {
     #[must_use]
     pub const fn endpoint(&self) -> &str {
         self.endpoint
+    }
+
+    /// Closed vendor transport selected with the credential and egress snapshot.
+    #[must_use]
+    pub const fn transport(&self) -> &str {
+        self.transport
     }
 
     /// Previously granted scope to preserve during refresh.
@@ -129,6 +139,12 @@ impl OAuthRefreshExchange<'_> {
     pub fn expose_refresh_token(&self) -> &[u8] {
         self.refresh_token.expose()
     }
+
+    /// Current administrator-authorized numeric destinations for this exact server operation.
+    #[must_use]
+    pub const fn egress_allowlist(&self) -> &CidrAllowlist {
+        self.egress_allowlist
+    }
 }
 
 impl core::fmt::Debug for OAuthRefreshExchange<'_> {
@@ -137,9 +153,11 @@ impl core::fmt::Debug for OAuthRefreshExchange<'_> {
             .debug_struct("OAuthRefreshExchange")
             .field("server_id", &self.server_id)
             .field("endpoint", &"<redacted-origin>")
+            .field("transport", &self.transport)
             .field("scope_bytes", &self.granted_scope.len())
             .field("oauth_client", &"<redacted>")
             .field("refresh_token", &"<redacted>")
+            .field("egress_allowlist_entries", &self.egress_allowlist.len())
             .finish()
     }
 }
@@ -252,6 +270,7 @@ impl core::fmt::Debug for VendorAccessToken {
 pub struct PreparedUserOAuthCredential {
     server_id: String,
     endpoint: String,
+    transport: String,
     actor: ActorId,
     scope: String,
     user_credential_id: Uuid,
@@ -259,6 +278,8 @@ pub struct PreparedUserOAuthCredential {
     refresh_token: SecretBytes,
     oauth_client: SecretBytes,
     user_encrypted_value: String,
+    egress_allowlist: CidrAllowlist,
+    egress_allow_cidrs: Vec<String>,
 }
 
 impl PreparedUserOAuthCredential {
@@ -304,9 +325,11 @@ impl PreparedUserOAuthCredential {
             .exchange(OAuthRefreshExchange {
                 server_id: &self.server_id,
                 endpoint: &self.endpoint,
+                transport: &self.transport,
                 granted_scope: &self.scope,
                 oauth_client: &self.oauth_client,
                 refresh_token: &self.refresh_token,
+                egress_allowlist: &self.egress_allowlist,
             })
             .await?;
         if access.is_empty() {
@@ -326,9 +349,11 @@ impl PreparedUserOAuthCredential {
             .exchange_rotating(OAuthRefreshExchange {
                 server_id: &self.server_id,
                 endpoint: &self.endpoint,
+                transport: &self.transport,
                 granted_scope: &self.scope,
                 oauth_client: &self.oauth_client,
                 refresh_token: &self.refresh_token,
+                egress_allowlist: &self.egress_allowlist,
             })
             .await?;
         if grant.access_token.is_empty() {
@@ -360,12 +385,14 @@ impl core::fmt::Debug for PreparedUserOAuthCredential {
             .debug_struct("PreparedUserOAuthCredential")
             .field("server_id", &self.server_id)
             .field("endpoint", &"<redacted-origin>")
+            .field("transport", &self.transport)
             .field("actor", &self.actor)
             .field("scope", &self.scope)
             .field("user_credential_id", &self.user_credential_id)
             .field("deployment_credential_id", &self.deployment_credential_id)
             .field("refresh_token", &"<redacted>")
             .field("oauth_client", &"<redacted>")
+            .field("egress_allowlist_entries", &self.egress_allowlist.len())
             .finish()
     }
 }
@@ -448,6 +475,18 @@ impl PluginUserCredentialStore {
                 field: "server_endpoint",
             });
         }
+        let transport = required_column::<String>(&row, "server_transport")?;
+        if !matches!(transport.as_str(), "mcp" | "google_drive_rest") {
+            return Err(UserCredentialSelectionError::Corrupt {
+                field: "server_transport",
+            });
+        }
+        let egress_allow_cidrs = required_column::<Vec<String>>(&row, "egress_allow_cidrs")?;
+        let egress_allowlist = parse_stored_mcp_egress(&egress_allow_cidrs).map_err(|_| {
+            UserCredentialSelectionError::Corrupt {
+                field: "egress_allow_cidrs",
+            }
+        })?;
         let user_pointer = optional_column::<Uuid>(&row, "user_pointer")?
             .ok_or(UserCredentialRefusal::ConnectionRequired)?;
         let user_id = required_joined::<Uuid>(&row, "user_credential_id")?;
@@ -537,6 +576,7 @@ impl PluginUserCredentialStore {
         Ok(PreparedUserOAuthCredential {
             server_id: server_id.to_owned(),
             endpoint,
+            transport,
             actor: actor.clone(),
             scope: granted_scope,
             user_credential_id: user_id,
@@ -544,6 +584,8 @@ impl PluginUserCredentialStore {
             refresh_token,
             oauth_client,
             user_encrypted_value: user_encrypted,
+            egress_allowlist,
+            egress_allow_cidrs,
         })
     }
 
@@ -663,6 +705,31 @@ impl PluginUserCredentialStore {
             })?
             .try_get(0)
             .map_err(|_| UserCredentialSelectionError::Corrupt { field: "clock" })?;
+        let current_server = transaction
+            .query_opt(
+                "SELECT s.id FROM public.mcp_servers s
+                   JOIN public.credentials d ON d.id=s.credential_id
+                  WHERE s.id=$1 AND s.url=$2 AND coalesce(s.transport,'mcp')=$3
+                    AND coalesce(s.egress_allow_cidrs,ARRAY[]::text[])=$4
+                    AND s.credential_id=$5 AND d.kind='mcp_oauth_client'
+                    AND d.provider=s.id AND d.revoked_at IS NULL
+                  FOR SHARE OF s,d",
+                &[
+                    &prepared.server_id,
+                    &prepared.endpoint,
+                    &prepared.transport,
+                    &prepared.egress_allow_cidrs,
+                    &prepared.deployment_credential_id,
+                ],
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(error = %error, "refresh rotation 复核server binding失败");
+                UserCredentialSelectionError::Unavailable
+            })?;
+        if current_server.is_none() {
+            return Err(UserCredentialSelectionError::Conflict);
+        }
         let updated = transaction
             .execute(
                 "UPDATE public.credentials SET encrypted_value=$3,
@@ -928,6 +995,8 @@ impl OwnedCredentialRetirer for PostgresOwnedCredentialRetirer {
 }
 
 const SELECTION_SQL: &str = "SELECT s.url AS server_endpoint, \
+            coalesce(s.transport,'mcp') AS server_transport, \
+            coalesce(s.egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs, \
             uc.credential_id AS user_pointer,uc.scope AS granted_scope, \
             u.id AS user_credential_id,u.kind AS user_kind,u.provider AS user_provider, \
             u.encrypted_value AS user_encrypted_value,u.key_id AS user_key_id, \

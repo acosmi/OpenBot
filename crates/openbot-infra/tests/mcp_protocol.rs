@@ -468,7 +468,10 @@ async fn custom_admin_private_egress_is_db_bound_refreshes_and_retires_atomicall
                  INSERT INTO public.user_roles(user_id,role)
                    VALUES('mcp-admin','admin');
                  INSERT INTO public.agents(id,name,type,configuration)
-                   VALUES('mcp-holder','MCP Holder','remote_ag_ui','{}');",
+                   VALUES('mcp-holder','MCP Holder','remote_ag_ui','{}');
+                 INSERT INTO public.agent_profiles(
+                   agent_id,owner_user_id,title,role_description,avatar_seed,visibility,deleted_at)
+                   VALUES('mcp-holder','mcp-admin','MCP Holder','role','mcp-holder-seed','public',NULL);",
             )
             .await
             .map_err(|error| error.to_string())?;

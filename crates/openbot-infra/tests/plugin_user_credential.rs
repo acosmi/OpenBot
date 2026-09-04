@@ -16,7 +16,8 @@ use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::repo::people_admin::PostgresPeopleAdministration;
 use openbot_infra::store::plugin_user_credential::{
     OAuthRefreshExchange, OAuthTokenExchangeError, OAuthTokenExchanger, PluginUserCredentialStore,
-    PostgresOwnedCredentialRetirer, UserCredentialRefusal, UserCredentialSelectionError,
+    PostgresOwnedCredentialRetirer, RotatingOAuthGrant, RotatingOAuthTokenExchanger,
+    UserCredentialRefusal, UserCredentialSelectionError, UserOAuthAccessError,
 };
 use openbot_infra::vault::CredentialRecordVault;
 use sha2::{Digest, Sha256};
@@ -83,7 +84,9 @@ where
             );
             let fixture = Fixture {
                 pool: pool.clone(),
-                store: PluginUserCredentialStore::new(pool.clone(), vault.clone()),
+                store: PluginUserCredentialStore::new(pool.clone(), vault.clone())
+                    .with_rotation_audit_key(AUDIT_KEY.to_vec())
+                    .map_err(|error| error.to_string())?,
                 retirer: PostgresOwnedCredentialRetirer::new(pool.clone(), AUDIT_KEY.to_vec())
                     .map_err(|error| error.to_string())?,
                 vault,
@@ -271,6 +274,41 @@ impl OAuthTokenExchanger for EmptyExchanger {
         _request: OAuthRefreshExchange<'_>,
     ) -> Result<SecretBytes, OAuthTokenExchangeError> {
         Ok(SecretBytes::new(Vec::new()))
+    }
+}
+
+struct EgressDriftExchanger {
+    pool: deadpool_postgres::Pool,
+}
+
+#[async_trait]
+impl RotatingOAuthTokenExchanger for EgressDriftExchanger {
+    async fn exchange_rotating(
+        &self,
+        request: OAuthRefreshExchange<'_>,
+    ) -> Result<RotatingOAuthGrant, OAuthTokenExchangeError> {
+        if request.server_id() != "private-oauth"
+            || request.transport() != "mcp"
+            || request.egress_allowlist().len() != 1
+        {
+            return Err(OAuthTokenExchangeError::InvalidResponse);
+        }
+        self.pool
+            .get()
+            .await
+            .map_err(|_| OAuthTokenExchangeError::Unavailable)?
+            .execute(
+                "UPDATE public.mcp_servers
+                    SET egress_allow_cidrs=ARRAY['10.1.0.0/16'] WHERE id='private-oauth'",
+                &[],
+            )
+            .await
+            .map_err(|_| OAuthTokenExchangeError::Unavailable)?;
+        Ok(RotatingOAuthGrant::new(
+            SecretBytes::new(b"access-after-egress-drift".to_vec()),
+            Some(SecretBytes::new(b"refresh-after-egress-drift".to_vec())),
+            Some("private:read".to_owned()),
+        ))
     }
 }
 
@@ -468,6 +506,94 @@ async fn never_sends_the_refresh_token_itself_to_the_vendor() {
                 || access_hash == digest(ASKER_REFRESH)
             {
                 return Err("vendor access token 与 refresh token 的类型/值边界失效".to_owned());
+            }
+            Ok(())
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn egress_drift_after_token_response_prevents_rotation_and_access_release() {
+    with_fixture(
+        "egress_drift_after_token_response_prevents_rotation_and_access_release",
+        "credential_egress_drift",
+        |fixture| async move {
+            fixture
+                .pool
+                .get()
+                .await
+                .map_err(|error| error.to_string())?
+                .execute(
+                    "INSERT INTO public.mcp_servers(
+                       id,title,vendor,url,provenance,transport,egress_allow_cidrs)
+                     VALUES('private-oauth','Private OAuth','private.test',
+                            'https://private.test/mcp','custom','mcp',
+                            ARRAY['10.0.0.0/8'])",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            register_client(&fixture, "private-oauth").await?;
+            let credential = connect(
+                &fixture,
+                "private-oauth",
+                ASKER,
+                b"private-refresh-before-drift",
+            )
+            .await?;
+            let before: String = fixture
+                .pool
+                .get()
+                .await
+                .map_err(|error| error.to_string())?
+                .query_one(
+                    "SELECT encrypted_value FROM public.credentials WHERE id=$1",
+                    &[&credential],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            let outcome = fixture
+                .store
+                .fresh_user_access_token(
+                    "private-oauth",
+                    &ActorId::new(ASKER),
+                    &EgressDriftExchanger {
+                        pool: fixture.pool.clone(),
+                    },
+                )
+                .await;
+            if !matches!(
+                &outcome,
+                Err(UserOAuthAccessError::Selection(
+                    UserCredentialSelectionError::Conflict
+                ))
+            ) {
+                return Err(format!(
+                    "egress drift outcome was not conflict: {outcome:?}"
+                ));
+            }
+            let evidence = fixture
+                .pool
+                .get()
+                .await
+                .map_err(|error| error.to_string())?
+                .query_one(
+                    "SELECT c.encrypted_value=$2,
+                            (SELECT count(*)::bigint FROM public.audit_events
+                              WHERE event_type='credential.rotated' AND target_id=$3)
+                       FROM public.credentials c WHERE c.id=$1",
+                    &[&credential, &before, &credential.to_string()],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let unchanged: bool = evidence.try_get(0).map_err(|error| error.to_string())?;
+            let audits: i64 = evidence.try_get(1).map_err(|error| error.to_string())?;
+            if !unchanged || audits != 0 {
+                return Err("egress drift rotated credential or wrote success audit".to_owned());
             }
             Ok(())
         },

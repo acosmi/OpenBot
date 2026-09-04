@@ -20,7 +20,8 @@ use zeroize::{Zeroize as _, Zeroizing};
 use openbot_domain::vault::SecretBytes;
 
 use crate::net::safe_http::{
-    AuthorizationValue, McpHttpMethod, SafeDialer, SafeHttpBudget, SafeHttpRequest, SchemePolicy,
+    AuthorizationValue, CidrAllowlist, EgressPolicy, McpHttpMethod, SafeDialer, SafeHttpBudget,
+    SafeHttpRequest, SchemePolicy,
 };
 use crate::store::plugin_user_credential::{
     OAuthRefreshExchange, OAuthTokenExchangeError, RotatingOAuthGrant, RotatingOAuthTokenExchanger,
@@ -204,6 +205,16 @@ impl McpOAuthClient {
         Self {
             dialer,
             scheme_policy,
+        }
+    }
+
+    /// Scope one OAuth operation to the exact private destinations authorized on its MCP server.
+    /// Resolver and TLS roots are retained and every redirect is still re-resolved.
+    #[must_use]
+    pub(crate) fn with_egress_allowlist(&self, allowlist: CidrAllowlist) -> Self {
+        Self {
+            dialer: self.dialer.with_egress_policy(EgressPolicy::new(allowlist)),
+            scheme_policy: self.scheme_policy,
         }
     }
 
@@ -588,7 +599,13 @@ impl RotatingOAuthTokenExchanger for McpOAuthClient {
         &self,
         request: OAuthRefreshExchange<'_>,
     ) -> Result<RotatingOAuthGrant, OAuthTokenExchangeError> {
-        self.refresh(request).await.map_err(Into::into)
+        if request.transport() != "mcp" {
+            return Err(OAuthTokenExchangeError::InvalidResponse);
+        }
+        self.with_egress_allowlist(request.egress_allowlist().clone())
+            .refresh(request)
+            .await
+            .map_err(Into::into)
     }
 }
 
