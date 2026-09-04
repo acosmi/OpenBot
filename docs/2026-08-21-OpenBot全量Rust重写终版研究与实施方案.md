@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–30 实施裁决 R126–R160，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-03 实施裁决 R126–R164，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1797,7 +1797,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 
 任何闸门失败都只能修复后重跑，不能以“后续补齐”进入下一发布阶段。
 
-### 24.1 实施状态勾选（2026-08-30；进度证据以机器台账为准）
+### 24.1 实施状态勾选（更新至 2026-09-03；进度证据以机器台账为准）
 
 - [ ] **G0**：Phase 0 证据产物已落；仍缺 §1.1 两份输入文档原件，故整关不勾。2026-08-28 R116 后 `grok-bot/` LFS 指针 = 0、可完整检出。
   - [x] **P0-code / Batch52**：`grok-inventory --check` 对钉死 tree 的 2,110 文件逐字同步；本平台 Electron 官方 zip 与 `engine-pins.toml` / 上游 SHASUMS 副本交叉一致并实跑 `v43.3.0`；overlay、shim 规则、6 条 Engine T-ID 与 poisoned epoch 全部落地。五个 xtask 退出子命令及 `openbot-computer` 9/0/0 在 macOS arm64 本轮实跑绿；这只勾 P0-code，不替代缺失的两份输入原件，也不勾 G0 整关。
@@ -1879,6 +1879,11 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     currency+positive micro-unit cap；native0026在BeginThreadRun同一事务冻结cap，后改设置不漂移已有run。
     cap缺rate或币种不匹配在provider effect前分别以stable terminal拒绝；cost upper bound超cap先记账再
     `run_cost_budget_exceeded`。三类quota拒绝都写同一closed hash-chain audit且不含金额/rate/provider；
+  - [x] Batch90 Agent concurrency 排队取消闭环：已激活 run 在取得 semaphore permit 前收到 cancel 时，
+    不再只清内存 reservation；它从 `Queued` 复用唯一 reducer/journal 提交 durable `Cancelled` terminal，
+    再释放 per-run tool sequence。修复前新增回归稳定超时，修复后 Agent 全包 `39/0/0`；同时补齐
+    Batch89 两个预算命令在 transport parity 无通配穷举中的显式分类，恢复 `8/0/0`。这只修复完整
+    并发 tool/computer runtime budget 的前置取消语义，不把该 budget 或 Computer 装配标为完成；
   - [x] 真实 tool host loop：complete batch 按 stable index 串行、跨 sampling 8-step、三家 assistant/tool pair、durable checkpoint/context reload、Rust call identity；首个 production executor `remember` 经 CEL/decision/attempt/capability/outcome/audit，generation race fail-closed；
   - [x] run/user cancellation 的统一host入口：PostgreSQL control outbox跨副本到lease owner，built-in Agent
     watch token沿context/provider/tool child传播；真实PG证明active child先drop、再写唯一Cancelled terminal。
@@ -2049,7 +2054,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G7**：本地 `ControlService` 的 HumanLease actor/auth/computer/tab/generation/epoch fencing 与 poisoned exhaustion 已有 9/0/0 单测；ScreenHub/viewer ticket、真 engine input、fps/latency/backpressure、coordinates/drag/IME 与跨 scope 矩阵仍未实施完成，故整关不勾。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账（`cargo xtask parity-check` 复算）：parity **813/1694 done（881 todo）**，fixtures **17/39 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1289/397/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账（`cargo xtask parity-check` 复算）：parity **823/1704 done（881 todo）**，fixtures **20/42 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1293/403/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -2384,6 +2389,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R162 | §7.3–§7.4 / §8.4 / §14.3 / §15.3–§15.4 / §24 G3、G4（2026-08-30 Batch88：operator-attested provider cost upper bound） | R161已有跨sampling token真源，却没有任何price/currency/provenance输入。硬编码当前官网价既会随时间漂移，也不适用于custom OpenAI-compatible endpoint与企业合同；runtime联网抓价会把启动/预算依赖外部可变页面。进一步实读三家decoder发现normalized Usage只有input/output/total，没有跨vendor稳定的cache-read/write细分，因此即使钉list price也不能诚实称“最终账单”。 | 价格只来自operator显式attestation，零内置默认、零runtime fetch。package provider在`model.yaml::pricing`声明，managed provider用六个`BOT_PRICE_*` all-or-none；snapshot绑定provider family+exact model+3位uppercase currency+每百万token的maximum input/output micro-unit rate+credential-free HTTPS source URL+source document SHA-256+observed-at。maximum必须不低于任一适用cache/uncached档位；因此counter是保守上界，可能早停但不能低估，不称vendor bill。不同currency不换算/不相加；future observed-at在provider前拒绝。缺snapshot明确unpriced/NULL，不解释为0。 | `ProviderRateCard`封闭校identity/currency/source/digest/time/rate；`ProviderCostUpperBound`以whole micro-unit+millionth remainder跨sampling checked carry，只在aggregate边界ceil。native0025给`runs`expand-only追加10列/1 shape CHECK，price snapshot与usage cost upper bound同token事务/exact replay，rate/currency/source/time漂移conflict；future时点在context和writer双拒绝。Server package/managed与Desktop package production context接线；remote AG-UI保持unpriced。implementation `6d46cb0d2ecd6d8d4b03c4c7d5d46ac3e2da91aa`。Application/Agent/Infra/Server/Desktop=`157/36/323/217/130`（Desktop另3 ignored），Server bin=`7/0/0`；PG17.11 context/native0024/native0025/run-runtime=`1+1+1+5/0/0`，0025 regeneration开/关各1/0/0，schema=`45表/447列/320 NOT NULL/247约束/91索引/4触发器/4枚举/1函数/0扩展`、SHA=`f72fe00b7bf2690786d7810bfa0d9481da0ea325a6f896ff56f152a14d8094cc`。五crate Clippy、fmt/diff、SafeDialer/Tauri/deny guards绿；Cargo package825不变（Application既有url direct、Agent dev既有time）。parity=`819/881/1700`、env=`55/25/80`、fixtures=`19/22/41`、overlay=`1289/403/2/6`、0违反；recount=`71/0/89 skipped`，strict未跑。safe-dialer guard顺带补锁Batch56/29/82四个test-only loopback caller均位于唯一`cfg(test)`后。用户费用上限/API/UI、并发tool与computer runtime仍todo，不关闭完整budget或G4；详见Batch88文档。 |
 
 | R163 | §7.4 / §8.4、§8.6 / §13.1–§13.3 / §14.3 / §15.1–§15.3 / §17.3 / §24 G3、G4、G6（2026-08-31 Batch89：actor-scoped per-run cost cap） | R162已有可信cost upper bound，却没有用户cap的持久化偏好、typed ApplicationService、Server/Desktop transport或Settings UI，counter也不会主动终止run。若只在UI存decimal或进程内比较，Desktop/Server会漂移且恢复后丢预算；若run每轮重读当前偏好，设置更新会改变正在运行的账本。JSON number又会让WASM超过2^53或用float舍入。cap存在但rate缺失/币种不同若先调用provider再报错，会在无法证明预算的情况下产生费用。最后，§17.3要求quota拒绝同时有stable code与audit，只有terminal仍不完整。 | 偏好按deployment/tenant/actor三轴完整替换，wire只含`cap:null`或3位uppercase currency+positive canonical decimal-string micro units；不接受actor/run/provider/model/rate。新run必须在BeginThreadRun同一事务复制当时cap，后改设置只影响未来run。cap只消费R162的保守上界：无rate或币种不匹配在provider effect前fail closed，不做汇率换算；sampling后超限必须先记实际usage/cost再terminal。三个拒绝原因用closed stable code；同一hash-chain audit只记error code，不记金额/币种/rate/provider。audit失败不得冒充已审计拒绝。 | 新增`RunCostCap`、`RunCostBudgetAdministration`与closed command/reply；PostgreSQL adapter供Server/Desktop共享assembly。native0026建`user_run_cost_budgets`并给runs追加2列/1 shape CHECK；run创建冻结、writer再比cap与rate。Agent每次context reload校immutable cap；unpriced/mismatch provider start=0，cost overage exact replay。GET/PUT `/api/me/run-cost-budget`与Tauri custom protocol同typed入口；Settings用整数微单位与最多6位小数，无float，明确非账单。`agent.run_cost_budget_refused`配三码audit。implementation `29c4201b7908bf2d2e9268e0ea4abf223d255813`。Contracts/Domain/Application/Agent/Infra/Server/UI/Desktop=`100/371/158/38/323/218/180/130`且0失败（Desktop3 ignored）；PG17.11 native0026 regen开/关各1、runtime/context/shared assembly/run regression=`2+1+1+5/0/0`。schema=`46表/455列/326 NOT NULL/253约束/92索引`、SHA=`ad5375da9abc5d03f1fa9587f5efda3e76e2cb89edf470e3bc4650a58670ba2c`。final改动四crate all-target/all-feature Clippy，Server/Desktop/UI对应Clippy、WASM/fmt/diff/i18n/design/CSS/bundle绿；bundle=`1868812/115524/740216/1/0`。parity=`823/881/1704`、API/events/tables=`82/35/59 done`、fixtures=`20/22/42`、overlay=`1293/403/2/6`、0违反；recount=`71/0/89 skipped`、strict未跑。Cargo825、Grok/npm/workflow不变。并发tool与computer runtime budget仍todo，不关闭完整budget/G4；详见Batch89文档。 |
+| R164 | §7.2、§7.4 / §13.2 / §19.3 / §24 G4（2026-09-03 Batch90：审计复核与 Agent 并发排队取消） | Batch89 后的外部审计指出两个可复现回归：其一，run 已 reserve/activate、但仍等待 `BuiltInAgentRuntime` semaphore 时，`revoke` 返回 `ChildSignalled`，旧 activation 只 `cleanup` 后退出，未提交 durable terminal；RunRelay 因而等待 child 自行收口。其二，新增 `GetRunCostBudget` / `ReplaceRunCostBudget` 后，`transport_parity.rs` 的无 wildcard `AppCommand` 穷举未同步，真实编译报 `E0004`。同一报告把多用户 isolation readiness 503、Computer 未装配、CEL 六差异、单链 advisory lock与协议栈secret副本混称为新回归，但前两项是§24明确门禁/todo，CEL差异有operator-confirmation preflight，audit生产坐标已在同一事务锁内用`clock_timestamp()`铸造，`SecretBytes`也从未承诺擦除类型边界外副本。 | semaphore 前两条cancel入口统一进入新`cancel_before_execution`：从权威lease构造`Queued`状态与`DurableTextRun`，复用`cancel_and_commit`走`Queued→Cancelling→CommittingResults`写`RunTerminal::Cancelled`，随后释放per-run tool sequence并按exact lease清reservation；不在RunRelay侧乐观造终态。新增`max_concurrency=1`回归以首run占permit、撤销第二个已激活run。transport穷举显式把两个预算命令归到已有专项证据，不加通配。其它审计项按第一真源分类，不删除fail-closed probe、不改CEL裁决、不拆hash chain、不伪造通用堆zeroize。 | implementation=`d97f232bdd497057a028203c63e7394ff9667833`。新Agent回归修前`0/1/0`超时、修后`1/0/0`，完整Agent=`39/0/0`；transport修前`E0004`、修后=`8/0/0`；Agent+testkit与Desktop各自all-target/all-feature Clippy `-D warnings`、fmt绿。CEL corpus=`6/0/0`，SafeDialer total-deadline定向=`1/0/0`。parity仍`823/881/1704`、fixtures=`20/22/42`、overlay=`1293/403/2/6`、0违反；native/schema/API/T-ID/Cargo/Grok/npm/workflow均不变。未跑strict recount（无上游目录）、`cargo xtask ci`或Actions。完整并发tool/computer runtime budget仍todo；详见Batch90与审计复核文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 
