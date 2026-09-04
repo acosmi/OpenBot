@@ -4,7 +4,9 @@
 //!
 //! - [`crate::db::baseline`] 把空库一次建成上游 0012 终态；
 //! - [`crate::db::compat`] 只读 `drizzle.__drizzle_migrations`，确认旧库至少到 0012；
-//! - 本模块从 0012 往后施加 Rust-owned 的 expand-only migration，**绝不写上游账本**。
+//! - 本模块从 0012 往后施加 Rust-owned migration，schema 只允许 expand，**绝不写上游账本**；
+//! - 唯一数据覆写例外是具名、可审计的隐私保留期清除；它只能把已终态 run 的 reasoning
+//!   payload 收敛为固定无内容标记，不能改业务身份、序列或 terminal 事实。
 //!
 //! # 自有账本与并发
 //!
@@ -157,8 +159,17 @@ pub const NATIVE_0026_NAME: &str = "native_0026_user_run_cost_budgets";
 /// 0026 SQL source.
 pub const NATIVE_0026_SQL: &str = include_str!("../../sql/native_0026.sql");
 
+/// Terminal-run reasoning retention redaction version.
+pub const NATIVE_0027_VERSION: i32 = 27;
+
+/// 0027 stable name.
+pub const NATIVE_0027_NAME: &str = "native_0027_terminal_reasoning_retention";
+
+/// 0027 SQL source.
+pub const NATIVE_0027_SQL: &str = include_str!("../../sql/native_0027.sql");
+
 /// 当前二进制认识的最新 native schema 版本。
-pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0026_VERSION;
+pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0027_VERSION;
 
 /// 当前二进制钉住的 native migration 数量。
 pub const NATIVE_MIGRATION_COUNT: usize = MIGRATIONS.len();
@@ -244,6 +255,11 @@ const MIGRATIONS: &[MigrationSpec] = &[
         version: NATIVE_0026_VERSION,
         name: NATIVE_0026_NAME,
         sql: NATIVE_0026_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0027_VERSION,
+        name: NATIVE_0027_NAME,
+        sql: NATIVE_0027_SQL,
     },
 ];
 
@@ -381,6 +397,12 @@ pub fn native_0025_checksum() -> String {
 #[must_use]
 pub fn native_0026_checksum() -> String {
     Sha256Digest::of(NATIVE_0026_SQL.as_bytes()).to_hex()
+}
+
+/// SHA-256 of the exact native 0027 SQL bytes.
+#[must_use]
+pub fn native_0027_checksum() -> String {
+    Sha256Digest::of(NATIVE_0027_SQL.as_bytes()).to_hex()
 }
 
 /// 在一个已到 0012 的数据库上施加当前二进制认识的全部 Rust-owned migrations。
@@ -536,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_sql_is_mechanically_expand_only() {
+    fn schema_migration_sql_is_mechanically_expand_only() {
         let forbidden_prefixes = ["DROP ", "TRUNCATE ", "DELETE ", "UPDATE "];
         for line in statement_lines(NATIVE_0013_SQL)
             .chain(statement_lines(NATIVE_0014_SQL))
@@ -610,6 +632,44 @@ mod tests {
     }
 
     #[test]
+    fn terminal_reasoning_retention_is_the_only_narrow_data_redaction() {
+        let statements = statement_lines(NATIVE_0027_SQL).collect::<Vec<_>>();
+        let statement_sql = statements.join("\n");
+        assert_eq!(statement_sql.matches(';').count(), 1);
+        assert_eq!(
+            statements
+                .iter()
+                .filter(|line| line.to_ascii_uppercase().starts_with("UPDATE "))
+                .count(),
+            1
+        );
+        assert!(statements[0].starts_with("UPDATE public.run_events AS reasoning_event"));
+        assert!(NATIVE_0027_SQL.contains(
+            "SET payload = jsonb_build_object(\n    'channel', 'reasoning',\n    'delta', '',\n    'retained', false\n)"
+        ));
+        assert!(NATIVE_0027_SQL.contains("reasoning_event.event_type = 'semantic_chunk'"));
+        assert!(NATIVE_0027_SQL.contains(
+            "run.status IN ('completed', 'failed', 'cancelled', 'reconciliation_required')"
+        ));
+        assert!(NATIVE_0027_SQL.contains("reasoning_event.payload->>'channel' = 'reasoning'"));
+        for forbidden in [
+            "DROP ",
+            "TRUNCATE ",
+            "DELETE ",
+            "ALTER ",
+            "CREATE ",
+            "INSERT ",
+            " RENAME ",
+            "SET NOT NULL",
+        ] {
+            assert!(
+                !statement_sql.to_ascii_uppercase().contains(forbidden),
+                "0027 privacy redaction escaped its DML boundary: {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn real_migration_uses_the_ledger_not_object_existence_as_idempotency() {
         assert!(
             !statement_lines(NATIVE_0013_SQL)
@@ -626,6 +686,7 @@ mod tests {
                 .chain(statement_lines(NATIVE_0024_SQL))
                 .chain(statement_lines(NATIVE_0025_SQL))
                 .chain(statement_lines(NATIVE_0026_SQL))
+                .chain(statement_lines(NATIVE_0027_SQL))
                 .any(|line| line.contains("IF NOT EXISTS"))
         );
         assert!(LEDGER_BOOTSTRAP_SQL.contains("IF NOT EXISTS"));
@@ -682,7 +743,10 @@ mod tests {
         let native_run_cost_budget = native_0026_checksum();
         assert_eq!(native_run_cost_budget.len(), 64);
         assert_ne!(native_run_cost, native_run_cost_budget);
-        assert_eq!(MIGRATIONS.len(), 14);
-        assert_eq!(MIGRATIONS[13].version, NATIVE_LATEST_VERSION);
+        let native_reasoning_retention = native_0027_checksum();
+        assert_eq!(native_reasoning_retention.len(), 64);
+        assert_ne!(native_run_cost_budget, native_reasoning_retention);
+        assert_eq!(MIGRATIONS.len(), 15);
+        assert_eq!(MIGRATIONS[14].version, NATIVE_LATEST_VERSION);
     }
 }

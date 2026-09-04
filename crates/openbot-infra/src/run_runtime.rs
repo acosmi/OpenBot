@@ -2048,6 +2048,7 @@ async fn finish_run_in_transaction(
     let next_run = checked_increment(expected, "next_event_sequence")?;
     let next_thread = checked_increment(thread_event, "thread_next_event_sequence")?;
     let assistant_text = aggregate_text_chunks(transaction, lease.run_id()).await?;
+    scrub_reasoning_chunks(transaction, lease.run_id()).await?;
     let message_sequence = if assistant_text.is_empty() {
         None
     } else {
@@ -2144,6 +2145,28 @@ async fn finish_run_in_transaction(
         message_sequence,
         replayed: false,
     })
+}
+
+async fn scrub_reasoning_chunks(
+    transaction: &Transaction<'_>,
+    run_id: &RunId,
+) -> Result<(), RunRuntimeError> {
+    transaction
+        .execute(
+            "UPDATE public.run_events \
+             SET payload=jsonb_build_object( \
+               'channel','reasoning','delta','','retained',false \
+             ) \
+             WHERE run_id=$1 AND event_type='semantic_chunk' \
+               AND payload->>'channel'='reasoning' \
+               AND payload IS DISTINCT FROM jsonb_build_object( \
+                 'channel','reasoning','delta','','retained',false \
+               )",
+            &[&run_id.as_str()],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| write_error("清除 terminal reasoning payload", error))
 }
 
 async fn recover_one_in_transaction(

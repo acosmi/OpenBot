@@ -1721,12 +1721,14 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 return Err("remote route touched package provider".to_owned());
             }
             let client = pool.get().await.map_err(|error| error.to_string())?;
-            let reasoning: i64 = client
+            let reasoning_markers: i64 = client
                 .query_one(
                     "SELECT count(*)::bigint FROM public.run_events \
                      WHERE run_id='run-remote' AND event_type='semantic_chunk' \
                        AND payload->>'channel'='reasoning' \
-                       AND payload->>'delta'='checked evidence'",
+                       AND payload=jsonb_build_object( \
+                         'channel','reasoning','delta','','retained',false \
+                       )",
                     &[],
                 )
                 .await
@@ -1750,16 +1752,17 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                        UNION ALL SELECT payload::text FROM public.run_events
                        UNION ALL SELECT payload::text FROM public.audit_events
                      ) AS persisted WHERE value LIKE '%REMOTE_ERROR_SECRET_CANARY%'
-                                      OR value LIKE '%ENCRYPTED_REASONING_CANARY%'",
+                                      OR value LIKE '%ENCRYPTED_REASONING_CANARY%'
+                                      OR value LIKE '%checked evidence%'",
                     &[],
                 )
                 .await
                 .map_err(|error| error.to_string())?
                 .try_get(0)
                 .map_err(|error| error.to_string())?;
-            if reasoning != 1 || invoked != 3 || canary_rows != 0 {
+            if reasoning_markers != 1 || invoked != 3 || canary_rows != 0 {
                 return Err(format!(
-                    "remote durable projection 漂移：reasoning={reasoning} invoked={invoked} canary={canary_rows}"
+                    "remote durable projection 漂移：reasoningMarkers={reasoning_markers} invoked={invoked} canary={canary_rows}"
                 ));
             }
             Ok(())
