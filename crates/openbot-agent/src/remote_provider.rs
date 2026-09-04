@@ -392,6 +392,13 @@ mod tests {
                     .to_string(),
                 json!({"type":"REASONING_MESSAGE_CONTENT","messageId":"rm","delta":"summary"})
                     .to_string(),
+                json!({
+                    "type":"REASONING_ENCRYPTED_VALUE",
+                    "subtype":"message",
+                    "entityId":"rm",
+                    "encryptedValue":"ENCRYPTED_REASONING_CANARY"
+                })
+                .to_string(),
                 json!({"type":"REASONING_MESSAGE_END","messageId":"rm"}).to_string(),
                 json!({"type":"REASONING_END","messageId":"r"}).to_string(),
                 json!({"type":"RUN_FINISHED","threadId":"thread-1","runId":"run-1"}).to_string(),
@@ -412,6 +419,7 @@ mod tests {
             event,
             ProviderEvent::ReasoningDelta { delta, .. } if delta == "summary"
         )));
+        assert!(!format!("{events:?}").contains("ENCRYPTED_REASONING_CANARY"));
         assert_eq!(events.last(), Some(&ProviderEvent::Completed));
         let body: serde_json::Value =
             serde_json::from_slice(transport.body.lock().unwrap().as_ref().unwrap()).unwrap();

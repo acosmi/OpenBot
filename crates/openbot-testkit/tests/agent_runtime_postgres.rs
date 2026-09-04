@@ -1542,6 +1542,7 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                     serde_json::json!({"type":"REASONING_START","messageId":"reason"}),
                     serde_json::json!({"type":"REASONING_MESSAGE_START","messageId":"reason-message","role":"reasoning"}),
                     serde_json::json!({"type":"REASONING_MESSAGE_CONTENT","messageId":"reason-message","delta":"checked evidence"}),
+                    serde_json::json!({"type":"REASONING_ENCRYPTED_VALUE","subtype":"message","entityId":"reason-message","encryptedValue":"ENCRYPTED_REASONING_CANARY"}),
                     serde_json::json!({"type":"REASONING_MESSAGE_END","messageId":"reason-message"}),
                     serde_json::json!({"type":"REASONING_END","messageId":"reason"}),
                     serde_json::json!({"type":"TEXT_MESSAGE_START","messageId":"answer","role":"assistant"}),
@@ -1748,7 +1749,8 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                        SELECT content::text AS value FROM public.messages
                        UNION ALL SELECT payload::text FROM public.run_events
                        UNION ALL SELECT payload::text FROM public.audit_events
-                     ) AS persisted WHERE value LIKE '%REMOTE_ERROR_SECRET_CANARY%'",
+                     ) AS persisted WHERE value LIKE '%REMOTE_ERROR_SECRET_CANARY%'
+                                      OR value LIKE '%ENCRYPTED_REASONING_CANARY%'",
                     &[],
                 )
                 .await
