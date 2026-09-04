@@ -52,3 +52,9 @@
 - native latest 仍为 `0026`，schema 仍为 46 表/455 列/253 约束/92 索引。
 - strict recount 未配置固定上游目录；按 R63 未运行 `cargo xtask ci`，未派发 Actions。
 - `grok-bot`、零 npm、单一非 Grok `package.json` 与 manual-only workflow 不变。
+
+## 6. R168 机器台账身份纠正
+
+Batch94 复核发现：本批 docs commit `a46438f2d2f338d3e9473d72f639f8b674b6fcc3` 把上面的 error `done_evidence` 错挂到了相邻 `T-EVT-0003 agui-tool-call-result`，并把它置为 done；真正的 `T-EVT-0011 agui-error` 仍留 todo。实现、真 PostgreSQL 证据和本文件的结论没有漂移，但机器台账身份是错的，不能因为 done 总数仍增加 1 就忽略。
+
+R168 / correction `2050fab0369bbc1537f94347eb1f74b75ffb5820` 已把同一 evidence 移到 `T-EVT-0011` 并恢复 `T-EVT-0003` 为 todo。修前与修后 events 总数都为相应阶段的 36 done；变化的是证据归属，不是计数。独立记录见 `docs/2026-09-03-G4-AGUI-error-ledger-identity-fix-batch94.md`。
