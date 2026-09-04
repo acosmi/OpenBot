@@ -14,6 +14,7 @@ use openbot_computer::engine::{
     EngineBundleDigest, EngineFrame, EngineLaunchConfig, EngineProcess, EngineProcessError,
     EngineRole, EngineSandboxFidelity, ScreenAudience, WorkspaceScope,
 };
+use openbot_computer::screen::coordinates::{CanvasRect, DecodedFrameSize, ScreenCoordinateMap};
 use openbot_computer::screen::{ScreenHub, ScreenHubError, ScreenViewerBinding};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
 use openbot_contracts::ids::{
@@ -30,6 +31,8 @@ const SCREENCAST_FIXTURE: &str =
     include_str!("../../../fixtures/computer/screencast-backpressure-v3.json");
 const SCREEN_HUB_FIXTURE: &str =
     include_str!("../../../fixtures/computer/screen-hub-ticket-core-v1.json");
+const SCREEN_COORDINATE_FIXTURE: &str =
+    include_str!("../../../fixtures/computer/screen-coordinate-input-journey-v1.json");
 
 #[test]
 fn engine_input_fixture_locks_protocol_and_unfinished_platform_boundaries() {
@@ -141,6 +144,69 @@ fn screen_hub_fixture_locks_ticket_and_production_transport_boundary() {
         "lastViewerStopsScreencastWithinTwoSeconds",
         "captureScreenshotFallback",
         "serverOrDesktopComputerAssembly",
+        "windowsRuntime",
+        "linuxRunscRuntime",
+    ] {
+        assert_eq!(fixture["evidenceBoundary"][unfinished], false);
+    }
+}
+
+#[test]
+fn screen_coordinate_fixture_locks_units_journeys_and_hardware_boundary() {
+    let fixture = serde_json::from_str::<serde_json::Value>(SCREEN_COORDINATE_FIXTURE)
+        .expect("screen coordinate fixture");
+    assert_eq!(
+        fixture["schema"],
+        "openbot-screen-coordinate-input-journey-v1"
+    );
+    assert_eq!(
+        fixture["officialCdpUnits"]["deviceWidthAndHeight"],
+        "device-independent-pixels"
+    );
+    assert_eq!(
+        fixture["officialCdpUnits"]["devtoolsFrontendCommit"],
+        "036dd84bc4fdfb0fd4be2a5ddb3fe37ef24939cd"
+    );
+    assert_eq!(
+        fixture["officialCdpUnits"]["inputModelGitBlob"],
+        "cfa97617c47f1b01957429f1bfdc96ebd6fe07d7"
+    );
+    assert_eq!(
+        fixture["officialCdpUnits"]["mouseCoordinates"],
+        "main-frame-viewport-css-pixels"
+    );
+    assert_eq!(fixture["mapping"]["canvasFit"], "contain");
+    assert_eq!(fixture["mapping"]["letterboxInput"], "reject");
+    assert_eq!(fixture["mapping"]["frameSequenceCarried"], true);
+    assert_eq!(
+        fixture["mapping"]["pageScaleAppliedOnlyToDocumentHitTestCoordinates"],
+        true
+    );
+    assert_eq!(fixture["pureMatrix"]["testsPassed"], 4);
+    assert_eq!(fixture["pureMatrix"]["viewportPoint"]["x"], 80);
+    assert_eq!(fixture["pureMatrix"]["viewportPoint"]["y"], 168);
+    assert_eq!(
+        fixture["macosArm64Evidence"]["dragSequence"],
+        serde_json::json!(["mousePressed", "mouseMoved", "mouseReleased"])
+    );
+    assert_eq!(fixture["macosArm64Evidence"]["imePath"], "Input.insertText");
+    for completed in [
+        "pureCoordinateMatrix",
+        "macosActualEngineJourney",
+        "imeCompletedTextJourney",
+        "downMoveUpJourney",
+    ] {
+        assert_eq!(fixture["evidenceBoundary"][completed], true);
+    }
+    for unfinished in [
+        "nonUnitDeviceScaleHardware",
+        "nonUnitPageScaleHardware",
+        "nonZeroScrollPointerHardware",
+        "leptosCanvasEventWiring",
+        "staleDisplayedFrameTransportRejection",
+        "serverOrDesktopWebSocket",
+        "productionComputerAssembly",
+        "resizeNavigationTabSwitch",
         "windowsRuntime",
         "linuxRunscRuntime",
     ] {
@@ -333,11 +399,20 @@ async fn run_role(role: EngineRole) {
             .await,
         Err(ScreenHubError::TicketInvalid)
     ));
-    let viewer_initial_sequence = viewer_a.current().expect("viewer a initial").sequence();
+    let viewer_initial_frame = viewer_a.current().expect("viewer a initial");
+    let viewer_initial_sequence = viewer_initial_frame.sequence();
     assert_eq!(
         viewer_b.current().expect("viewer b initial").sequence(),
         viewer_initial_sequence
     );
+    let coordinates = ScreenCoordinateMap::new(
+        &viewer_initial_frame,
+        DecodedFrameSize::new(viewer_initial_frame.width(), viewer_initial_frame.height())
+            .expect("decoded frame size"),
+        CanvasRect::new(100.0, 50.0, 640.0, 500.0).expect("letterboxed canvas"),
+    )
+    .expect("viewer coordinate map");
+    assert_eq!(coordinates.frame_sequence(), viewer_initial_sequence);
     let descendants = descendant_pids(pid);
     assert!(
         descendants.contains(&started.renderer_pid),
@@ -347,7 +422,15 @@ async fn run_role(role: EngineRole) {
         assert_no_tcp_listener(process);
     }
 
-    run_live_input_matrix(&mut process, &mut control, &auth, &ticket, slow_frame).await;
+    run_live_input_matrix(
+        &mut process,
+        &mut control,
+        &auth,
+        &ticket,
+        slow_frame,
+        coordinates,
+    )
+    .await;
     let viewer_frame_a = tokio::time::timeout(std::time::Duration::from_secs(5), viewer_a.next())
         .await
         .expect("viewer a latest deadline")
@@ -460,6 +543,7 @@ async fn run_live_input_matrix(
     auth: &AuthContext,
     ticket: &HumanInputTicket,
     starting_frame: EngineFrame,
+    coordinates: ScreenCoordinateMap,
 ) {
     let none = ModifierMask::new(0).expect("modifiers");
     let mut sequence = starting_frame.sequence();
@@ -504,12 +588,22 @@ async fn run_live_input_matrix(
         Err(EngineProcessError::InputAuthority)
     ));
 
+    let button = coordinates
+        .map_point(140.0, 184.0)
+        .expect("letterboxed button point");
+    assert_eq!((button.viewport_x(), button.viewport_y()), (80.0, 168.0));
     dispatch(
         process,
         control,
         auth,
         ticket,
-        BrowserInput::mouse_move(80.0, 168.0, MouseButton::Left, none).expect("button hover"),
+        BrowserInput::mouse_move(
+            button.viewport_x(),
+            button.viewport_y(),
+            MouseButton::Left,
+            none,
+        )
+        .expect("button hover"),
     )
     .await;
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -519,7 +613,14 @@ async fn run_live_input_matrix(
         control,
         auth,
         ticket,
-        BrowserInput::mouse_down(80.0, 168.0, MouseButton::Left, None, none).expect("press"),
+        BrowserInput::mouse_down(
+            button.viewport_x(),
+            button.viewport_y(),
+            MouseButton::Left,
+            None,
+            none,
+        )
+        .expect("press"),
         &mut sequence,
     )
     .await;
@@ -528,12 +629,36 @@ async fn run_live_input_matrix(
         frame_hash(&button_hover),
         "mousePressed must change :active"
     );
+    let drag_outside = coordinates
+        .map_point(250.0, 184.0)
+        .expect("letterboxed drag point");
+    dispatch(
+        process,
+        control,
+        auth,
+        ticket,
+        BrowserInput::mouse_move(
+            drag_outside.viewport_x(),
+            drag_outside.viewport_y(),
+            MouseButton::Left,
+            none,
+        )
+        .expect("drag move while pressed"),
+    )
+    .await;
     let released = apply(
         process,
         control,
         auth,
         ticket,
-        BrowserInput::mouse_up(80.0, 168.0, MouseButton::Left, None, none).expect("release"),
+        BrowserInput::mouse_up(
+            drag_outside.viewport_x(),
+            drag_outside.viewport_y(),
+            MouseButton::Left,
+            None,
+            none,
+        )
+        .expect("release after drag"),
         &mut sequence,
     )
     .await;
@@ -653,7 +778,7 @@ async fn run_live_input_matrix(
         control,
         auth,
         ticket,
-        BrowserInput::insert_text("A中"),
+        BrowserInput::insert_text("日本語🔐"),
         &mut sequence,
     )
     .await;
@@ -663,12 +788,29 @@ async fn run_live_input_matrix(
         "insertText must alter input"
     );
 
+    let page_scroll = coordinates
+        .map_point(550.0, 450.0)
+        .expect("letterboxed page scroll point");
+    let wheel_delta = coordinates
+        .map_delta(0.0, 200.0)
+        .expect("viewer wheel delta");
+    assert_eq!(
+        (page_scroll.viewport_x(), page_scroll.viewport_y()),
+        (900.0, 700.0)
+    );
+    assert_eq!((wheel_delta.delta_x(), wheel_delta.delta_y()), (0.0, 400.0));
     dispatch(
         process,
         control,
         auth,
         ticket,
-        BrowserInput::mouse_move(900.0, 700.0, MouseButton::Left, none).expect("page scroll hover"),
+        BrowserInput::mouse_move(
+            page_scroll.viewport_x(),
+            page_scroll.viewport_y(),
+            MouseButton::Left,
+            none,
+        )
+        .expect("page scroll hover"),
     )
     .await;
     let scroll_hover = inserted.clone();
@@ -677,7 +819,14 @@ async fn run_live_input_matrix(
         control,
         auth,
         ticket,
-        BrowserInput::wheel(900.0, 700.0, 0.0, 400.0, none).expect("wheel"),
+        BrowserInput::wheel(
+            page_scroll.viewport_x(),
+            page_scroll.viewport_y(),
+            wheel_delta.delta_x(),
+            wheel_delta.delta_y(),
+            none,
+        )
+        .expect("wheel"),
     )
     .await;
     let scrolled = next_distinct_frame(process, &mut sequence, frame_hash(&scroll_hover)).await;

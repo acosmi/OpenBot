@@ -1,5 +1,7 @@
 //! Engine-backed multi-viewer ScreenHub and one-time viewer-ticket authority.
 
+pub mod coordinates;
+
 use core::fmt;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -362,6 +364,12 @@ async fn close_source(state: Weak<Mutex<HubState>>, key: ScreenStreamKey) {
 pub struct ScreenViewerFrame {
     sequence: u64,
     captured_at_ms: i64,
+    width: u32,
+    height: u32,
+    device_scale_factor: f32,
+    page_scale_factor: f32,
+    scroll_x: f32,
+    scroll_y: f32,
     bytes: Arc<[u8]>,
 }
 
@@ -391,6 +399,12 @@ impl ScreenViewerFrame {
         Ok(Self {
             sequence: frame.sequence(),
             captured_at_ms: frame.captured_at_ms(),
+            width: frame.width(),
+            height: frame.height(),
+            device_scale_factor: frame.device_scale_factor(),
+            page_scale_factor: frame.page_scale_factor(),
+            scroll_x: frame.scroll_x(),
+            scroll_y: frame.scroll_y(),
             bytes: bytes.into(),
         })
     }
@@ -405,6 +419,42 @@ impl ScreenViewerFrame {
     #[must_use]
     pub const fn captured_at_ms(&self) -> i64 {
         self.captured_at_ms
+    }
+
+    /// Screencast device width in device-independent pixels (DIP).
+    #[must_use]
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Screencast device height in device-independent pixels (DIP).
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Renderer device-pixel ratio sampled by the fixed engine probe.
+    #[must_use]
+    pub const fn device_scale_factor(&self) -> f32 {
+        self.device_scale_factor
+    }
+
+    /// Page scale reported with the exact screencast frame.
+    #[must_use]
+    pub const fn page_scale_factor(&self) -> f32 {
+        self.page_scale_factor
+    }
+
+    /// Horizontal document scroll in CSS pixels for the exact frame.
+    #[must_use]
+    pub const fn scroll_x(&self) -> f32 {
+        self.scroll_x
+    }
+
+    /// Vertical document scroll in CSS pixels for the exact frame.
+    #[must_use]
+    pub const fn scroll_y(&self) -> f32 {
+        self.scroll_y
     }
 
     /// Sanitized binary wire without scope IDs, ticket, or internal CDP session ID.

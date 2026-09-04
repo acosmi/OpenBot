@@ -13,7 +13,7 @@ Phase 0（Evidence Freeze）的 fixture 目录。真源：
 
 | 路径 | 内容 | 状态 |
 | --- | --- | --- |
-| `MANIFEST.yaml` | 本目录的 parity ledger。每条 fixture 一行，`test_id` 前缀 `T-FIX`。 | 51 条：30 done / 21 todo |
+| `MANIFEST.yaml` | 本目录的 parity ledger。每条 fixture 一行，`test_id` 前缀 `T-FIX`。 | 52 条：31 done / 21 todo |
 | `policy/cel-corpus.json` | CEL corpus。69 条表达式 × context，结果类别由 `cel-js@0.8.2` 实跑测出。 | done |
 | `ui/seed.json` | GUI golden 的确定性数据（§10.2）。25 张实体表 95 行 + native 段 + runtime views，覆盖 27 页。 | done |
 | `ui/golden/MANIFEST.toml` | golden 清单：镜像 digest 位、字体、视口、阈值、平台矩阵、mask 规则、bundle 预算。 | done（digest 为 TBD 占位） |
@@ -22,7 +22,7 @@ Phase 0（Evidence Freeze）的 fixture 目录。真源：
 | `provider/*.jsonl` | provider 流录像。 | todo（T-FIX-0013..0017） |
 | `mcp/*.json` | MCP conformance、catalog 漂移、OAuth、恶意载荷。 | todo（T-FIX-0018..0021） |
 | `browser/*.json` | Browser engine 操作、陈旧 ref、被拒副作用。 | todo（T-FIX-0022..0024） |
-| `computer/*.json` | Browser residency、CDP输入、protocol-v3 screencast/背压与ScreenHub ticket核心边界。 | done（T-FIX-0025/0048..0051；生产WS/跨平台仍按各自todo） |
+| `computer/*.json` | Browser residency、CDP输入、protocol-v3 screencast/背压、ScreenHub ticket与viewer坐标核心边界。 | done（T-FIX-0025/0048..0052；生产WS/跨平台仍按各自todo） |
 | `upstream-baseline/` | 上游基线测试原始输出归档（§24 G0）。 | todo（T-FIX-0026） |
 
 > `todo` 是 v3 §19.3 允许的状态。G0 的判据是"未归类项 = 0"，不是"全部 done"。
@@ -55,9 +55,9 @@ Phase 0（Evidence Freeze）的 fixture 目录。真源：
 本机复算（六条 recount 全部跑过，见 `MANIFEST.yaml::recount`）：
 
 ```bash
-python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))"          # 51
+python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))"          # 52
 python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))"  # 21
-python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))"  # 30
+python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))"  # 31
 ```
 
 ---

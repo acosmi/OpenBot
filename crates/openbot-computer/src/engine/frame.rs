@@ -70,13 +70,13 @@ impl EngineFrame {
         self.captured_at_ms
     }
 
-    /// CSS-pixel capture width.
+    /// Device screen width in device-independent pixels (DIP), as defined by CDP metadata.
     #[must_use]
     pub const fn width(&self) -> u32 {
         self.width
     }
 
-    /// CSS-pixel capture height.
+    /// Device screen height in device-independent pixels (DIP), as defined by CDP metadata.
     #[must_use]
     pub const fn height(&self) -> u32 {
         self.height
