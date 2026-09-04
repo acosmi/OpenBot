@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R176，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R178，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -622,6 +622,16 @@ managed provider 的首版协议再固定如下：Anthropic 走 Messages streami
 SHA-256 合成仅用于 trace/correlation 的确定 id，不把它当授权或业务 identity。三家 adapter 都必须在
 `Completed` 前给出单调、自洽的 normalized `Usage`；缺失、重复或回退按 invalid response fail-closed。
 这些是本地协议实现证据，不等于 provider gate 要求的三家 recorded vendor trace。（§28.1 R70）
+
+Batch104 从 OpenAI 官方 `openai-dotnet` 固定 commit 的公开 RecordedTest session record 逐字节提取
+Responses SSE response body，并经 production `OpenAiProvider`、唯一 SafeDialer 与真实 HTTP/SSE 分块回放；
+source record/blob/SHA、派生规则、fixture SHA、MIT/copyright、消毒范围同时进入一对一 provenance、SPDX、
+NOTICE 与离线 guard。实录中的 `response.function_call_arguments.done` 不带 `name`：只有此前 added item
+已经给出非空有界 name 时才接受缺失/null，双 name 必须相等，可选 output index 必须匹配；改名、索引漂移、
+全程无 name 均 fail-closed。该证据只关闭 OpenAI recorded trace **1/3** 与 T-FIX-0046；Anthropic/Google、
+live credential、没有被此 function-only trace 覆盖的 text/reasoning skeleton 及完整 G4 均保持红灯。测试
+fixture 是供应链登记的离线证据，不改变“生产不持久化原始 provider stream/HTTP body”的产品约束。
+（§28.1 R178）
 
 ### 7.4 Retry、Cancel、Budget 与 Commit
 
@@ -1897,6 +1907,11 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G4**：整关未通过；以下 Rust built-in Agent 子面已有本机机械证据：
   - [x] pure reducer + bounded dispatch consumer；reserve→durable ack→activate、activation 起算 absolute deadline/lease heartbeat、cancel 等 children stopped；
   - [x] OpenAI-compatible Responses + Chat adapter：safe dialer、SSE UTF-8/multiline、skeleton/延迟字段、partial JSON、交错 tool calls、未知扩展、真实 read-gap stall；
+  - [x] Batch104 OpenAI官方recorded trace：固定`openai-dotnet@19d0a3cb…`的RecordedTest source
+    record/blob/SHA与MIT许可，36段ResponseBody逐字节提取为9,070-byte SSE；production
+    OpenAiProvider→SafeDialer→HTTP/SSE对整块/非规则/逐字节chunk输出同一function-call/usage/唯一terminal，
+    provenance/NOTICE/SPDX/secret guard同批闭合。只勾三家中的OpenAI **1/3** 与T-FIX-0046；该trace
+    不含text/reasoning，T-FIX-0013及Anthropic/Google/live credential保持todo；
   - [x] Anthropic Messages adapter：system/messages/tools 分域、thinking/text/partial tool JSON/usage、固定 version + header-only key、未知事件隔离；
   - [x] Google streamGenerateContent adapter：systemInstruction/content/function call+result/usage、header-only key、无 vendor response id 时确定性 trace id；
   - [x] package `model.yaml` model/credential ref、每 run PostgreSQL active credential 精确选择、stored-first/env fallback/corrupt-no-fallback、standing prompt/provenance 与 Server production assembly；
@@ -2018,7 +2033,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] create-time routing provider：production main复用package model/每请求PostgreSQL credential/Vault/
     SafeDialer并固定OpenAI Chat Completions；模型只建议权威roster内ID，缺credential/transport/坏JSON/
     低confidence均由Application成功fallback，tool output拒绝，消息与模型理由不进hash-chain audit；
-  - [ ] provider gate 要求的三家 recorded vendor trace 仍为 **0/3**，本批未使用 live vendor credential；human approval 的 Leptos/Axum可点击竖切、critical realtime、真实PG与production session resolver浏览器均已落，但真实OIDC/SAML登录、完整 thread/cancel/computer 集成仍未闭合；run-wide normalized token、operator-attested cost upper bound、用户费用cap/API/UI与并发tool runtime budget已落，仍缺computer runtime budget；Desktop Local installed-app client/system browser/random loopback callback、RMCP/computer/file/shell各自的协议级cancel notification/process-tree、Plugins/Skills完整UI、G8 typed operator-attestation/最终secret retirement，Agent Desktop正式capability/真实Wry journey、browser/file/shell executor尚未闭合。AG-UI十一event family与admin-delete compensation/runbook虽已完成，不能替代这些G4/G8余项；Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
+  - [ ] provider gate 要求的三家 recorded vendor trace 当前为 **1/3**：OpenAI官方RecordedTest response-body trace已由Batch104闭合，Anthropic与Google仍缺；本批未使用 live vendor credential。human approval 的 Leptos/Axum可点击竖切、critical realtime、真实PG与production session resolver浏览器均已落，但真实OIDC/SAML登录、完整 thread/cancel/computer 集成仍未闭合；run-wide normalized token、operator-attested cost upper bound、用户费用cap/API/UI与并发tool runtime budget已落，仍缺computer runtime budget；Desktop Local installed-app client/system browser/random loopback callback、RMCP/computer/file/shell各自的协议级cancel notification/process-tree、Plugins/Skills完整UI、G8 typed operator-attestation/最终secret retirement，Agent Desktop正式capability/真实Wry journey、browser/file/shell executor尚未闭合。AG-UI十一event family、单家trace与admin-delete compensation/runbook都不能替代这些G4/G8余项；Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
   - [x] P0-code 规则与台账地基：engine fetch/verify、shim 静态 allowlist、boot/role/confinement/render/conformance T-ID、HumanLeaseEpoch checked + generation-recoverable poison 已绿。
   - [x] Batch53 macOS P1 子证据：clean-room shim 404 LOC；Rust-only ASAR/fuses/rebrand/integrity/signature/release manifest；digest-before-spawn、4 KiB stdin token、双 UDS peer PID + live child、hello/ready/command/shutdown deadline与独立 binary frame；main executable 精确继承 SBPL profile，仅四个 Electron Helper + crashpad 五个 literal 可 `with no-sandbox` 后由 Chromium renderer sandbox 接管。Browser/Component 两 role 真 Electron 各自 start→1280×800 JPEG→stop→shutdown，renderer `ProcessMetric.sandboxed=true` + creationTime，主/全部后代 TCP LISTEN 0，全部 PID/profile lock 清理 0。
@@ -2135,7 +2150,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G7**：本地 `ControlService` 的 HumanLease actor/auth/computer/tab/generation/epoch fencing 与 poisoned exhaustion 已有 9/0/0 单测；ScreenHub/viewer ticket、真 engine input、fps/latency/backpressure、coordinates/drag/IME 与跨 scope 矩阵仍未实施完成，故整关不勾。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账（`cargo xtask parity-check` 复算）：parity **848/1710 done（862 todo）**，fixtures **23/45 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1299/403/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账（`cargo xtask parity-check` 复算）：parity **848/1710 done（862 todo）**，fixtures **24/46 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1299/403/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ## 25. Definition of Done
 
@@ -2493,6 +2508,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R176 | §2.4 / §6.4 / §8.6 / §9.1–§9.4 / §13.2–§13.3 / §15.3 / §17.2 / §24 G4（2026-09-04 Batch102：custom private MCP user-OAuth egress lifecycle） | R173只把server CIDR用于catalog/call；generic OAuth的admin registration discovery、connect PRM/AS、code exchange、runtime refresh、disconnect revoke与pending retry仍用global public-only dialer，导致tools可达内网但用户永远无法OAuth。反向给global dialer加private allowlist会让一个server的authority扩到全部connector/redirect。OAuth state v2不含CIDR，配置变化后callback会按新权限重新解释旧state；runtime token返回后的rotation CAS又只锁user credential，不复核server/client/transport/CIDR。disconnect还会在local tombstone后使用此前捕获的旧allowlist。 | 新增单一`mcp_egress` canonical reader供catalog/connections/credential共用。`McpOAuthClient::with_egress_allowlist`保留resolver/TLS、替换每operation policy；registration/begin/code/revoke四处及runtime exchanger都消费current server allowlist，每redirect重解析。state升v3并sealed绑定exact CIDR；begin与persist用`users+mcp_servers FOR SHARE`，callback pre-token逐字比较。selection envelope加入transport/CIDR；post-token rotation先`FOR SHARE` current server+deployment client并复核endpoint/transport/CIDR/pointer，再CAS refresh/audit，Conflict不释放access。disconnect local commit后重新load current material；pending每轮同样current。Drive只收fixed transport+empty override。 | implementation=`3745c4f6f10395d7ced7c214f5f74e97ca49a36b`。PG17.11 host-SCRAM+loopback OAuth/RMCP：OAuth=`2/0/0`，空CIDR registration/runtime refresh网络与写入0、127/32全生命周期正向、127/32→127/8 state drift code-call0、pending CIDR撤销网络0后恢复成功；credential=`12/0/0`，新增post-token drift使Conflict/ciphertext不变/rotation audit0；RMCP=`6/0/0`。Infra=`327/0/0`；Infra/Server/Desktop Clippy、fmt、SafeDialer/RMCP/Application/OAuth guards绿。T-API-0083/0087/0088/0157 evidence重验证，parity=`848/862/1710`、API=`94/80/174`、fixtures=`23/22/45`、overlay=`1299/403/2/6`、0违反，strict=`160/0/0`。native/schema/UI/deps/Cargo/npm/Grok/workflow不变，未跑CI/Actions。Desktop Local OAuth、admin-delete vendor compensation、protocol cancel与完整G4/G6仍todo；详见Batch102文档。 |
 
 | R177 | §2.4 / §6.4 / §8.6 / §9.2–§9.4 / §15.3 / §17.2 / §24 G4、G8（2026-09-04 Batch103：MCP admin-delete vendor compensation/runbook） | R173在同一事务撤本地credential/grant/server，却删除了pending reconciler后续所需的resource/client/CIDR authority；若继续按server id reload会永久pending，若同ID server后来重建又可能把旧refresh token发给新resource/client。只存endpoint而不锁transport/CIDR/client会扩大旧authority；client密文或closed shape损坏仍标pending会无限重试。最后一个user token完成或一开始零user token时，client也会永远停在retained；bearer与vendor-side OAuth registration没有明确人工处置。旧grant删除只join current tools还会遗漏stale/orphan ref。 | 删除事务冻结versioned non-secret resource/transport/exact CIDR/client credential ID；只在URL/transport/CIDR、kind/provider、未撤client、Vault解封与closed client parse全部有效时让user token进入pending，否则立即operator_required。active actor local-disconnect vendor=false、credential tombstone、全部`split_part(ref,'/',1)=server` grant、server与configuration audit同事务。reconciler按reason强制走retained context+exact revoked client，永不读同ID replacement；vendor失败回pending，retained本地材料永久损坏则一次claim后operator_required+audit，成功写vendor=true并擦user-token network context。最后一条完成或零user时OAuth client转operator_required；bearer同样保留本地revoked并由runbook指导vendor轮换。错绑到其它kind/provider的credential不被误撤。 | implementation=`caea34d88504cbbd567a79a8c8fb2e99c06fe872`。PG17.11 host-SCRAM+loopback OAuth=`2/0/0`，覆盖失败→retry、same-ID replacement、success context scrub、零user、删除前/后client损坏、二次sweep0、错绑credential不变与audit；TLS RMCP=`6/0/0`并证bearer operator状态。Infra/Server/Desktop=`327/222/131 passed`且Desktop3 ignored；三crate all-target/all-feature Clippy、fmt、SafeDialer/RMCP/Application/Tauri/WebSocket/MCP guards绿。T-API-0084 evidence重验证，无新T-ID；parity/API仍`848/862/1710`与`94/80/174`，fixtures=`23/22/45`、overlay=`1299/403/2/6`、native/schema/Cargo/npm/Grok/workflow不变。fixed-upstream strict=`160/0/0`，tools/shim/Grok guards绿；未跑CI/Actions。Desktop Local OAuth、四个Plugins/Skills UI route、protocol cancel与G8 typed operator-attestation/最终secret retirement仍todo；详见Batch103文档与runbook。 |
+
+| R178 | §7.3 / §16.3 / §23 / §24 G0、G4（2026-09-04 Batch104：OpenAI官方recorded trace） | 三家adapter只有本地合成/loopback协议测试，provider gate仍0/3；外部候选带来一份OpenAI官方公开RecordedTest，但其分支基线停在R172，source record提取、commit time/blob/hash、MIT许可、NOTICE/SPDX、terminal SSE空行与secret边界没有由主控独立闭合。真实done事件又不带`name`，旧decoder要求必有name而会拒绝官方流；直接放宽则可能接受工具改名、索引漂移或全程无name。不同worktree共用Cargo target还会复用不兼容rmeta制造假编译结果。 | 只择取候选单commit到R177。固定`openai/openai-dotnet@19d0a3cb…`，从13,211-byte source record的`Entries[0].ResponseBody`36段逐字节拼出9,070-byte SSE并独立`cmp`；一对一provenance、SPDX/NOTICE、MIT版权与offline guard钉source/blob/SHA、fixture SHA、header allowlist和消毒布尔。production OpenAiProvider经SafeDialer/HTTP/SSE对整块、非规则、逐字节分块回放相同normalized结果；`.sse`只豁免协议要求的blank-at-EOF。done缺失/null name仅在added已有非空name时接受，双name与可选index必须匹配，改名/漂移/全程无name负向锁死。跨worktree禁止共享Cargo target。 | candidate=`cb6e2d69b5ea70d4a046d31aea00c3b2bdd02e77`，hardening=`5becad90ee71fd6b84f1bbc6f47d1e24fdb3a1dc`。source record=`13211 B`/blob `3272bc4116a32b4472d21f68b41ce23ce363c02c`/SHA-256 `ff7fadb3…`，fixture=`9070 B`/SHA-256 `fe38a7a0…`且逐字节相等。OpenAI unit=`7/0/0`、recorded production replay=`1/0/0`、Infra lib=`328/0/0`且完整crate命令exit0；Infra all-target/all-feature Clippy、fmt/diff、recorded guard、SPDX 56 unique packages/65 relationships绿。新增T-FIX-0046；parity仍`848/862/1710`，fixtures=`24/22/46`，overlay=`1299/403/2/6`，0违反；fixed-upstream strict=`160/0/0`。无PG/schema/native/API/UI/env/dependency/Cargo/npm/Grok/workflow变化，未跑CI/Actions。只关闭OpenAI **1/3**；Anthropic/Google、live credential、T-FIX-0013与完整G4仍todo，详见Batch104文档。 |
 
 ### 28.2 复核通过、原样保留的断言
 
