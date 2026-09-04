@@ -18,11 +18,17 @@ pub enum ImageFormat {
 }
 
 /// One image frame after all scope/generation/ordering/bounds checks.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EngineFrame {
     sequence: u64,
+    captured_at_ms: i64,
     width: u32,
     height: u32,
+    device_scale_factor: f32,
+    page_scale_factor: f32,
+    scroll_x: f32,
+    scroll_y: f32,
+    screencast_session_id: u32,
     format: ImageFormat,
     bytes: Vec<u8>,
 }
@@ -32,6 +38,12 @@ impl EngineFrame {
     #[must_use]
     pub const fn sequence(&self) -> u64 {
         self.sequence
+    }
+
+    /// CDP frame-swap timestamp converted from seconds to Unix milliseconds by the shim.
+    #[must_use]
+    pub const fn captured_at_ms(&self) -> i64 {
+        self.captured_at_ms
     }
 
     /// CSS-pixel capture width.
@@ -44,6 +56,34 @@ impl EngineFrame {
     #[must_use]
     pub const fn height(&self) -> u32 {
         self.height
+    }
+
+    /// Renderer device scale factor sampled by the fixed non-free runtime probe.
+    #[must_use]
+    pub const fn device_scale_factor(&self) -> f32 {
+        self.device_scale_factor
+    }
+
+    /// Page scale factor reported by CDP screencast metadata.
+    #[must_use]
+    pub const fn page_scale_factor(&self) -> f32 {
+        self.page_scale_factor
+    }
+
+    /// Horizontal page scroll in CSS pixels.
+    #[must_use]
+    pub const fn scroll_x(&self) -> f32 {
+        self.scroll_x
+    }
+
+    /// Vertical page scroll in CSS pixels.
+    #[must_use]
+    pub const fn scroll_y(&self) -> f32 {
+        self.scroll_y
+    }
+
+    pub(crate) const fn screencast_session_id(&self) -> u32 {
+        self.screencast_session_id
     }
 
     /// Validated image format.
@@ -135,16 +175,36 @@ impl EngineFrameReader {
         if sequence <= self.last_sequence {
             return Err(EngineFrameError::Sequence);
         }
-        let width = u32::from_le_bytes(fixed[36..40].try_into().expect("fixed slice"));
-        let height = u32::from_le_bytes(fixed[40..44].try_into().expect("fixed slice"));
+        let captured_at_ms = i64::from_le_bytes(fixed[36..44].try_into().expect("fixed slice"));
+        if captured_at_ms <= 0 {
+            return Err(EngineFrameError::Metadata);
+        }
+        let width = u32::from_le_bytes(fixed[44..48].try_into().expect("fixed slice"));
+        let height = u32::from_le_bytes(fixed[48..52].try_into().expect("fixed slice"));
         if width == 0 || height == 0 || width > 1280 || height > 800 {
             return Err(EngineFrameError::Dimensions);
         }
+        let device_scale_factor =
+            f32::from_le_bytes(fixed[52..56].try_into().expect("fixed slice"));
+        let page_scale_factor = f32::from_le_bytes(fixed[56..60].try_into().expect("fixed slice"));
+        let scroll_x = f32::from_le_bytes(fixed[60..64].try_into().expect("fixed slice"));
+        let scroll_y = f32::from_le_bytes(fixed[64..68].try_into().expect("fixed slice"));
+        if !device_scale_factor.is_finite()
+            || device_scale_factor <= 0.0
+            || !page_scale_factor.is_finite()
+            || page_scale_factor <= 0.0
+            || !scroll_x.is_finite()
+            || !scroll_y.is_finite()
+        {
+            return Err(EngineFrameError::Metadata);
+        }
+        let screencast_session_id =
+            u32::from_le_bytes(fixed[68..72].try_into().expect("fixed slice"));
         let computer_length = usize::from(u16::from_le_bytes(
-            fixed[44..46].try_into().expect("fixed slice"),
+            fixed[72..74].try_into().expect("fixed slice"),
         ));
         let tab_length = usize::from(u16::from_le_bytes(
-            fixed[46..48].try_into().expect("fixed slice"),
+            fixed[74..76].try_into().expect("fixed slice"),
         ));
         if computer_length == 0
             || tab_length == 0
@@ -177,8 +237,14 @@ impl EngineFrameReader {
         self.last_sequence = sequence;
         Ok(EngineFrame {
             sequence,
+            captured_at_ms,
             width,
             height,
+            device_scale_factor,
+            page_scale_factor,
+            scroll_x,
+            scroll_y,
+            screencast_session_id,
             format,
             bytes,
         })
@@ -233,6 +299,9 @@ pub enum EngineFrameError {
     /// Dimensions exceeded the fixed 1280×800 contract.
     #[error("engine_frame_dimensions")]
     Dimensions,
+    /// Timestamp, scale, scroll, or CDP frame identity metadata was malformed.
+    #[error("engine_frame_metadata")]
+    Metadata,
     /// Computer/tab scope did not exactly match the Rust-owned session.
     #[error("engine_frame_scope")]
     Scope,
@@ -266,10 +335,16 @@ mod tests {
         fixed[16..20].copy_from_slice(&u32::try_from(image.len()).unwrap().to_le_bytes());
         fixed[20..28].copy_from_slice(&generation.to_le_bytes());
         fixed[28..36].copy_from_slice(&sequence.to_le_bytes());
-        fixed[36..40].copy_from_slice(&1280_u32.to_le_bytes());
-        fixed[40..44].copy_from_slice(&800_u32.to_le_bytes());
-        fixed[44..46].copy_from_slice(&u16::try_from(computer.len()).unwrap().to_le_bytes());
-        fixed[46..48].copy_from_slice(&u16::try_from(tab.len()).unwrap().to_le_bytes());
+        fixed[36..44].copy_from_slice(&1_788_499_200_000_i64.to_le_bytes());
+        fixed[44..48].copy_from_slice(&1280_u32.to_le_bytes());
+        fixed[48..52].copy_from_slice(&800_u32.to_le_bytes());
+        fixed[52..56].copy_from_slice(&2.0_f32.to_le_bytes());
+        fixed[56..60].copy_from_slice(&1.0_f32.to_le_bytes());
+        fixed[60..64].copy_from_slice(&0.0_f32.to_le_bytes());
+        fixed[64..68].copy_from_slice(&20.0_f32.to_le_bytes());
+        fixed[68..72].copy_from_slice(&7_u32.to_le_bytes());
+        fixed[72..74].copy_from_slice(&u16::try_from(computer.len()).unwrap().to_le_bytes());
+        fixed[74..76].copy_from_slice(&u16::try_from(tab.len()).unwrap().to_le_bytes());
         [
             fixed.as_slice(),
             computer.as_bytes(),
@@ -290,6 +365,10 @@ mod tests {
         let bytes = frame(3, 1, "computer", "tab");
         let accepted = reader.read(&mut bytes.as_slice()).await.expect("frame");
         assert_eq!(accepted.sequence(), 1);
+        assert_eq!(accepted.captured_at_ms(), 1_788_499_200_000);
+        assert_eq!(accepted.device_scale_factor(), 2.0);
+        assert_eq!(accepted.page_scale_factor(), 1.0);
+        assert_eq!((accepted.scroll_x(), accepted.scroll_y()), (0.0, 20.0));
         assert_eq!(
             reader.read(&mut bytes.as_slice()).await,
             Err(EngineFrameError::Sequence)
@@ -326,6 +405,32 @@ mod tests {
         assert_eq!(
             reader.read(&mut bad.as_slice()).await,
             Err(EngineFrameError::Magic)
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_timestamp_and_scale_metadata_fail_before_payload_exposure() {
+        let make_reader = || {
+            EngineFrameReader::new(
+                EngineRoleKind::BrowserComputer,
+                ComputerId::new("computer"),
+                ComputerGeneration::new(3),
+                TabId::new("tab"),
+            )
+        };
+        let mut timestamp = frame(3, 1, "computer", "tab");
+        timestamp[36..44].copy_from_slice(&0_i64.to_le_bytes());
+        let mut reader = make_reader();
+        assert_eq!(
+            reader.read(&mut timestamp.as_slice()).await,
+            Err(EngineFrameError::Metadata)
+        );
+        let mut scale = frame(3, 1, "computer", "tab");
+        scale[52..56].copy_from_slice(&f32::NAN.to_le_bytes());
+        let mut reader = make_reader();
+        assert_eq!(
+            reader.read(&mut scale.as_slice()).await,
+            Err(EngineFrameError::Metadata)
         );
     }
 }

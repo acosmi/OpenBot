@@ -5,6 +5,17 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  # Batch110 closes the three screencast operations only after protocol-v3 executes them in both
+  # real macOS roles and Rust's size-one latest buffer drives every CDP acknowledgement.
+  - id: T-BROP-0030
+    disposition: revalidate
+    notes: "Batch110 reruns exact Page.startScreencast settings and validates the first full-metadata binary frame in both real roles."
+  - id: T-BROP-0031
+    disposition: revalidate
+    notes: "Batch110 reruns Page.stopScreencast, bounded drain/detach/cleanup and exact idempotent stop replay in both roles."
+  - id: T-BROP-0032
+    disposition: revalidate
+    notes: "Batch110 proves every real frame is ACKed only after Rust latest-buffer publish and slow consumers drop old frames."
   # Batch109 closes the seven ordinary BrowserInput variants only after protocol-v2 executes each
   # one in both real macOS Seatbelt Electron roles and observes the exact next frame/effect.
   - id: T-BROP-0037

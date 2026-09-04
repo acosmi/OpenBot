@@ -24,6 +24,8 @@ use time::{Duration, OffsetDateTime, macros::datetime};
 const INPUT_TIME: OffsetDateTime = datetime!(2026-09-04 12:00 UTC);
 const ENGINE_INPUT_FIXTURE: &str =
     include_str!("../../../fixtures/computer/engine-input-wire-v2.json");
+const SCREENCAST_FIXTURE: &str =
+    include_str!("../../../fixtures/computer/screencast-backpressure-v3.json");
 
 #[test]
 fn engine_input_fixture_locks_protocol_and_unfinished_platform_boundaries() {
@@ -55,6 +57,46 @@ fn engine_input_fixture_locks_protocol_and_unfinished_platform_boundaries() {
         "secretTypedEffect",
         "screenHub",
         "pageStartScreencast",
+    ] {
+        assert_eq!(fixture["evidenceBoundary"][unfinished], false);
+    }
+}
+
+#[test]
+fn screencast_fixture_locks_ack_order_latest_buffer_and_remaining_screen_boundary() {
+    let fixture =
+        serde_json::from_str::<serde_json::Value>(SCREENCAST_FIXTURE).expect("screencast fixture");
+    assert_eq!(fixture["schema"], "openbot-screencast-backpressure-v3");
+    assert_eq!(fixture["protocol"]["version"], 3);
+    assert_eq!(fixture["protocol"]["releaseEpoch"], 3);
+    assert_eq!(fixture["protocol"]["frameMagic"], "OBFRAME2");
+    assert_eq!(fixture["protocol"]["fixedHeaderBytes"], 76);
+    assert_eq!(fixture["backpressure"]["rustLatestBufferCapacity"], 1);
+    assert_eq!(fixture["backpressure"]["ackAfterRustPublish"], true);
+    assert_eq!(fixture["backpressure"]["receivedEqualsAcknowledged"], true);
+    assert_eq!(fixture["backpressure"]["slowConsumerDroppedAtLeast"], 1);
+    assert_eq!(fixture["macosArm64Evidence"]["receivedAtLeast"], 2);
+    assert_eq!(
+        fixture["macosArm64Evidence"]["acknowledgedEqualsReceived"],
+        true
+    );
+    assert_eq!(fixture["macosArm64Evidence"]["droppedAtLeast"], 1);
+    for completed in [
+        "pageStartScreencast",
+        "pageStopScreencast",
+        "pageScreencastFrameAck",
+        "screenIngressLatestBuffer",
+    ] {
+        assert_eq!(fixture["evidenceBoundary"][completed], true);
+    }
+    for unfinished in [
+        "viewerTicketOrWebSocket",
+        "multiViewer",
+        "fpsOrLatencyBudget",
+        "captureScreenshotFallback",
+        "serverOrDesktopComputerAssembly",
+        "windowsRuntime",
+        "linuxRunscRuntime",
     ] {
         assert_eq!(fixture["evidenceBoundary"][unfinished], false);
     }
@@ -132,6 +174,11 @@ async fn run_role(role: EngineRole) {
         .await
         .expect("start + frame");
     assert_eq!((started.frame.width(), started.frame.height()), (1280, 800));
+    assert!(started.frame.captured_at_ms() > 0);
+    assert!(started.frame.device_scale_factor() > 0.0);
+    assert!(started.frame.page_scale_factor() > 0.0);
+    assert!(started.frame.scroll_x().is_finite());
+    assert!(started.frame.scroll_y().is_finite());
     assert!(started.frame.bytes().starts_with(&[0xff, 0xd8, 0xff]));
     assert!(started.frame.bytes().ends_with(&[0xff, 0xd9]));
     assert!(started.renderer_pid > 0);
@@ -170,14 +217,39 @@ async fn run_role(role: EngineRole) {
     let ticket = control
         .issue_human_input_ticket(INPUT_TIME)
         .expect("human input ticket");
-    run_live_input_matrix(&mut process, &mut control, &auth, &ticket, started.frame).await;
+    run_live_input_matrix(
+        &mut process,
+        &mut control,
+        &auth,
+        &ticket,
+        started.frame.clone(),
+    )
+    .await;
     control.release(INPUT_TIME).expect("release control");
     assert!(matches!(
         control.authorize_human_input_receipt(&auth, &ticket, INPUT_TIME),
         Err(ControlError::TakeControlFirst)
     ));
 
-    process.stop_session(&tab).await.expect("stop");
+    let stopped = process.stop_session(&tab).await.expect("stop");
+    assert!(!stopped.replayed());
+    assert_eq!(
+        stopped.stats().received_frames(),
+        stopped.stats().acknowledged_frames()
+    );
+    assert!(stopped.stats().dropped_before_consume() > 0);
+    println!(
+        "engine-screencast role={tag} received={} acknowledged={} dropped={} deviceScale={} pageScale={}",
+        stopped.stats().received_frames(),
+        stopped.stats().acknowledged_frames(),
+        stopped.stats().dropped_before_consume(),
+        started.frame.device_scale_factor(),
+        started.frame.page_scale_factor(),
+    );
+    let replayed = process.stop_session(&tab).await.expect("idempotent stop");
+    assert!(replayed.replayed());
+    assert_eq!(replayed.stats(), stopped.stats());
+    assert!(process.next_frame().await.is_err());
     process.shutdown().await.expect("shutdown in five seconds");
     assert_process_gone(pid);
     for child in descendants {
@@ -242,30 +314,41 @@ async fn run_live_input_matrix(
         Err(EngineProcessError::InputAuthority)
     ));
 
-    let hover = apply(
+    dispatch(
         process,
         control,
         auth,
         ticket,
         BrowserInput::mouse_move(80.0, 70.0, MouseButton::Left, none).expect("hover"),
-        &mut sequence,
     )
     .await;
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let hover = next_frame(process, &mut sequence).await;
     assert_ne!(
         frame_hash(&hover),
         baseline_hash,
         "mouseMoved must change :hover"
     );
+    let slow_stats = wait_screen_caught_up(process).await;
+    assert_eq!(
+        slow_stats.received_frames(),
+        slow_stats.acknowledged_frames()
+    );
+    assert!(
+        slow_stats.dropped_before_consume() > 0,
+        "size-one latest buffer must drop old animation frames for a slow consumer"
+    );
 
-    let button_hover = apply(
+    dispatch(
         process,
         control,
         auth,
         ticket,
         BrowserInput::mouse_move(80.0, 168.0, MouseButton::Left, none).expect("button hover"),
-        &mut sequence,
     )
     .await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let button_hover = next_frame(process, &mut sequence).await;
     let pressed = apply(
         process,
         control,
@@ -295,13 +378,12 @@ async fn run_live_input_matrix(
         "mouseReleased must clear :active"
     );
 
-    let _ = apply(
+    dispatch(
         process,
         control,
         auth,
         ticket,
         BrowserInput::mouse_move(80.0, 256.0, MouseButton::Left, none).expect("input hover"),
-        &mut sequence,
     )
     .await;
     let _ = apply(
@@ -336,13 +418,12 @@ async fn run_live_input_matrix(
         frame_hash(&focused),
         "keyDown text must alter input"
     );
-    let _ = apply(
+    dispatch(
         process,
         control,
         auth,
         ticket,
         BrowserInput::key_up("a", "KeyA", none).expect("key up"),
-        &mut sequence,
     )
     .await;
     let erased = apply(
@@ -359,31 +440,28 @@ async fn run_live_input_matrix(
         frame_hash(&typed),
         "rawKeyDown Backspace must alter input"
     );
-    let _ = apply(
+    dispatch(
         process,
         control,
         auth,
         ticket,
         BrowserInput::key_up("Backspace", "Backspace", none).expect("raw key up"),
-        &mut sequence,
     )
     .await;
-    let _ = apply(
+    dispatch(
         process,
         control,
         auth,
         ticket,
         BrowserInput::key_down("F1", "F1", None, none).expect("unknown multi-unit key"),
-        &mut sequence,
     )
     .await;
-    let _ = apply(
+    dispatch(
         process,
         control,
         auth,
         ticket,
         BrowserInput::key_up("F1", "F1", none).expect("unknown multi-unit key up"),
-        &mut sequence,
     )
     .await;
 
@@ -420,29 +498,30 @@ async fn run_live_input_matrix(
         "insertText must alter input"
     );
 
-    let scroll_hover = apply(
+    dispatch(
         process,
         control,
         auth,
         ticket,
-        BrowserInput::mouse_move(450.0, 100.0, MouseButton::Left, none).expect("scroll hover"),
-        &mut sequence,
+        BrowserInput::mouse_move(900.0, 700.0, MouseButton::Left, none).expect("page scroll hover"),
     )
     .await;
-    let scrolled = apply(
+    let scroll_hover = inserted.clone();
+    dispatch(
         process,
         control,
         auth,
         ticket,
-        BrowserInput::wheel(450.0, 100.0, 0.0, 300.0, none).expect("wheel"),
-        &mut sequence,
+        BrowserInput::wheel(900.0, 700.0, 0.0, 400.0, none).expect("wheel"),
     )
     .await;
+    let scrolled = next_distinct_frame(process, &mut sequence, frame_hash(&scroll_hover)).await;
     assert_ne!(
         frame_hash(&scrolled),
         frame_hash(&scroll_hover),
         "mouseWheel must scroll"
     );
+    assert!(scrolled.scroll_y() > scroll_hover.scroll_y());
 }
 
 async fn apply(
@@ -453,6 +532,17 @@ async fn apply(
     input: BrowserInput,
     sequence: &mut u64,
 ) -> EngineFrame {
+    dispatch(process, control, auth, ticket, input).await;
+    next_frame(process, sequence).await
+}
+
+async fn dispatch(
+    process: &mut EngineProcess,
+    control: &mut ControlService,
+    auth: &AuthContext,
+    ticket: &HumanInputTicket,
+    input: BrowserInput,
+) {
     let receipt = control
         .authorize_human_input_receipt(auth, ticket, INPUT_TIME)
         .expect("fresh input authority");
@@ -460,17 +550,43 @@ async fn apply(
         .apply_human_input(receipt, &input, INPUT_TIME)
         .await
         .expect("authenticated live CDP input");
+}
+
+async fn next_frame(process: &mut EngineProcess, sequence: &mut u64) -> EngineFrame {
     let frame = tokio::time::timeout(std::time::Duration::from_secs(5), process.next_frame())
         .await
         .expect("next input frame deadline")
         .expect("next input frame");
-    assert_eq!(
-        frame.sequence(),
-        sequence.checked_add(1).expect("frame sequence overflow"),
-        "each accepted input emits exactly one next frame"
-    );
+    assert!(frame.sequence() > *sequence, "frame sequence must advance");
     *sequence = frame.sequence();
     frame
+}
+
+async fn next_distinct_frame(
+    process: &mut EngineProcess,
+    sequence: &mut u64,
+    previous_hash: [u8; 32],
+) -> EngineFrame {
+    for _ in 0..50 {
+        let frame = next_frame(process, sequence).await;
+        if frame_hash(&frame) != previous_hash {
+            return frame;
+        }
+    }
+    panic!("no visually distinct screencast frame arrived");
+}
+
+async fn wait_screen_caught_up(
+    process: &EngineProcess,
+) -> openbot_computer::engine::ScreenIngressStats {
+    for _ in 0..100 {
+        let stats = process.screen_stats().await.expect("screen stats");
+        if stats.received_frames() == stats.acknowledged_frames() {
+            return stats;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("screen ingress did not acknowledge all received frames");
 }
 
 fn frame_hash(frame: &EngineFrame) -> [u8; 32] {

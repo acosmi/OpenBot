@@ -308,6 +308,13 @@ pub(crate) enum EngineCommandWire<'a> {
         #[serde(flatten)]
         input: EngineInputWire<'a>,
     },
+    FrameAck {
+        computer_id: &'a str,
+        generation: String,
+        tab_id: &'a str,
+        frame_sequence: String,
+        screencast_session_id: u32,
+    },
     Shutdown {
         operation_id: &'a str,
     },
@@ -363,6 +370,22 @@ impl<'a> EngineCommandWire<'a> {
             operation_id: operation.as_str(),
         }
     }
+
+    pub(crate) fn frame_ack(
+        computer: &'a ComputerId,
+        generation: ComputerGeneration,
+        tab: &'a TabId,
+        frame_sequence: u64,
+        screencast_session_id: u32,
+    ) -> Self {
+        Self::FrameAck {
+            computer_id: computer.as_str(),
+            generation: generation.get().to_string(),
+            tab_id: tab.as_str(),
+            frame_sequence: frame_sequence.to_string(),
+            screencast_session_id,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -392,6 +415,10 @@ pub(crate) enum EngineEventWire {
     },
     Stopped {
         operation_id: String,
+        tab_id: String,
+        received_frames: String,
+        acknowledged_frames: String,
+        replayed: bool,
     },
     ShutdownComplete {
         operation_id: String,
@@ -500,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_v2_serializes_all_eight_closed_input_kinds_without_a_method_slot() {
+    fn protocol_v3_serializes_all_eight_closed_input_kinds_without_a_method_slot() {
         let none = ModifierMask::new(0).expect("modifiers");
         let inputs = [
             BrowserInput::mouse_move(1.0, 2.0, MouseButton::Left, none).expect("move"),
@@ -556,7 +583,7 @@ mod tests {
         assert_eq!(descriptor["input_kinds"], serde_json::json!(kinds));
         assert_eq!(
             descriptor["commands"],
-            serde_json::json!(["start", "input", "stop", "shutdown"])
+            serde_json::json!(["start", "input", "frame_ack", "stop", "shutdown"])
         );
     }
 
@@ -577,5 +604,26 @@ mod tests {
             )),
             Err(EngineProtocolError::ControlFrameTooLarge)
         ));
+    }
+
+    #[test]
+    fn frame_ack_has_no_operation_or_free_cdp_slot_and_preserves_u64_as_text() {
+        let computer = ComputerId::new("computer");
+        let tab = TabId::new("tab");
+        let bytes = encode_command(&EngineCommandWire::frame_ack(
+            &computer,
+            ComputerGeneration::new(3),
+            &tab,
+            u64::MAX,
+            u32::MAX,
+        ))
+        .expect("frame ack");
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes[..bytes.len() - 1]).expect("wire JSON");
+        assert_eq!(value["kind"], "frame_ack");
+        assert_eq!(value["frame_sequence"], u64::MAX.to_string());
+        assert_eq!(value["screencast_session_id"], u64::from(u32::MAX));
+        assert!(value.get("operation_id").is_none());
+        assert!(value.get("method").is_none());
     }
 }

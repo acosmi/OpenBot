@@ -14,7 +14,7 @@ pub use frame::{EngineFrame, EngineFrameError, EngineFrameReader, ImageFormat};
 pub use process::RunscAttestation;
 pub use process::{
     EngineBundle, EngineBundleDigest, EngineLaunchConfig, EngineProcess, EngineProcessError,
-    EngineSandboxFidelity, StartedSession,
+    EngineSandboxFidelity, ScreenIngressStats, ScreenStopReceipt, StartedSession,
 };
 pub use protocol::{EngineOperationId, EngineProtocolError};
 pub use scope::{

@@ -30,9 +30,9 @@
 #   配第 6 条（server/src 得 2）；dialog 的负向（第 7 条得 0）配第 8 条（app/src 得 10）。
 #   recount 里所有 command 都是可直接执行的裸命令，不带任何说明前缀，方便 CI 逐条重跑。
 #
-# Batch109 后本表 14 done / 36 todo：Batch52的control/HumanLease/closed union保持；Batch108 pure
-# plan后，Batch109又以protocol v2 + fresh receipt在macOS arm64两真实Seatbelt role关闭普通
-# mouse/wheel/key/insertText七项。secret typed effect、其它Browser操作、screen/frame/viewer ticket仍todo。
+# Batch110 后本表 17 done / 33 todo：Batch109普通input七项保持；protocol v3又在macOS arm64两
+# 真实Seatbelt role关闭Page.start/stop/FrameAck三项。secret typed effect、其它Browser操作与viewer
+# ticket/WS/fps/latency仍todo。
 #
 # owner 全表固定 openbot-computer（v3 §5.1 十 crate 之一；§18 里 Browser actions / Supervisor /
 # File/shell 三行的 Rust owner 都是 computer）。Screen/input 行在 §18 写作
@@ -100,7 +100,7 @@ recount:
     expect: 3
   - command: "grep -c '^    status: todo$' parity/browser-operations.yaml"
     cwd: repo
-    expect: 36
+    expect: 33
   - command: "grep -c '^    upstream: \"-\"$' parity/browser-operations.yaml"
     cwd: repo
     expect: 9
@@ -418,7 +418,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0030
     migration_rule: "preserve: format=jpeg、quality 70、maxWidth 1280、maxHeight 800、everyNthFrame 1（一帧一变化，不是定时轮询）"
-    status: todo
+    status: done
+    done_evidence: "Batch110 protocol-v3在macOS arm64 BrowserComputer+SandboxedComponent两真实Seatbelt role调用literal Page.startScreencast；descriptor逐值钉jpeg/70/1280/800/every1/maxInFlight1/sendLastFrame，首帧带完整metadata经Rust验证"
     evidence: "grep -c 'quality: options.quality ?? 70' agent-computer/src/screencast.ts 得 1；grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u 得 3"
     notes: "v3 §12.6 与这四个值逐值相同，属 parity。**新增**的是 fps 上限（10 passive / 15 driving）这条背压——v3 §12.6 自己写明「上游不限 fps」，所以它不算在本条里，登记在 screen/性能面而不是这里。§12.2 另钉死：只有 JPEG（生产）与 PNG（诊断）两种格式，不得把 WebP 写成已支持。"
   - id: op-screencast-stop
@@ -428,7 +429,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0031
     migration_rule: "preserve: 幂等（上游 stop 用 stopped 标志守卫，调两次安全），停完 detach CDP session"
-    status: todo
+    status: done
+    done_evidence: "Batch110两真实role调用literal Page.stopScreencast，先停源、移除event listener、排空已发送帧与Rust ACK，再detach/destroy；同tab第二次stop返回冻结stats且replayed=true，PID/profile lock均0"
     evidence: "grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u 含 Page.stopScreencast；返回对象的 stop() 先置 stopped 再 send('Page.stopScreencast') 再 detach()"
     notes: "v3 §12.6 要求「最后一个 viewer 断开后 2 秒内停止 screencast」——上游是断开即停（websocket.close -> stopViewer），2 秒宽限是新增的抖动容忍，登记在 screen 面。幂等这条必须保留：切页时上游是「新 cast 起来后再停旧的」，两条路径都会调 stop。"
   - id: op-screencast-ack
@@ -438,7 +440,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0032
     migration_rule: "preserve: 每帧必 ack，且 ack 是 Chromium 侧背压的唯一来源"
-    status: todo
+    status: done
+    done_evidence: "Batch110 frame_ack只在Rust验证frame并发布进size-one latest buffer后经独立control write返回shim；多次双role实跑received=ack均成立（49..52帧）且slow-consumer drop=37..40，fixture只钉相等/下界而不钉调度相关精确帧数；shim exact sequence/session guard由closed code与static checker锁定"
     evidence: "grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u 含 Page.screencastFrameAck；Page.screencastFrame 处理器里无条件先 ack 再判 stopped"
     notes: "上游注释点名了这条的失败模式：忘了 ack 的实现会「发一帧然后看起来卡住」。v3 §12.2 加了一条时序约束：ack 在帧成功进入 size-1 latest buffer 之后发（上游是收到即 ack，先于任何投递）——这是**行为差异**，慢消费者语义从「Chromium 侧排队」变成「只丢旧帧」。差异本身属 screen 面的背压契约，本条只登记 ack 这个操作成员本身。"
   - id: op-profile-ensure

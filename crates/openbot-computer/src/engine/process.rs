@@ -7,6 +7,7 @@ use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
 #[cfg(unix)]
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -39,6 +40,10 @@ use tokio::net::UnixListener;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 #[cfg(unix)]
 use tokio::process::{Child, Command};
+#[cfg(any(unix, windows))]
+use tokio::sync::{Mutex, watch};
+#[cfg(any(unix, windows))]
+use tokio::task::JoinHandle;
 
 #[cfg(unix)]
 type EngineChild = Child;
@@ -309,6 +314,249 @@ pub struct StartedSession {
     pub origin: String,
 }
 
+/// Counters for the Rust-owned size-one latest-frame ingress.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScreenIngressStats {
+    received_frames: u64,
+    dropped_before_consume: u64,
+    acknowledged_frames: u64,
+}
+
+impl ScreenIngressStats {
+    #[must_use]
+    pub const fn received_frames(self) -> u64 {
+        self.received_frames
+    }
+
+    #[must_use]
+    pub const fn dropped_before_consume(self) -> u64 {
+        self.dropped_before_consume
+    }
+
+    #[must_use]
+    pub const fn acknowledged_frames(self) -> u64 {
+        self.acknowledged_frames
+    }
+}
+
+/// Verified Page.stopScreencast result joined to local ingress counters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScreenStopReceipt {
+    stats: ScreenIngressStats,
+    replayed: bool,
+}
+
+impl ScreenStopReceipt {
+    #[must_use]
+    pub const fn stats(self) -> ScreenIngressStats {
+        self.stats
+    }
+
+    #[must_use]
+    pub const fn replayed(self) -> bool {
+        self.replayed
+    }
+}
+
+#[cfg(any(unix, windows))]
+#[derive(Default)]
+struct ScreenIngressState {
+    consumed_sequence: u64,
+    published_sequence: u64,
+    stats: ScreenIngressStats,
+    failed: bool,
+}
+
+#[cfg(any(unix, windows))]
+struct ScreenIngress {
+    receiver: watch::Receiver<Option<Arc<EngineFrame>>>,
+    state: Arc<Mutex<ScreenIngressState>>,
+    shutdown: watch::Sender<bool>,
+    task: JoinHandle<()>,
+}
+
+#[cfg(any(unix, windows))]
+impl ScreenIngress {
+    async fn start(
+        frame_reader: BufReader<EnginePipeReadHalf>,
+        decoder: EngineFrameReader,
+        control_writer: Arc<Mutex<EnginePipeWriteHalf>>,
+        computer_id: ComputerId,
+        generation: ComputerGeneration,
+        tab_id: TabId,
+        first_frame: &EngineFrame,
+    ) -> Result<Self, EngineProcessError> {
+        let (sender, mut receiver) = watch::channel(Some(Arc::new(first_frame.clone())));
+        receiver.borrow_and_update();
+        let state = Arc::new(Mutex::new(ScreenIngressState {
+            consumed_sequence: first_frame.sequence(),
+            published_sequence: first_frame.sequence(),
+            stats: ScreenIngressStats {
+                received_frames: 1,
+                dropped_before_consume: 0,
+                acknowledged_frames: 0,
+            },
+            failed: false,
+        }));
+        write_frame_ack(
+            &control_writer,
+            &computer_id,
+            generation,
+            &tab_id,
+            first_frame,
+        )
+        .await?;
+        state.lock().await.stats.acknowledged_frames = 1;
+
+        let (shutdown, shutdown_receiver) = watch::channel(false);
+        let task_state = Arc::clone(&state);
+        let task = tokio::spawn(run_screen_ingress(
+            frame_reader,
+            decoder,
+            control_writer,
+            computer_id,
+            generation,
+            tab_id,
+            sender,
+            task_state,
+            shutdown_receiver,
+        ));
+        Ok(Self {
+            receiver,
+            state,
+            shutdown,
+            task,
+        })
+    }
+
+    async fn next_frame(&mut self) -> Result<EngineFrame, EngineProcessError> {
+        self.receiver
+            .changed()
+            .await
+            .map_err(|_| EngineProcessError::ScreenIngressClosed)?;
+        let mut state = self.state.lock().await;
+        if state.failed {
+            return Err(EngineProcessError::ScreenIngressClosed);
+        }
+        let frame = self
+            .receiver
+            .borrow_and_update()
+            .as_ref()
+            .cloned()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?;
+        state.consumed_sequence = state.consumed_sequence.max(frame.sequence());
+        Ok((*frame).clone())
+    }
+
+    async fn stats(&self) -> Result<ScreenIngressStats, EngineProcessError> {
+        let state = self.state.lock().await;
+        if state.failed {
+            Err(EngineProcessError::ScreenIngressClosed)
+        } else {
+            Ok(state.stats)
+        }
+    }
+
+    async fn stop(self) -> Result<ScreenIngressStats, EngineProcessError> {
+        self.shutdown.send_replace(true);
+        if self.task.await.is_err() {
+            return Err(EngineProcessError::ScreenIngressClosed);
+        }
+        let state = self.state.lock().await;
+        if state.failed {
+            Err(EngineProcessError::ScreenIngressClosed)
+        } else {
+            Ok(state.stats)
+        }
+    }
+}
+
+#[cfg(any(unix, windows))]
+#[allow(clippy::too_many_arguments)]
+async fn run_screen_ingress(
+    mut frame_reader: BufReader<EnginePipeReadHalf>,
+    mut decoder: EngineFrameReader,
+    control_writer: Arc<Mutex<EnginePipeWriteHalf>>,
+    computer_id: ComputerId,
+    generation: ComputerGeneration,
+    tab_id: TabId,
+    sender: watch::Sender<Option<Arc<EngineFrame>>>,
+    state: Arc<Mutex<ScreenIngressState>>,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    loop {
+        let frame = tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+                continue;
+            }
+            frame = decoder.read(&mut frame_reader) => match frame {
+                Ok(frame) => frame,
+                Err(_) => {
+                    state.lock().await.failed = true;
+                    break;
+                }
+            }
+        };
+        let sequence = frame.sequence();
+        {
+            let mut locked = state.lock().await;
+            let Some(received) = locked.stats.received_frames.checked_add(1) else {
+                locked.failed = true;
+                break;
+            };
+            locked.stats.received_frames = received;
+            if locked.published_sequence > locked.consumed_sequence {
+                let Some(dropped) = locked.stats.dropped_before_consume.checked_add(1) else {
+                    locked.failed = true;
+                    break;
+                };
+                locked.stats.dropped_before_consume = dropped;
+            }
+            locked.published_sequence = sequence;
+            sender.send_replace(Some(Arc::new(frame.clone())));
+        }
+        if write_frame_ack(&control_writer, &computer_id, generation, &tab_id, &frame)
+            .await
+            .is_err()
+        {
+            state.lock().await.failed = true;
+            break;
+        }
+        let mut locked = state.lock().await;
+        let Some(acknowledged) = locked.stats.acknowledged_frames.checked_add(1) else {
+            locked.failed = true;
+            break;
+        };
+        locked.stats.acknowledged_frames = acknowledged;
+    }
+}
+
+#[cfg(any(unix, windows))]
+async fn write_frame_ack(
+    writer: &Arc<Mutex<EnginePipeWriteHalf>>,
+    computer_id: &ComputerId,
+    generation: ComputerGeneration,
+    tab_id: &TabId,
+    frame: &EngineFrame,
+) -> Result<(), EngineProcessError> {
+    let command = EngineCommandWire::frame_ack(
+        computer_id,
+        generation,
+        tab_id,
+        frame.sequence(),
+        frame.screencast_session_id(),
+    );
+    writer
+        .lock()
+        .await
+        .write_all(&encode_command(&command)?)
+        .await
+        .map_err(Into::into)
+}
+
 #[cfg(any(unix, windows))]
 /// Live engine process. Drop kills the child; normal shutdown additionally proves bounded cleanup.
 pub struct EngineProcess {
@@ -316,8 +564,8 @@ pub struct EngineProcess {
     child_pid: u32,
     main_creation_time: f64,
     control_reader: BufReader<EnginePipeReadHalf>,
-    control_writer: EnginePipeWriteHalf,
-    frame_reader: BufReader<EnginePipeReadHalf>,
+    control_writer: Arc<Mutex<EnginePipeWriteHalf>>,
+    frame_reader: Option<BufReader<EnginePipeReadHalf>>,
     _frame_writer: EnginePipeWriteHalf,
     role: EngineRole,
     computer_id: ComputerId,
@@ -325,7 +573,9 @@ pub struct EngineProcess {
     _runtime: RuntimeDirectory,
     operation_sequence: AtomicU64,
     active_tab: Option<TabId>,
-    frame_decoder: Option<EngineFrameReader>,
+    session_started: bool,
+    screen: Option<ScreenIngress>,
+    last_stop: Option<(TabId, ScreenStopReceipt)>,
     fidelity: EngineSandboxFidelity,
 }
 
@@ -449,8 +699,8 @@ impl EngineProcess {
             child_pid,
             main_creation_time,
             control_reader,
-            control_writer,
-            frame_reader,
+            control_writer: Arc::new(Mutex::new(control_writer)),
+            frame_reader: Some(frame_reader),
             _frame_writer: frame_writer,
             role: config.role,
             computer_id: config.computer_id,
@@ -458,7 +708,9 @@ impl EngineProcess {
             _runtime: runtime,
             operation_sequence: AtomicU64::new(0),
             active_tab: None,
-            frame_decoder: None,
+            session_started: false,
+            screen: None,
+            last_stop: None,
             fidelity,
         })
     }
@@ -486,10 +738,15 @@ impl EngineProcess {
         &mut self,
         tab_id: TabId,
     ) -> Result<StartedSession, EngineProcessError> {
+        if self.session_started {
+            return Err(EngineProcessError::SessionAlreadyStarted);
+        }
         let operation = self.next_operation()?;
         let command =
             EngineCommandWire::start(&operation, &self.computer_id, self.generation, &tab_id);
         self.control_writer
+            .lock()
+            .await
             .write_all(&encode_command(&command)?)
             .await?;
         let mut decoder = EngineFrameReader::new(
@@ -500,7 +757,9 @@ impl EngineProcess {
         );
         let (event, frame) = read_operation_frame(
             &mut self.control_reader,
-            &mut self.frame_reader,
+            self.frame_reader
+                .as_mut()
+                .ok_or(EngineProcessError::ScreenIngressClosed)?,
             &mut decoder,
             &operation,
         )
@@ -522,8 +781,23 @@ impl EngineProcess {
                 && !node_exposed
                 && internal_origin_matches(self.role.kind(), &origin) =>
             {
+                let frame_reader = self
+                    .frame_reader
+                    .take()
+                    .ok_or(EngineProcessError::ScreenIngressClosed)?;
+                let screen = ScreenIngress::start(
+                    frame_reader,
+                    decoder,
+                    Arc::clone(&self.control_writer),
+                    self.computer_id.clone(),
+                    self.generation,
+                    tab_id.clone(),
+                    &frame,
+                )
+                .await?;
                 self.active_tab = Some(tab_id);
-                self.frame_decoder = Some(decoder);
+                self.session_started = true;
+                self.screen = Some(screen);
                 Ok(StartedSession {
                     frame,
                     renderer_pid,
@@ -536,7 +810,7 @@ impl EngineProcess {
         }
     }
 
-    /// Apply one freshly authorized ordinary input through protocol-v2 and require an exact
+    /// Apply one freshly authorized ordinary input through protocol-v3 and require an exact
     /// operation-bound acknowledgement. Frames remain on the independent [`Self::next_frame`]
     /// channel. `SecretInsert` is rejected before any control-pipe write.
     pub async fn apply_human_input(
@@ -563,7 +837,7 @@ impl EngineProcess {
             &plan,
         );
         let bytes = encode_command(&command)?;
-        self.control_writer.write_all(&bytes).await?;
+        self.control_writer.lock().await.write_all(&bytes).await?;
         let event = tokio::time::timeout(COMMAND_TIMEOUT, read_event(&mut self.control_reader))
             .await
             .map_err(|_| EngineProcessError::CommandTimeout)??;
@@ -589,32 +863,94 @@ impl EngineProcess {
     /// Screen delivery intentionally remain separate channels so Page.startScreencast can replace
     /// the current conformance capture without changing the authority API.
     pub async fn next_frame(&mut self) -> Result<EngineFrame, EngineProcessError> {
-        let decoder = self
-            .frame_decoder
+        self.screen
             .as_mut()
-            .ok_or(EngineProcessError::InputAuthority)?;
-        decoder
-            .read(&mut self.frame_reader)
+            .ok_or(EngineProcessError::ScreenIngressClosed)?
+            .next_frame()
             .await
-            .map_err(Into::into)
     }
 
-    /// Stop one exact tab and require an operation-bound acknowledgement.
-    pub async fn stop_session(&mut self, tab_id: &TabId) -> Result<(), EngineProcessError> {
+    /// Current exact size-one ingress counters.
+    pub async fn screen_stats(&self) -> Result<ScreenIngressStats, EngineProcessError> {
+        self.screen
+            .as_ref()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?
+            .stats()
+            .await
+    }
+
+    /// Stop one exact tab and require an operation-bound acknowledgement plus joined frame stats.
+    /// Repeating the exact stop is idempotent and returns the frozen receipt with `replayed=true`.
+    pub async fn stop_session(
+        &mut self,
+        tab_id: &TabId,
+    ) -> Result<ScreenStopReceipt, EngineProcessError> {
+        let replay = self.active_tab.is_none()
+            && self
+                .last_stop
+                .as_ref()
+                .is_some_and(|(stopped, _)| stopped == tab_id);
+        if !replay && self.active_tab.as_ref() != Some(tab_id) {
+            return Err(EngineProcessError::StoppedIdentity);
+        }
         let operation = self.next_operation()?;
         let command =
             EngineCommandWire::stop(&operation, &self.computer_id, self.generation, tab_id);
         self.control_writer
+            .lock()
+            .await
             .write_all(&encode_command(&command)?)
             .await?;
         let event = tokio::time::timeout(COMMAND_TIMEOUT, read_event(&mut self.control_reader))
             .await
             .map_err(|_| EngineProcessError::CommandTimeout)??;
         match event {
-            EngineEventWire::Stopped { operation_id } if operation_id == operation.as_str() => {
+            EngineEventWire::Stopped {
+                operation_id,
+                tab_id: echoed_tab,
+                received_frames,
+                acknowledged_frames,
+                replayed,
+            } if operation_id == operation.as_str() && echoed_tab == tab_id.as_str() => {
+                let remote_received = parse_counter(&received_frames)?;
+                let remote_acknowledged = parse_counter(&acknowledged_frames)?;
+                if remote_received != remote_acknowledged || replayed != replay {
+                    return Err(EngineProcessError::StoppedIdentity);
+                }
+                if replay {
+                    let stored = self
+                        .last_stop
+                        .as_ref()
+                        .map(|(_, receipt)| *receipt)
+                        .ok_or(EngineProcessError::StoppedIdentity)?;
+                    if stored.stats.received_frames != remote_received
+                        || stored.stats.acknowledged_frames != remote_acknowledged
+                    {
+                        return Err(EngineProcessError::StoppedIdentity);
+                    }
+                    return Ok(ScreenStopReceipt {
+                        stats: stored.stats,
+                        replayed: true,
+                    });
+                }
+                let local = self
+                    .screen
+                    .take()
+                    .ok_or(EngineProcessError::ScreenIngressClosed)?
+                    .stop()
+                    .await?;
+                if local.received_frames != remote_received
+                    || local.acknowledged_frames != remote_acknowledged
+                {
+                    return Err(EngineProcessError::StoppedIdentity);
+                }
                 self.active_tab = None;
-                self.frame_decoder = None;
-                Ok(())
+                let receipt = ScreenStopReceipt {
+                    stats: local,
+                    replayed: false,
+                };
+                self.last_stop = Some((tab_id.clone(), receipt));
+                Ok(receipt)
             }
             EngineEventWire::Error { operation_id, code } => {
                 Err(reported_for(&operation, operation_id, code))
@@ -625,8 +961,13 @@ impl EngineProcess {
 
     /// Graceful bounded shutdown. Timeout kills the process and returns a hard failure.
     pub async fn shutdown(mut self) -> Result<(), EngineProcessError> {
+        if let Some(tab_id) = self.active_tab.clone() {
+            let _ = self.stop_session(&tab_id).await?;
+        }
         let operation = self.next_operation()?;
         self.control_writer
+            .lock()
+            .await
             .write_all(&encode_command(&EngineCommandWire::shutdown(&operation))?)
             .await?;
         let event = tokio::time::timeout(COMMAND_TIMEOUT, read_event(&mut self.control_reader))
@@ -1218,6 +1559,19 @@ fn reported_for(
     }
 }
 
+fn parse_counter(value: &str) -> Result<u64, EngineProcessError> {
+    if value.is_empty()
+        || value.len() > 20
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return Err(EngineProcessError::StoppedIdentity);
+    }
+    value
+        .parse::<u64>()
+        .map_err(|_| EngineProcessError::StoppedIdentity)
+}
+
 fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, EngineProcessError> {
     let path = Path::new(relative);
     if path.is_absolute()
@@ -1333,12 +1687,18 @@ pub enum EngineProcessError {
     /// Started event did not echo the exact operation/tab or exposed Node.
     #[error("engine_started_identity")]
     StartedIdentity,
+    /// This P1 engine process already consumed its single session lifecycle.
+    #[error("engine_session_already_started")]
+    SessionAlreadyStarted,
     /// Fresh HumanLease receipt did not match this process/generation/active tab.
     #[error("engine_input_authority")]
     InputAuthority,
     /// Input acknowledgement did not echo the exact operation/tab/kind.
     #[error("engine_input_applied_identity")]
     InputAppliedIdentity,
+    /// The authenticated frame ingress stopped or failed before the caller consumed a frame.
+    #[error("engine_screen_ingress_closed")]
+    ScreenIngressClosed,
     /// Stop acknowledgement did not match the operation.
     #[error("engine_stopped_identity")]
     StoppedIdentity,

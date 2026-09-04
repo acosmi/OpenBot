@@ -33,9 +33,10 @@
 //! selector effective over opaque driver handles, but no Server/Desktop production host assembles
 //! that manager with `EngineProcess` yet. Protocol v2 now consumes fresh HumanLease receipts and
 //! executes the fixed-upstream ordinary `BrowserInput` plan in both real macOS Electron roles; the
-//! Server/Desktop Computer assembly, secret typed effect, Page.startScreencast/ScreenHub,
-//! file/shell executors and supervisor remain separate unfinished boundaries. The internal page is
-//! conformance evidence, not a production browser destination.
+//! Server/Desktop Computer assembly and secret typed effect remain open. Protocol v3 now owns the
+//! formal Page.startScreencast/stop/ACK loop, full frame metadata and a Rust size-one latest buffer;
+//! viewer ticket/WS, multi-viewer fps/latency, file/shell executors and supervisor remain separate
+//! unfinished boundaries. The internal page is conformance evidence, not a production destination.
 
 pub mod browser;
 pub mod control;

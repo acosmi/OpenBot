@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest as _, Sha256};
 
-pub(crate) const DESCRIPTOR_RELPATH: &str = "crates/openbot-contracts/engine-protocol-v2.json";
+pub(crate) const DESCRIPTOR_RELPATH: &str = "crates/openbot-contracts/engine-protocol-v3.json";
 pub(crate) const MODULE_RELPATH: &str = "crates/openbot-desktop/engine-shim/generated/protocol.mjs";
 pub(crate) const HASH_RELPATH: &str = "crates/openbot-contracts/generated/engine-protocol.sha256";
 
@@ -76,6 +76,7 @@ fn validate_descriptor(value: &serde_json::Value) -> Result<()> {
         "release_epoch",
         "roles",
         "schema",
+        "screencast",
         "version",
     ]
     .into_iter()
@@ -88,13 +89,13 @@ fn validate_descriptor(value: &serde_json::Value) -> Result<()> {
         bail!("engine protocol keys drift: expected {expected:?}, got {actual:?}");
     }
     if value["schema"] != "openbot-engine-protocol"
-        || value["version"] != 2
-        || value["release_epoch"] != 2
-        || value["frame_magic"] != "OBFRAME1"
+        || value["version"] != 3
+        || value["release_epoch"] != 3
+        || value["frame_magic"] != "OBFRAME2"
         || value["frame_hello_magic"] != "OBFHELLO"
-        || value["frame_fixed_header_bytes"] != 48
+        || value["frame_fixed_header_bytes"] != 76
     {
-        bail!("engine protocol fixed v2 values drift");
+        bail!("engine protocol fixed v3 values drift");
     }
     for (key, expected) in [
         (
@@ -103,7 +104,7 @@ fn validate_descriptor(value: &serde_json::Value) -> Result<()> {
         ),
         (
             "commands",
-            ["start", "input", "stop", "shutdown"].as_slice(),
+            ["start", "input", "frame_ack", "stop", "shutdown"].as_slice(),
         ),
         (
             "events",
@@ -148,6 +149,21 @@ fn validate_descriptor(value: &serde_json::Value) -> Result<()> {
             bail!("engine protocol `{key}` drift: expected {expected:?}, got {got:?}");
         }
     }
+    let screencast = value["screencast"]
+        .as_object()
+        .ok_or_else(|| anyhow!("engine protocol `screencast` must be an object"))?;
+    let expected_screencast = serde_json::json!({
+        "format": "jpeg",
+        "quality": 70,
+        "max_width": 1280,
+        "max_height": 800,
+        "every_nth_frame": 1,
+        "max_frames_in_flight": 1,
+        "send_last_frame": true,
+    });
+    if screencast != expected_screencast.as_object().expect("object literal") {
+        bail!("engine protocol screencast settings drift");
+    }
     Ok(())
 }
 
@@ -182,14 +198,14 @@ mod tests {
     #[test]
     fn descriptor_domain_is_closed() {
         let value: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../crates/openbot-contracts/engine-protocol-v2.json"
+            "../../../../crates/openbot-contracts/engine-protocol-v3.json"
         ))
         .expect("descriptor");
         validate_descriptor(&value).expect("closed descriptor");
         let mut changed = value;
         let mut stale = changed.clone();
-        stale["version"] = serde_json::json!(1);
-        stale["release_epoch"] = serde_json::json!(1);
+        stale["version"] = serde_json::json!(2);
+        stale["release_epoch"] = serde_json::json!(2);
         assert!(validate_descriptor(&stale).is_err());
         changed["commands"] = serde_json::json!(["start", "free_method"]);
         assert!(validate_descriptor(&changed).is_err());

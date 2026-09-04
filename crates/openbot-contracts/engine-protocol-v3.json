@@ -1,13 +1,13 @@
 {
   "schema": "openbot-engine-protocol",
-  "version": 2,
-  "release_epoch": 2,
+  "version": 3,
+  "release_epoch": 3,
   "max_boot_bytes": 4096,
   "max_control_frame_bytes": 65536,
   "max_image_bytes": 8388608,
-  "frame_magic": "OBFRAME1",
+  "frame_magic": "OBFRAME2",
   "frame_hello_magic": "OBFHELLO",
-  "frame_fixed_header_bytes": 48,
+  "frame_fixed_header_bytes": 76,
   "roles": [
     "browser_computer",
     "sandboxed_component"
@@ -15,6 +15,7 @@
   "commands": [
     "start",
     "input",
+    "frame_ack",
     "stop",
     "shutdown"
   ],
@@ -39,5 +40,14 @@
   ],
   "image_formats": [
     "jpeg"
-  ]
+  ],
+  "screencast": {
+    "format": "jpeg",
+    "quality": 70,
+    "max_width": 1280,
+    "max_height": 800,
+    "every_nth_frame": 1,
+    "max_frames_in_flight": 1,
+    "send_last_frame": true
+  }
 }
