@@ -989,6 +989,7 @@ async fn call_vendor_tool(
         VendorTransportKind::Mcp => {
             runtime
                 .client
+                .with_egress_allowlist(tool.egress_allowlist.clone())
                 .call_tool_bound(
                     &tool.endpoint,
                     bearer,

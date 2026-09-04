@@ -520,10 +520,13 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::IssueAgentCallbackToken { .. }
         | AppCommand::RevokeAgentCallbackToken { .. }
         | AppCommand::ListMcpConnections
+        | AppCommand::ListMcpAdminPage
         | AppCommand::BeginMcpOAuth { .. }
         | AppCommand::DisconnectMcpConnection { .. }
         | AppCommand::RegisterMcpOAuthClient { .. }
         | AppCommand::AddCuratedMcpServer { .. }
+        | AppCommand::AddCustomMcpServer(_)
+        | AppCommand::RemoveMcpServer { .. }
         | AppCommand::RefreshMcpServer { .. }
         | AppCommand::ListPendingToolApprovals
         | AppCommand::DecideToolApproval { .. }

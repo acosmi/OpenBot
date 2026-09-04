@@ -564,8 +564,8 @@ async fn production_callback_http_reaches_governed_real_rmcp_with_durable_sequen
             .map_err(|error| error.to_string())?;
             pg.execute(
                 "INSERT INTO public.mcp_servers(
-                   id,title,vendor,url,provenance,credential_id
-                 ) VALUES('notes','Notes','notes',$1,'custom',$2)",
+                   id,title,vendor,url,provenance,credential_id,egress_allow_cidrs
+                 ) VALUES('notes','Notes','notes',$1,'custom',$2,ARRAY['127.0.0.1/32'])",
                 &[&mcp_url, &credential_id],
             )
             .await

@@ -30,6 +30,7 @@ use openbot_contracts::desktop::{
 };
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
+use openbot_contracts::mcp::McpCustomServerRegistration;
 use openbot_contracts::people::CurrentUserResponse;
 use openbot_contracts::remote_interrupt::{RemoteInterruptAnswer, RemoteInterruptResolved};
 use openbot_contracts::sandboxed::SaveSandboxedComponentRequest;
@@ -59,6 +60,7 @@ const COMPONENT_CATALOGUE_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_DECISION_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_GOVERNANCE_BODY_MAX_BYTES: usize = 68 * 1024;
 const SANDBOXED_COMPONENT_BODY_MAX_BYTES: usize = 1024 * 1024;
+const MCP_ADMIN_BODY_MAX_BYTES: usize = 16 * 1024;
 const HTML_ROOT_MARKER: &str = "<html lang=\"en\">";
 const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
                    connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; \
@@ -544,6 +546,25 @@ impl DesktopTauriProtocol {
         if path == "/api/me/remote-interrupts" {
             return self.remote_interrupts(request, authority).await;
         }
+        if path == "/api/plugins" {
+            return self.plugins(request, authority).await;
+        }
+        if path == "/api/plugins/servers/custom" {
+            return self.custom_mcp_server(request, authority).await;
+        }
+        if let Some(server_id) = path
+            .strip_prefix("/api/plugins/servers/")
+            .and_then(|rest| rest.strip_suffix("/refresh"))
+        {
+            return self
+                .configured_mcp_server(request, authority, server_id, true)
+                .await;
+        }
+        if let Some(server_id) = path.strip_prefix("/api/plugins/servers/") {
+            return self
+                .configured_mcp_server(request, authority, server_id, false)
+                .await;
+        }
         if let Some(request_id) = path.strip_prefix("/api/me/remote-interrupts/") {
             return self
                 .resolve_remote_interrupt(request, authority, request_id)
@@ -737,6 +758,102 @@ impl DesktopTauriProtocol {
         };
         match self.transport.execute(authority.auth, command).await {
             Ok(AppReply::RunCostBudget(preference)) => json_response(&preference),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugins(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::ListMcpAdminPage)
+            .await
+        {
+            Ok(AppReply::McpAdminPage(page)) => json_response(&page),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn custom_mcp_server(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        if request.body().len() > MCP_ADMIN_BODY_MAX_BYTES {
+            request.body_mut().fill(0);
+            return payload_too_large();
+        }
+        let registration =
+            match serde_json::from_slice::<McpCustomServerRegistration>(request.body()) {
+                Ok(registration) => registration,
+                Err(_) => {
+                    request.body_mut().fill(0);
+                    return error_response(AppError::MalformedPayload { field: "body" });
+                }
+            };
+        request.body_mut().fill(0);
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::AddCustomMcpServer(registration))
+            .await
+        {
+            Ok(AppReply::McpServerMutation(receipt)) => json_response(&receipt),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn configured_mcp_server(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        server_id: &str,
+        refresh: bool,
+    ) -> Response<Vec<u8>> {
+        let expected_method = if refresh {
+            Method::POST
+        } else {
+            Method::DELETE
+        };
+        if request.method() != expected_method || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let command = if refresh {
+            AppCommand::RefreshMcpServer {
+                server_id: server_id.to_owned(),
+            }
+        } else {
+            AppCommand::RemoveMcpServer {
+                server_id: server_id.to_owned(),
+            }
+        };
+        match self.transport.execute(authority.auth, command).await {
+            Ok(AppReply::McpServerMutation(receipt)) if refresh => json_response(&receipt),
+            Ok(AppReply::McpServerRemoved(receipt)) if !refresh => json_response(&receipt),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -2267,15 +2384,15 @@ mod tests {
         ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
         ChannelReader, ChannelRoutingBackend, ChannelRoutingBackendError, ComponentAdministration,
         ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
-        ComponentRuntimeScope, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
-        PeoplePortError, PortError, ProviderRemoteInterruptBatch, ProviderRemoteResume,
-        ProviderRemoteResumeStatus, RemoteInterruptCoordinator, RemoteInterruptError,
-        RemoteInterruptPending, RemoteInterruptPendingInput, RemoteInterruptResolutionReceipt,
-        RoutingAuditRecord, RunCostBudgetAdministration, RunCostBudgetAdministrationError,
-        RunCostCap, RunExecutionLease, SandboxedComponentAdministration,
-        SandboxedComponentAdministrationError, SandboxedComponentDraft, ThreadConversationRequest,
-        ThreadDirectory, ThreadDirectoryError, ToolApprovalAdministration,
-        ToolApprovalAdministrationError, UiPreferenceAdministration,
+        ComponentRuntimeScope, McpConnectionAdministration, McpConnectionError, OpenBotApplication,
+        PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
+        ProviderRemoteInterruptBatch, ProviderRemoteResume, ProviderRemoteResumeStatus,
+        RemoteInterruptCoordinator, RemoteInterruptError, RemoteInterruptPending,
+        RemoteInterruptPendingInput, RemoteInterruptResolutionReceipt, RoutingAuditRecord,
+        RunCostBudgetAdministration, RunCostBudgetAdministrationError, RunCostCap,
+        RunExecutionLease, SandboxedComponentAdministration, SandboxedComponentAdministrationError,
+        SandboxedComponentDraft, ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError,
+        ToolApprovalAdministration, ToolApprovalAdministrationError, UiPreferenceAdministration,
         UiPreferenceAdministrationError,
     };
     use openbot_contracts::agent::{
@@ -2299,6 +2416,11 @@ mod tests {
         PendingComponentHumanDecisions, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
+    use openbot_contracts::mcp::{
+        McpAdminAuthentication, McpAdminCatalogueEntry, McpAdminPage, McpConnectionDisconnected,
+        McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
+        McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation, McpServerRemoved,
+    };
     use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
     use openbot_contracts::remote_interrupt::{
         PendingRemoteInterrupts, RemoteInterruptAnswerStatus, RemoteInterruptResolved,
@@ -3006,6 +3128,99 @@ mod tests {
 
     struct FakeRunCostBudgets(Mutex<Option<RunCostCap>>);
 
+    struct FakeMcpConnections;
+
+    #[async_trait]
+    impl McpConnectionAdministration for FakeMcpConnections {
+        async fn list_connections(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<McpConnections, McpConnectionError> {
+            Err(McpConnectionError::Unavailable)
+        }
+
+        async fn list_admin_page(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<McpAdminPage, McpConnectionError> {
+            Ok(McpAdminPage {
+                catalogue: vec![McpAdminCatalogueEntry {
+                    key: "google-drive".to_owned(),
+                    title: "Google Drive".to_owned(),
+                    vendor: "Google".to_owned(),
+                    summary: "Files".to_owned(),
+                    docs_url: "https://developers.google.com/".to_owned(),
+                    auth: McpAdminAuthentication::UserOAuth,
+                    per_instance: false,
+                }],
+                bots_may_call_back: false,
+                servers: Vec::new(),
+                skills: Vec::new(),
+                redirect_uri: None,
+            })
+        }
+
+        async fn begin_oauth(
+            &self,
+            _auth: &AuthContext,
+            _server_id: &str,
+            _return_to: McpOAuthReturnTo,
+        ) -> Result<McpOAuthAuthorization, McpConnectionError> {
+            Err(McpConnectionError::Unavailable)
+        }
+
+        async fn disconnect(
+            &self,
+            _auth: &AuthContext,
+            _server_id: &str,
+        ) -> Result<McpConnectionDisconnected, McpConnectionError> {
+            Err(McpConnectionError::Unavailable)
+        }
+
+        async fn register_oauth_client(
+            &self,
+            _auth: &AuthContext,
+            _server_id: &str,
+            _registration: &McpOAuthClientRegistration,
+        ) -> Result<McpOAuthClientRegistered, McpConnectionError> {
+            Err(McpConnectionError::Unavailable)
+        }
+
+        async fn add_custom_server(
+            &self,
+            _auth: &AuthContext,
+            registration: &McpCustomServerRegistration,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            Ok(McpServerMutation {
+                server_id: registration.id.clone(),
+                catalog_generation: 1,
+                tool_count: 1,
+                suspended_grants: 0,
+            })
+        }
+
+        async fn remove_server(
+            &self,
+            _auth: &AuthContext,
+            _server_id: &str,
+        ) -> Result<McpServerRemoved, McpConnectionError> {
+            Ok(McpServerRemoved::success())
+        }
+
+        async fn refresh_server(
+            &self,
+            _auth: &AuthContext,
+            server_id: &str,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            Ok(McpServerMutation {
+                server_id: server_id.to_owned(),
+                catalog_generation: 2,
+                tool_count: 1,
+                suspended_grants: 0,
+            })
+        }
+    }
+
     struct FakeRemoteInterrupts;
 
     #[async_trait]
@@ -3374,6 +3589,7 @@ mod tests {
                 .with_agent_administration(agents)
                 .with_ui_preferences(preferences)
                 .with_run_cost_budgets(Arc::new(FakeRunCostBudgets(Mutex::new(None))))
+                .with_mcp_connections(Arc::new(FakeMcpConnections))
                 .with_remote_interrupts(Arc::new(FakeRemoteInterrupts))
                 .with_component_administration(Arc::new(FakeComponents))
                 .with_sandboxed_component_administration(Arc::new(FakeSandboxed))
@@ -4808,6 +5024,119 @@ mod tests {
                 approval_id: "approval-1".to_owned(),
                 decision: ToolApprovalDecision::Grant,
             }
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plugin_admin_protocol_uses_typed_commands_and_host_freshness() {
+        let (protocol, root) = protocol();
+        protocol
+            .bind_window("stale-plugins", admin_auth(), None)
+            .unwrap();
+        let page = protocol
+            .handle(
+                "stale-plugins",
+                Request::builder()
+                    .uri("/api/plugins")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(page.status(), StatusCode::OK);
+        assert_eq!(page.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<McpAdminPage>(page.body())
+                .unwrap()
+                .catalogue[0]
+                .key,
+            "google-drive"
+        );
+        let stale = protocol
+            .handle(
+                "stale-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/servers/custom")
+                    .body(
+                        br#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp"}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+
+        protocol
+            .bind_window("fresh-plugins", admin_auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        let malformed = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/servers/custom")
+                    .body(
+                        br#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp","actor":"forged"}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        let added = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/servers/custom")
+                    .body(
+                        br#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp","egressAllowCidrs":["10.0.0.0/8"]}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(added.status(), StatusCode::OK);
+        assert_eq!(added.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<McpServerMutation>(added.body())
+                .unwrap()
+                .server_id,
+            "private-notes"
+        );
+        let refreshed = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/servers/private-notes/refresh")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(refreshed.status(), StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<McpServerMutation>(refreshed.body())
+                .unwrap()
+                .catalog_generation,
+            2
+        );
+        let removed = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/plugins/servers/private-notes")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert!(
+            serde_json::from_slice::<McpServerRemoved>(removed.body())
+                .unwrap()
+                .ok
         );
         fs::remove_dir_all(root).unwrap();
     }

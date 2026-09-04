@@ -503,8 +503,10 @@ async fn actor_oauth_rotates_before_use_and_retries_one_401_exactly_once() {
             .await
             .map_err(|error| error.to_string())?;
             pg.execute(
-                "INSERT INTO public.mcp_servers(id,title,vendor,url,provenance,credential_id)
-                   VALUES($1,'OAuth Notes','oauth-notes',$2,'custom',$3)",
+                "INSERT INTO public.mcp_servers(
+                   id,title,vendor,url,provenance,credential_id,egress_allow_cidrs)
+                   VALUES($1,'OAuth Notes','oauth-notes',$2,'custom',$3,
+                          ARRAY['127.0.0.1/32'])",
                 &[&SERVER, &spawned.resource, &client_credential_id],
             )
             .await
@@ -803,8 +805,10 @@ async fn authorization_code_state_pkce_callback_and_local_first_disconnect_are_r
                 WrappingKey::from_bytes(vec![0x55; 32]).map_err(|error| error.to_string())?,
             );
             pg.execute(
-                "INSERT INTO public.mcp_servers(id,title,vendor,url,provenance)
-                   VALUES($1,'OAuth Notes','oauth-notes',$2,'custom')",
+                "INSERT INTO public.mcp_servers(
+                   id,title,vendor,url,provenance,egress_allow_cidrs)
+                   VALUES($1,'OAuth Notes','oauth-notes',$2,'custom',
+                          ARRAY['127.0.0.1/32'])",
                 &[&SERVER, &spawned.resource],
             )
             .await

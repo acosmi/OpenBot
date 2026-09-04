@@ -579,7 +579,16 @@ pub fn router(state: ServerState) -> Router {
             post(approvals::decision_post),
         )
         .route("/api/plugins/connections", get(plugins::connections_get))
+        .route("/api/plugins", get(plugins::list_get))
         .route("/api/plugins/servers", post(plugins::servers_post))
+        .route(
+            "/api/plugins/servers/custom",
+            post(plugins::servers_custom_post),
+        )
+        .route(
+            "/api/plugins/servers/{server_id}",
+            delete(plugins::servers_delete),
+        )
         .route(
             "/api/plugins/connections/{server_id}",
             delete(plugins::connections_delete),

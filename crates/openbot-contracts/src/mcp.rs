@@ -202,6 +202,183 @@ pub struct McpServerMutation {
     pub suspended_grants: u32,
 }
 
+/// Authentication presentation used by the deployment-wide Plugins administration surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum McpAdminAuthentication {
+    /// Anonymous remote MCP.
+    #[serde(rename = "none")]
+    None,
+    /// One deployment-owned bearer credential.
+    #[serde(rename = "deployment-bearer")]
+    DeploymentBearer,
+    /// Actor-owned OAuth connection backed by a deployment OAuth client.
+    #[serde(rename = "user-oauth")]
+    UserOAuth,
+}
+
+/// Closed effect vocabulary shown by Plugins administration and bound into grants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAdminToolEffect {
+    /// Read-only data access.
+    Read,
+    /// Mutating data access.
+    Write,
+    /// Process or operation execution.
+    Execute,
+    /// Network side effect.
+    Network,
+    /// Credential-affecting side effect.
+    Credential,
+}
+
+/// One compile-time reviewed connector catalogue item.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpAdminCatalogueEntry {
+    /// Stable catalogue key.
+    pub key: String,
+    /// Human-readable title.
+    pub title: String,
+    /// Vendor name.
+    pub vendor: String,
+    /// Short product summary.
+    pub summary: String,
+    /// Vendor documentation URL.
+    pub docs_url: String,
+    /// Authentication mode without any credential material.
+    pub auth: McpAdminAuthentication,
+    /// Whether an administrator must supply an instance hostname.
+    pub per_instance: bool,
+}
+
+/// One authoritative tool row on the Plugins administration surface.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpAdminTool {
+    /// Owning server id.
+    pub server_id: String,
+    /// Raw vendor tool name.
+    pub name: String,
+    /// Bounded vendor description.
+    pub description: String,
+    /// Exact catalogued JSON Schema.
+    pub input_schema: serde_json::Value,
+    /// Human-readable `<server>/<tool>` grant reference.
+    #[serde(rename = "ref")]
+    pub reference: String,
+    /// First-party effect classification.
+    pub effect: McpAdminToolEffect,
+    /// Stable Agent ids holding an active, current-generation grant.
+    pub granted_to: Vec<String>,
+}
+
+/// One configured MCP/Drive server and its current authoritative catalog projection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpAdminServer {
+    /// Stable server id.
+    pub id: String,
+    /// Human-readable title.
+    pub title: String,
+    /// Vendor/hostname presentation.
+    pub vendor: String,
+    /// Configured endpoint; never contains credentials.
+    pub url: String,
+    /// Reviewed catalogue summary, or empty for custom servers.
+    pub summary: String,
+    /// Reviewed vendor documentation URL, or empty for custom servers.
+    pub docs_url: String,
+    /// `first-party` or `custom`.
+    pub provenance: String,
+    /// Whether a deployment credential pointer is present.
+    pub has_credential: bool,
+    /// Last successful catalog refresh.
+    pub tools_refreshed_at: Option<OffsetDateTime>,
+    /// Stable local error code only; remote response bodies are never projected.
+    pub last_error: Option<String>,
+    /// Actor id that last added/updated the server.
+    pub added_by: Option<String>,
+    /// Canonical exact numeric CIDRs explicitly authorized for this custom server.
+    pub egress_allow_cidrs: Vec<String>,
+    /// Current tools only.
+    pub tools: Vec<McpAdminTool>,
+}
+
+/// One skill visible to the current actor on the shared Plugins surface.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpAdminSkill {
+    /// Stable row id.
+    pub id: String,
+    /// Stable skill slug.
+    pub slug: String,
+    /// Owner actor, or `None` for a deployment skill.
+    pub owner_user_id: Option<String>,
+    /// Human-readable title.
+    pub title: String,
+    /// Short summary.
+    pub summary: String,
+    /// Instruction body.
+    pub instructions: String,
+    /// Provenance label.
+    pub origin: String,
+    /// Actor that installed it, when known.
+    pub installed_by: Option<String>,
+    /// Stable Agent ids holding a grant.
+    pub granted_to: Vec<String>,
+}
+
+/// Complete signed-in Plugins page projection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpAdminPage {
+    /// Compile-time reviewed catalogue.
+    pub catalogue: Vec<McpAdminCatalogueEntry>,
+    /// Always false in v4: shared Bot callback credentials were constructively removed.
+    pub bots_may_call_back: bool,
+    /// Deployment-wide configured servers.
+    pub servers: Vec<McpAdminServer>,
+    /// Deployment or actor-visible skills.
+    pub skills: Vec<McpAdminSkill>,
+    /// Exact configured OAuth callback URI, if this distribution can complete OAuth.
+    pub redirect_uri: Option<String>,
+}
+
+/// Admin-controlled custom Streamable HTTP server registration.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpCustomServerRegistration {
+    /// Stable lower-case slug.
+    pub id: String,
+    /// Human-readable title.
+    pub title: String,
+    /// HTTPS Streamable HTTP endpoint.
+    pub url: String,
+    /// Optional deployment-owned bearer credential.
+    #[serde(default)]
+    pub credential_id: Option<String>,
+    /// Exact numeric CIDRs that may override the default private/special-address deny policy.
+    #[serde(default)]
+    pub egress_allow_cidrs: Vec<String>,
+}
+
+/// Successful configured-server deletion acknowledgement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpServerRemoved {
+    /// Always true for the successful reply variant.
+    pub ok: bool,
+}
+
+impl McpServerRemoved {
+    /// Construct the only successful acknowledgement.
+    #[must_use]
+    pub const fn success() -> Self {
+        Self { ok: true }
+    }
+}
+
 impl McpOAuthClientRegistered {
     /// Construct the only successful acknowledgement.
     #[must_use]
@@ -248,6 +425,25 @@ mod tests {
                 r#"{"clientId":"client","clientSecret":"bad\u0000secret","issuer":"https://issuer.example"}"#
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn custom_server_wire_is_closed_and_private_egress_is_explicit() {
+        let registration: McpCustomServerRegistration = serde_json::from_str(
+            r#"{"id":"internal-search","title":"Internal search","url":"https://search.internal.example/mcp","egressAllowCidrs":["10.8.0.0/16"]}"#,
+        )
+        .unwrap();
+        assert_eq!(registration.egress_allow_cidrs, ["10.8.0.0/16"]);
+        assert!(
+            serde_json::from_str::<McpCustomServerRegistration>(
+                r#"{"id":"x","title":"X","url":"https://x.example/mcp","host":"10.0.0.1"}"#
+            )
+            .is_err()
+        );
+        assert_eq!(
+            serde_json::to_value(McpAdminAuthentication::UserOAuth).unwrap(),
+            "user-oauth"
         );
     }
 }

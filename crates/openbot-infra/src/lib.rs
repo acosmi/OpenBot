@@ -35,11 +35,12 @@
 //! - [`db::compat`] —— 迁移边界检查（v3 §14.1「Rust 不接收更早 schema」）。
 //! - [`db::schema_facts`] —— schema 事实提取，与 `fixtures/db/schema-0012.json` 同构。
 //! - [`db::pool`] —— `deadpool-postgres` 连接池。
-//! - [`db::native`] —— Rust-owned 0013–0028，自有 SHA-256 账本与并发施加锁；0021 增加
+//! - [`db::native`] —— Rust-owned 0013–0029，自有 SHA-256 账本与并发施加锁；0021 增加
 //!   actor/deployment/tenant scoped UI preference，0022 增加 actor/tenant scoped runtime memory
 //!   write control，0023 独立增加 compiled-component human decision state，0024 为 runs 追加
 //!   run-wide normalized provider usage，0025追加operator-attested maximum-rate cost upper bound，
-//!   0028增加actor-scoped remote AG-UI interrupt/resume与terminal content scrub；
+//!   0028增加actor-scoped remote AG-UI interrupt/resume与terminal content scrub；0029增加
+//!   custom MCP 的显式 private-egress CIDR authority；
 //!   均保持 expand-only。
 //! - [`repo::IMPLEMENTED_REPOSITORIES`] —— 当前 40 个规划落点全部有物理表与具名 repository；
 //!   [`repo::channels::ChannelRepo`] 同时实现 `openbot_application::ChannelReader`。

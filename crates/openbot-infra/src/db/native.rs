@@ -177,8 +177,17 @@ pub const NATIVE_0028_NAME: &str = "native_0028_remote_agent_interrupts";
 /// 0028 SQL source.
 pub const NATIVE_0028_SQL: &str = include_str!("../../sql/native_0028.sql");
 
+/// Explicit custom-MCP private-egress authority version.
+pub const NATIVE_0029_VERSION: i32 = 29;
+
+/// 0029 stable name.
+pub const NATIVE_0029_NAME: &str = "native_0029_mcp_private_egress";
+
+/// 0029 SQL source.
+pub const NATIVE_0029_SQL: &str = include_str!("../../sql/native_0029.sql");
+
 /// 当前二进制认识的最新 native schema 版本。
-pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0028_VERSION;
+pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0029_VERSION;
 
 /// 当前二进制钉住的 native migration 数量。
 pub const NATIVE_MIGRATION_COUNT: usize = MIGRATIONS.len();
@@ -274,6 +283,11 @@ const MIGRATIONS: &[MigrationSpec] = &[
         version: NATIVE_0028_VERSION,
         name: NATIVE_0028_NAME,
         sql: NATIVE_0028_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0029_VERSION,
+        name: NATIVE_0029_NAME,
+        sql: NATIVE_0029_SQL,
     },
 ];
 
@@ -423,6 +437,12 @@ pub fn native_0027_checksum() -> String {
 #[must_use]
 pub fn native_0028_checksum() -> String {
     Sha256Digest::of(NATIVE_0028_SQL.as_bytes()).to_hex()
+}
+
+/// SHA-256 of the exact native 0029 SQL bytes.
+#[must_use]
+pub fn native_0029_checksum() -> String {
+    Sha256Digest::of(NATIVE_0029_SQL.as_bytes()).to_hex()
 }
 
 /// 在一个已到 0012 的数据库上施加当前二进制认识的全部 Rust-owned migrations。
@@ -651,6 +671,8 @@ mod tests {
         assert!(NATIVE_0026_SQL.contains("runs_cost_budget_shape"));
         assert!(NATIVE_0028_SQL.contains("CREATE TABLE public.remote_agent_interrupts"));
         assert!(NATIVE_0028_SQL.contains("remote_agent_interrupts_state_shape"));
+        assert!(NATIVE_0029_SQL.contains("ADD COLUMN egress_allow_cidrs text[]"));
+        assert!(NATIVE_0029_SQL.contains("provenance = 'custom'"));
     }
 
     #[test]
@@ -710,6 +732,7 @@ mod tests {
                 .chain(statement_lines(NATIVE_0026_SQL))
                 .chain(statement_lines(NATIVE_0027_SQL))
                 .chain(statement_lines(NATIVE_0028_SQL))
+                .chain(statement_lines(NATIVE_0029_SQL))
                 .any(|line| line.contains("IF NOT EXISTS"))
         );
         assert!(LEDGER_BOOTSTRAP_SQL.contains("IF NOT EXISTS"));
@@ -772,7 +795,10 @@ mod tests {
         let native_remote_interrupts = native_0028_checksum();
         assert_eq!(native_remote_interrupts.len(), 64);
         assert_ne!(native_reasoning_retention, native_remote_interrupts);
-        assert_eq!(MIGRATIONS.len(), 16);
-        assert_eq!(MIGRATIONS[15].version, NATIVE_LATEST_VERSION);
+        let native_mcp_private_egress = native_0029_checksum();
+        assert_eq!(native_mcp_private_egress.len(), 64);
+        assert_ne!(native_remote_interrupts, native_mcp_private_egress);
+        assert_eq!(MIGRATIONS.len(), 17);
+        assert_eq!(MIGRATIONS[16].version, NATIVE_LATEST_VERSION);
     }
 }

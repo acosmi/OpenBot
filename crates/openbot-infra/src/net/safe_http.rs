@@ -622,6 +622,18 @@ impl fmt::Debug for SafeDialer {
 }
 
 impl SafeDialer {
+    /// Clone this transport with a different explicit destination policy while preserving the
+    /// resolver and TLS roots. This is used for per-resource policy, never caller-controlled
+    /// request state; every redirect still resolves and re-checks through the cloned policy.
+    #[must_use]
+    pub(crate) fn with_egress_policy(&self, policy: EgressPolicy) -> Self {
+        Self {
+            resolver: self.resolver.clone(),
+            policy,
+            tls: self.tls.clone(),
+        }
+    }
+
     /// Resolve one URL and apply the exact current destination policy without opening a socket.
     /// Callers use this only as an early registration verdict; execute re-resolves every hop.
     pub async fn validate_destination(

@@ -155,10 +155,13 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::IssueAgentCallbackToken { .. } => "issue_agent_callback_token",
         AppCommand::RevokeAgentCallbackToken { .. } => "revoke_agent_callback_token",
         AppCommand::ListMcpConnections => "list_mcp_connections",
+        AppCommand::ListMcpAdminPage => "list_mcp_admin_page",
         AppCommand::BeginMcpOAuth { .. } => "begin_mcp_oauth",
         AppCommand::DisconnectMcpConnection { .. } => "disconnect_mcp_connection",
         AppCommand::RegisterMcpOAuthClient { .. } => "register_mcp_oauth_client",
         AppCommand::AddCuratedMcpServer { .. } => "add_curated_mcp_server",
+        AppCommand::AddCustomMcpServer(_) => "add_custom_mcp_server",
+        AppCommand::RemoveMcpServer { .. } => "remove_mcp_server",
         AppCommand::RefreshMcpServer { .. } => "refresh_mcp_server",
         AppCommand::ListPendingToolApprovals => "list_pending_tool_approvals",
         AppCommand::DecideToolApproval { .. } => "decide_tool_approval",
@@ -381,6 +384,7 @@ mod tests {
                 "revoke_agent_callback_token",
             ),
             (AppCommand::ListMcpConnections, "list_mcp_connections"),
+            (AppCommand::ListMcpAdminPage, "list_mcp_admin_page"),
             (
                 AppCommand::BeginMcpOAuth {
                     server_id: "notes".to_owned(),
@@ -413,6 +417,24 @@ mod tests {
                     key: "google-drive".to_owned(),
                 },
                 "add_curated_mcp_server",
+            ),
+            (
+                AppCommand::AddCustomMcpServer(
+                    openbot_contracts::mcp::McpCustomServerRegistration {
+                        id: "notes".to_owned(),
+                        title: "Notes".to_owned(),
+                        url: "https://notes.example/mcp".to_owned(),
+                        credential_id: None,
+                        egress_allow_cidrs: Vec::new(),
+                    },
+                ),
+                "add_custom_mcp_server",
+            ),
+            (
+                AppCommand::RemoveMcpServer {
+                    server_id: "notes".to_owned(),
+                },
+                "remove_mcp_server",
             ),
             (
                 AppCommand::RefreshMcpServer {

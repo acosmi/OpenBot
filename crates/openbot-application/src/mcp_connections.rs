@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use openbot_contracts::auth::{AuthContext, Role};
 use openbot_contracts::error::AppError;
 use openbot_contracts::mcp::{
-    McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
-    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
+    McpAdminPage, McpConnectionDisconnected, McpConnections, McpCustomServerRegistration,
+    McpOAuthAuthorization, McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo,
+    McpServerMutation, McpServerRemoved,
 };
 use openbot_domain::vault::SecretBytes;
 
@@ -72,6 +73,14 @@ pub trait McpConnectionAdministration: Send + Sync {
         auth: &AuthContext,
     ) -> Result<McpConnections, McpConnectionError>;
 
+    /// List the signed-in actor's deployment-wide Plugins page projection.
+    async fn list_admin_page(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<McpAdminPage, McpConnectionError> {
+        Err(McpConnectionError::Unavailable)
+    }
+
     /// Mint one-time state + PKCE and return the validated vendor authorization URL.
     async fn begin_oauth(
         &self,
@@ -101,6 +110,24 @@ pub trait McpConnectionAdministration: Send + Sync {
         _auth: &AuthContext,
         _key: &str,
     ) -> Result<McpServerMutation, McpConnectionError> {
+        Err(McpConnectionError::Unavailable)
+    }
+
+    /// Register and immediately refresh one custom Streamable HTTP server.
+    async fn add_custom_server(
+        &self,
+        _auth: &AuthContext,
+        _registration: &McpCustomServerRegistration,
+    ) -> Result<McpServerMutation, McpConnectionError> {
+        Err(McpConnectionError::Unavailable)
+    }
+
+    /// Remove one configured server and its cascading catalog/connection rows.
+    async fn remove_server(
+        &self,
+        _auth: &AuthContext,
+        _server_id: &str,
+    ) -> Result<McpServerRemoved, McpConnectionError> {
         Err(McpConnectionError::Unavailable)
     }
 
@@ -226,6 +253,16 @@ pub async fn list_mcp_connections(
         .map_err(McpConnectionError::into_app_error)
 }
 
+/// Application use case: read the signed-in actor's Plugins page projection.
+pub async fn list_mcp_admin_page(
+    port: &dyn McpConnectionAdministration,
+    auth: &AuthContext,
+) -> Result<McpAdminPage, AppError> {
+    port.list_admin_page(auth)
+        .await
+        .map_err(McpConnectionError::into_app_error)
+}
+
 /// Application use case: begin actor-owned OAuth.
 pub async fn begin_mcp_oauth(
     port: &dyn McpConnectionAdministration,
@@ -282,6 +319,38 @@ pub async fn add_curated_mcp_server(
         .map_err(McpConnectionError::into_app_error)
 }
 
+/// Application use case: admin-only custom Streamable HTTP server registration.
+pub async fn add_custom_mcp_server(
+    port: &dyn McpConnectionAdministration,
+    auth: &AuthContext,
+    registration: &McpCustomServerRegistration,
+) -> Result<McpServerMutation, AppError> {
+    if !auth.has_role(Role::Admin) {
+        return Err(AppError::ForbiddenRole {
+            required: Role::Admin,
+        });
+    }
+    port.add_custom_server(auth, registration)
+        .await
+        .map_err(McpConnectionError::into_app_error)
+}
+
+/// Application use case: admin-only configured-server removal.
+pub async fn remove_mcp_server(
+    port: &dyn McpConnectionAdministration,
+    auth: &AuthContext,
+    server_id: &str,
+) -> Result<McpServerRemoved, AppError> {
+    if !auth.has_role(Role::Admin) {
+        return Err(AppError::ForbiddenRole {
+            required: Role::Admin,
+        });
+    }
+    port.remove_server(auth, server_id)
+        .await
+        .map_err(McpConnectionError::into_app_error)
+}
+
 /// Application use case: admin-only server catalog refresh.
 pub async fn refresh_mcp_server(
     port: &dyn McpConnectionAdministration,
@@ -310,6 +379,8 @@ mod tests {
     struct FakePort {
         registrations: AtomicUsize,
         additions: AtomicUsize,
+        custom_additions: AtomicUsize,
+        removals: AtomicUsize,
         refreshes: AtomicUsize,
     }
 
@@ -361,6 +432,29 @@ mod tests {
                 tool_count: 4,
                 suspended_grants: 0,
             })
+        }
+
+        async fn add_custom_server(
+            &self,
+            _auth: &AuthContext,
+            registration: &McpCustomServerRegistration,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            self.custom_additions.fetch_add(1, Ordering::SeqCst);
+            Ok(McpServerMutation {
+                server_id: registration.id.clone(),
+                catalog_generation: 1,
+                tool_count: 1,
+                suspended_grants: 0,
+            })
+        }
+
+        async fn remove_server(
+            &self,
+            _auth: &AuthContext,
+            _server_id: &str,
+        ) -> Result<McpServerRemoved, McpConnectionError> {
+            self.removals.fetch_add(1, Ordering::SeqCst);
+            Ok(McpServerRemoved::success())
         }
 
         async fn refresh_server(
@@ -450,5 +544,44 @@ mod tests {
         );
         assert_eq!(port.additions.load(Ordering::SeqCst), 1);
         assert_eq!(port.refreshes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn custom_add_and_remove_are_admin_gated_before_the_port() {
+        let port = FakePort::default();
+        let custom = McpCustomServerRegistration {
+            id: "private-notes".to_owned(),
+            title: "Private notes".to_owned(),
+            url: "https://notes.example/mcp".to_owned(),
+            credential_id: None,
+            egress_allow_cidrs: vec!["10.0.0.0/8".to_owned()],
+        };
+        assert!(matches!(
+            add_custom_mcp_server(&port, &auth(Role::User), &custom).await,
+            Err(AppError::ForbiddenRole {
+                required: Role::Admin
+            })
+        ));
+        assert!(matches!(
+            remove_mcp_server(&port, &auth(Role::User), "private-notes").await,
+            Err(AppError::ForbiddenRole {
+                required: Role::Admin
+            })
+        ));
+        assert_eq!(port.custom_additions.load(Ordering::SeqCst), 0);
+        assert_eq!(port.removals.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            add_custom_mcp_server(&port, &auth(Role::Admin), &custom)
+                .await
+                .unwrap()
+                .tool_count,
+            1
+        );
+        assert_eq!(
+            remove_mcp_server(&port, &auth(Role::Admin), "private-notes").await,
+            Ok(McpServerRemoved::success())
+        );
+        assert_eq!(port.custom_additions.load(Ordering::SeqCst), 1);
+        assert_eq!(port.removals.load(Ordering::SeqCst), 1);
     }
 }

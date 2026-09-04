@@ -46,8 +46,9 @@ use crate::components::{
 };
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::mcp::{
-    McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
-    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
+    McpAdminPage, McpConnectionDisconnected, McpConnections, McpCustomServerRegistration,
+    McpOAuthAuthorization, McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo,
+    McpServerMutation, McpServerRemoved,
 };
 use crate::memory::{
     CorrectMemory, MemoryControl, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord,
@@ -424,6 +425,9 @@ pub enum AppCommand {
     /// List only the authenticated actor's per-user MCP connections.
     ListMcpConnections,
 
+    /// Read the deployment-wide Plugins administration projection visible to this actor.
+    ListMcpAdminPage,
+
     /// Begin an OAuth authorization-code flow for the authenticated actor.
     BeginMcpOAuth {
         /// Stable server id; endpoint and client are resolved authoritatively.
@@ -450,6 +454,15 @@ pub enum AppCommand {
     AddCuratedMcpServer {
         /// Exact catalogue key.
         key: String,
+    },
+
+    /// Register a custom Streamable HTTP server under explicit administrator authority.
+    AddCustomMcpServer(McpCustomServerRegistration),
+
+    /// Remove one configured server and its cascading catalog/connection rows.
+    RemoveMcpServer {
+        /// Stable configured server id.
+        server_id: String,
     },
 
     /// Refresh one configured server catalogue under admin authority.
@@ -575,6 +588,8 @@ pub enum AppReply {
     AgentCallbackTokenRevoked(CallbackTokenRevoked),
     /// [`AppCommand::ListMcpConnections`] response.
     McpConnections(McpConnections),
+    /// [`AppCommand::ListMcpAdminPage`] response.
+    McpAdminPage(McpAdminPage),
     /// [`AppCommand::BeginMcpOAuth`] response.
     McpOAuthAuthorization(McpOAuthAuthorization),
     /// [`AppCommand::DisconnectMcpConnection`] response.
@@ -583,6 +598,8 @@ pub enum AppReply {
     McpOAuthClientRegistered(McpOAuthClientRegistered),
     /// [`AppCommand::AddCuratedMcpServer`] or [`AppCommand::RefreshMcpServer`] response.
     McpServerMutation(McpServerMutation),
+    /// [`AppCommand::RemoveMcpServer`] response.
+    McpServerRemoved(McpServerRemoved),
     /// [`AppCommand::ListPendingToolApprovals`] response.
     PendingToolApprovals(PendingToolApprovals),
     /// [`AppCommand::DecideToolApproval`] response.

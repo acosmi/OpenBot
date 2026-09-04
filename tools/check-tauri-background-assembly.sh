@@ -71,8 +71,8 @@ fi
 agent_source=$(awk '/^#\[cfg\(test\)\]/{exit} {print}' crates/openbot-desktop/src/desktop_agent_runtime.rs)
 [[ $(rg -c 'RunRelay::start_with_database\(' <<<"$agent_source") == 1 ]] \
   || fail "Desktop durable RunRelay count drift"
-[[ $(rg -c 'BuiltInAgentRuntime::start\(' <<<"$agent_source") == 1 ]] \
-  || fail "Desktop built-in Agent runtime count drift"
+[[ $(rg -c 'BuiltInAgentRuntime::start_with_remote_interrupts\(' <<<"$agent_source") == 1 ]] \
+  || fail "Desktop built-in Agent + durable interrupt runtime count drift"
 [[ $(rg -c 'SafeRemoteAguiTransport::new\(' <<<"$agent_source") == 1 ]] \
   || fail "Desktop remote Agent transport is no longer the concrete SafeDialer adapter"
 if rg -n 'std::env|allow_http|environment_api_key|SchemePolicy::HttpOrHttps' <<<"$agent_source" >/dev/null; then

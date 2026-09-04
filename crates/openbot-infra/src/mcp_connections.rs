@@ -1,5 +1,6 @@
 //! PostgreSQL/Vault implementation of MCP OAuth connect, callback and local-first disconnect.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
@@ -18,9 +19,11 @@ use openbot_application::{
 use openbot_contracts::auth::{AuthContext, Role};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_contracts::mcp::{
-    McpConnection, McpConnectionDisconnected, McpConnections, McpOAuthAuthorization,
-    McpOAuthClientAuthMethod, McpOAuthClientRegistered, McpOAuthClientRegistration,
-    McpOAuthReturnTo, McpServerMutation, McpVendorRevocationStatus,
+    McpAdminAuthentication, McpAdminCatalogueEntry, McpAdminPage, McpAdminServer, McpAdminSkill,
+    McpAdminTool, McpAdminToolEffect, McpConnection, McpConnectionDisconnected, McpConnections,
+    McpCustomServerRegistration, McpOAuthAuthorization, McpOAuthClientAuthMethod,
+    McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
+    McpServerRemoved, McpVendorRevocationStatus,
 };
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
 use openbot_domain::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
@@ -43,8 +46,9 @@ use crate::mcp::McpBearerToken;
 use crate::mcp_catalog::{
     McpCatalogError, McpCatalogRefresh, PostgresMcpCatalog, VendorTransportKind,
 };
+use crate::mcp_credentials::{McpCredentialError, PostgresMcpCredentialBroker};
 use crate::mcp_oauth::{McpOAuthClient, McpOAuthError};
-use crate::net::safe_http::SchemePolicy;
+use crate::net::safe_http::{CidrAllowlist, SchemePolicy};
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 use crate::vault::CredentialRecordVault;
 
@@ -60,6 +64,11 @@ const MAX_ATTEMPT_VALUE_BYTES: usize = 32 * 1024;
 const DEFAULT_ATTEMPT_CAPACITY: usize = 4096;
 const REVOCATION_BATCH: i64 = 32;
 const REVOCATION_RETRY_INTERVAL: StdDuration = StdDuration::from_secs(30);
+const MAX_CUSTOM_SERVER_ID_BYTES: usize = 40;
+const MAX_CUSTOM_SERVER_TITLE_BYTES: usize = 256;
+const MAX_CUSTOM_SERVER_URL_BYTES: usize = 8 * 1024;
+const MAX_MCP_EGRESS_CIDRS: usize = 32;
+const MAX_MCP_EGRESS_CIDR_BYTES: usize = 2_048;
 
 /// Production MCP OAuth connection coordinator.
 #[derive(Clone)]
@@ -68,6 +77,7 @@ pub struct PostgresMcpConnections {
     vault: CredentialRecordVault,
     oauth: McpOAuthClient,
     drive_oauth: Option<GoogleDriveOAuthClient>,
+    credentials: Option<Arc<PostgresMcpCredentialBroker>>,
     catalog: Arc<PostgresMcpCatalog>,
     deployment: DeploymentId,
     tenant: TenantId,
@@ -160,6 +170,7 @@ impl PostgresMcpConnections {
             vault,
             oauth,
             drive_oauth: None,
+            credentials: None,
             catalog,
             deployment,
             tenant,
@@ -178,6 +189,319 @@ impl PostgresMcpConnections {
     pub fn with_google_drive_oauth(mut self, oauth: GoogleDriveOAuthClient) -> Self {
         self.drive_oauth = Some(oauth);
         self
+    }
+
+    /// Attach the same fresh per-operation credential broker used by the Agent tool runtime.
+    #[must_use]
+    pub fn with_mcp_credentials(mut self, credentials: Arc<PostgresMcpCredentialBroker>) -> Self {
+        self.credentials = Some(credentials);
+        self
+    }
+
+    async fn admin_page_projection(
+        &self,
+        auth: &AuthContext,
+    ) -> Result<McpAdminPage, McpConnectionError> {
+        let client = self.pool.get().await.map_err(unavailable)?;
+        let active_grants = client
+            .query(
+                "SELECT g.ref,g.agent_id
+                   FROM public.plugin_grants g
+                   JOIN public.mcp_tools t
+                     ON g.kind='mcp' AND g.ref=t.server_id||'/'||t.name
+                   JOIN public.mcp_servers s ON s.id=t.server_id
+                  WHERE g.state='active' AND t.available=true
+                    AND s.catalog_generation IS NOT NULL
+                    AND g.catalog_generation=s.catalog_generation
+                    AND t.catalog_generation=s.catalog_generation
+                    AND g.schema_hash=t.schema_hash AND g.effect=t.effect
+                    AND g.transport_fingerprint=s.catalog_transport_fingerprint
+                    AND g.credential_generation=coalesce(s.credential_generation,0)
+                  ORDER BY g.ref,g.agent_id",
+                &[],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let mut grants = BTreeMap::<String, Vec<String>>::new();
+        for row in active_grants {
+            let reference: String = row.try_get("ref").map_err(|_| corrupt("grant_ref"))?;
+            let agent_id: String = row
+                .try_get("agent_id")
+                .map_err(|_| corrupt("grant_agent_id"))?;
+            grants.entry(reference).or_default().push(agent_id);
+        }
+
+        let tool_rows = client
+            .query(
+                "SELECT t.server_id,t.name,t.description,t.input_schema,t.effect
+                   FROM public.mcp_tools t
+                   JOIN public.mcp_servers s ON s.id=t.server_id
+                  WHERE t.available=true AND s.catalog_generation IS NOT NULL
+                    AND t.catalog_generation=s.catalog_generation
+                  ORDER BY t.server_id,t.name",
+                &[],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let mut tools_by_server = BTreeMap::<String, Vec<McpAdminTool>>::new();
+        for row in tool_rows {
+            let server_id: String = row.try_get("server_id").map_err(|_| corrupt("server_id"))?;
+            let name: String = row.try_get("name").map_err(|_| corrupt("tool_name"))?;
+            validate_server_id(&server_id)?;
+            validate_tool_component(&name)?;
+            let reference = format!("{server_id}/{name}");
+            let description: String = row
+                .try_get("description")
+                .map_err(|_| corrupt("description"))?;
+            if description.len() > crate::mcp::MAX_MCP_TOOL_DESCRIPTION_BYTES
+                || description.as_bytes().contains(&0)
+            {
+                return Err(corrupt("description"));
+            }
+            let input_schema: serde_json::Value = row
+                .try_get("input_schema")
+                .map_err(|_| corrupt("input_schema"))?;
+            let effect: String = row.try_get("effect").map_err(|_| corrupt("effect"))?;
+            tools_by_server
+                .entry(server_id.clone())
+                .or_default()
+                .push(McpAdminTool {
+                    server_id,
+                    name,
+                    description,
+                    input_schema,
+                    reference: reference.clone(),
+                    effect: admin_effect(&effect)?,
+                    granted_to: grants.remove(&reference).unwrap_or_default(),
+                });
+        }
+        if !grants.is_empty() {
+            return Err(corrupt("active_grant_projection"));
+        }
+
+        let server_rows = client
+            .query(
+                "SELECT id,title,vendor,url,provenance,credential_id,tools_refreshed_at,
+                        last_error,added_by,
+                        coalesce(transport,'mcp') AS transport,
+                        coalesce(egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs
+                   FROM public.mcp_servers ORDER BY title,id",
+                &[],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let mut servers = Vec::with_capacity(server_rows.len());
+        for row in server_rows {
+            let id: String = row.try_get("id").map_err(|_| corrupt("server_id"))?;
+            validate_server_id(&id)?;
+            let title: String = row.try_get("title").map_err(|_| corrupt("title"))?;
+            let vendor: String = row.try_get("vendor").map_err(|_| corrupt("vendor"))?;
+            let url: String = row.try_get("url").map_err(|_| corrupt("server_endpoint"))?;
+            let provenance: String = row
+                .try_get("provenance")
+                .map_err(|_| corrupt("provenance"))?;
+            let transport = VendorTransportKind::parse(
+                &row.try_get::<_, String>("transport")
+                    .map_err(|_| corrupt("transport"))?,
+            )
+            .map_err(|_| corrupt("transport"))?;
+            let egress_allow_cidrs: Vec<String> = row
+                .try_get("egress_allow_cidrs")
+                .map_err(|_| corrupt("egress_allow_cidrs"))?;
+            validate_stored_egress(&egress_allow_cidrs)?;
+            validate_public_server_projection(
+                &id,
+                &title,
+                &vendor,
+                &url,
+                &provenance,
+                transport,
+                &egress_allow_cidrs,
+            )?;
+            let (summary, docs_url) = if id == GOOGLE_DRIVE_SERVER_ID {
+                (
+                    "Files in the Drive of whoever is asking.".to_owned(),
+                    "https://developers.google.com/workspace/guides/configure-mcp-servers"
+                        .to_owned(),
+                )
+            } else {
+                (String::new(), String::new())
+            };
+            let raw_error: Option<String> = row
+                .try_get("last_error")
+                .map_err(|_| corrupt("last_error"))?;
+            servers.push(McpAdminServer {
+                id: id.clone(),
+                title,
+                vendor,
+                url,
+                summary,
+                docs_url,
+                provenance,
+                has_credential: row
+                    .try_get::<_, Option<Uuid>>("credential_id")
+                    .map_err(|_| corrupt("credential_id"))?
+                    .is_some(),
+                tools_refreshed_at: row
+                    .try_get("tools_refreshed_at")
+                    .map_err(|_| corrupt("tools_refreshed_at"))?,
+                last_error: raw_error.map(|_| "mcp_catalog_unavailable".to_owned()),
+                added_by: row.try_get("added_by").map_err(|_| corrupt("added_by"))?,
+                egress_allow_cidrs,
+                tools: tools_by_server.remove(&id).unwrap_or_default(),
+            });
+        }
+        if !tools_by_server.is_empty() {
+            return Err(corrupt("tool_server_projection"));
+        }
+
+        let is_admin = auth.has_role(Role::Admin);
+        let skill_rows = client
+            .query(
+                "SELECT id,slug,owner_user_id,title,summary,instructions,origin,installed_by
+                   FROM public.skills
+                  WHERE $2::boolean OR owner_user_id IS NULL OR owner_user_id=$1
+                  ORDER BY title,id",
+                &[&auth.actor().as_str(), &is_admin],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let skill_grant_rows = client
+            .query(
+                "SELECT ref,agent_id FROM public.plugin_grants
+                  WHERE kind='skill' ORDER BY ref,agent_id",
+                &[],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let mut skill_grants = BTreeMap::<String, Vec<String>>::new();
+        for row in skill_grant_rows {
+            let reference: String = row.try_get("ref").map_err(|_| corrupt("skill_ref"))?;
+            let agent_id: String = row
+                .try_get("agent_id")
+                .map_err(|_| corrupt("grant_agent_id"))?;
+            skill_grants.entry(reference).or_default().push(agent_id);
+        }
+        let mut skills = Vec::with_capacity(skill_rows.len());
+        for row in skill_rows {
+            let slug: String = row.try_get("slug").map_err(|_| corrupt("skill_slug"))?;
+            skills.push(McpAdminSkill {
+                id: row.try_get("id").map_err(|_| corrupt("skill_id"))?,
+                slug: slug.clone(),
+                owner_user_id: row
+                    .try_get("owner_user_id")
+                    .map_err(|_| corrupt("skill_owner"))?,
+                title: row.try_get("title").map_err(|_| corrupt("skill_title"))?,
+                summary: row
+                    .try_get("summary")
+                    .map_err(|_| corrupt("skill_summary"))?,
+                instructions: row
+                    .try_get("instructions")
+                    .map_err(|_| corrupt("skill_instructions"))?,
+                origin: row.try_get("origin").map_err(|_| corrupt("skill_origin"))?,
+                installed_by: row
+                    .try_get("installed_by")
+                    .map_err(|_| corrupt("skill_installed_by"))?,
+                granted_to: skill_grants.remove(&slug).unwrap_or_default(),
+            });
+        }
+
+        Ok(McpAdminPage {
+            catalogue: vec![McpAdminCatalogueEntry {
+                key: GOOGLE_DRIVE_SERVER_ID.to_owned(),
+                title: "Google Drive".to_owned(),
+                vendor: GOOGLE_DRIVE_VENDOR.to_owned(),
+                summary: "Files in the Drive of whoever is asking.".to_owned(),
+                docs_url: "https://developers.google.com/workspace/guides/configure-mcp-servers"
+                    .to_owned(),
+                auth: McpAdminAuthentication::UserOAuth,
+                per_instance: false,
+            }],
+            bots_may_call_back: false,
+            servers,
+            skills,
+            redirect_uri: self.callback_uri.clone(),
+        })
+    }
+
+    async fn refresh_configured_catalog(
+        &self,
+        auth: &AuthContext,
+        server_id: &str,
+    ) -> Result<McpServerMutation, McpConnectionError> {
+        validate_server_id(server_id)?;
+        let client = self.pool.get().await.map_err(unavailable)?;
+        let row = client
+            .query_opt(
+                "SELECT title,url,vendor,provenance,coalesce(transport,'mcp') AS transport,
+                        credential_id,
+                        coalesce(egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs
+                   FROM public.mcp_servers WHERE id=$1",
+                &[&server_id],
+            )
+            .await
+            .map_err(query_unavailable)?
+            .ok_or(McpConnectionError::NotVisible)?;
+        let title: String = row.try_get("title").map_err(|_| corrupt("title"))?;
+        let endpoint: String = row.try_get("url").map_err(|_| corrupt("server_endpoint"))?;
+        let vendor: String = row.try_get("vendor").map_err(|_| corrupt("vendor"))?;
+        let provenance: String = row
+            .try_get("provenance")
+            .map_err(|_| corrupt("provenance"))?;
+        let transport = VendorTransportKind::parse(
+            &row.try_get::<_, String>("transport")
+                .map_err(|_| corrupt("transport"))?,
+        )
+        .map_err(|_| corrupt("transport"))?;
+        let credential_id: Option<Uuid> = row
+            .try_get("credential_id")
+            .map_err(|_| corrupt("credential_id"))?;
+        let egress_allow_cidrs: Vec<String> = row
+            .try_get("egress_allow_cidrs")
+            .map_err(|_| corrupt("egress_allow_cidrs"))?;
+        validate_stored_egress(&egress_allow_cidrs)?;
+        validate_public_server_projection(
+            server_id,
+            &title,
+            &vendor,
+            &endpoint,
+            &provenance,
+            transport,
+            &egress_allow_cidrs,
+        )?;
+        let bearer = match (provenance.as_str(), transport, credential_id) {
+            (GOOGLE_DRIVE_PROVENANCE, VendorTransportKind::GoogleDriveRest, _)
+                if server_id == GOOGLE_DRIVE_SERVER_ID =>
+            {
+                None
+            }
+            ("custom", VendorTransportKind::Mcp, None) => None,
+            ("custom", VendorTransportKind::Mcp, Some(_)) => self
+                .credentials
+                .as_ref()
+                .ok_or(McpConnectionError::Unavailable)?
+                .bearer_for(server_id, auth.actor())
+                .await
+                .map_err(map_credential_failure)?,
+            _ => return Err(corrupt("server_authentication")),
+        };
+        drop(client);
+        let refresh = match self.catalog.refresh(server_id, bearer).await {
+            Ok(refresh) => refresh,
+            Err(error) => {
+                if let Ok(client) = self.pool.get().await {
+                    let _ = client
+                        .execute(
+                            "UPDATE public.mcp_servers SET last_error='mcp_catalog_unavailable',
+                               updated_at=clock_timestamp() WHERE id=$1",
+                            &[&server_id],
+                        )
+                        .await;
+                }
+                return Err(map_catalog_failure(error));
+            }
+        };
+        mutation_receipt(server_id, &refresh)
     }
 
     async fn load_server_client(
@@ -1108,6 +1432,14 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         })
     }
 
+    async fn list_admin_page(
+        &self,
+        auth: &AuthContext,
+    ) -> Result<McpAdminPage, McpConnectionError> {
+        self.ensure_auth_current(auth).await?;
+        self.admin_page_projection(auth).await
+    }
+
     async fn begin_oauth(
         &self,
         auth: &AuthContext,
@@ -1654,6 +1986,225 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         mutation_receipt(GOOGLE_DRIVE_SERVER_ID, &refresh)
     }
 
+    async fn add_custom_server(
+        &self,
+        auth: &AuthContext,
+        registration: &McpCustomServerRegistration,
+    ) -> Result<McpServerMutation, McpConnectionError> {
+        self.ensure_auth_current(auth).await?;
+        if !auth.has_role(Role::Admin) {
+            return Err(McpConnectionError::NotVisible);
+        }
+        let prepared = prepare_custom_server(registration)?;
+        let generation =
+            i64::try_from(auth.auth_generation().get()).map_err(|_| corrupt("auth_generation"))?;
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client.transaction().await.map_err(query_unavailable)?;
+        let current: bool = transaction
+            .query_one(
+                "SELECT EXISTS(
+                    SELECT 1 FROM public.users u
+                     WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
+                       AND EXISTS(SELECT 1 FROM public.user_roles ur
+                                   WHERE ur.user_id=u.id AND ur.role='admin')
+                       AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                       WHERE ra.email=lower(u.email)))",
+                &[&auth.actor().as_str(), &generation],
+            )
+            .await
+            .map_err(query_unavailable)?
+            .try_get(0)
+            .map_err(|_| corrupt("admin_scope"))?;
+        if !current {
+            return Err(McpConnectionError::NotVisible);
+        }
+        let mut old_credential_id = None;
+        if let Some(row) = transaction
+            .query_opt(
+                "SELECT provenance,credential_id FROM public.mcp_servers WHERE id=$1 FOR UPDATE",
+                &[&prepared.id],
+            )
+            .await
+            .map_err(query_unavailable)?
+        {
+            let provenance: String = row
+                .try_get("provenance")
+                .map_err(|_| corrupt("provenance"))?;
+            if provenance != "custom" {
+                return Err(McpConnectionError::Conflict {
+                    resource: "mcp_server_identity",
+                });
+            }
+            old_credential_id = row
+                .try_get("credential_id")
+                .map_err(|_| corrupt("credential_id"))?;
+        }
+        if let Some(credential_id) = prepared.credential_id {
+            let credential = transaction
+                .query_opt(
+                    "SELECT kind,provider,revoked_at FROM public.credentials WHERE id=$1 FOR SHARE",
+                    &[&credential_id],
+                )
+                .await
+                .map_err(query_unavailable)?
+                .ok_or(McpConnectionError::InvalidInput {
+                    field: "credential_id",
+                })?;
+            let kind: crate::db::types::CredentialKind = credential
+                .try_get("kind")
+                .map_err(|_| corrupt("credential_kind"))?;
+            let provider: String = credential
+                .try_get("provider")
+                .map_err(|_| corrupt("credential_provider"))?;
+            let revoked_at: Option<OffsetDateTime> = credential
+                .try_get("revoked_at")
+                .map_err(|_| corrupt("credential_revoked_at"))?;
+            if kind != crate::db::types::CredentialKind::Mcp
+                || provider != prepared.id
+                || revoked_at.is_some()
+            {
+                return Err(McpConnectionError::InvalidInput {
+                    field: "credential_id",
+                });
+            }
+        }
+        transaction
+            .execute(
+                "INSERT INTO public.mcp_servers(
+                   id,title,vendor,url,provenance,credential_id,tools_refreshed_at,last_error,
+                   added_by,created_at,updated_at,catalog_generation,catalog_hash,
+                   catalog_transport_fingerprint,credential_generation,transport,
+                   egress_allow_cidrs
+                 ) VALUES($1,$2,$3,$4,'custom',$5,NULL,NULL,$6,clock_timestamp(),
+                          clock_timestamp(),NULL,NULL,NULL,0,'mcp',$7)
+                 ON CONFLICT (id) DO UPDATE SET
+                   title=EXCLUDED.title,vendor=EXCLUDED.vendor,url=EXCLUDED.url,
+                   credential_generation=coalesce(public.mcp_servers.credential_generation,0)
+                     + CASE WHEN public.mcp_servers.credential_id IS DISTINCT FROM EXCLUDED.credential_id
+                            THEN 1 ELSE 0 END,
+                   credential_id=EXCLUDED.credential_id,added_by=EXCLUDED.added_by,
+                   egress_allow_cidrs=EXCLUDED.egress_allow_cidrs,last_error=NULL,
+                   updated_at=clock_timestamp()",
+                &[
+                    &prepared.id,
+                    &prepared.title,
+                    &prepared.vendor,
+                    &prepared.url,
+                    &prepared.credential_id,
+                    &auth.actor().as_str(),
+                    &prepared.egress_allow_cidrs,
+                ],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        if let Some(old_credential_id) = old_credential_id
+            && Some(old_credential_id) != prepared.credential_id
+        {
+            transaction
+                .execute(
+                    "UPDATE public.credentials SET
+                       revoked_at=coalesce(revoked_at,clock_timestamp()),
+                       updated_at=clock_timestamp(),
+                       metadata=coalesce(metadata,'{}'::jsonb)
+                         || jsonb_build_object('revocation_reason','mcp_server_credential_replaced')
+                     WHERE id=$1",
+                    &[&old_credential_id],
+                )
+                .await
+                .map_err(query_unavailable)?;
+        }
+        append_configuration_audit(
+            &transaction,
+            auth.actor(),
+            &prepared.id,
+            self.checkpoint_key.expose(),
+        )
+        .await?;
+        transaction.commit().await.map_err(|error| {
+            tracing::error!(error = %error, "custom MCP server commit 结果未知");
+            McpConnectionError::CommitUnknown
+        })?;
+        drop(client);
+        self.refresh_configured_catalog(auth, &prepared.id).await
+    }
+
+    async fn remove_server(
+        &self,
+        auth: &AuthContext,
+        server_id: &str,
+    ) -> Result<McpServerRemoved, McpConnectionError> {
+        self.ensure_auth_current(auth).await?;
+        if !auth.has_role(Role::Admin) {
+            return Err(McpConnectionError::NotVisible);
+        }
+        validate_server_id(server_id)?;
+        let generation =
+            i64::try_from(auth.auth_generation().get()).map_err(|_| corrupt("auth_generation"))?;
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client.transaction().await.map_err(query_unavailable)?;
+        let row = transaction
+            .query_opt(
+                "SELECT s.credential_id,
+                        EXISTS(SELECT 1 FROM public.users u
+                                WHERE u.id=$2 AND coalesce(u.auth_generation,0)=$3
+                                  AND EXISTS(SELECT 1 FROM public.user_roles ur
+                                              WHERE ur.user_id=u.id AND ur.role='admin')
+                                  AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                                  WHERE ra.email=lower(u.email))) AS current
+                   FROM public.mcp_servers s WHERE s.id=$1 FOR UPDATE OF s",
+                &[&server_id, &auth.actor().as_str(), &generation],
+            )
+            .await
+            .map_err(query_unavailable)?
+            .ok_or(McpConnectionError::NotVisible)?;
+        let current: bool = row.try_get("current").map_err(|_| corrupt("admin_scope"))?;
+        if !current {
+            return Err(McpConnectionError::NotVisible);
+        }
+        let server_credential: Option<Uuid> = row
+            .try_get("credential_id")
+            .map_err(|_| corrupt("credential_id"))?;
+        transaction
+            .execute(
+                "UPDATE public.credentials c
+                    SET revoked_at=coalesce(c.revoked_at,clock_timestamp()),
+                        updated_at=clock_timestamp(),
+                        metadata=coalesce(c.metadata,'{}'::jsonb)
+                          || jsonb_build_object('revocation_reason','mcp_server_removed')
+                  WHERE c.id=$1 OR c.id IN (
+                    SELECT credential_id FROM public.mcp_user_credentials WHERE server_id=$2)",
+                &[&server_credential, &server_id],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        transaction
+            .execute(
+                "DELETE FROM public.plugin_grants g
+                  WHERE g.kind='mcp' AND EXISTS(
+                    SELECT 1 FROM public.mcp_tools t
+                     WHERE t.server_id=$1 AND g.ref=t.server_id||'/'||t.name)",
+                &[&server_id],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        transaction
+            .execute("DELETE FROM public.mcp_servers WHERE id=$1", &[&server_id])
+            .await
+            .map_err(query_unavailable)?;
+        append_configuration_audit(
+            &transaction,
+            auth.actor(),
+            server_id,
+            self.checkpoint_key.expose(),
+        )
+        .await?;
+        transaction.commit().await.map_err(|error| {
+            tracing::error!(error = %error, "MCP server removal commit 结果未知");
+            McpConnectionError::CommitUnknown
+        })?;
+        Ok(McpServerRemoved::success())
+    }
+
     async fn refresh_server(
         &self,
         auth: &AuthContext,
@@ -1663,44 +2214,7 @@ impl McpConnectionAdministration for PostgresMcpConnections {
         if !auth.has_role(Role::Admin) {
             return Err(McpConnectionError::NotVisible);
         }
-        validate_server_id(server_id)?;
-        let client = self.pool.get().await.map_err(unavailable)?;
-        let row = client
-            .query_opt(
-                "SELECT url,vendor,provenance,coalesce(transport,'mcp') AS transport
-                   FROM public.mcp_servers WHERE id=$1",
-                &[&server_id],
-            )
-            .await
-            .map_err(query_unavailable)?
-            .ok_or(McpConnectionError::NotVisible)?;
-        let transport = VendorTransportKind::parse(
-            &row.try_get::<_, String>("transport")
-                .map_err(|_| corrupt("transport"))?,
-        )
-        .map_err(|_| corrupt("transport"))?;
-        let endpoint: String = row.try_get("url").map_err(|_| corrupt("server_endpoint"))?;
-        let vendor: String = row.try_get("vendor").map_err(|_| corrupt("vendor"))?;
-        let provenance: String = row
-            .try_get("provenance")
-            .map_err(|_| corrupt("provenance"))?;
-        if transport != VendorTransportKind::GoogleDriveRest
-            || server_id != GOOGLE_DRIVE_SERVER_ID
-            || endpoint != GOOGLE_DRIVE_API_BASE
-            || vendor != GOOGLE_DRIVE_VENDOR
-            || provenance != GOOGLE_DRIVE_PROVENANCE
-        {
-            return Err(McpConnectionError::Conflict {
-                resource: "actor_catalog_credential",
-            });
-        }
-        drop(client);
-        let refresh = self
-            .catalog
-            .refresh(server_id, None)
-            .await
-            .map_err(map_catalog_failure)?;
-        mutation_receipt(server_id, &refresh)
+        self.refresh_configured_catalog(auth, server_id).await
     }
 }
 
@@ -2079,6 +2593,232 @@ fn valid_server_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
+struct PreparedCustomServer {
+    id: String,
+    title: String,
+    vendor: String,
+    url: String,
+    credential_id: Option<Uuid>,
+    egress_allow_cidrs: Option<Vec<String>>,
+}
+
+fn prepare_custom_server(
+    registration: &McpCustomServerRegistration,
+) -> Result<PreparedCustomServer, McpConnectionError> {
+    if registration.id == GOOGLE_DRIVE_SERVER_ID
+        || registration.id.len() < 2
+        || registration.id.len() > MAX_CUSTOM_SERVER_ID_BYTES
+        || !registration
+            .id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        || registration.id.starts_with('-')
+        || registration.id.ends_with('-')
+    {
+        return Err(McpConnectionError::InvalidInput { field: "server_id" });
+    }
+    if registration.title.is_empty()
+        || registration.title.trim() != registration.title
+        || registration.title.len() > MAX_CUSTOM_SERVER_TITLE_BYTES
+        || registration.title.as_bytes().contains(&0)
+    {
+        return Err(McpConnectionError::InvalidInput { field: "title" });
+    }
+    if registration.url.is_empty()
+        || registration.url.len() > MAX_CUSTOM_SERVER_URL_BYTES
+        || registration.url.as_bytes().contains(&0)
+    {
+        return Err(McpConnectionError::InvalidInput { field: "url" });
+    }
+    let parsed = Url::parse(&registration.url)
+        .map_err(|_| McpConnectionError::InvalidInput { field: "url" })?;
+    if parsed.scheme() != "https"
+        || parsed.cannot_be_a_base()
+        || parsed.host_str().is_none()
+        || parsed.port_or_known_default().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(McpConnectionError::InvalidInput { field: "url" });
+    }
+    let cidr_bytes = registration
+        .egress_allow_cidrs
+        .iter()
+        .map(String::len)
+        .sum::<usize>();
+    if registration.egress_allow_cidrs.len() > MAX_MCP_EGRESS_CIDRS
+        || cidr_bytes > MAX_MCP_EGRESS_CIDR_BYTES
+    {
+        return Err(McpConnectionError::InvalidInput {
+            field: "egress_allow_cidrs",
+        });
+    }
+    CidrAllowlist::parse_exact(registration.egress_allow_cidrs.iter().map(String::as_str))
+        .map_err(|_| McpConnectionError::InvalidInput {
+            field: "egress_allow_cidrs",
+        })?;
+    let cidrs = registration
+        .egress_allow_cidrs
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let vendor = parsed
+        .host_str()
+        .ok_or(McpConnectionError::InvalidInput { field: "url" })?
+        .to_ascii_lowercase();
+    Ok(PreparedCustomServer {
+        id: registration.id.clone(),
+        title: registration.title.clone(),
+        vendor,
+        url: parsed.to_string(),
+        credential_id: registration
+            .credential_id
+            .as_deref()
+            .map(Uuid::parse_str)
+            .transpose()
+            .map_err(|_| McpConnectionError::InvalidInput {
+                field: "credential_id",
+            })?,
+        egress_allow_cidrs: (!cidrs.is_empty()).then_some(cidrs),
+    })
+}
+
+fn validate_stored_egress(entries: &[String]) -> Result<(), McpConnectionError> {
+    if entries.len() > MAX_MCP_EGRESS_CIDRS
+        || entries.iter().map(String::len).sum::<usize>() > MAX_MCP_EGRESS_CIDR_BYTES
+        || entries
+            .windows(2)
+            .any(|pair| pair.first().is_some_and(|left| left >= &pair[1]))
+    {
+        return Err(corrupt("egress_allow_cidrs"));
+    }
+    CidrAllowlist::parse_exact(entries.iter().map(String::as_str))
+        .map(|_| ())
+        .map_err(|_| corrupt("egress_allow_cidrs"))
+}
+
+fn validate_public_server_projection(
+    id: &str,
+    title: &str,
+    vendor: &str,
+    endpoint: &str,
+    provenance: &str,
+    transport: VendorTransportKind,
+    egress_allow_cidrs: &[String],
+) -> Result<(), McpConnectionError> {
+    if title.is_empty()
+        || title.len() > MAX_CUSTOM_SERVER_TITLE_BYTES
+        || title.as_bytes().contains(&0)
+        || vendor.is_empty()
+        || vendor.len() > 256
+        || vendor.as_bytes().contains(&0)
+    {
+        return Err(corrupt("server_presentation"));
+    }
+    let parsed = Url::parse(endpoint).map_err(|_| corrupt("server_endpoint"))?;
+    if parsed.scheme() != "https"
+        || parsed.cannot_be_a_base()
+        || parsed.host_str().is_none()
+        || parsed.port_or_known_default().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(corrupt("server_endpoint"));
+    }
+    match provenance {
+        GOOGLE_DRIVE_PROVENANCE
+            if id == GOOGLE_DRIVE_SERVER_ID
+                && title == "Google Drive"
+                && vendor == GOOGLE_DRIVE_VENDOR
+                && endpoint == GOOGLE_DRIVE_API_BASE
+                && transport == VendorTransportKind::GoogleDriveRest
+                && egress_allow_cidrs.is_empty() =>
+        {
+            Ok(())
+        }
+        "custom"
+            if id != GOOGLE_DRIVE_SERVER_ID
+                && transport == VendorTransportKind::Mcp
+                && vendor
+                    == parsed
+                        .host_str()
+                        .ok_or_else(|| corrupt("server_endpoint"))?
+                        .to_ascii_lowercase() =>
+        {
+            Ok(())
+        }
+        _ => Err(corrupt("server_identity")),
+    }
+}
+
+fn validate_tool_component(value: &str) -> Result<(), McpConnectionError> {
+    if value.is_empty()
+        || value.len() > 64
+        || value.contains("__")
+        || value.contains('/')
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        return Err(corrupt("tool_name"));
+    }
+    Ok(())
+}
+
+fn admin_effect(value: &str) -> Result<McpAdminToolEffect, McpConnectionError> {
+    match value {
+        "read" => Ok(McpAdminToolEffect::Read),
+        "write" => Ok(McpAdminToolEffect::Write),
+        "execute" => Ok(McpAdminToolEffect::Execute),
+        "network" => Ok(McpAdminToolEffect::Network),
+        "credential" => Ok(McpAdminToolEffect::Credential),
+        _ => Err(corrupt("effect")),
+    }
+}
+
+fn map_credential_failure(error: McpCredentialError) -> McpConnectionError {
+    match error {
+        McpCredentialError::Unavailable => McpConnectionError::Unavailable,
+        McpCredentialError::AuthRequired | McpCredentialError::InsufficientScope => {
+            McpConnectionError::Conflict {
+                resource: "actor_catalog_credential",
+            }
+        }
+        McpCredentialError::CommitUnknown => McpConnectionError::CommitUnknown,
+        McpCredentialError::Corrupt { field } => McpConnectionError::Corrupt { field },
+    }
+}
+
+async fn append_configuration_audit(
+    transaction: &tokio_postgres::Transaction<'_>,
+    actor: &ActorId,
+    server_id: &str,
+    checkpoint_key: &[u8],
+) -> Result<(), McpConnectionError> {
+    let (id, created_at) = next_event_coordinates(transaction)
+        .await
+        .map_err(query_unavailable)?;
+    let event = AuditEvent {
+        id,
+        actor: Some(actor.clone()),
+        event_type: AuditEventType::parse("configuration.changed")
+            .ok_or_else(|| corrupt("audit_event"))?,
+        target_kind: AuditLabel::new("mcp_server"),
+        target_id: Some(AuditIdentifier::new(server_id).map_err(|_| corrupt("server_id"))?),
+        payload: AuditPayload::empty(),
+        created_at,
+    };
+    append_event_in_transaction(transaction, &event, checkpoint_key)
+        .await
+        .map(|_| ())
+        .map_err(query_unavailable)
+}
+
 fn validate_server_id(value: &str) -> Result<(), McpConnectionError> {
     if valid_server_id(value) {
         Ok(())
@@ -2245,5 +2985,54 @@ mod tests {
         let exact = OffsetDateTime::from_unix_timestamp(100).unwrap();
         assert!(!attempt_is_expired(100, before));
         assert!(attempt_is_expired(100, exact));
+    }
+
+    #[test]
+    fn custom_server_registration_canonicalizes_exact_cidrs_and_rejects_ambiguous_urls() {
+        let prepared = prepare_custom_server(&McpCustomServerRegistration {
+            id: "internal-search".to_owned(),
+            title: "Internal search".to_owned(),
+            url: "https://search.internal.example/mcp".to_owned(),
+            credential_id: None,
+            egress_allow_cidrs: vec![
+                "10.40.0.0/16".to_owned(),
+                "10.40.0.0/16".to_owned(),
+                "fd00:40::/48".to_owned(),
+            ],
+        })
+        .unwrap();
+        assert_eq!(
+            prepared.egress_allow_cidrs.unwrap(),
+            ["10.40.0.0/16", "fd00:40::/48"]
+        );
+        for url in [
+            "http://search.example/mcp",
+            "https://user@search.example/mcp",
+            "https://search.example/mcp?target=internal",
+            "https://search.example/mcp#fragment",
+        ] {
+            assert!(
+                prepare_custom_server(&McpCustomServerRegistration {
+                    id: "internal-search".to_owned(),
+                    title: "Internal search".to_owned(),
+                    url: url.to_owned(),
+                    credential_id: None,
+                    egress_allow_cidrs: Vec::new(),
+                })
+                .is_err(),
+                "{url}"
+            );
+        }
+        assert!(
+            prepare_custom_server(&McpCustomServerRegistration {
+                id: "internal-search".to_owned(),
+                title: "Internal search".to_owned(),
+                url: "https://search.example/mcp".to_owned(),
+                credential_id: None,
+                egress_allow_cidrs: vec!["10.40.1.1/16".to_owned()],
+            })
+            .is_err(),
+            "host bits must not be silently canonicalized"
+        );
     }
 }

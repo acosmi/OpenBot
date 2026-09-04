@@ -4,31 +4,46 @@ mod harness {
     include!("../../../test-support/postgres_harness.rs");
 }
 
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use openbot_agent::{AgentToolInvoker, AuthorizedAgentToolGateway};
 use openbot_application::{
-    AgentContextSource, ApplicationService, OpenBotApplication, RunExecutionLease,
-    ToolApprovalAdministration, ToolCallSequence,
+    AgentContextSource, ApplicationService, McpConnectionAdministration, OpenBotApplication,
+    RunExecutionLease, ToolApprovalAdministration, ToolCallSequence,
 };
 use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId, ThreadId};
+use openbot_contracts::mcp::McpCustomServerRegistration;
 use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_domain::policy::{ActionPolicy, PolicyMode};
 use openbot_domain::thread::FencingToken;
+use openbot_domain::vault::{
+    KeyVersion, SecretBytes, SecretKind, SecretPrincipal, ServiceId, WrappingKey,
+};
 use openbot_infra::agent_tools::{
     PostgresAgentAuthorizationSource, PostgresAgentToolSequence, PostgresBuiltInToolControlPlane,
 };
 use openbot_infra::db::{baseline, native, pool};
 use openbot_infra::mcp::{MAX_MCP_RESULT_CHARS, McpClientError, SafeRmcpClient, normalize_result};
 use openbot_infra::mcp_catalog::PostgresMcpCatalog;
+use openbot_infra::mcp_connections::PostgresMcpConnections;
+use openbot_infra::mcp_credentials::PostgresMcpCredentialBroker;
+use openbot_infra::mcp_oauth::McpOAuthClient;
 use openbot_infra::memory_admin::PostgresMemoryAdministration;
-use openbot_infra::net::safe_http::{CidrAllowlist, EgressPolicy, SafeDialer, SchemePolicy};
+use openbot_infra::net::safe_http::{
+    CidrAllowlist, DnsResolver, DnsUnavailable, EgressPolicy, SafeDialer, SafeHttpBudget,
+    SafeHttpRequest, SchemePolicy,
+};
 use openbot_infra::policy::PolicyStore;
 use openbot_infra::provider::context::PostgresAgentContextSource;
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::tools::PostgresToolJournal;
 use openbot_infra::tool_approval::PostgresToolApprovalCoordinator;
+use openbot_infra::vault::CredentialRecordVault;
 use rmcp::ErrorData as McpError;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
@@ -39,7 +54,17 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
+use rustls::ServerConfig;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use serde_json::{Value, json};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::TlsAcceptor;
+
+// Long-lived test-only Ed25519 CA/leaf for `idp.test`; copied from the repository's W-7 TLS
+// conformance fixture so no certificate generation or network dependency enters this test.
+const TLS_CA_DER: &str = "MIIBYTCCAROgAwIBAgIUV2Gyaxvee9eFEK3h9B3MJM3RdHMwBQYDK2VwMB0xGzAZBgNVBAMMEk9wZW5Cb3QgVzcgVGVzdCBDQTAgFw0yNjA4MjMxNzIxNTNaGA8yMTI2MDczMDE3MjE1M1owHTEbMBkGA1UEAwwST3BlbkJvdCBXNyBUZXN0IENBMCowBQYDK2VwAyEApgBzSV/LoqKcnUaH8XyHAyeVHmSdWzs/pG1QLsZtLXujYzBhMB0GA1UdDgQWBBRGuULlFEmfV4B1pDoFKLlyG87ckjAfBgNVHSMEGDAWgBRGuULlFEmfV4B1pDoFKLlyG87ckjAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjAFBgMrZXADQQAhZqm1u2PwIPUkIhbQpjQhEbNUYoF2Abyx+fdXyy5b0QRLqnEK/8DY350B6fiQHd7a6BEa+qN+qhUQNauulgwB";
+const TLS_LEAF_DER: &str = "MIIBgDCCATKgAwIBAgIUWFITT9Bap6fPTrUyiQds6m7YbW4wBQYDK2VwMB0xGzAZBgNVBAMMEk9wZW5Cb3QgVzcgVGVzdCBDQTAgFw0yNjA4MjMxNzIxNTNaGA8yMTI2MDczMDE3MjE1M1owEzERMA8GA1UEAwwIaWRwLnRlc3QwKjAFBgMrZXADIQDUfQYU3Rio5WectHhNXvjIzi67mD9xT6HD7WzyBqMdIKOBizCBiDAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATATBgNVHREEDDAKgghpZHAudGVzdDAdBgNVHQ4EFgQU7WAFDj1TPql991Rys+6HvGt+f2kwHwYDVR0jBBgwFoAURrlC5RRJn1eAdaQ6BSi5chvO3JIwBQYDK2VwA0EAhqOV0ZqpgZsjy3YMiwb4D94mGVQmVikza22FtbWfcC2F4b1GV0YKYCOwdIN9ruFVxguKPy//7tlCnuSzoUzkBQ==";
+const TLS_LEAF_KEY_DER: &str = "MC4CAQAwBQYDK2VwBCIEIIhvzdQUg5xdTDZfBbx3RK3yTMHjMv2r8AJ5/hgshUDa";
 
 #[derive(Clone)]
 struct RealMcpServer {
@@ -132,12 +157,14 @@ async fn spawn_server() -> Result<
         String,
         Arc<Mutex<Vec<Value>>>,
         Arc<Mutex<Vec<Tool>>>,
+        Arc<Mutex<Vec<String>>>,
         tokio::task::JoinHandle<()>,
     ),
     String,
 > {
     let received = Arc::new(Mutex::new(Vec::new()));
     let listed = Arc::new(Mutex::new(RealMcpServer::tools()));
+    let traffic = Arc::new(Mutex::new(Vec::new()));
     let server = RealMcpServer {
         received: received.clone(),
         listed: listed.clone(),
@@ -145,9 +172,32 @@ async fn spawn_server() -> Result<
     let service = StreamableHttpService::new(
         move || Ok::<_, std::io::Error>(server.clone()),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default(),
+        StreamableHttpServerConfig::default().with_allowed_hosts([
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "idp.test",
+        ]),
     );
-    let router = axum::Router::new().nest_service("/mcp", service);
+    let traffic_log = traffic.clone();
+    let router =
+        axum::Router::new()
+            .nest_service("/mcp", service)
+            .layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let traffic = traffic_log.clone();
+                    async move {
+                        let method = request.method().clone();
+                        let path = request.uri().path().to_owned();
+                        let response = next.run(request).await;
+                        traffic
+                            .lock()
+                            .unwrap()
+                            .push(format!("{method} {path} {}", response.status()));
+                        response
+                    }
+                },
+            ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|error| error.to_string())?;
@@ -155,7 +205,117 @@ async fn spawn_server() -> Result<
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    Ok((format!("http://{address}/mcp"), received, listed, handle))
+    Ok((
+        format!("http://{address}/mcp"),
+        received,
+        listed,
+        traffic,
+        handle,
+    ))
+}
+
+#[derive(Clone)]
+struct LocalResolver(SocketAddr);
+
+#[async_trait]
+impl DnsResolver for LocalResolver {
+    async fn resolve(&self, _host: &str, _port: u16) -> Result<Vec<SocketAddr>, DnsUnavailable> {
+        Ok(vec![self.0])
+    }
+}
+
+async fn spawn_tls_server() -> Result<
+    (
+        String,
+        SocketAddr,
+        CertificateDer<'static>,
+        Arc<Mutex<Vec<Value>>>,
+        Arc<Mutex<Vec<String>>>,
+        Arc<Mutex<Vec<String>>>,
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<()>,
+    ),
+    String,
+> {
+    let (backend_url, received, _listed, traffic, backend_handle) = spawn_server().await?;
+    let backend = url::Url::parse(&backend_url).map_err(|error| error.to_string())?;
+    let backend_address = SocketAddr::new(
+        backend
+            .host_str()
+            .ok_or("TLS proxy backend host missing")?
+            .parse()
+            .map_err(|error: std::net::AddrParseError| error.to_string())?,
+        backend.port().ok_or("TLS proxy backend port missing")?,
+    );
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let root = CertificateDer::from(
+        BASE64_STANDARD
+            .decode(TLS_CA_DER)
+            .map_err(|error| error.to_string())?,
+    );
+    let leaf = CertificateDer::from(
+        BASE64_STANDARD
+            .decode(TLS_LEAF_DER)
+            .map_err(|error| error.to_string())?,
+    );
+    let key = PrivateKeyDer::try_from(
+        BASE64_STANDARD
+            .decode(TLS_LEAF_KEY_DER)
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut tls = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|error| error.to_string())?
+        .with_no_client_auth()
+        .with_single_cert(vec![leaf], key)
+        .map_err(|error| error.to_string())?;
+    tls.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let acceptor = TlsAcceptor::from(Arc::new(tls));
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|error| error.to_string())?;
+    let address = listener.local_addr().map_err(|error| error.to_string())?;
+    let server_errors = errors.clone();
+    let handle = tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                return;
+            };
+            let acceptor = acceptor.clone();
+            let errors = server_errors.clone();
+            tokio::spawn(async move {
+                let mut stream = match acceptor.accept(stream).await {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        errors.lock().unwrap().push(format!("tls: {error}"));
+                        return;
+                    }
+                };
+                let mut backend = match TcpStream::connect(backend_address).await {
+                    Ok(backend) => backend,
+                    Err(error) => {
+                        errors.lock().unwrap().push(format!("backend: {error}"));
+                        return;
+                    }
+                };
+                if let Err(error) = tokio::io::copy_bidirectional(&mut stream, &mut backend).await {
+                    errors.lock().unwrap().push(format!("proxy: {error}"));
+                }
+            });
+        }
+    });
+    Ok((
+        format!("https://idp.test:{}/mcp", address.port()),
+        address,
+        root,
+        received,
+        errors,
+        traffic,
+        handle,
+        backend_handle,
+    ))
 }
 
 fn client() -> SafeRmcpClient {
@@ -170,7 +330,7 @@ fn client() -> SafeRmcpClient {
 
 #[tokio::test]
 async fn real_rmcp_server_lists_calls_normalizes_and_closes_per_operation() {
-    let (url, received, listed, server) = spawn_server().await.unwrap();
+    let (url, received, listed, _traffic, server) = spawn_server().await.unwrap();
     let client = client();
     let tools = client.list_tools(&url, None).await.unwrap();
     assert_eq!(tools.len(), 6);
@@ -284,6 +444,336 @@ async fn unreachable_server_is_an_error_not_an_empty_catalog() {
     );
 }
 
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL 与本机 TLS：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn custom_admin_private_egress_is_db_bound_refreshes_and_retires_atomically() {
+    let admin = harness::admin_config(
+        "custom_admin_private_egress_is_db_bound_refreshes_and_retires_atomically",
+    );
+    harness::with_temp_database(&admin, "mcpadmin", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let outcome = async {
+            let mut pg = pool.get().await.map_err(|error| error.to_string())?;
+            baseline::apply(&pg)
+                .await
+                .map_err(|error| error.to_string())?;
+            native::apply(&mut pg)
+                .await
+                .map_err(|error| error.to_string())?;
+            pg.batch_execute(
+                "INSERT INTO public.users(id,email,auth_generation)
+                   VALUES('mcp-admin','mcp-admin@example.test',0);
+                 INSERT INTO public.user_roles(user_id,role)
+                   VALUES('mcp-admin','admin');
+                 INSERT INTO public.agents(id,name,type,configuration)
+                   VALUES('mcp-holder','MCP Holder','remote_ag_ui','{}');",
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+
+            let (
+                endpoint,
+                address,
+                root,
+                _received,
+                tls_errors,
+                tls_traffic,
+                tls_server,
+                backend_server,
+            ) = spawn_tls_server().await?;
+            let direct_dialer = SafeDialer::with_extra_roots(
+                EgressPolicy::new(
+                    CidrAllowlist::parse_exact(["127.0.0.1/32"])
+                        .map_err(|error| error.to_string())?,
+                ),
+                Arc::new(LocalResolver(address)),
+                [root.clone()],
+            )
+            .map_err(|error| error.to_string())?;
+            direct_dialer
+                .validate_destination(
+                    &url::Url::parse(&endpoint).map_err(|error| error.to_string())?,
+                    SchemePolicy::HttpsOnly,
+                )
+                .await
+                .map_err(|error| format!("direct destination control: {error:?}"))?;
+            direct_dialer
+                .execute(
+                    SafeHttpRequest::get(
+                        url::Url::parse(&endpoint).map_err(|error| error.to_string())?,
+                        SchemePolicy::HttpsOnly,
+                        SafeHttpBudget::new(64 * 1024, std::time::Duration::from_secs(2))
+                            .map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?,
+                )
+                .await
+                .map_err(|error| format!("direct TLS HTTP control: {error:?}"))?;
+            let direct_result = SafeRmcpClient::new(
+                direct_dialer,
+                SchemePolicy::HttpsOnly,
+                Some(std::time::Duration::from_secs(2)),
+            )
+            .list_tools(&endpoint, None)
+            .await;
+            let direct_tools = match direct_result {
+                Ok(tools) => tools,
+                Err(error) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    return Err(format!(
+                        "direct TLS RMCP control: {error:?}; server={:?}; traffic={:?}",
+                        tls_errors.lock().unwrap(),
+                        tls_traffic.lock().unwrap()
+                    ));
+                }
+            };
+            if direct_tools.len() != 6 {
+                return Err(format!(
+                    "direct TLS RMCP tool count: {}",
+                    direct_tools.len()
+                ));
+            }
+            let dialer = SafeDialer::with_extra_roots(
+                EgressPolicy::default(),
+                Arc::new(LocalResolver(address)),
+                [root],
+            )
+            .map_err(|error| error.to_string())?;
+            let rmcp = SafeRmcpClient::new(
+                dialer.clone(),
+                SchemePolicy::HttpsOnly,
+                Some(std::time::Duration::from_secs(2)),
+            );
+            let catalog = Arc::new(
+                PostgresMcpCatalog::new(pool.clone(), rmcp, vec![0x91; 32])
+                    .map_err(|error| error.to_string())?,
+            );
+            let vault = CredentialRecordVault::single_key(
+                TenantId::new("mcp-admin-tenant"),
+                KeyVersion::new(1),
+                WrappingKey::from_bytes(vec![0x92; 32]).map_err(|error| error.to_string())?,
+            );
+            let credential_id = uuid::Uuid::now_v7();
+            let encrypted = vault
+                .seal(
+                    &credential_id,
+                    SecretKind::Mcp,
+                    SecretPrincipal::Deployment,
+                    SecretPrincipal::Service(ServiceId::new("private-notes")),
+                    &SecretBytes::new(b"deployment-bearer-canary".to_vec()),
+                )
+                .map_err(|error| error.to_string())?;
+            pg.execute(
+                "INSERT INTO public.credentials(
+                   id,kind,provider,encrypted_value,key_id,metadata)
+                 VALUES($1,'mcp','private-notes',$2,'mcp-admin-test','{}')",
+                &[&credential_id, &encrypted],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            let broker = Arc::new(PostgresMcpCredentialBroker::new(
+                pool.clone(),
+                vault.clone(),
+            ));
+            let connections = PostgresMcpConnections::new(
+                pool.clone(),
+                vault.clone(),
+                McpOAuthClient::new(dialer, SchemePolicy::HttpsOnly),
+                catalog,
+                DeploymentId::new("mcp-admin-deployment"),
+                TenantId::new("mcp-admin-tenant"),
+                vec![0x93; 32],
+                vec![0x91; 32],
+                None,
+                None,
+                SchemePolicy::HttpsOnly,
+            )
+            .map_err(|error| error.to_string())?
+            .with_mcp_credentials(broker);
+            let auth = AuthContextBuilder::from_verified_session(
+                DeploymentId::new("mcp-admin-deployment"),
+                TenantId::new("mcp-admin-tenant"),
+                ActorId::new("mcp-admin"),
+                AuthGeneration::new(0),
+                false,
+            )
+            .with_roles([Role::Admin])
+            .build();
+            let mut registration = McpCustomServerRegistration {
+                id: "private-notes".to_owned(),
+                title: "Private notes".to_owned(),
+                url: endpoint.clone(),
+                credential_id: Some(credential_id.to_string()),
+                egress_allow_cidrs: Vec::new(),
+            };
+            let denied = connections
+                .add_custom_server(&auth, &registration)
+                .await
+                .expect_err("private destination without explicit CIDR must fail closed");
+            if denied.to_string() != "mcp_connection_unavailable" {
+                return Err(format!("unexpected private-egress refusal: {denied}"));
+            }
+            let denied_page = connections
+                .list_admin_page(&auth)
+                .await
+                .map_err(|error| format!("denied admin page: {error}"))?;
+            if denied_page.servers.len() != 1
+                || denied_page.servers[0].last_error.as_deref() != Some("mcp_catalog_unavailable")
+                || !denied_page.servers[0].tools.is_empty()
+            {
+                return Err(format!("failed refresh projection drift: {denied_page:?}"));
+            }
+
+            registration.egress_allow_cidrs = vec!["127.0.0.1/32".to_owned()];
+            let added = connections
+                .add_custom_server(&auth, &registration)
+                .await
+                .map_err(|error| format!("authorized custom add: {error}"))?;
+            if added.catalog_generation != 1 || added.tool_count != 6 {
+                return Err(format!("custom server refresh drift: {added:?}"));
+            }
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "INSERT INTO public.plugin_grants(
+                   kind,ref,agent_id,granted_by,state,catalog_generation,schema_hash,effect,
+                   transport_fingerprint,credential_generation)
+                 SELECT 'mcp','private-notes/search_issues','mcp-holder','mcp-admin','active',
+                        s.catalog_generation,t.schema_hash,t.effect,
+                        s.catalog_transport_fingerprint,coalesce(s.credential_generation,0)
+                   FROM public.mcp_servers s JOIN public.mcp_tools t ON t.server_id=s.id
+                  WHERE s.id='private-notes' AND t.name='search_issues'",
+                &[],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            let granted_page = connections
+                .list_admin_page(&auth)
+                .await
+                .map_err(|error| format!("granted admin page: {error}"))?;
+            let search = granted_page.servers[0]
+                .tools
+                .iter()
+                .find(|tool| tool.name == "search_issues")
+                .ok_or("search tool missing from admin page")?;
+            if search.granted_to != ["mcp-holder"]
+                || granted_page.bots_may_call_back
+                || granted_page.catalogue.len() != 1
+            {
+                return Err(format!(
+                    "admin page grant/catalogue drift: {granted_page:?}"
+                ));
+            }
+
+            registration.egress_allow_cidrs =
+                vec!["127.0.0.1/32".to_owned(), "10.0.0.0/8".to_owned()];
+            let rotated_credential_id = uuid::Uuid::now_v7();
+            let rotated_encrypted = vault
+                .seal(
+                    &rotated_credential_id,
+                    SecretKind::Mcp,
+                    SecretPrincipal::Deployment,
+                    SecretPrincipal::Service(ServiceId::new("private-notes")),
+                    &SecretBytes::new(b"rotated-deployment-bearer".to_vec()),
+                )
+                .map_err(|error| error.to_string())?;
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            pg.execute(
+                "INSERT INTO public.credentials(
+                   id,kind,provider,encrypted_value,key_id,metadata)
+                 VALUES($1,'mcp','private-notes',$2,'mcp-admin-rotated','{}')",
+                &[&rotated_credential_id, &rotated_encrypted],
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            drop(pg);
+            registration.credential_id = Some(rotated_credential_id.to_string());
+            let policy_changed = connections
+                .add_custom_server(&auth, &registration)
+                .await
+                .map_err(|error| format!("egress policy update: {error}"))?;
+            if policy_changed.catalog_generation != 2 || policy_changed.suspended_grants != 1 {
+                return Err(format!(
+                    "egress fingerprint did not suspend old grant: {policy_changed:?}"
+                ));
+            }
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            let old_retired: bool = pg
+                .query_one(
+                    "SELECT revoked_at IS NOT NULL FROM public.credentials WHERE id=$1",
+                    &[&credential_id],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if !old_retired {
+                return Err("replaced MCP credential remained active".to_owned());
+            }
+            drop(pg);
+            let page = connections
+                .list_admin_page(&auth)
+                .await
+                .map_err(|error| format!("suspended admin page: {error}"))?;
+            if page.servers[0].egress_allow_cidrs != ["10.0.0.0/8", "127.0.0.1/32"]
+                || page.servers[0]
+                    .tools
+                    .iter()
+                    .any(|tool| !tool.granted_to.is_empty())
+            {
+                return Err(format!(
+                    "canonical egress/suspension projection drift: {page:?}"
+                ));
+            }
+
+            connections
+                .remove_server(&auth, "private-notes")
+                .await
+                .map_err(|error| format!("server removal: {error}"))?;
+            let pg = pool.get().await.map_err(|error| error.to_string())?;
+            let counts = pg
+                .query_one(
+                    "SELECT
+                       (SELECT count(*)::bigint FROM public.mcp_servers
+                         WHERE id='private-notes') AS servers,
+                       (SELECT count(*)::bigint FROM public.mcp_tools
+                         WHERE server_id='private-notes') AS tools,
+                       (SELECT count(*)::bigint FROM public.plugin_grants
+                         WHERE ref='private-notes/search_issues') AS grants,
+                       (SELECT count(*)::bigint FROM public.credentials
+                         WHERE id IN ($1,$2) AND revoked_at IS NOT NULL) AS retired,
+                       (SELECT count(*)::bigint FROM public.audit_events
+                         WHERE event_type='configuration.changed'
+                           AND target_type='mcp_server' AND target_id='private-notes'
+                           AND row_hash IS NOT NULL) AS audits",
+                    &[&credential_id, &rotated_credential_id],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let observed = (
+                counts.try_get::<_, i64>("servers").unwrap_or(-1),
+                counts.try_get::<_, i64>("tools").unwrap_or(-1),
+                counts.try_get::<_, i64>("grants").unwrap_or(-1),
+                counts.try_get::<_, i64>("retired").unwrap_or(-1),
+                counts.try_get::<_, i64>("audits").unwrap_or(-1),
+            );
+            if observed != (0, 0, 0, 2, 4) {
+                return Err(format!("removal/audit closure drift: {observed:?}"));
+            }
+            tls_server.abort();
+            backend_server.abort();
+            Ok(())
+        }
+        .await;
+        pool.close();
+        outcome
+    })
+    .await;
+}
+
 #[test]
 fn pure_result_projection_preserves_whitespace_next_to_real_content() {
     let result = normalize_result(
@@ -317,7 +807,7 @@ async fn catalog_generation_suspends_missing_and_changed_grants_without_auto_rev
             native::apply(&mut pg)
                 .await
                 .map_err(|error| error.to_string())?;
-            let (url, _received, listed, server) = spawn_server().await?;
+            let (url, _received, listed, _traffic, server) = spawn_server().await?;
             let search = RealMcpServer::tools().remove(0);
             let schema = Value::Object((*search.input_schema).clone());
             let schema_hash = openbot_domain::audit::hash::Sha256Digest::of(
@@ -341,8 +831,9 @@ async fn catalog_generation_suspends_missing_and_changed_grants_without_auto_rev
             pg.execute(
                 "INSERT INTO public.mcp_servers(
                    id,title,vendor,url,provenance,catalog_generation,catalog_hash,
-                   catalog_transport_fingerprint
-                 ) VALUES('notes','Notes','notes',$1,'custom',0,repeat('0',64),repeat('0',64))",
+                   catalog_transport_fingerprint,egress_allow_cidrs
+                 ) VALUES('notes','Notes','notes',$1,'custom',0,repeat('0',64),repeat('0',64),
+                          ARRAY['127.0.0.1/32'])",
                 &[&url],
             )
             .await
@@ -479,7 +970,7 @@ async fn catalog_generation_suspends_missing_and_changed_grants_without_auto_rev
             .await
             .map_err(|error| error.to_string())?;
             pg.execute(
-                "UPDATE public.mcp_servers SET provenance='custom-v2' WHERE id='notes'",
+                "UPDATE public.mcp_servers SET vendor='notes-v2' WHERE id='notes'",
                 &[],
             )
             .await
@@ -506,7 +997,7 @@ async fn catalog_generation_suspends_missing_and_changed_grants_without_auto_rev
                 || transport_changed.suspended_grants != 1
             {
                 return Err(format!(
-                    "transport/provenance suspension drift: {transport_changed:?}"
+                    "transport/vendor suspension drift: {transport_changed:?}"
                 ));
             }
             let pg = pool.get().await.map_err(|error| error.to_string())?;
@@ -564,7 +1055,7 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             native::apply(&mut pg)
                 .await
                 .map_err(|error| error.to_string())?;
-            let (url, received, _listed, server) = spawn_server().await?;
+            let (url, received, _listed, _traffic, server) = spawn_server().await?;
             pg.execute(
                 "INSERT INTO public.users(id,email,auth_generation)
                    VALUES('actor-mcp','actor-mcp@example.test',0)",
@@ -626,8 +1117,9 @@ async fn server_side_tools_cover_no_grant_vendor_schema_real_rmcp_audit_and_poli
             .await
             .map_err(|error| error.to_string())?;
             pg.execute(
-                "INSERT INTO public.mcp_servers(id,title,vendor,url,provenance)
-                   VALUES('notes','Notes','notes',$1,'custom')",
+                "INSERT INTO public.mcp_servers(
+                   id,title,vendor,url,provenance,egress_allow_cidrs)
+                   VALUES('notes','Notes','notes',$1,'custom',ARRAY['127.0.0.1/32'])",
                 &[&url],
             )
             .await

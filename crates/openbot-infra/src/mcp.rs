@@ -33,8 +33,8 @@ use zeroize::Zeroizing;
 use openbot_domain::audit::hash::Sha256Digest;
 
 use crate::net::safe_http::{
-    AuthorizationValue, McpHttpMethod, SafeDialer, SafeHttpBudget, SafeHttpError, SafeHttpRequest,
-    SafeHttpStreamResponse, SchemePolicy,
+    AuthorizationValue, CidrAllowlist, EgressPolicy, McpHttpMethod, SafeDialer, SafeHttpBudget,
+    SafeHttpError, SafeHttpRequest, SafeHttpStreamResponse, SchemePolicy,
 };
 
 /// Parity timeout for `tools/list`.
@@ -187,6 +187,17 @@ impl SafeRmcpClient {
             dialer,
             scheme_policy,
             stall_timeout,
+        }
+    }
+
+    /// Bind one server operation to its administrator-authorized exact CIDR set. The base client's
+    /// resolver/TLS material is retained, so deterministic tests and production share one path.
+    #[must_use]
+    pub(crate) fn with_egress_allowlist(&self, allowlist: CidrAllowlist) -> Self {
+        Self {
+            dialer: self.dialer.with_egress_policy(EgressPolicy::new(allowlist)),
+            scheme_policy: self.scheme_policy,
+            stall_timeout: self.stall_timeout,
         }
     }
 
@@ -919,7 +930,7 @@ fn bounded_sse(
 }
 
 fn map_safe_http(error: SafeHttpError) -> StreamableHttpError<SafeRmcpHttpError> {
-    let _ = error;
+    tracing::debug!(code = %error, "MCP SafeDialer operation failed");
     StreamableHttpError::Client(SafeRmcpHttpError::Transport)
 }
 

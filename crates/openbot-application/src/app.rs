@@ -37,8 +37,8 @@ use crate::components::{
 };
 use crate::mcp_connections::{
     McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
-    begin_mcp_oauth, disconnect_mcp_connection, list_mcp_connections, refresh_mcp_server,
-    register_mcp_oauth_client,
+    add_custom_mcp_server, begin_mcp_oauth, disconnect_mcp_connection, list_mcp_admin_page,
+    list_mcp_connections, refresh_mcp_server, register_mcp_oauth_client, remove_mcp_server,
 };
 use crate::ports::{
     AgentAdministration, AgentDirectory, AuditReader, ChannelAdministration, ChannelReader,
@@ -764,6 +764,9 @@ where
             AppCommand::ListMcpConnections => Ok(AppReply::McpConnections(
                 list_mcp_connections(self.mcp_connections.as_ref(), auth).await?,
             )),
+            AppCommand::ListMcpAdminPage => Ok(AppReply::McpAdminPage(
+                list_mcp_admin_page(self.mcp_connections.as_ref(), auth).await?,
+            )),
             AppCommand::BeginMcpOAuth {
                 server_id,
                 return_to,
@@ -790,6 +793,12 @@ where
             )),
             AppCommand::AddCuratedMcpServer { key } => Ok(AppReply::McpServerMutation(
                 add_curated_mcp_server(self.mcp_connections.as_ref(), auth, &key).await?,
+            )),
+            AppCommand::AddCustomMcpServer(registration) => Ok(AppReply::McpServerMutation(
+                add_custom_mcp_server(self.mcp_connections.as_ref(), auth, &registration).await?,
+            )),
+            AppCommand::RemoveMcpServer { server_id } => Ok(AppReply::McpServerRemoved(
+                remove_mcp_server(self.mcp_connections.as_ref(), auth, &server_id).await?,
             )),
             AppCommand::RefreshMcpServer { server_id } => Ok(AppReply::McpServerMutation(
                 refresh_mcp_server(self.mcp_connections.as_ref(), auth, &server_id).await?,

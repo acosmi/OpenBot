@@ -317,6 +317,7 @@ pub async fn assemble_postgres_application(
             SchemePolicy::HttpsOnly,
         )
         .map_err(|_| fail("mcp_connections"))?
+        .with_mcp_credentials(mcp_credentials.clone())
         .with_google_drive_oauth(drive_oauth),
     );
     let tool_approvals = Arc::new(

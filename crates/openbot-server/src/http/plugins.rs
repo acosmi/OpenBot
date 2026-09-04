@@ -10,14 +10,30 @@ use openbot_application::{McpOAuthCallbackInput, McpOAuthCallbackOutcome};
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
 use openbot_contracts::mcp::{
-    McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
-    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
+    McpAdminPage, McpConnectionDisconnected, McpConnections, McpCustomServerRegistration,
+    McpOAuthAuthorization, McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo,
+    McpServerMutation, McpServerRemoved,
 };
 use serde::Deserialize;
 
 use crate::auth::{Authenticated, OriginAuthenticated, SensitiveAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
+
+/// `GET /api/plugins`; one typed deployment/actor projection shared with Desktop.
+pub async fn list_get(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+) -> Result<(HeaderMap, Json<McpAdminPage>), HttpError> {
+    match state
+        .application()
+        .execute(auth, AppCommand::ListMcpAdminPage)
+        .await?
+    {
+        AppReply::McpAdminPage(page) => Ok((no_store_headers(), Json(page))),
+        _ => Err(application_contract_error()),
+    }
+}
 
 /// `GET /api/plugins/connections`.
 pub async fn connections_get(
@@ -152,6 +168,56 @@ pub async fn servers_post(
         .await?
     {
         AppReply::McpServerMutation(receipt) => Ok(Json(receipt)),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/plugins/servers/custom`; exact CIDRs are explicit admin authority, not hostnames.
+pub async fn servers_custom_post(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    body: Result<Json<McpCustomServerRegistration>, JsonRejection>,
+) -> Result<(HeaderMap, Json<McpServerMutation>), HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    let Json(registration) = body.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "custom MCP server body 解析失败");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(
+            resolved.into_context(),
+            AppCommand::AddCustomMcpServer(registration),
+        )
+        .await?
+    {
+        AppReply::McpServerMutation(receipt) => Ok((no_store_headers(), Json(receipt))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `DELETE /api/plugins/servers/{id}`; grant and credential retirement is one DB transaction.
+pub async fn servers_delete(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+) -> Result<(HeaderMap, Json<McpServerRemoved>), HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    match state
+        .application()
+        .execute(
+            resolved.into_context(),
+            AppCommand::RemoveMcpServer { server_id },
+        )
+        .await?
+    {
+        AppReply::McpServerRemoved(receipt) => Ok((no_store_headers(), Json(receipt))),
         _ => Err(application_contract_error()),
     }
 }
@@ -300,10 +366,13 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum Call {
         List(ActorId),
+        AdminPage(ActorId),
         Begin(ActorId, String, McpOAuthReturnTo),
         Disconnect(ActorId, String),
         Register(ActorId, String),
         Add(ActorId, String),
+        AddCustom(ActorId, String, Vec<String>),
+        Remove(ActorId, String),
         Refresh(ActorId, String),
     }
 
@@ -332,6 +401,23 @@ mod tests {
                 redirect_uri: Some(
                     "https://api.example.test/api/plugins/oauth/callback".to_owned(),
                 ),
+            })
+        }
+
+        async fn list_admin_page(
+            &self,
+            auth: &AuthContext,
+        ) -> Result<McpAdminPage, McpConnectionError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(Call::AdminPage(auth.actor().clone()));
+            Ok(McpAdminPage {
+                catalogue: Vec::new(),
+                bots_may_call_back: false,
+                servers: Vec::new(),
+                skills: Vec::new(),
+                redirect_uri: None,
             })
         }
 
@@ -394,6 +480,36 @@ mod tests {
                 tool_count: 4,
                 suspended_grants: 0,
             })
+        }
+
+        async fn add_custom_server(
+            &self,
+            auth: &AuthContext,
+            registration: &McpCustomServerRegistration,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            self.calls.lock().unwrap().push(Call::AddCustom(
+                auth.actor().clone(),
+                registration.id.clone(),
+                registration.egress_allow_cidrs.clone(),
+            ));
+            Ok(McpServerMutation {
+                server_id: registration.id.clone(),
+                catalog_generation: 1,
+                tool_count: 2,
+                suspended_grants: 0,
+            })
+        }
+
+        async fn remove_server(
+            &self,
+            auth: &AuthContext,
+            server_id: &str,
+        ) -> Result<McpServerRemoved, McpConnectionError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(Call::Remove(auth.actor().clone(), server_id.to_owned()));
+            Ok(McpServerRemoved::success())
         }
 
         async fn refresh_server(
@@ -603,6 +719,67 @@ mod tests {
                     McpOAuthReturnTo::Settings
                 ),
                 Call::Disconnect(ActorId::new("actor"), "notes".to_owned())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_registry_routes_are_typed_no_store_and_guard_before_custom_body_parse() {
+        let connections = FakeConnections::default();
+        let page = send(
+            registration_app(connections.clone()),
+            Method::GET,
+            "/api/plugins",
+            None,
+        )
+        .await;
+        assert_eq!(page.status(), StatusCode::OK);
+        assert_eq!(page.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+
+        let forbidden = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/servers/custom",
+            None,
+            "{",
+        )
+        .await;
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+        let malformed = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/servers/custom",
+            Some("https://app.example.test"),
+            r#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp","host":"forbidden"}"#,
+        )
+        .await;
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        let added = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/servers/custom",
+            Some("https://app.example.test"),
+            r#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp","egressAllowCidrs":["10.0.0.0/8"]}"#,
+        )
+        .await;
+        assert_eq!(added.status(), StatusCode::OK);
+        assert_eq!(added.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+        let removed = send(
+            registration_app(connections.clone()),
+            Method::DELETE,
+            "/api/plugins/servers/private-notes",
+            Some("https://app.example.test"),
+        )
+        .await;
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(removed.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+        assert_eq!(
+            connections.calls.lock().unwrap().as_slice(),
+            [
+                Call::AdminPage(ActorId::new("actor")),
+                Call::AddCustom(
+                    ActorId::new("actor"),
+                    "private-notes".to_owned(),
+                    vec!["10.0.0.0/8".to_owned()]
+                ),
+                Call::Remove(ActorId::new("actor"), "private-notes".to_owned())
             ]
         );
     }
