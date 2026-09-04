@@ -8,10 +8,10 @@ recount:
     expect: 55
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
-    expect: 21
+    expect: 20
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 34
+    expect: 35
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
@@ -608,18 +608,19 @@ entries:
   - id: agui-official-event-family
     upstream: "-"
     label: 新增
-    target: fixtures/agui/official-event-family.jsonl -> openbot_agent::agui
+    target: fixtures/agui/official-event-family.jsonl -> openbot_agent::agui::AguiDecoder
     owner: openbot-agent
     test_id: T-FIX-0010
-    migration_rule: "n/a: 上游 OpenBot 无 AG-UI golden，事件族真源是 AG-UI 官方 schema"
-    status: todo
-    evidence: docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md §21.2「official AG-UI golden 完整事件族；malformed event 不崩 UI」
+    migration_rule: "n/a: official AG-UI schema corpus; third-party wire stays in Agent decoder, not domain/contracts"
+    status: done
+    evidence: "cargo test -p openbot-agent --test agui_official_fixture --locked；official Git tree/blob + registry source metadata check"
+    done_evidence: "Batch116/R192: fixed @ag-ui/core0.0.57 schema source54f13419…，六个官方文件Git blob/bytes/SHA逐项复核；fixture39行/33type/三scenario，4426B/SHA256 6c13dad31a54a85a7c38b2d8e7623b9799a31d546eb0502d58000244708ec5ab。官方EventType/fixture/Rust三向集合相等，公共AguiDecoder lifecycle与variant/encoder回放5/0/0、Agent57/0/0，Clippy/fmt/shim gate绿；exact source inventory/regular files/byte count/hash均校验。"
     notes: >-
-      需录：AG-UI 官方 schema 声明的**每一个**事件类型各至少一条合法样本，一行一个 JSON，jsonl。
-      录制前提：AG-UI 规范版本已钉死（同 PR 写进 tools/pins.toml 或 v3 §1.2），并拿到官方 schema 文件。
-      验收判据：官方 schema 里的事件类型集合与本文件出现过的 type 集合逐字相等（多一个少一个都红，是**集合相等**不是包含）；每条能被 openbot-contracts 的类型反序列化成功。
-      阻塞原因：本机没有 AG-UI 官方 schema 的固定副本，本仓也无网络取证；用记忆里的事件名单会正好犯 §21.2 要求避免的错误。
-      解除条件：把 AG-UI 官方 schema 以固定版本 vendored 进仓（或写进 pins.toml 并由 xtask 校验 sha256），随后可离线生成。
+      这是本项目按官方schema构造的protocol corpus，不是vendor recorded/live，也不是PG/UI/transport证明。
+      package manifest原字节以package-manifest.json存储，仓内非Grok package.json仍只有一个。
+      不改变v4原AG-UI仓库oracle e42bdbed…；此fixture消费独立钉版SDK0.0.57的发布schema。
+      Registry与attestation payload已核对source commit，但Sigstore签名未验证；不得宣称SLSA验签通过。
+      MIT版权行原样保留；G8归属文字确认、T-FIX-0011/0012与G4整关仍未闭合。
   - id: agui-malformed-and-drift
     upstream: "-"
     label: 新增

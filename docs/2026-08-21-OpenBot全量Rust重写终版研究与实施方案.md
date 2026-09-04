@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R191，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R192，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -727,6 +727,11 @@ OpenAI 官方把开源 Codex 描述为可嵌入产品的 agent harness，并把 
 | Grok MCP | generation/liveness/ingest limits 的测试案例 | 较旧 protocol pin 和直接作为本项目 runtime |
 
 不复制 Codex/Grok 的完整 session loop、产品 DTO、账号、终端 UI 或消费者 OAuth。Grok Build 中来自 Codex/OpenCode 的工具必须追溯原始来源，不能重复记作 xAI 独立来源。
+
+Batch116/R192把T-FIX-0010补成固定SDK0.0.57官方schema corpus：发布来源commit54f13419…的六个官方
+文件完整保留，原package manifest仅改为资料文件名；33个EventType与fixture及Rust三向相等，39行按三个
+独立lifecycle回放。它不替换§1.2的e42bdbed…仓库oracle、不冒充vendor recorded/live或PG/UI/transport；
+Sigstore签名未验证，G8归属文字确认与T-FIX-0011/0012继续保留。
 
 ## 8. Tool、Policy、Approval 与 Audit
 
@@ -2307,7 +2312,7 @@ R191新增的受控Alpha按§24.2单独准入，不视为G0–G8通过或§25完
   navigation/tab/跨scope矩阵，故整关不勾。Batch114仅补Server bandwidth/control-rate/heartbeat/idle/write预算，真实macOS Engine默认计时已验证，不代表2秒Engine停流。Batch115随后已闭合已注册source的需求驱动pause/resume与真实Server WS停流；完整产品仍缺上述production装配和性能/平台证据。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账（`cargo xtask parity-check` 复算）：parity **873/1712 done（839 todo）**，fixtures **34/55 done（21 todo）**；v4 overlay carry/revalidate/split/superseded = **1273/431/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账（`cargo xtask parity-check` 复算）：parity **873/1712 done（839 todo）**，fixtures **35/55 done（20 todo）**；v4 overlay carry/revalidate/split/superseded = **1273/431/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
 
 ### 24.2 受控Alpha准入（R191新增，尚未通过）
 
@@ -2707,6 +2712,8 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R190 | §11.2–§11.3 / §12.4–§12.6 / §24 G7（2026-09-04 Batch115：Screen需求生命周期） | R189关闭socket预算，但last-viewer断开还不触发Engine停流；直接复用stop_session会销毁document。排队前铸input receipt无法保证实际执行时epoch仍有效；旧source/owner只按key清理也会误删同key替代registration。 | protocol/epoch4新增closed screencast enabled与state ACK；pause排frame/ACK且保留window/document，resume继续sequence。ScreenHub以active viewer需求通知唯一ScreenEngineOwner，pending ticket不计；source/owner cleanup比较registration；detach不等旧viewer drop。队列16、操作750ms、shutdown1500ms；只排非权威ticket，执行时持当前ControlService锁重验并写pipe，wire超时后退役不复用。 | Computer lib67/0/0、fixture5/0/0；三条真实host case通过（含双role需求旅程），paused received=ack=4且250ms不增、scroll400/renderer保留、stale epoch拒绝；Server233/0/0、真实WS idle→pause1/0/0（48.21秒），Contracts105、xtask103；Clippy/Windows Clippy/Linux check、fmt、bundle/verify绿。shim595/600，ASAR30069/header d795c804…；T-FIX-0055=1411B/SHA256 2a510ef6…，fixtures34/21/55，parity仍873/839/1712。production ComputerManager/auth hook、Desktop、fps/paint/fallback、Windows/runsc仍缺，不关闭G7或P1/P2。无deps/schema/UI/npm/Grok/workflow变化，未跑CI/Actions或远端写入。详见Batch115。 |
 
 | R191 | §0.5 / §3 / §11.4 / §19 / §23.2 / §24–§25（2026-09-04：用户裁决开源共建与受控Alpha） | 仅沿全部v4待办推进会延后首个可用版本；用户明确要尽早可用后续升级、社区按v4共建并由维护者审PR，首版工作台/Agent工具/浏览器/原生电脑三类均必需。自有项目旧checkout不代表最新已合并Windows实现，复制与开源许可也不是同一件事。 | 新增独立受控Alpha方向与三条真实用户故事，平台分腿实际准入；保留全部v4 G0–G8/DoD和todo分母，不称Alpha通过=v4完成。按固定已合并提交复制最小Rust模块评估，不改源仓；明确最新已有macOS/Windows实现，移植后各自重验。开源先做范围/授权/whole-tree审计及许可证同步，社区任务固定基线/允许路径/T-ID/证据，维护者独立复算后合入；R63、固定Grok树、安全不变量不放宽。 | 用户本轮明确选择受控试用、三类能力均必需、开源共建、只复制不改源仓。只读Git与合并PR核实纠正旧平台判断；副本独立编译后坐标5/风险30/序列化14/图像15通过，Windows x64 check通过；均不是本产品runtime/签名证据。当前LICENSE仍专有，未发布或上传复制源码，未派发Actions、未合并PR。研究方案记录候选A0–A7、复用与社区流程；后续逐条实现，v4总目标保持active。 |
+
+| R192 | §7.5 / §21.2 / §23.1 / §24 G4（2026-09-04 Batch116：AG-UI官方事件fixture主控验收） | 十一事件族production已落但T-FIX-0010仍缺正式schema corpus。外部候选虽5项测试绿，却新增第二份package.json，测试只比fixture/Rust而未读官方枚举，报告byte/scenario漂移且从作者字段推定版权人/SLSA验签。 | 只将单候选dd7febe7…的允许文件导入主控分支并修正；官方package原字节改名为惰性package-manifest.json，加入official/fixture/Rust三向集合、exact库存/regular-file/bytes/hash验证；去宿主路径、按实物重写交付报告。SDK0.0.57发布schema54f13419…单独登记，不替换v4仓库oracle e42bdbed…；官方MIT原文保留，不发明版权人，Registry/SLSA payload与签名验证分开。 | 官方六文件Git tree/blob/bytes/SHA逐项独立复核，Registry元数据及attestation payload source commit吻合，Sigstore验签仍false。fixture39行/33type/3scenario=4426B/SHA256 6c13dad3…；公共AguiDecoder/encoder回放5/0/0、Agent57/0/0，Clippy/fmt/shim595/600与单manifest绿。T-FIX-0010 done后fixtures35/20/55，parity仍873/839/1712、overlay1273/431/2/6；SPDX独立schema source后57项。仅协议corpus，不是vendor录制或PG/UI/网络证明；T-FIX-0011/0012、G4/G6/G8与归属文字确认仍未完成。无production/Cargo/native/UI/Grok/workflow或远端写入。详见Batch116。 |
 
 ### 28.2 复核通过、原样保留的断言
 

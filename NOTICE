@@ -8,7 +8,7 @@ NOTICE —— 第三方组件声明
 - 本文件只声明**第三方**组件；它们各自按原始条款授权，LICENSE 的「保留一切权利」
   不适用于、也不能收紧它们。
 - 机器可读的完整来源登记（固定 commit、SHA-256、purl、逐条取证记录）在
-  `provenance/sources.spdx.json`（SPDX 2.3，56 个 package）。**那份是真源**，
+  `provenance/sources.spdx.json`（SPDX 2.3，57 个 package）。**那份是真源**，
   本文件是它面向发行包的人类可读投影；两者不一致时以 SPDX 文件与实际取证为准，
   并同 PR 修订本文件。
 - 契约依据：v3 方案 §23.1「代码许可」条 1–7、§23.2、§23.4。
@@ -794,8 +794,9 @@ xmlsec/xmlsec-openssl 原件中与本闭包相关的一节：
 7.6 AG-UI 版权行不完整
   ag-ui-protocol/ag-ui @ e42bdbedc27cdf982ed9b5de904215acd73a17fb 的 LICENSE 是
   标准 MIT，但版权行逐字为 `Copyright (c) 2025` —— **只有年份，没有权利人姓名**。
-  照抄会得到一条不完整的归属声明。AG-UI 目前只作为协议 oracle 使用、未复制文件，
-  所以尚未构成随包义务；一旦复用其源码，必须先向上游确认权利人写法再写进本文件。
+  该原文没有指定姓名，不得自行用package作者名补成版权人。R192已为协议fixture保存
+  0.0.57版本的官方schema资料，根MIT原文逐字保留于下方§10及fixture目录。
+  版权归属文字的进一步确认仍为G8事项，不因协议fixture通过而标为完成。
 
 7.7 Node.js 许可证未取证
   本轮只从 Electron release body 确认了版本号 24.18.1，**没有**拉取 Node 的
@@ -839,3 +840,35 @@ xmlsec/xmlsec-openssl 原件中与本闭包相关的一节：
    等于永远不会被补全。
 4. 禁止在本文件中写入未经本轮实际取回的许可证正文。缺就是缺，写清楚缺什么。
 5. 本仓 public：本文件不得出现内部路径、私有 URL、凭据或真账号样本。
+
+================================================================================
+10. AG-UI 0.0.57 官方schema资料（Batch116/R192）
+================================================================================
+
+来源：ag-ui-protocol/ag-ui @ 54f13419055b4d0f442c71e1efab18b310982ce1。
+仅保留用于离线协议fixture的六份官方文件，文件清单与逐字节摘要在
+fixtures/agui/official-event-family.provenance.json；不作为TypeScript/Node生产依赖。
+本地package-manifest.json只是上游package.json的原始字节改名，不参与构建。
+下列为同commit的LICENSE原文。版权行缺少姓名的进一步确认仍见§7.6，不自行补造。
+
+MIT License
+
+Copyright (c) 2025
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

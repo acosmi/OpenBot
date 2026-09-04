@@ -1143,6 +1143,26 @@
       "comment": "v4 §24 G4 OpenAI adapter recorded-trace证据。官方commit时间2026-09-02T18:33:36Z；source record=13,211 bytes、Git blob SHA-1 3272bc4116a32b4472d21f68b41ce23ce363c02c。Entries[0].ResponseBody为36段，逐字节UTF-8拼接后9,070 bytes/SHA-256 fe38a7a044f8de33d441d0c9bf426e1291b1401bb9099ef419f62651b50d2927，与本仓SSE fixture cmp相等。源record已将Authorization、日期、组织/项目/request id等置Sanitized；本仓进一步完全排除RequestHeaders/RequestBody/Variables，只保留response body与content-type/openai-version provenance。该fixture为测试证据、不进入产品网络请求或模型上下文。",
       "homepage": "https://github.com/openai/openai-dotnet",
       "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-ag-ui-core-schema-0-0-57",
+      "name": "@ag-ui/core official schema fixture",
+      "versionInfo": "0.0.57",
+      "downloadLocation": "git+https://github.com/ag-ui-protocol/ag-ui.git@54f13419055b4d0f442c71e1efab18b310982ce1",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2025",
+      "sourceInfo": "Selected source files under sdks/typescript/packages/core plus root LICENSE; exact paths/Git blobs/bytes/SHA-256 in fixtures/agui/official-event-family.provenance.json. package.json bytes are preserved as package-manifest.json, never executed.",
+      "comment": "Batch116/R192: public protocol corpus source, not a Node dependency or vendor recording. Independently checked six source blobs against the official fixed tree. This does not replace the v4 original repository oracle e42bdbed…; the fixture targets the separately pinned published SDK version 0.0.57. The upstream copyright line omits the holder name; preserve it verbatim, do not invent one. NOTICE attribution clarification remains a G8 item. Registry/SLSA URLs are provenance references, not a claim of verified Sigstore signatures.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40ag-ui/core@0.0.57"
+        }
+      ],
+      "primaryPackagePurpose": "SOURCE"
     }
   ],
   "relationships": [
@@ -1487,6 +1507,12 @@
       "relationshipType": "OTHER",
       "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-ts-agent-mcp",
       "comment": "复用候选；当前无授权，默认走 clean-room 重写。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-ag-ui-core-schema-0-0-57",
+      "comment": "Test-only official AG-UI schema and synthetic protocol corpus; not linked into production."
     }
   ]
 }
