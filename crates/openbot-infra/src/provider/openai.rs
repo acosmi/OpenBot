@@ -658,12 +658,25 @@ impl ResponsesDecoder {
             }
             "response.function_call_arguments.done" => {
                 let item_id = string_field(&value, "item_id")?;
-                let name = string_field(&value, "name")?;
+                let name = match value.get("name") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(name))
+                        if !name.is_empty() && name.len() <= MAX_PROVIDER_FIELD_BYTES =>
+                    {
+                        Some(name.as_str())
+                    }
+                    _ => return Err(ProviderFailure::InvalidResponse),
+                };
                 let arguments = string_field(&value, "arguments")?;
                 let tool = self
                     .tools
                     .remove(item_id)
                     .ok_or(ProviderFailure::InvalidResponse)?;
+                if value.get("output_index").is_some()
+                    && u32_field(&value, "output_index")? != tool.index
+                {
+                    return Err(ProviderFailure::InvalidResponse);
+                }
                 output.push(tool.complete(name, arguments)?);
             }
             "response.completed" => {
@@ -846,11 +859,20 @@ impl ToolAccumulator {
         }
     }
 
-    fn complete(self, name: &str, arguments: &str) -> Result<ProviderEvent, ProviderFailure> {
-        if self.name.as_deref().is_some_and(|known| known != name)
-            || (!self.arguments.is_empty() && self.arguments != arguments)
-            || name.is_empty()
-        {
+    fn complete(
+        self,
+        completed_name: Option<&str>,
+        arguments: &str,
+    ) -> Result<ProviderEvent, ProviderFailure> {
+        let name = match (self.name.as_deref(), completed_name) {
+            (Some(known), Some(completed)) if known != completed => {
+                return Err(ProviderFailure::InvalidResponse);
+            }
+            (Some(known), _) => known,
+            (None, Some(completed)) => completed,
+            (None, None) => return Err(ProviderFailure::InvalidResponse),
+        };
+        if !self.arguments.is_empty() && self.arguments != arguments {
             return Err(ProviderFailure::InvalidResponse);
         }
         let arguments: Value =
