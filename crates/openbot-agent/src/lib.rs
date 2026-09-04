@@ -42,14 +42,15 @@ pub use agui::{
     apply_patch as apply_agui_json_patch, encode_run_agent_input,
 };
 pub use gateway::{
-    AgentToolGateway, AgentToolInvokeError, AgentToolInvoker, AgentToolReply,
-    AuthorizedAgentToolGateway, NoAgentToolInvoker, RemoteAgentToolInvoker,
+    AgentToolGateway, AgentToolInvokeError, AgentToolInvoker, AgentToolReply, AgentToolScheduling,
+    AuthorizedAgentToolGateway, MAX_AGENT_TOOL_RESOURCE_LOCKS, NoAgentToolInvoker,
+    RemoteAgentToolInvoker,
 };
 pub use provider_router::ProviderRouter;
 pub use remote_provider::RemoteAguiProvider;
 pub use retry::{RetryingProvider, RetryingProviderConfig};
 pub use runtime::{
     AGENT_SHUTDOWN_DEADLINE, BuiltInAgentConfig, BuiltInAgentRuntime, DEFAULT_AGENT_CONCURRENCY,
-    DEFAULT_AGENT_QUEUE_CAPACITY, DEFAULT_LEASE_RENEW_INTERVAL, DEFAULT_RUN_DEADLINE,
-    TOOL_STEP_CAP,
+    DEFAULT_AGENT_QUEUE_CAPACITY, DEFAULT_AGENT_TOOL_CONCURRENCY, DEFAULT_LEASE_RENEW_INTERVAL,
+    DEFAULT_RUN_DEADLINE, MAX_AGENT_TOOL_CONCURRENCY, TOOL_STEP_CAP,
 };
