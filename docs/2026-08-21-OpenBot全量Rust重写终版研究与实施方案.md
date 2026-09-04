@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R190，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R191，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -66,6 +66,25 @@ Electron/Chromium browser engine（无业务裁决权）
 ### 0.4 交付基线
 
 （R125，2026-08-28）**12 人 / 52 周的日历基线作废**：§19 改为只用入口条件、产物与退出证据控制的阶段门（P0-code → P1 → … 与既有 G3 / G4 / G6 余项并行），不再给没有实证的周数。两次不参与编码的独立安全审计保留：第一次仍按 §24 G2，第二次在 G8 之前、P3 之后。范围约束不变：任何新增数据库、额外 MCP 协议面、第二浏览器 driver、移动端、Firecracker、ACP、新模型专用集成，或**来自参考源的产品能力**（R115），都不得挤入本次重写范围。
+
+### 0.5 受控Alpha与开源共建方向（2026-09-04，R191）
+
+用户明确要求尽早上线可用、逐步补全v4，并将本项目面向社区开源共建，由维护者审查PR。
+首批为本人及少量受邀用户的受控本机试用；首版必须同时具备基础工作台、AI对话/工具闭环、
+浏览器和原生电脑操控。原生OS桌面控制超出既有Browser/file/shell parity的部分标为新增，不能借旧T-ID勾选。
+
+本方向新增独立Alpha里程碑，**不改变§25所定义的v4完整完成条件**；G0–G8、parity/fixtures和平台/外审等
+仍全量保留。Alpha支持面按准确平台、部署和数据边界声明，哪个平台先实际通过适用闸门，哪个先准入。
+不能把单用户服务共享给多用户，也不允许P0/P1、跨scope泄漏、audit-before-action违规或数据损坏以Alpha豁免。
+
+复用自有项目采用固定提交复制到本项目处理，禁止修改源仓。最新已合并基线已核实有macOS和Windows
+原生实现，旧checkout的macOS-only判断已撤销；复制副本独立编译/纯测试不替代OpenBot真实平台验收。
+最小Rust底层、browser request/timeout、supervisor/sandbox/exec依§11.4逐文件授权和差量适配；
+不复制完整TS宿主、账户桥、证书、密钥或产品身份，不引入npm、第二条browser生产链或第二套权限真源。
+
+执行方案与候选Alpha闸门见`docs/2026-09-04-OpenBot开源共建与渐进上线策略-研究方案.md`。
+开源方向已确认，但具体许可授权、干净发行文件范围及whole-tree审计须按§23.2完成；本轮不把复制评估
+或公开可见性当成已授予开源许可。R63、Grok固定树与不擅自合并/上传的既有边界保持。
 
 ## 1. 第一真源与证据冻结
 
@@ -1835,7 +1854,11 @@ native thread final cutover 是明确的 writer switch。之后不回到 Intelli
 
 ### 23.2 新项目发行许可
 
-本次实施默认是内部、闭源、all-rights-reserved 的第一方新代码；MIT/Apache 等第三方代码按各自条款分区随包。该默认值避免在权利人尚未书面决定时擅自把 CrabCode 专有资产开放。若未来开源，必须另立书面发布决议并重新做 whole-tree license audit，不在本次重写中自动发生。
+R191之前的默认许可为内部、闭源、all-rights-reserved；根LICENSE/Cargo/SPDX目前仍反映该实际状态。
+2026-09-04用户已明确本项目面向社区开源共建，授权开始开源范围、复用与发布准备。实施时须形成书面发布
+决议并完成拟公开文件的whole-tree license audit，再同批更新LICENSE/Cargo/SPDX/NOTICE/README。
+第一方可授权代码的具体开源许可与第三方各自许可分区处理；本地复制自有模块的授权不自动把整个源项目
+或其中第三方材料公开。原项目源码、参考树、身份/签名材料与服务凭据不得不经审查混入开源发行物。
 
 ### 23.3 服务许可不等于源码许可
 
@@ -1927,7 +1950,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - 供应链、NOTICE、brand、runbook 全通过；
 - engine bundle：`cargo xtask engine verify` 绿（sha256 / fuses / ASAR integrity / rebrand / release epoch），Electron `autoUpdater` 禁用，零 npm（R117）；Linux Desktop tier-2 不进入签名 / 更新判据（R122）。
 
-任何闸门失败都只能修复后重跑，不能以“后续补齐”进入下一发布阶段。
+上述G0–G8是v4完整发行闸门，失败只能修复后重跑，不能以“后续补齐”宣称完整发行通过。
+R191新增的受控Alpha按§24.2单独准入，不视为G0–G8通过或§25完成。
 
 ### 24.1 实施状态勾选（更新至 2026-09-04；进度证据以机器台账为准）
 
@@ -2284,6 +2308,20 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
 当前总台账（`cargo xtask parity-check` 复算）：parity **873/1712 done（839 todo）**，fixtures **34/55 done（21 todo）**；v4 overlay carry/revalidate/split/superseded = **1273/431/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+
+### 24.2 受控Alpha准入（R191新增，尚未通过）
+
+仅适用于本人/少量受邀者的独立本地实例，按实际通过的平台逐腿开放；不适用于公开注册、多租户SaaS、
+跨用户共享桌面执行端或承诺v4全能力的正式发行。首版同时覆盖工作台、Agent工具、浏览器和原生电脑闭环。
+
+必须实际通过：A0支持范围/来源许可；A1干净环境启动与真实readiness；A2真provider/PG/GUI工具审批取消；
+A3指定浏览器target与接管/Stop；A4本产品身份的原生权限、动作receipt、结果变化及输入互斥/取消；
+A5数据/secret/像素出网与远端不可扩权；A6新数据backup/restore/checksum与升级失败恢复；
+A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R191研究方案§8。
+
+这些A项均未在本次规划中自动勾选。P0/P1、跨scope泄漏、audit-before-action违规和不可恢复数据错误零容忍；
+未具备的能力不能在Alpha支持矩阵中启用。A项不替代G8的production-scale迁移、完整签名或外审证据。
+原G0–G8及parity/fixtures全部待办保留，总目标只有§25完整满足时才可complete。
 
 ## 25. Definition of Done
 
@@ -2667,6 +2705,8 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R189 | §12.4、§12.6 / §24 G7 / §25（2026-09-04 Batch114：Server Screen transport budget与实际范围复盘） | R188只有active+pending cap和单帧上限，socket写入无deadline、出帧不证明客户端存活、控制帧和带宽未限。旧文与fixture又把8MiB单源上限误写为16MiB，未有对应常量断言。用户要求先按实际状态重排全范围，再继续实施及外部候选验收。 | 新增host-only整数纳秒byte bucket：8MiB/s、burst=8,388,676；control burst20/10条每秒。10秒Ping与30秒idle仅由当前8-byte challenge的单次matching Pong续期；frame/Ping/Pong写1秒、close100ms、write buffer0/最大一帧+1KiB，首帧发送后释放引用。保持ExactOrigin/ticket/query/base-only/closed failure，超限断线释放permit。纠正旧fixture的字节上限并加单源断言；全范围工作单固定actual R188、全部todo、依赖与外部阻塞；三个外部任务书只预留不冒充执行。 | Server233/0/0（Screen11）；真实macOS Engine默认heartbeat/idle1/0/0，49.92秒；all-target/all-feature Clippy、fmt、WebSocket guard、engine bundle/verify与Grok inventory绿。T-FIX-0054=1301B/SHA256 `2e7a844f…`，修正T-FIX-0053=1969B/`7f9f021c…`。parity仍873/839/1712，fixtures33/21/54，overlay1273/431/2/6，0违反；恢复固定上游后strict160/0/0。中间bind权限、dev-only依赖及fixture错误均修复后重跑。没有kernel send-buffer saturation、PG cookie/TLS、production source/auth hook、Desktop、2秒Engine停流、fps/paint/跨平台证据，T-BROP-0027与完整G7仍红。无Cargo/schema/UI/shim/npm/Grok/workflow变化，未跑CI/Actions；详见Batch114。 |
 
 | R190 | §11.2–§11.3 / §12.4–§12.6 / §24 G7（2026-09-04 Batch115：Screen需求生命周期） | R189关闭socket预算，但last-viewer断开还不触发Engine停流；直接复用stop_session会销毁document。排队前铸input receipt无法保证实际执行时epoch仍有效；旧source/owner只按key清理也会误删同key替代registration。 | protocol/epoch4新增closed screencast enabled与state ACK；pause排frame/ACK且保留window/document，resume继续sequence。ScreenHub以active viewer需求通知唯一ScreenEngineOwner，pending ticket不计；source/owner cleanup比较registration；detach不等旧viewer drop。队列16、操作750ms、shutdown1500ms；只排非权威ticket，执行时持当前ControlService锁重验并写pipe，wire超时后退役不复用。 | Computer lib67/0/0、fixture5/0/0；三条真实host case通过（含双role需求旅程），paused received=ack=4且250ms不增、scroll400/renderer保留、stale epoch拒绝；Server233/0/0、真实WS idle→pause1/0/0（48.21秒），Contracts105、xtask103；Clippy/Windows Clippy/Linux check、fmt、bundle/verify绿。shim595/600，ASAR30069/header d795c804…；T-FIX-0055=1411B/SHA256 2a510ef6…，fixtures34/21/55，parity仍873/839/1712。production ComputerManager/auth hook、Desktop、fps/paint/fallback、Windows/runsc仍缺，不关闭G7或P1/P2。无deps/schema/UI/npm/Grok/workflow变化，未跑CI/Actions或远端写入。详见Batch115。 |
+
+| R191 | §0.5 / §3 / §11.4 / §19 / §23.2 / §24–§25（2026-09-04：用户裁决开源共建与受控Alpha） | 仅沿全部v4待办推进会延后首个可用版本；用户明确要尽早可用后续升级、社区按v4共建并由维护者审PR，首版工作台/Agent工具/浏览器/原生电脑三类均必需。自有项目旧checkout不代表最新已合并Windows实现，复制与开源许可也不是同一件事。 | 新增独立受控Alpha方向与三条真实用户故事，平台分腿实际准入；保留全部v4 G0–G8/DoD和todo分母，不称Alpha通过=v4完成。按固定已合并提交复制最小Rust模块评估，不改源仓；明确最新已有macOS/Windows实现，移植后各自重验。开源先做范围/授权/whole-tree审计及许可证同步，社区任务固定基线/允许路径/T-ID/证据，维护者独立复算后合入；R63、固定Grok树、安全不变量不放宽。 | 用户本轮明确选择受控试用、三类能力均必需、开源共建、只复制不改源仓。只读Git与合并PR核实纠正旧平台判断；副本独立编译后坐标5/风险30/序列化14/图像15通过，Windows x64 check通过；均不是本产品runtime/签名证据。当前LICENSE仍专有，未发布或上传复制源码，未派发Actions、未合并PR。研究方案记录候选A0–A7、复用与社区流程；后续逐条实现，v4总目标保持active。 |
 
 ### 28.2 复核通过、原样保留的断言
 
