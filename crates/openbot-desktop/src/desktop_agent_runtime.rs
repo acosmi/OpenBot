@@ -11,8 +11,8 @@ use openbot_application::tenant::package::{
     BuiltInProviderSource, LoadedTenantPackage, TenantAgentConfiguration, TenantAgentType,
 };
 use openbot_application::{
-    AgentAudit, ApplicationService, NoRunDispatchConsumer, ProviderAdapter, RunDispatchConsumer,
-    RunRuntime, remember_provider_tool,
+    AgentAudit, ApplicationService, NoRunDispatchConsumer, ProviderAdapter,
+    RemoteInterruptCoordinator, RunDispatchConsumer, RunRuntime, remember_provider_tool,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use openbot_domain::remote_callback::RemoteRunAssertionSigner;
@@ -178,6 +178,7 @@ pub(crate) struct DesktopAgentHostInput {
     pub(crate) package: LoadedTenantPackage,
     pub(crate) application: Arc<dyn ApplicationService>,
     pub(crate) runtime: Arc<dyn RunRuntime>,
+    pub(crate) remote_interrupts: Arc<dyn RemoteInterruptCoordinator>,
     pub(crate) credential_vault: CredentialRecordVault,
     pub(crate) audit_key: Vec<u8>,
     pub(crate) remote_assertions: Arc<RemoteRunAssertionSigner>,
@@ -214,6 +215,7 @@ pub(crate) fn start_desktop_agent_host(
         package,
         application,
         runtime,
+        remote_interrupts,
         credential_vault,
         audit_key,
         remote_assertions,
@@ -310,12 +312,13 @@ pub(crate) fn start_desktop_agent_host(
             .with_sandboxed_components(sandboxed_components)
             .with_agent_credential_vault(credential_vault),
         );
-        let agent = BuiltInAgentRuntime::start(
+        let agent = BuiltInAgentRuntime::start_with_remote_interrupts(
             Arc::clone(&runtime),
             context,
             provider,
             tools,
             audit,
+            remote_interrupts,
             BuiltInAgentConfig {
                 run_deadline: budgets.run_deadline,
                 ..BuiltInAgentConfig::default()

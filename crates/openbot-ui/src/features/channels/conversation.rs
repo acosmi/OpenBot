@@ -21,6 +21,9 @@ use openbot_contracts::components::{
     compiled_component_parameter_schema,
 };
 use openbot_contracts::ids::{BotId, RunId, ThreadId};
+use openbot_contracts::remote_interrupt::{
+    PendingRemoteInterrupt, RemoteInterruptAnswer, RemoteInterruptAnswerStatus,
+};
 use openbot_contracts::sandboxed::is_sandboxed_component_name;
 use openbot_contracts::text::trim_ecmascript;
 use sha2::{Digest, Sha256};
@@ -32,14 +35,14 @@ use crate::api::desktop_transport::{
 use crate::api::mint_run_id;
 #[cfg(target_arch = "wasm32")]
 use crate::api::{
-    answer_component_human_decision, begin_thread_run, cancel_thread_run,
-    list_pending_component_human_decisions, load_thread_conversation, mint_thread_id,
-    thread_event_stream_path,
+    answer_component_human_decision, answer_remote_interrupt, begin_thread_run, cancel_thread_run,
+    list_pending_component_human_decisions, list_pending_remote_interrupts,
+    load_thread_conversation, mint_thread_id, thread_event_stream_path,
 };
 use crate::features::agents::{AgentPresence, AgentPresenceState};
 use crate::features::channels::composer::draft::{Segment, to_draft};
 use crate::features::channels::composer::queue::{QueueAction, QueuedMessage, reduce_queue};
-use crate::features::gallery::{ConversationComponent, HumanDecisionCard};
+use crate::features::gallery::{ConversationComponent, GalleryFrame, HumanDecisionCard};
 use crate::features::threads::tool_name::read_tool_name;
 use crate::features::threads::tool_result::for_display;
 use crate::i18n::{t, t_string, use_i18n};
@@ -561,6 +564,11 @@ fn ConversationSurface(
         human_decision_answers,
         human_decision_load_error,
     );
+    let remote_interrupts = RwSignal::new(Vec::<PendingRemoteInterrupt>::new());
+    let remote_interrupt_in_flight = RwSignal::new(BTreeSet::<String>::new());
+    let remote_interrupt_failures = RwSignal::new(BTreeSet::<String>::new());
+    let remote_interrupt_load_error = RwSignal::new(false);
+    install_remote_interrupt_sync(remote_interrupts, remote_interrupt_load_error);
     Effect::new(move |_| {
         let snapshot = state.get();
         let durable_provider_calls = snapshot
@@ -777,6 +785,43 @@ fn ConversationSurface(
             }
         },
     );
+    let answer_remote = UnsyncCallback::new(
+        move |(request_id, answer): (String, RemoteInterruptAnswer)| {
+            if remote_interrupt_in_flight.with_untracked(|ids| ids.contains(&request_id)) {
+                return;
+            }
+            remote_interrupt_in_flight.update(|ids| {
+                ids.insert(request_id.clone());
+            });
+            remote_interrupt_failures.update(|ids| {
+                ids.remove(&request_id);
+            });
+            #[cfg(target_arch = "wasm32")]
+            leptos::task::spawn_local_scoped_with_cancellation(async move {
+                match answer_remote_interrupt(&request_id, &answer).await {
+                    Ok(_) => remote_interrupts.update(|interrupts| {
+                        interrupts.retain(|interrupt| interrupt.request_id != request_id);
+                    }),
+                    Err(_) => remote_interrupt_failures.update(|ids| {
+                        ids.insert(request_id.clone());
+                    }),
+                }
+                remote_interrupt_in_flight.update(|ids| {
+                    ids.remove(&request_id);
+                });
+            });
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let _ = answer;
+                remote_interrupt_failures.update(|ids| {
+                    ids.insert(request_id.clone());
+                });
+                remote_interrupt_in_flight.update(|ids| {
+                    ids.remove(&request_id);
+                });
+            }
+        },
+    );
     let submit = UnsyncCallback::new(move |_| {
         if send_disabled.get_untracked() {
             return;
@@ -902,6 +947,18 @@ fn ConversationSurface(
             .filter(|decision| active.as_ref() == Some(&decision.run_id))
             .collect::<Vec<_>>()
     });
+    let visible_remote_interrupts = Signal::derive(move || {
+        let active = state.get().active_run_id;
+        remote_interrupts
+            .get()
+            .into_iter()
+            .filter(|interrupt| {
+                active
+                    .as_ref()
+                    .is_some_and(|run| run.as_str() == interrupt.run_id)
+            })
+            .collect::<Vec<_>>()
+    });
 
     view! {
         <div class="ob-channel-conversation">
@@ -924,6 +981,9 @@ fn ConversationSurface(
             <Show when=move || human_decision_load_error.get() && state.get().active_run_id.is_some()>
                 <p class="ob-alert" role="status">{move || t!(i18n, gallery.decision_load_error)}</p>
             </Show>
+            <Show when=move || remote_interrupt_load_error.get() && state.get().active_run_id.is_some()>
+                <p class="ob-alert" role="status">{move || t!(i18n, channels.remote_interrupt_load_error)}</p>
+            </Show>
             <MessageScroller
                 id="channel-transcript"
                 aria_label=move || t_string!(i18n, channels.transcript_label).to_owned()
@@ -935,6 +995,7 @@ fn ConversationSurface(
                                 && state.get().messages.is_empty()
                                 && state.get().streaming_text.is_empty()
                                 && visible_human_decisions.get().is_empty()
+                                && visible_remote_interrupts.get().is_empty()
                         }>
                             <p class="ob-page-empty">{move || t!(i18n, channels.conversation_empty)}</p>
                         </Show>
@@ -972,6 +1033,22 @@ fn ConversationSurface(
                                 }
                             }
                         />
+                        <For
+                            each=move || visible_remote_interrupts.get()
+                            key=|interrupt| interrupt.request_id.clone()
+                            children={
+                                let agent_name = agent_name.clone();
+                                move |interrupt| view! {
+                                    <PendingRemoteInterruptMessage
+                                        interrupt
+                                        agent_name=agent_name.clone()
+                                        in_flight=remote_interrupt_in_flight
+                                        failures=remote_interrupt_failures
+                                        on_answer=answer_remote
+                                    />
+                                }
+                            }
+                        />
                         <Show when=move || !state.get().streaming_text.is_empty()>
                             {move || state.get().active_run_id.map(|run_id| view! {
                                 <MessageScrollerItem
@@ -1005,6 +1082,7 @@ fn ConversationSurface(
                             busy.get()
                                 && state.get().streaming_text.is_empty()
                                 && visible_human_decisions.get().is_empty()
+                                && visible_remote_interrupts.get().is_empty()
                                 && !matches!(
                                     state.get().active_run_state,
                                     Some(
@@ -1148,6 +1226,121 @@ fn ConversationSurface(
                 <p class="ob-page-empty">{move || t!(i18n, channels.detail_inactive)}</p>
             </Show>
         </div>
+    }
+}
+
+#[component]
+fn PendingRemoteInterruptMessage(
+    interrupt: PendingRemoteInterrupt,
+    agent_name: String,
+    in_flight: RwSignal<BTreeSet<String>>,
+    failures: RwSignal<BTreeSet<String>>,
+    on_answer: UnsyncCallback<(String, RemoteInterruptAnswer)>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    let request_id = interrupt.request_id.clone();
+    let submitting_id = interrupt.request_id.clone();
+    let failure_id = interrupt.request_id.clone();
+    let resolve_id = interrupt.request_id.clone();
+    let cancel_id = interrupt.request_id.clone();
+    let title = interrupt.untrusted_reason;
+    let message = interrupt.untrusted_message.unwrap_or_default();
+    let has_message = !message.is_empty();
+    let message = StoredValue::new(message);
+    let agent_seed = interrupt.agent_id;
+    let payload = RwSignal::new("{}".to_owned());
+    let invalid_payload = RwSignal::new(false);
+    let submitting = Signal::derive(move || in_flight.get().contains(&submitting_id));
+    let failed = Signal::derive(move || failures.get().contains(&failure_id));
+    let resolve = on_answer;
+    let cancel = on_answer;
+    let avatar_name = StoredValue::new(agent_name);
+    view! {
+        <MessageScrollerItem message_id=transcript_dom_id(&format!("interrupt:{request_id}"))>
+            <Message aria_label=move || t_string!(i18n, channels.assistant_message_label).to_owned()>
+                <MessageAvatar>
+                    <span aria-hidden="true">
+                        <Avatar
+                            principal_id=agent_seed.clone()
+                            name=avatar_name.get_value()
+                            size=AvatarSize::Small
+                        />
+                    </span>
+                </MessageAvatar>
+                <MessageContent>
+                    <MessageHeader>{avatar_name.get_value()}</MessageHeader>
+                    <div data-remote-interrupt="" data-untrusted-remote-content="">
+                        <GalleryFrame
+                            title=title
+                            caption=move || t_string!(i18n, channels.remote_interrupt_caption).to_owned()
+                        >
+                            <Show when=move || has_message>
+                                <p class="ob-gallery-decision-summary">{message.get_value()}</p>
+                            </Show>
+                            <div class="ob-gallery-decision-controls">
+                                <Textarea
+                                    value=payload
+                                    aria_label=move || t_string!(i18n, channels.remote_interrupt_payload_label).to_owned()
+                                    disabled=submitting
+                                    invalid=invalid_payload
+                                />
+                                <Show when=move || invalid_payload.get()>
+                                    <p class="ob-gallery-decision-error" role="alert">
+                                        {move || t!(i18n, channels.remote_interrupt_payload_invalid)}
+                                    </p>
+                                </Show>
+                                <Show when=move || failed.get()>
+                                    <p class="ob-gallery-decision-error" role="alert">
+                                        {move || t!(i18n, channels.remote_interrupt_answer_error)}
+                                    </p>
+                                </Show>
+                                <div class="ob-gallery-decision-actions">
+                                    <Button
+                                        variant=ButtonVariant::Primary
+                                        size=ButtonSize::Small
+                                        disabled=submitting
+                                        loading=submitting
+                                        on_activate=move |_| {
+                                            let raw = trim_ecmascript(&payload.get_untracked()).to_owned();
+                                            let parsed = if raw.is_empty() {
+                                                Ok(None)
+                                            } else {
+                                                serde_json::from_str::<serde_json::Value>(&raw).map(Some)
+                                            };
+                                            match parsed {
+                                                Ok(value) => {
+                                                    invalid_payload.set(false);
+                                                    resolve.run((
+                                                        resolve_id.clone(),
+                                                        RemoteInterruptAnswer {
+                                                            status: RemoteInterruptAnswerStatus::Resolved,
+                                                            payload: value,
+                                                        },
+                                                    ));
+                                                }
+                                                Err(_) => invalid_payload.set(true),
+                                            }
+                                        }
+                                    >{move || t!(i18n, channels.remote_interrupt_submit)}</Button>
+                                    <Button
+                                        variant=ButtonVariant::Ghost
+                                        size=ButtonSize::Small
+                                        disabled=submitting
+                                        on_activate=move |_| cancel.run((
+                                            cancel_id.clone(),
+                                            RemoteInterruptAnswer {
+                                                status: RemoteInterruptAnswerStatus::Cancelled,
+                                                payload: None,
+                                            },
+                                        ))
+                                    >{move || t!(i18n, channels.remote_interrupt_cancel)}</Button>
+                                </div>
+                            </div>
+                        </GalleryFrame>
+                    </div>
+                </MessageContent>
+            </Message>
+        </MessageScrollerItem>
     }
 }
 
@@ -1306,6 +1499,30 @@ fn install_component_human_decision_sync(
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = (decisions, answers);
+        load_error.set(true);
+    }
+}
+
+fn install_remote_interrupt_sync(
+    interrupts: RwSignal<Vec<PendingRemoteInterrupt>>,
+    load_error: RwSignal<bool>,
+) {
+    #[cfg(target_arch = "wasm32")]
+    leptos::task::spawn_local_scoped_with_cancellation(async move {
+        loop {
+            match list_pending_remote_interrupts().await {
+                Ok(page) => {
+                    interrupts.set(page.interrupts);
+                    load_error.set(false);
+                }
+                Err(_) => load_error.set(true),
+            }
+            component_human_decision_poll_delay().await;
+        }
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = interrupts;
         load_error.set(true);
     }
 }

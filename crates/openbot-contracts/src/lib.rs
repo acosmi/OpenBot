@@ -87,6 +87,7 @@ pub mod mcp;
 pub mod memory;
 pub mod people;
 pub mod policy;
+pub mod remote_interrupt;
 pub mod sandboxed;
 pub mod telemetry;
 pub mod text;

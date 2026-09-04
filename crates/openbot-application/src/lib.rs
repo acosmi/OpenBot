@@ -82,6 +82,7 @@ pub mod intelligence_import;
 pub mod mcp_connections;
 pub mod ports;
 pub mod provider;
+pub mod remote_interrupt;
 pub mod run_cost_budget;
 pub mod run_runtime;
 pub mod sandboxed_components;
@@ -151,17 +152,19 @@ pub use ports::{
 };
 pub use provider::{
     AgentAudit, AgentAuditError, AgentAuditKind, AgentAuthorizationError, AgentAuthorizationSource,
-    AgentContextError, AgentContextSource, NoAgentAudit, PROVIDER_REMOTE_INTERRUPT_MAX_ITEMS,
-    PROVIDER_REMOTE_PROJECTION_MAX_BYTES, PROVIDER_REMOTE_RESUME_PAYLOAD_MAX_BYTES,
-    ProviderAdapter, ProviderBillingFamily, ProviderCostUpperBound, ProviderEvent, ProviderFailure,
-    ProviderMessage, ProviderMessageRole, ProviderOutputKind, ProviderPortError, ProviderRateCard,
-    ProviderRateCardError, ProviderRateCardInput, ProviderRemoteInterrupt,
-    ProviderRemoteInterruptBatch, ProviderRemoteInterruptInput, ProviderRemoteProjection,
-    ProviderRemoteProjectionError, ProviderRemoteProjectionKind, ProviderRemoteResume,
-    ProviderRemoteResumeEntry, ProviderRemoteResumeStatus, ProviderRequest, ProviderRoute,
-    ProviderSession, ProviderToolCall, ProviderToolDefinition, ProviderUsage,
-    RemoteAguiAuthorization, RemoteAguiEventStream, RemoteAguiRoute, RemoteAguiTransport,
-    RemoteAguiTransportError,
+    AgentContextError, AgentContextSource, NoAgentAudit, NoRemoteInterruptCoordinator,
+    PROVIDER_REMOTE_INTERRUPT_MAX_ITEMS, PROVIDER_REMOTE_PROJECTION_MAX_BYTES,
+    PROVIDER_REMOTE_RESUME_PAYLOAD_MAX_BYTES, ProviderAdapter, ProviderBillingFamily,
+    ProviderCostUpperBound, ProviderEvent, ProviderFailure, ProviderMessage, ProviderMessageRole,
+    ProviderOutputKind, ProviderPortError, ProviderRateCard, ProviderRateCardError,
+    ProviderRateCardInput, ProviderRemoteInterrupt, ProviderRemoteInterruptBatch,
+    ProviderRemoteInterruptInput, ProviderRemoteProjection, ProviderRemoteProjectionError,
+    ProviderRemoteProjectionKind, ProviderRemoteResume, ProviderRemoteResumeEntry,
+    ProviderRemoteResumeStatus, ProviderRequest, ProviderRoute, ProviderSession, ProviderToolCall,
+    ProviderToolDefinition, ProviderUsage, RemoteAguiAuthorization, RemoteAguiEventStream,
+    RemoteAguiRoute, RemoteAguiTransport, RemoteAguiTransportError, RemoteInterruptCoordinator,
+    RemoteInterruptError, RemoteInterruptPending, RemoteInterruptPendingInput,
+    RemoteInterruptResolutionReceipt,
 };
 pub use run_cost_budget::{
     NoRunCostBudgetAdministration, RunCostBudgetAdministration, RunCostBudgetAdministrationError,

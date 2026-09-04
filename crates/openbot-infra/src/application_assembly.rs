@@ -36,6 +36,7 @@ use crate::net::safe_http::{
 use crate::policy::PolicyStore;
 use crate::provider::credential::PostgresOpenAiCredentialSource;
 use crate::provider::openai::{OpenAiApiKey, OpenAiProtocol, OpenAiProvider, OpenAiProviderConfig};
+use crate::remote_interrupt::PostgresRemoteInterruptCoordinator;
 use crate::repo::ChannelRepo;
 use crate::repo::agents::{PostgresAgentAdministration, PostgresAgentDirectory};
 use crate::repo::audit::PostgresAuditReader;
@@ -133,6 +134,7 @@ impl core::fmt::Debug for PostgresApplicationAssemblyInput {
 pub struct PostgresApplicationAssembly {
     pub application: Arc<dyn ApplicationService>,
     pub run_runtime: Arc<dyn RunRuntime>,
+    pub remote_interrupts: Arc<PostgresRemoteInterruptCoordinator>,
     pub mcp_catalog: Arc<PostgresMcpCatalog>,
     pub components: Arc<PostgresComponentAdministration>,
     pub sandboxed_components: Arc<PostgresSandboxedComponentAdministration>,
@@ -147,6 +149,7 @@ impl core::fmt::Debug for PostgresApplicationAssembly {
             .debug_struct("PostgresApplicationAssembly")
             .field("application", &"Arc<dyn ApplicationService>")
             .field("run_runtime", &"Arc<dyn RunRuntime>")
+            .field("remote_interrupts", &"PostgresRemoteInterruptCoordinator")
             .field("mcp_catalog", &"PostgresMcpCatalog")
             .field("components", &"PostgresComponentAdministration")
             .field(
@@ -235,6 +238,14 @@ pub async fn assemble_postgres_application(
             DEFAULT_DISPATCH_CLAIM_DURATION,
         )
         .map_err(|_| fail("run_runtime"))?,
+    );
+    let remote_interrupts = Arc::new(
+        PostgresRemoteInterruptCoordinator::new(
+            pool.clone(),
+            runtime_owner.clone(),
+            audit_key.to_vec(),
+        )
+        .map_err(|_| fail("remote_interrupts"))?,
     );
     let thread_directory = PostgresThreadDirectory::with_runtime(
         pool.clone(),
@@ -387,12 +398,14 @@ pub async fn assemble_postgres_application(
         .with_ui_preferences(ui_preferences)
         .with_run_cost_budgets(Arc::new(PostgresRunCostBudgetAdministration::new(
             pool.clone(),
-        )));
+        )))
+        .with_remote_interrupts(remote_interrupts.clone());
     let application: Arc<dyn ApplicationService> = Arc::new(application);
     let mcp_revocation_reconciler = McpRevocationReconciler::start(mcp_connections.clone());
     Ok(PostgresApplicationAssembly {
         application,
         run_runtime,
+        remote_interrupts,
         mcp_catalog,
         components,
         sandboxed_components,

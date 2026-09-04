@@ -47,6 +47,8 @@ use crate::ports::{
     NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory, PeopleAdministration,
     PolicyAdministration, ThreadDirectory,
 };
+use crate::provider::{NoRemoteInterruptCoordinator, RemoteInterruptCoordinator};
+use crate::remote_interrupt::{list_pending_remote_interrupts, resolve_remote_interrupt};
 use crate::run_cost_budget::{
     NoRunCostBudgetAdministration, RunCostBudgetAdministration, get_run_cost_budget,
     replace_run_cost_budget,
@@ -109,6 +111,7 @@ pub struct OpenBotApplication<
     tool_approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
     ui_preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
     run_cost_budgets: std::sync::Arc<dyn RunCostBudgetAdministration>,
+    remote_interrupts: std::sync::Arc<dyn RemoteInterruptCoordinator>,
     heartbeat_period: Duration,
 }
 
@@ -147,6 +150,7 @@ impl<R>
             tool_approvals: std::sync::Arc::new(NoToolApprovalAdministration),
             ui_preferences: std::sync::Arc::new(NoUiPreferenceAdministration),
             run_cost_budgets: std::sync::Arc::new(NoRunCostBudgetAdministration),
+            remote_interrupts: std::sync::Arc::new(NoRemoteInterruptCoordinator),
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
@@ -176,6 +180,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -203,6 +208,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -230,6 +236,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -261,6 +268,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -288,6 +296,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -315,6 +324,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -345,6 +355,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -443,6 +454,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
         budgets: std::sync::Arc<dyn RunCostBudgetAdministration>,
     ) -> Self {
         self.run_cost_budgets = budgets;
+        self
+    }
+
+    /// Attach durable remote AG-UI interrupt administration shared by runtime and transports.
+    #[must_use]
+    pub fn with_remote_interrupts(
+        mut self,
+        remote_interrupts: std::sync::Arc<dyn RemoteInterruptCoordinator>,
+    ) -> Self {
+        self.remote_interrupts = remote_interrupts;
         self
     }
 
@@ -691,6 +712,20 @@ where
             AppCommand::GetThreadConversation { thread_id } => Ok(AppReply::ThreadConversation(
                 get_thread_conversation(&self.threads, auth, thread_id).await?,
             )),
+            AppCommand::ListPendingRemoteInterrupts => Ok(AppReply::PendingRemoteInterrupts(
+                list_pending_remote_interrupts(self.remote_interrupts.as_ref(), auth).await?,
+            )),
+            AppCommand::ResolveRemoteInterrupt { request_id, answer } => {
+                Ok(AppReply::RemoteInterruptResolved(
+                    resolve_remote_interrupt(
+                        self.remote_interrupts.as_ref(),
+                        auth,
+                        request_id,
+                        answer,
+                    )
+                    .await?,
+                ))
+            }
             AppCommand::RememberMemory(input) => Ok(AppReply::Memory(
                 remember_memory(&self.memory, auth, input).await?,
             )),

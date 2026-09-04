@@ -330,6 +330,10 @@ pub enum AgentEvent {
     HumanRequired,
     /// Human released; the host must durably commit the waiting tool result before resampling.
     HumanReleased,
+    /// A remote AG-UI interrupt batch was durably resolved and a fresh invocation may load context.
+    RemoteResumeReady,
+    /// Durable remote interrupt coordination failed with a closed local failure.
+    RemoteResumeFailed(AgentFailure),
     /// User/deadline cancellation request。
     CancelRequested,
     /// Provider/tool/computer/process children all confirmed stopped。
@@ -369,6 +373,10 @@ impl core::fmt::Debug for AgentEvent {
             Self::ApprovalDenied => f.write_str("ApprovalDenied"),
             Self::HumanRequired => f.write_str("HumanRequired"),
             Self::HumanReleased => f.write_str("HumanReleased"),
+            Self::RemoteResumeReady => f.write_str("RemoteResumeReady"),
+            Self::RemoteResumeFailed(value) => {
+                f.debug_tuple("RemoteResumeFailed").field(value).finish()
+            }
             Self::CancelRequested => f.write_str("CancelRequested"),
             Self::ChildrenStopped => f.write_str("ChildrenStopped"),
             Self::TerminalCommitted => f.write_str("TerminalCommitted"),
@@ -517,6 +525,13 @@ pub fn reduce(
         (AgentPhase::AwaitingHuman, AgentEvent::HumanReleased) => {
             next.phase = AgentPhase::ExecutingTools;
             Vec::new()
+        }
+        (AgentPhase::AwaitingHuman, AgentEvent::RemoteResumeReady) => {
+            next.phase = AgentPhase::Preparing;
+            vec![AgentEffect::LoadContext]
+        }
+        (AgentPhase::AwaitingHuman, AgentEvent::RemoteResumeFailed(failure)) => {
+            begin_terminal(&mut next, failure_terminal(failure))
         }
         (
             AgentPhase::Queued
@@ -711,5 +726,32 @@ mod tests {
         let (preparing, effects) = step(&executing, AgentEvent::ToolResultCommitted);
         assert_eq!(preparing.phase(), AgentPhase::Preparing);
         assert_eq!(effects, [AgentEffect::LoadContext]);
+    }
+
+    #[test]
+    fn remote_interrupt_resume_reloads_context_without_faking_a_tool_exchange() {
+        let mut state = AgentState::queued(RunId::new("run-remote-human"));
+        (state, _) = step(&state, AgentEvent::DispatchActivated);
+        (state, _) = step(&state, AgentEvent::ContextPrepared);
+        let (waiting, effects) = step(&state, AgentEvent::HumanRequired);
+        assert_eq!(waiting.phase(), AgentPhase::AwaitingHuman);
+        assert_eq!(effects, [AgentEffect::AwaitHuman]);
+
+        let (preparing, effects) = step(&waiting, AgentEvent::RemoteResumeReady);
+        assert_eq!(preparing.phase(), AgentPhase::Preparing);
+        assert_eq!(preparing.tool_steps(), 0);
+        assert_eq!(effects, [AgentEffect::LoadContext]);
+
+        let (failed, effects) = step(
+            &waiting,
+            AgentEvent::RemoteResumeFailed(AgentFailure::ProviderGenerationFailed),
+        );
+        assert_eq!(failed.phase(), AgentPhase::CommittingResults);
+        assert_eq!(
+            effects,
+            [AgentEffect::CommitTerminal(AgentTerminal::Failed(
+                AgentFailure::ProviderGenerationFailed
+            ))]
+        );
     }
 }

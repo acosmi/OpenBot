@@ -82,6 +82,14 @@ impl AuditEventType {
     pub const AGENT_RUN_DEADLINE_EXCEEDED: Self = Self("agent.run_deadline_exceeded");
     /// Actor-scoped run cost budget refused before or after a provider sampling.
     pub const AGENT_RUN_COST_BUDGET_REFUSED: Self = Self("agent.run_cost_budget_refused");
+    /// A remote AG-UI interrupt batch became durable before the run waited for a person.
+    pub const AGENT_REMOTE_INTERRUPT_REQUESTED: Self = Self("agent.remote_interrupt_requested");
+    /// The current actor resolved one durable remote AG-UI interrupt.
+    pub const AGENT_REMOTE_INTERRUPT_RESOLVED: Self = Self("agent.remote_interrupt_resolved");
+    /// The current actor cancelled one durable remote AG-UI interrupt.
+    pub const AGENT_REMOTE_INTERRUPT_CANCELLED: Self = Self("agent.remote_interrupt_cancelled");
+    /// The local bounded wait expired one remote AG-UI interrupt.
+    pub const AGENT_REMOTE_INTERRUPT_EXPIRED: Self = Self("agent.remote_interrupt_expired");
     /// Explicit remember tool was refused before execution.
     pub const MEMORY_REMEMBER_REFUSED: Self = Self("memory.remember_refused");
     /// Explicit remember tool committed a memory record.
@@ -156,7 +164,7 @@ impl fmt::Display for AuditEventType {
     }
 }
 
-/// 事件类型全集：上游 57 项 + 本项目新增 deadline/budget/memory/catalog/approval/component 15 项。
+/// 事件类型全集：上游 57 项 + 本项目新增 deadline/budget/memory/catalog/approval/component/interrupt 19 项。
 ///
 /// 顺序也照抄上游，方便逐行对拍。
 pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
@@ -172,6 +180,10 @@ pub const AUDIT_EVENT_TYPES: &[AuditEventType] = &[
     AuditEventType("agent.stream_stalled"),
     AuditEventType("agent.run_deadline_exceeded"),
     AuditEventType("agent.run_cost_budget_refused"),
+    AuditEventType("agent.remote_interrupt_requested"),
+    AuditEventType("agent.remote_interrupt_resolved"),
+    AuditEventType("agent.remote_interrupt_cancelled"),
+    AuditEventType("agent.remote_interrupt_expired"),
     AuditEventType("memory.remember_refused"),
     AuditEventType("memory.remember_succeeded"),
     AuditEventType("memory.remember_failed"),
@@ -292,10 +304,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn catalog_is_upstream_fifty_seven_plus_fifteen_new_and_has_no_duplicates() {
-        assert_eq!(AUDIT_EVENT_TYPES.len(), 72);
+    fn catalog_is_upstream_fifty_seven_plus_nineteen_new_and_has_no_duplicates() {
+        assert_eq!(AUDIT_EVENT_TYPES.len(), 76);
         let unique: BTreeSet<&str> = AUDIT_EVENT_TYPES.iter().map(|t| t.0).collect();
-        assert_eq!(unique.len(), 72, "目录里有重复的事件类型");
+        assert_eq!(unique.len(), 76, "目录里有重复的事件类型");
     }
 
     #[test]

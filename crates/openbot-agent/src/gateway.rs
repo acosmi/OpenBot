@@ -317,6 +317,8 @@ impl AgentToolGateway {
                 | AppReply::ThreadRunCancellation(_)
                 | AppReply::ThreadHistory(_)
                 | AppReply::ThreadConversation(_)
+                | AppReply::PendingRemoteInterrupts(_)
+                | AppReply::RemoteInterruptResolved(_)
                 | AppReply::Memory(_)
                 | AppReply::MemoryControl(_)
                 | AppReply::Memories(_)

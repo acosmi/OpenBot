@@ -55,6 +55,7 @@ pub mod health;
 pub mod memories;
 pub mod metrics;
 pub mod plugins;
+pub mod remote_interrupts;
 pub mod routing;
 pub mod run_cost_budget;
 pub mod sandbox_runner;
@@ -640,6 +641,11 @@ pub fn router(state: ServerState) -> Router {
         .route(
             "/api/me/run-cost-budget",
             get(run_cost_budget::get).put(run_cost_budget::put),
+        )
+        .route("/api/me/remote-interrupts", get(remote_interrupts::get))
+        .route(
+            "/api/me/remote-interrupts/{request_id}",
+            axum::routing::put(remote_interrupts::put),
         )
         .route("/api/admin/status", get(admin::status))
         .route("/api/admin/identity-providers", get(auth_sso::list))

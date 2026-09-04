@@ -55,6 +55,9 @@ use crate::memory::{
 };
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
 use crate::policy::ActionPolicyDocument;
+use crate::remote_interrupt::{
+    PendingRemoteInterrupts, RemoteInterruptAnswer, RemoteInterruptResolved,
+};
 use crate::sandboxed::{
     PublishedSandboxedComponents, SandboxedComponentDeleted, SandboxedComponentResponse,
     SandboxedComponents, SaveSandboxedComponentRequest,
@@ -359,6 +362,17 @@ pub enum AppCommand {
         thread_id: ThreadId,
     },
 
+    /// List current-actor pending remote AG-UI interrupts.
+    ListPendingRemoteInterrupts,
+
+    /// Resolve one server-minted remote AG-UI interrupt handle.
+    ResolveRemoteInterrupt {
+        /// Opaque server-minted handle; remote interrupt ids are not control authority.
+        request_id: String,
+        /// Closed status and bounded optional JSON payload.
+        answer: RemoteInterruptAnswer,
+    },
+
     /// GUI “记住这条”；application 固定 origin=user_action。
     RememberMemory(RememberMemory),
 
@@ -543,6 +557,10 @@ pub enum AppReply {
     ThreadHistory(ThreadHistory),
     /// [`AppCommand::GetThreadConversation`] response.
     ThreadConversation(ThreadConversationSnapshot),
+    /// [`AppCommand::ListPendingRemoteInterrupts`] response.
+    PendingRemoteInterrupts(PendingRemoteInterrupts),
+    /// [`AppCommand::ResolveRemoteInterrupt`] response.
+    RemoteInterruptResolved(RemoteInterruptResolved),
     /// Remember/correct/mutate 后的记录。
     Memory(MemoryRecord),
     /// Actor-scoped runtime memory write control.

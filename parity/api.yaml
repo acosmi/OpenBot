@@ -57,7 +57,7 @@ recount:
     expect: 10
   - command: "grep -c '^  - id: ' parity/api.yaml"
     cwd: "repo"
-    expect: 172
+    expect: 174
   - command: "grep -c 'label: \"parity\"' parity/api.yaml"
     cwd: "repo"
     expect: 139
@@ -66,10 +66,10 @@ recount:
     expect: 7
   - command: "grep -c 'label: \"新增\"' parity/api.yaml || true"
     cwd: "repo"
-    expect: 26
+    expect: 28
   - command: "grep -oE 'T-API-[0-9]{4}' parity/api.yaml | sort -u | wc -l"
     cwd: "repo"
-    expect: 172
+    expect: 174
 entries:
   - id: "health-get"
     upstream: "server/src/app.ts::createApp"
@@ -1888,3 +1888,26 @@ entries:
     done_evidence: "Batch89 trusted Origin在JSON parse前；body full replace为cap:null或exact currency/maxCostMicroUnits，unknown actor字段400，currency恰3位uppercase、amount canonical positive bigint。PG upsert/delete只按AuthContext三轴，commit unknown不冒充成功；新run同begin事务冻结，现有run不漂移。Server 1/0/0、Desktop Tauri-host定向、UI parse/wire定向绿。"
     evidence: "固定上游95条静态route无/api/me/run-cost-budget；v4 §7.4/§17.3要求用户费用上限与stable quota rejection"
     notes: "新增。写请求不接受rate、provider、model、actor或run；cap缺rate/币种不匹配由Agent在provider effect前以稳定terminal拒绝。错误码：401/403 Origin/400/503/reconciliation。"
+
+  - id: "api-remote-interrupts-get"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::remote_interrupts::get (GET /api/me/remote-interrupts)"
+    owner: "openbot-server"
+    test_id: "T-API-0173"
+    migration_rule: "n/a: v4 §7.5 AG-UI interrupt需要actor-scoped durable UI read面"
+    status: "done"
+    done_evidence: "Batch98 authenticated/no-store handler经唯一ApplicationService列出fresh actor/generation/membership/running lease的pending rows；wire只含server-minted requestId、权威run/Agent与显式untrusted reason/message/schema、本地DB时间，不回remote interrupt id/metadata/authority。Server定向1/0/0、Desktop同typed command、UI validator/WASM绿，真PG两次请求纵向通过。"
+    evidence: "固定上游95条静态route无/api/me/remote-interrupts；v4 §7.5要求interrupt/resume durable UI projection"
+    notes: "新增。空列表200；过期/撤权/异scope不可见。错误码：401/503。"
+  - id: "api-remote-interrupt-put"
+    upstream: "-"
+    label: "新增"
+    target: "openbot-server::http::remote_interrupts::put (PUT /api/me/remote-interrupts/{request_id})"
+    owner: "openbot-server"
+    test_id: "T-API-0174"
+    migration_rule: "n/a: v4 §7.5 AG-UI resume必须由fresh actor answer触发"
+    status: "done"
+    done_evidence: "Batch98 path只收Rust-minted canonical UUIDv7 handle，body只收resolved+可选≤64KiB JSON或cancelled+无payload；trusted Origin先于body parse。PostgreSQL serializable事务复核current actor/generation/membership/run/lease，answer与hash-chain audit原子提交后才唤醒第二次SafeDialer；same answer replay、异值409。Server1/0/0、Desktop typed framing、真实PG ApplicationService纵向1/0/0。"
+    evidence: "固定上游无独立durable resume endpoint；AG-UI 0.0.57 ResumeEntry fixed wire与v4 audit-before-effect"
+    notes: "新增。remote interrupt id不能作path authority；错误码：401/403 Origin/400/404/409/503/reconciliation。"

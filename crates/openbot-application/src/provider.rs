@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use core::time::Duration;
 use openbot_contracts::auth::AuthContext;
+use openbot_contracts::remote_interrupt::is_remote_interrupt_request_id;
 use openbot_domain::vault::SecretBytes;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -143,6 +144,34 @@ impl RemoteAguiRoute {
             resume.protocol_run_id().to_owned(),
         );
         self.parent_protocol_run_id = Some(parent_protocol_run_id);
+        self.resume = Some(Box::new(resume));
+        Ok(self)
+    }
+
+    /// Attach a resume to a freshly reloaded route while preserving a prior protocol cursor.
+    ///
+    /// A context reload intentionally refreshes endpoint, assertion, authorization and tool
+    /// grants, so it starts with `protocol_run_id == local_run_id`. The runtime supplies the
+    /// cursor that it observed from the preceding typed provider session; both that cursor and
+    /// the resume parent must match before the fresh authority can be used for another request.
+    pub fn with_fresh_resume(
+        mut self,
+        current_protocol_run_id: &str,
+        resume: ProviderRemoteResume,
+    ) -> Result<Self, AgentContextError> {
+        if self.protocol_run_id != self.local_run_id
+            || self.parent_protocol_run_id.is_some()
+            || self.resume.is_some()
+            || current_protocol_run_id.is_empty()
+            || current_protocol_run_id.as_bytes().contains(&0)
+            || resume.parent_protocol_run_id() != current_protocol_run_id
+        {
+            return Err(AgentContextError::Corrupt {
+                field: "remote_resume_parent",
+            });
+        }
+        self.parent_protocol_run_id = Some(current_protocol_run_id.to_owned());
+        self.protocol_run_id = resume.protocol_run_id().to_owned();
         self.resume = Some(Box::new(resume));
         Ok(self)
     }
@@ -647,6 +676,10 @@ impl core::fmt::Debug for ProviderToolDefinition {
 
 /// Maximum interrupts accepted from one fixed-schema terminal outcome.
 pub const PROVIDER_REMOTE_INTERRUPT_MAX_ITEMS: usize = 256;
+/// Maximum bytes for one remote interrupt pairing id or categorical reason.
+pub const PROVIDER_REMOTE_INTERRUPT_LABEL_MAX_BYTES: usize = 256;
+/// Maximum bytes retained for one optional remote presentation message.
+pub const PROVIDER_REMOTE_INTERRUPT_MESSAGE_MAX_BYTES: usize = 64 * 1024;
 /// Maximum encoded bytes accepted for one human resume payload.
 pub const PROVIDER_REMOTE_RESUME_PAYLOAD_MAX_BYTES: usize = 64 * 1024;
 
@@ -682,17 +715,32 @@ impl ProviderRemoteInterrupt {
     ///
     /// Returns a content-free error for empty/NUL labels, non-object schema/metadata, or >1 MiB.
     pub fn new(input: ProviderRemoteInterruptInput) -> Result<Self, ProviderRemoteProjectionError> {
-        if [&input.id, &input.reason]
-            .into_iter()
-            .any(|value| value.is_empty() || value.as_bytes().contains(&0))
-            || [
-                input.message.as_deref(),
-                input.tool_call_id.as_deref(),
-                input.expires_at.as_deref(),
-            ]
-            .into_iter()
-            .flatten()
-            .any(|value| value.is_empty() || value.as_bytes().contains(&0))
+        if [&input.id, &input.reason].into_iter().any(|value| {
+            value.is_empty()
+                || value.len() > PROVIDER_REMOTE_INTERRUPT_LABEL_MAX_BYTES
+                || value.chars().any(char::is_control)
+        }) || [
+            input.message.as_deref(),
+            input.tool_call_id.as_deref(),
+            input.expires_at.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| value.is_empty() || value.as_bytes().contains(&0))
+            || input.message.as_ref().is_some_and(|value| {
+                value.len() > PROVIDER_REMOTE_INTERRUPT_MESSAGE_MAX_BYTES
+                    || value.chars().any(|character| {
+                        character.is_control() && !matches!(character, '\n' | '\r' | '\t')
+                    })
+            })
+            || input.tool_call_id.as_ref().is_some_and(|value| {
+                value.len() > PROVIDER_REMOTE_INTERRUPT_LABEL_MAX_BYTES
+                    || value.chars().any(char::is_control)
+            })
+            || input
+                .expires_at
+                .as_ref()
+                .is_some_and(|value| value.len() > 128 || value.chars().any(char::is_control))
             || input
                 .response_schema
                 .as_ref()
@@ -777,6 +825,7 @@ impl ProviderRemoteInterruptBatch {
     ) -> Result<Self, ProviderRemoteProjectionError> {
         if protocol_run_id.is_empty()
             || protocol_run_id.as_bytes().contains(&0)
+            || protocol_run_id.len() > 1_024
             || interrupts.is_empty()
             || interrupts.len() > PROVIDER_REMOTE_INTERRUPT_MAX_ITEMS
             || interrupts
@@ -869,7 +918,8 @@ impl ProviderRemoteResumeEntry {
         payload: Option<Value>,
     ) -> Result<Self, ProviderRemoteProjectionError> {
         if interrupt_id.is_empty()
-            || interrupt_id.as_bytes().contains(&0)
+            || interrupt_id.len() > PROVIDER_REMOTE_INTERRUPT_LABEL_MAX_BYTES
+            || interrupt_id.chars().any(char::is_control)
             || payload.as_ref().is_some_and(value_contains_nul)
         {
             return Err(ProviderRemoteProjectionError::Invalid);
@@ -1091,6 +1141,271 @@ pub enum ProviderRemoteProjectionError {
     /// The normalized checkpoint exceeded its independent one-event bound.
     #[error("provider_remote_projection_too_large")]
     TooLarge,
+}
+
+/// Stable durable remote-interrupt coordination failure; remote prose is never carried.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum RemoteInterruptError {
+    /// PostgreSQL/coordinator dependency is unavailable before commit is known.
+    #[error("remote_interrupt_unavailable")]
+    Unavailable,
+    /// The active run lease, actor generation, membership, or role is no longer current.
+    #[error("remote_interrupt_stale")]
+    Stale,
+    /// A durable identity is already bound to different content.
+    #[error("remote_interrupt_conflict")]
+    Conflict,
+    /// Durable rows violate the closed interrupt/resume shape.
+    #[error("remote_interrupt_corrupt field={field}")]
+    Corrupt {
+        /// Static field name only.
+        field: &'static str,
+    },
+    /// A transaction carrying interrupt state or its audit may have committed.
+    #[error("remote_interrupt_commit_unknown")]
+    CommitUnknown,
+}
+
+/// Adapter construction input for one actor-visible pending remote interrupt.
+pub struct RemoteInterruptPendingInput {
+    /// Server-minted opaque resolution handle.
+    pub request_id: String,
+    /// Authoritative durable run.
+    pub run_id: String,
+    /// Authoritative Bot.
+    pub bot_id: String,
+    /// Remote protocol invocation that produced the interrupt.
+    pub protocol_run_id: String,
+    /// Remote pairing id; never used alone as authority.
+    pub interrupt_id: String,
+    /// Known-field-only untrusted descriptor.
+    pub untrusted_payload: Value,
+    /// Database request time.
+    pub requested_at: OffsetDateTime,
+    /// Local database expiry, independent from remote presentation metadata.
+    pub expires_at: OffsetDateTime,
+}
+
+/// One actor-scoped pending remote interrupt for presentation. It is deliberately non-serde.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RemoteInterruptPending {
+    request_id: String,
+    run_id: String,
+    bot_id: String,
+    protocol_run_id: String,
+    interrupt_id: String,
+    untrusted_payload: Value,
+    requested_at: OffsetDateTime,
+    expires_at: OffsetDateTime,
+}
+
+impl RemoteInterruptPending {
+    /// Construct from a PostgreSQL row after authority filtering.
+    pub fn new(input: RemoteInterruptPendingInput) -> Result<Self, RemoteInterruptError> {
+        if !is_remote_interrupt_request_id(&input.request_id)
+            || [&input.run_id, &input.bot_id, &input.protocol_run_id]
+                .into_iter()
+                .any(|value| value.is_empty() || value.as_bytes().contains(&0))
+            || input.interrupt_id.is_empty()
+            || input.interrupt_id.len() > PROVIDER_REMOTE_INTERRUPT_LABEL_MAX_BYTES
+            || input.interrupt_id.chars().any(char::is_control)
+            || !input.untrusted_payload.is_object()
+            || input.untrusted_payload.get("id").and_then(Value::as_str)
+                != Some(input.interrupt_id.as_str())
+            || value_contains_nul(&input.untrusted_payload)
+            || serde_json::to_vec(&input.untrusted_payload)
+                .map_err(|_| RemoteInterruptError::Corrupt {
+                    field: "interrupt_payload",
+                })?
+                .len()
+                > PROVIDER_REMOTE_PROJECTION_MAX_BYTES
+            || input.expires_at <= input.requested_at
+        {
+            return Err(RemoteInterruptError::Corrupt {
+                field: "remote_interrupt",
+            });
+        }
+        Ok(Self {
+            request_id: input.request_id,
+            run_id: input.run_id,
+            bot_id: input.bot_id,
+            protocol_run_id: input.protocol_run_id,
+            interrupt_id: input.interrupt_id,
+            untrusted_payload: input.untrusted_payload,
+            requested_at: input.requested_at,
+            expires_at: input.expires_at,
+        })
+    }
+
+    /// Server-minted resolution handle.
+    #[must_use]
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    /// Durable run id.
+    #[must_use]
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    /// Authoritative Bot id.
+    #[must_use]
+    pub fn bot_id(&self) -> &str {
+        &self.bot_id
+    }
+
+    /// Remote protocol run id.
+    #[must_use]
+    pub fn protocol_run_id(&self) -> &str {
+        &self.protocol_run_id
+    }
+
+    /// Remote pairing id.
+    #[must_use]
+    pub fn interrupt_id(&self) -> &str {
+        &self.interrupt_id
+    }
+
+    /// Known-field-only untrusted presentation descriptor.
+    #[must_use]
+    pub const fn untrusted_payload(&self) -> &Value {
+        &self.untrusted_payload
+    }
+
+    /// Database request time.
+    #[must_use]
+    pub const fn requested_at(&self) -> OffsetDateTime {
+        self.requested_at
+    }
+
+    /// Local authoritative expiry.
+    #[must_use]
+    pub const fn expires_at(&self) -> OffsetDateTime {
+        self.expires_at
+    }
+}
+
+impl core::fmt::Debug for RemoteInterruptPending {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RemoteInterruptPending")
+            .field("request_id", &self.request_id)
+            .field("run_id", &self.run_id)
+            .field("bot_id", &self.bot_id)
+            .field("protocol_run_id", &self.protocol_run_id)
+            .field("interrupt_id", &self.interrupt_id)
+            .field("untrusted_payload", &"[redacted]")
+            .field("requested_at", &self.requested_at)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
+}
+
+/// Durable answer acknowledgement returned only after its hash-chain audit commits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteInterruptResolutionReceipt {
+    request_id: String,
+    status: ProviderRemoteResumeStatus,
+    replayed: bool,
+}
+
+impl RemoteInterruptResolutionReceipt {
+    /// Construct a checked receipt.
+    pub fn new(
+        request_id: String,
+        status: ProviderRemoteResumeStatus,
+        replayed: bool,
+    ) -> Result<Self, RemoteInterruptError> {
+        if !is_remote_interrupt_request_id(&request_id) {
+            return Err(RemoteInterruptError::Corrupt {
+                field: "request_id",
+            });
+        }
+        Ok(Self {
+            request_id,
+            status,
+            replayed,
+        })
+    }
+
+    /// Server-minted resolution handle.
+    #[must_use]
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    /// Closed wire status committed for resume.
+    #[must_use]
+    pub const fn status(&self) -> ProviderRemoteResumeStatus {
+        self.status
+    }
+
+    /// Exact repeated answer observed without a second audit row.
+    #[must_use]
+    pub const fn replayed(&self) -> bool {
+        self.replayed
+    }
+}
+
+/// Durable coordinator for one remote AG-UI interrupt batch.
+///
+/// Implementations must persist the batch and request audit atomically, wait on durable state,
+/// revalidate actor/lease authority, and return only after every answer/expiry audit is committed.
+#[async_trait]
+pub trait RemoteInterruptCoordinator: Send + Sync {
+    /// List current-actor pending rows after fresh role/generation/membership validation.
+    async fn list_pending(
+        &self,
+        auth: &AuthContext,
+    ) -> Result<Vec<RemoteInterruptPending>, RemoteInterruptError>;
+
+    /// Resolve one server-minted request handle and commit its audit in the same transaction.
+    async fn resolve(
+        &self,
+        auth: &AuthContext,
+        request_id: &str,
+        status: ProviderRemoteResumeStatus,
+        payload: Option<Value>,
+    ) -> Result<RemoteInterruptResolutionReceipt, RemoteInterruptError>;
+
+    /// Persist and wait for a complete typed resume batch.
+    async fn persist_and_wait(
+        &self,
+        lease: &RunExecutionLease,
+        batch: &ProviderRemoteInterruptBatch,
+    ) -> Result<ProviderRemoteResume, RemoteInterruptError>;
+}
+
+/// Default fail-closed coordinator used by assemblies that have not enabled remote Agents.
+#[derive(Debug, Default)]
+pub struct NoRemoteInterruptCoordinator;
+
+#[async_trait]
+impl RemoteInterruptCoordinator for NoRemoteInterruptCoordinator {
+    async fn list_pending(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<Vec<RemoteInterruptPending>, RemoteInterruptError> {
+        Err(RemoteInterruptError::Unavailable)
+    }
+
+    async fn resolve(
+        &self,
+        _auth: &AuthContext,
+        _request_id: &str,
+        _status: ProviderRemoteResumeStatus,
+        _payload: Option<Value>,
+    ) -> Result<RemoteInterruptResolutionReceipt, RemoteInterruptError> {
+        Err(RemoteInterruptError::Unavailable)
+    }
+
+    async fn persist_and_wait(
+        &self,
+        _lease: &RunExecutionLease,
+        _batch: &ProviderRemoteInterruptBatch,
+    ) -> Result<ProviderRemoteResume, RemoteInterruptError> {
+        Err(RemoteInterruptError::Unavailable)
+    }
 }
 
 /// Bounded remote UI projection. Every remote-controlled field remains under explicit

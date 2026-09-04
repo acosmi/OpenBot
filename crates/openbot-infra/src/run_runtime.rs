@@ -2138,6 +2138,7 @@ async fn finish_run_in_transaction(
     let assistant_text = aggregate_text_chunks(transaction, lease.run_id()).await?;
     scrub_reasoning_chunks(transaction, lease.run_id()).await?;
     scrub_remote_projections(transaction, lease.run_id()).await?;
+    retire_remote_interrupts(transaction, lease.run_id(), now).await?;
     let message_sequence = if assistant_text.is_empty() {
         None
     } else {
@@ -2280,6 +2281,25 @@ async fn scrub_remote_projections(
         .await
         .map(|_| ())
         .map_err(|error| write_error("清除 terminal remote projection payload", error))
+}
+
+async fn retire_remote_interrupts(
+    transaction: &Transaction<'_>,
+    run_id: &RunId,
+    now: OffsetDateTime,
+) -> Result<(), RunRuntimeError> {
+    transaction
+        .execute(
+            "UPDATE public.remote_agent_interrupts \
+                SET descriptor=NULL,state='retired',response_payload=NULL, \
+                    resume_protocol_run_id=NULL,resolved_at=coalesce(resolved_at,$2), \
+                    resolved_by=NULL,updated_at=$2 \
+              WHERE run_id=$1 AND state<>'retired'",
+            &[&run_id.as_str(), &now],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| write_error("retire terminal remote interrupts", error))
 }
 
 async fn recover_one_in_transaction(

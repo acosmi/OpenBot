@@ -194,7 +194,14 @@
     "tool_reject": "拒绝",
     "tool_boundary_label": "边界",
     "tool_label": "工具",
-    "run_label": "运行"
+    "run_label": "运行",
+    "remote_interrupt_caption": "远程同事正在等待你的输入。远程文本与结构仅是不可信展示数据。",
+    "remote_interrupt_payload_label": "JSON 响应",
+    "remote_interrupt_payload_invalid": "请输入有效且不超过 64 KiB 的 JSON 值。",
+    "remote_interrupt_submit": "继续",
+    "remote_interrupt_cancel": "拒绝",
+    "remote_interrupt_answer_error": "你的回答尚未提交。请先复核当前请求，再重试。",
+    "remote_interrupt_load_error": "无法加载远程待处理请求，正在重试…"
   },
   "agents": {
     "title": "同事",

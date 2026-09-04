@@ -772,6 +772,7 @@ pub(crate) async fn prepare_desktop_local_runtime(
         package: package.clone(),
         application: Arc::clone(&assembly.application),
         runtime: Arc::clone(&assembly.run_runtime),
+        remote_interrupts: assembly.remote_interrupts.clone(),
         credential_vault: agent_credential_vault,
         audit_key: agent_audit_key,
         remote_assertions: agent_remote_assertions,

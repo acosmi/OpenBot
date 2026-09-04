@@ -181,7 +181,9 @@ pub async fn list(
         | AppReply::PendingToolApprovals(_)
         | AppReply::ToolApprovalResolved(_)
         | AppReply::UiPreferences(_)
-        | AppReply::RunCostBudget(_) => {
+        | AppReply::RunCostBudget(_)
+        | AppReply::PendingRemoteInterrupts(_)
+        | AppReply::RemoteInterruptResolved(_) => {
             tracing::error!(
                 "ListVisibleChannels 收到非 Channels 应答 —— ApplicationService 契约破损"
             );
@@ -257,7 +259,9 @@ pub async fn get(
         | AppReply::PendingToolApprovals(_)
         | AppReply::ToolApprovalResolved(_)
         | AppReply::UiPreferences(_)
-        | AppReply::RunCostBudget(_) => {
+        | AppReply::RunCostBudget(_)
+        | AppReply::PendingRemoteInterrupts(_)
+        | AppReply::RemoteInterruptResolved(_) => {
             tracing::error!("GetVisibleChannel received a non-Channel application reply");
             Err(AppError::DependencyUnavailable {
                 dependency: "application",
@@ -339,7 +343,9 @@ pub async fn create(
         | AppReply::PendingToolApprovals(_)
         | AppReply::ToolApprovalResolved(_)
         | AppReply::UiPreferences(_)
-        | AppReply::RunCostBudget(_) => {
+        | AppReply::RunCostBudget(_)
+        | AppReply::PendingRemoteInterrupts(_)
+        | AppReply::RemoteInterruptResolved(_) => {
             tracing::error!("CreateChannel received a non-Channel application reply");
             Err(AppError::DependencyUnavailable {
                 dependency: "application",

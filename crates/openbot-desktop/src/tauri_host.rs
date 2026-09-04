@@ -31,6 +31,7 @@ use openbot_contracts::desktop::{
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::people::CurrentUserResponse;
+use openbot_contracts::remote_interrupt::{RemoteInterruptAnswer, RemoteInterruptResolved};
 use openbot_contracts::sandboxed::SaveSandboxedComponentRequest;
 use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme, UpdateUiPreferences};
@@ -50,6 +51,7 @@ const INDEX_MAX_BYTES: u64 = 1024 * 1024;
 const ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const API_BODY_MAX_BYTES: usize = 4096;
 const AGENT_BODY_MAX_BYTES: usize = 64 * 1024;
+const REMOTE_INTERRUPT_BODY_MAX_BYTES: usize = 64 * 1024 + 1024;
 // Server's single request-body cap and the public message cap are both 1 MiB. Using the contracts
 // constant keeps Desktop from accepting a larger renderer-materialized body than Axum.
 const CHANNEL_THREAD_BODY_MAX_BYTES: usize = MAX_THREAD_MESSAGE_BYTES;
@@ -539,6 +541,14 @@ impl DesktopTauriProtocol {
         if path == "/api/me/run-cost-budget" {
             return self.run_cost_budget(request, authority).await;
         }
+        if path == "/api/me/remote-interrupts" {
+            return self.remote_interrupts(request, authority).await;
+        }
+        if let Some(request_id) = path.strip_prefix("/api/me/remote-interrupts/") {
+            return self
+                .resolve_remote_interrupt(request, authority, request_id)
+                .await;
+        }
         if path == "/api/channels" {
             return self.channels(request, authority).await;
         }
@@ -727,6 +737,66 @@ impl DesktopTauriProtocol {
         };
         match self.transport.execute(authority.auth, command).await {
             Ok(AppReply::RunCostBudget(preference)) => json_response(&preference),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn remote_interrupts(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::ListPendingRemoteInterrupts)
+            .await
+        {
+            Ok(AppReply::PendingRemoteInterrupts(pending)) => json_response(&pending),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn resolve_remote_interrupt(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        request_id: &str,
+    ) -> Response<Vec<u8>> {
+        if request_id.is_empty() || request_id.contains('/') {
+            return empty_response(StatusCode::NOT_FOUND);
+        }
+        let answer = match *request.method() {
+            Method::PUT if request.body().len() <= REMOTE_INTERRUPT_BODY_MAX_BYTES => {
+                match serde_json::from_slice::<RemoteInterruptAnswer>(request.body()) {
+                    Ok(answer) => answer,
+                    Err(_) => {
+                        return error_response(AppError::MalformedPayload { field: "body" });
+                    }
+                }
+            }
+            Method::PUT => return payload_too_large(),
+            _ => return empty_response(StatusCode::METHOD_NOT_ALLOWED),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::ResolveRemoteInterrupt {
+                    request_id: request_id.to_owned(),
+                    answer,
+                },
+            )
+            .await
+        {
+            Ok(AppReply::RemoteInterruptResolved(resolved)) => {
+                let resolved: RemoteInterruptResolved = resolved;
+                json_response(&resolved)
+            }
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -2198,8 +2268,11 @@ mod tests {
         ChannelReader, ChannelRoutingBackend, ChannelRoutingBackendError, ComponentAdministration,
         ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
         ComponentRuntimeScope, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
-        PeoplePortError, PortError, RoutingAuditRecord, RunCostBudgetAdministration,
-        RunCostBudgetAdministrationError, RunCostCap, SandboxedComponentAdministration,
+        PeoplePortError, PortError, ProviderRemoteInterruptBatch, ProviderRemoteResume,
+        ProviderRemoteResumeStatus, RemoteInterruptCoordinator, RemoteInterruptError,
+        RemoteInterruptPending, RemoteInterruptPendingInput, RemoteInterruptResolutionReceipt,
+        RoutingAuditRecord, RunCostBudgetAdministration, RunCostBudgetAdministrationError,
+        RunCostCap, RunExecutionLease, SandboxedComponentAdministration,
         SandboxedComponentAdministrationError, SandboxedComponentDraft, ThreadConversationRequest,
         ThreadDirectory, ThreadDirectoryError, ToolApprovalAdministration,
         ToolApprovalAdministrationError, UiPreferenceAdministration,
@@ -2227,6 +2300,9 @@ mod tests {
     };
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
     use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
+    use openbot_contracts::remote_interrupt::{
+        PendingRemoteInterrupts, RemoteInterruptAnswerStatus, RemoteInterruptResolved,
+    };
     use openbot_contracts::sandboxed::{
         PublishedSandboxedComponent, PublishedSandboxedComponents, SandboxedComponentDeleted,
         SandboxedComponentRecord, SandboxedComponentResponse, SandboxedComponents,
@@ -2930,6 +3006,49 @@ mod tests {
 
     struct FakeRunCostBudgets(Mutex<Option<RunCostCap>>);
 
+    struct FakeRemoteInterrupts;
+
+    #[async_trait]
+    impl RemoteInterruptCoordinator for FakeRemoteInterrupts {
+        async fn list_pending(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<Vec<RemoteInterruptPending>, RemoteInterruptError> {
+            Ok(vec![RemoteInterruptPending::new(
+                RemoteInterruptPendingInput {
+                    request_id: "018f6f8a-5f4b-7c2d-8a31-111111111111".to_owned(),
+                    run_id: "desktop-run".to_owned(),
+                    bot_id: "desktop-agent-1".to_owned(),
+                    protocol_run_id: "desktop-run".to_owned(),
+                    interrupt_id: "remote-1".to_owned(),
+                    untrusted_payload: json!({
+                        "id":"remote-1","reason":"confirmation","message":"Remote asks"
+                    }),
+                    requested_at: time::OffsetDateTime::UNIX_EPOCH,
+                    expires_at: time::OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(30),
+                },
+            )?])
+        }
+
+        async fn resolve(
+            &self,
+            _auth: &AuthContext,
+            request_id: &str,
+            status: ProviderRemoteResumeStatus,
+            _payload: Option<serde_json::Value>,
+        ) -> Result<RemoteInterruptResolutionReceipt, RemoteInterruptError> {
+            RemoteInterruptResolutionReceipt::new(request_id.to_owned(), status, false)
+        }
+
+        async fn persist_and_wait(
+            &self,
+            _lease: &RunExecutionLease,
+            _batch: &ProviderRemoteInterruptBatch,
+        ) -> Result<ProviderRemoteResume, RemoteInterruptError> {
+            Err(RemoteInterruptError::Unavailable)
+        }
+    }
+
     #[async_trait]
     impl RunCostBudgetAdministration for FakeRunCostBudgets {
         async fn get(
@@ -3255,6 +3374,7 @@ mod tests {
                 .with_agent_administration(agents)
                 .with_ui_preferences(preferences)
                 .with_run_cost_budgets(Arc::new(FakeRunCostBudgets(Mutex::new(None))))
+                .with_remote_interrupts(Arc::new(FakeRemoteInterrupts))
                 .with_component_administration(Arc::new(FakeComponents))
                 .with_sandboxed_component_administration(Arc::new(FakeSandboxed))
                 .with_tool_approvals(Arc::new(FakeApprovals)),
@@ -4427,6 +4547,45 @@ mod tests {
             )
             .await;
         assert_eq!(smuggled.status(), StatusCode::BAD_REQUEST);
+
+        let interrupts = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .uri("/api/me/remote-interrupts")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(interrupts.status(), StatusCode::OK);
+        assert_eq!(interrupts.headers()[CACHE_CONTROL], "no-store");
+        let interrupts =
+            serde_json::from_slice::<PendingRemoteInterrupts>(interrupts.body()).unwrap();
+        assert_eq!(interrupts.interrupts.len(), 1);
+        let resolved = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/me/remote-interrupts/018f6f8a-5f4b-7c2d-8a31-111111111111")
+                    .body(br#"{"status":"resolved","payload":{"approved":true}}"#.to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(resolved.status(), StatusCode::OK);
+        let resolved = serde_json::from_slice::<RemoteInterruptResolved>(resolved.body()).unwrap();
+        assert_eq!(resolved.status, RemoteInterruptAnswerStatus::Resolved);
+        let invalid_cancel = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/me/remote-interrupts/018f6f8a-5f4b-7c2d-8a31-111111111111")
+                    .body(br#"{"status":"cancelled","payload":true}"#.to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(invalid_cancel.status(), StatusCode::BAD_REQUEST);
 
         let approvals = protocol
             .handle(

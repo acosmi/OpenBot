@@ -14,7 +14,7 @@
 #       identity_provider.registered / knowledge.searched）在 server/src 无任何发出点。
 #       owner 判据（机械）：发出点是进程启动顶层代码或传输层看门狗（无 use case）=> openbot-infra，
 #       其余 => openbot-application（铸造）；落库一律 openbot-infra，见 §8.6 的 DB role 分离。
-#   (c) 新增语义事件 20 条，label=新增，upstream=-。
+#   (c) 新增语义事件 24 条，label=新增，upstream=-。
 #
 # target 统一写事件名的 Rust 符号落点；audit 的名字是契约层封闭枚举（§5.1 openbot-contracts
 # 的职责原文 = "native/wasm-safe ID、DTO、event、error、schema"），owner 写的是谁负责铸造它。
@@ -43,17 +43,17 @@ recount:
   - command: |-
       grep -c '^  - id: ' parity/events.yaml
     cwd: repo
-    expect: 88
-  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，20 新增）
+    expect: 92
+  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，24 新增）
   - command: |-
       printf 'parity=%s 新增=%s 替代=%s\n' "$(grep -c "^    label: 'parity'$" parity/events.yaml)" "$(grep -c "^    label: '新增'$" parity/events.yaml)" "$(grep -c "^    label: '替代'$" parity/events.yaml)"
     cwd: repo
-    expect: 'parity=68 新增=20 替代=0'
-  # owner 分布（openbot-agent 11；openbot-infra 3；其余 openbot-application 74 = audit 54 + 新增 20）
+    expect: 'parity=68 新增=24 替代=0'
+  # owner 分布（openbot-agent 11；openbot-infra 3；其余 openbot-application 78 = audit 54 + 新增 24）
   - command: |-
       grep -oE "^    owner: 'openbot-[a-z]+'" parity/events.yaml | tr -d "'" | sort | uniq -c | awk '{print $3"="$1}' | paste -sd' ' -
     cwd: repo
-    expect: 'openbot-agent=11 openbot-application=74 openbot-infra=3'
+    expect: 'openbot-agent=11 openbot-application=78 openbot-infra=3'
   # 新增 absolute deadline audit 在固定上游零命中；同形命令对既有 stall audit 命中 5 个文件。
   - command: |-
       printf 'deadline=%s stalled=%s\n' "$(git grep -l 'agent.run_deadline_exceeded' | wc -l | tr -d ' ')" "$(git grep -l 'agent.stream_stalled' | wc -l | tr -d ' ')"
@@ -180,7 +180,8 @@ entries:
     owner: 'openbot-agent'
     test_id: 'T-EVT-0010'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'Batch98：固定0.0.57 interrupt known fields经typed ProviderEvent进入专用native0028；runtime转AwaitingHuman并持续lease/deadline/cancel，actor用server-minted UUIDv7 handle经同一ApplicationService resolve且answer与hash-chain audit同事务。真实PG17.11+SafeDialer第一次RUN_FINISHED interrupt后pending可见，resolved提交后第二次HTTP请求使用新runId、parentRunId=首个protocol run与exact resume[]，最终completed；terminal同事务把descriptor/response payload清空，remote message/metadata/answer canary联合命中0。Server/Desktop/UI typed framing/WASM均有定向证据。'
     evidence: 'rg -c --no-heading -g ''!bun.lock'' ''RUN_INTERRUPTED'' . | awk -F: ''{s+=$NF} END{print s+0}'' => 0；正向对照同命令 RUN_STARTED => 17；对 ''interrupt|resume'' 的全仓 grep 命中全部是 TurnWatchdog.resume / 英文散文，非 AG-UI 事件'
     notes: 'interrupt / resume 族。上游源码零使用。server/src/channels/turn-watchdog.ts::TurnWatchdog 的 pause/resume 是看门狗自己的计时器控制，**不是** AG-UI interrupt 事件。v3 §7.5 要求支持。'
   - id: 'agui-error'
@@ -998,3 +999,48 @@ entries:
     done_evidence: 'Batch89 Agent在provider effect前对unpriced/currency mismatch、在durable cost upper bound记账后对cap exceeded分别写同一agent.run_cost_budget_refused hash-chain audit，payload只含对应stable error_code。Agent 38/0/0逐条断言invoked→budget audit顺序；Infra audit_shape对三码均只产生1个allowlisted fact且零content/prompt。audit失败转journal_commit_unknown，不冒充已审计拒绝。'
     evidence: '固定上游git grep agent.run_cost_budget_refused=0；v4 §17.3逐字要求provider cost quota拒绝有stable code和audit'
     notes: '一个closed event type配三个closed error code：run_cost_budget_unpriced、run_cost_budget_currency_mismatch、run_cost_budget_exceeded；不记录币种、金额、rate、provider/model或用户输入。'
+
+  - id: 'agent-remote-interrupt-requested'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::AGENT_REMOTE_INTERRUPT_REQUESTED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0089'
+    migration_rule: 'n/a: remote interrupt在等待人之前必须成为durable actor-scoped事实'
+    status: 'done'
+    done_evidence: 'Batch98真实PG17.11：native0028 batch rows与agent.remote_interrupt_requested hash-chain audit同serializable事务；exact remote batch replay零重复audit，audit payload为空且不含message/schema/metadata。'
+    evidence: '固定上游git grep agent.remote_interrupt_=0；v4 §7.5/§8.6要求remote HITL有durable真源与审计'
+    notes: 'target只记权威local run id；remote interrupt id与正文不进audit。'
+  - id: 'agent-remote-interrupt-resolved'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::AGENT_REMOTE_INTERRUPT_RESOLVED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0090'
+    migration_rule: 'n/a: actor answer必须在第二次provider effect之前durable audited'
+    status: 'done'
+    done_evidence: 'Batch98真实PG17.11：fresh actor/generation/membership/run/lease复核后，resolved state、bounded payload与空payload hash-chain audit同事务commit；第二次SafeDialer请求只在commit返回后发生，exact replay无第二audit。'
+    evidence: '固定上游无Rust actor-scoped durable resume面；v4 §17.2 audit-before-action'
+    notes: 'audit不含answer payload；payload只暂存在专表并于run terminal同事务清除。'
+  - id: 'agent-remote-interrupt-cancelled'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::AGENT_REMOTE_INTERRUPT_CANCELLED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0091'
+    migration_rule: 'n/a: actor显式decline是closed resume status而非自由文本'
+    status: 'done'
+    done_evidence: 'Batch98 coordinator真PG矩阵以第二个batch item提交cancelled，无payload且同事务写agent.remote_interrupt_cancelled；waiter按原position生成cancelled resume entry，未伪造成run cancellation或tool denial。'
+    evidence: 'AG-UI 0.0.57 ResumeEntry status包含cancelled；固定上游产品无durable Rust audit'
+    notes: 'cancelled answer与scope失效/run terminal retirement分离；只有人显式选择才写本事件。'
+  - id: 'agent-remote-interrupt-expired'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::AGENT_REMOTE_INTERRUPT_EXPIRED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0092'
+    migration_rule: 'n/a: 不信remote expiresAt，以DB clock与本地30分钟上限结束等待'
+    status: 'done'
+    done_evidence: 'Batch98 coordinator用数据库clock对pending row执行inclusive expiry CAS，写closed cancelled resume status且response payload/resolved_by为空，并在同事务追加agent.remote_interrupt_expired；runtime自身absolute deadline可更早取消整run。'
+    evidence: 'AG-UI字段expiresAt只作untrusted presentation；v4 §7.2所有等待必须受本地deadline约束'
+    notes: 'remote expiresAt不参与authority；本地TTL与run deadline共同防永久悬挂。'

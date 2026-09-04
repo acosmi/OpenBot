@@ -194,7 +194,14 @@
     "tool_reject": "Reject",
     "tool_boundary_label": "Boundary",
     "tool_label": "Tool",
-    "run_label": "Run"
+    "run_label": "Run",
+    "remote_interrupt_caption": "This remote coworker is waiting for your input. Remote text and schema are untrusted presentation data.",
+    "remote_interrupt_payload_label": "JSON response",
+    "remote_interrupt_payload_invalid": "Enter a valid JSON value no larger than 64 KiB.",
+    "remote_interrupt_submit": "Continue",
+    "remote_interrupt_cancel": "Decline",
+    "remote_interrupt_answer_error": "Your answer was not committed. Review the current request before trying again.",
+    "remote_interrupt_load_error": "Waiting remote requests could not be loaded. Retrying…"
   },
   "agents": {
     "title": "Coworkers",

@@ -143,6 +143,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::CancelThreadRun(_) => "cancel_thread_run",
         AppCommand::GetThreadHistory { .. } => "get_thread_history",
         AppCommand::GetThreadConversation { .. } => "get_thread_conversation",
+        AppCommand::ListPendingRemoteInterrupts => "list_pending_remote_interrupts",
+        AppCommand::ResolveRemoteInterrupt { .. } => "resolve_remote_interrupt",
         AppCommand::RememberMemory(_) => "remember_memory",
         AppCommand::GetMemoryControl => "get_memory_control",
         AppCommand::UpdateMemoryControl(_) => "update_memory_control",
@@ -443,6 +445,20 @@ mod tests {
                     openbot_contracts::budget::RunCostBudgetPreference::default(),
                 ),
                 "replace_run_cost_budget",
+            ),
+            (
+                AppCommand::ListPendingRemoteInterrupts,
+                "list_pending_remote_interrupts",
+            ),
+            (
+                AppCommand::ResolveRemoteInterrupt {
+                    request_id: "018f6f8a-5f4b-7c2d-8a31-111111111111".to_owned(),
+                    answer: openbot_contracts::remote_interrupt::RemoteInterruptAnswer {
+                        status: openbot_contracts::remote_interrupt::RemoteInterruptAnswerStatus::Cancelled,
+                        payload: None,
+                    },
+                },
+                "resolve_remote_interrupt",
             ),
         ];
         for (command, expected) in commands {

@@ -20,8 +20,8 @@ use openbot_application::{
     AppEventStream, ApplicationService, BeginThreadRunRequest, CancelThreadRunRequest,
     ComponentAdministration, MemoryAdministrationError, OpenBotApplication, ProviderAdapter,
     ProviderEvent, ProviderMessage, ProviderPortError, ProviderRequest, ProviderSession,
-    ProviderUsage, RememberToolMemory, RememberToolMemoryRequest, RunExecutionLease, RunRuntime,
-    RunToolExchange, ThreadDirectory, remember_provider_tool,
+    ProviderUsage, RememberToolMemory, RememberToolMemoryRequest, RemoteInterruptCoordinator,
+    RunExecutionLease, RunRuntime, RunToolExchange, ThreadDirectory, remember_provider_tool,
 };
 use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::command::{
@@ -36,6 +36,7 @@ use openbot_contracts::components::{
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
 use openbot_contracts::memory::MemoryRecord;
+use openbot_contracts::remote_interrupt::{RemoteInterruptAnswer, RemoteInterruptAnswerStatus};
 use openbot_domain::policy::{ActionPolicy, PolicyMode};
 use openbot_domain::remote_callback::{RemoteRunAssertionSigner, RemoteToolSet};
 use openbot_domain::thread::FencingToken;
@@ -63,6 +64,7 @@ use openbot_infra::provider::openai::{
     OpenAiProviderConfig,
 };
 use openbot_infra::remote_agui::SafeRemoteAguiTransport;
+use openbot_infra::remote_interrupt::PostgresRemoteInterruptCoordinator;
 use openbot_infra::repo::ChannelRepo;
 use openbot_infra::repo::tools::PostgresToolJournal;
 use openbot_infra::run_runtime::{DEFAULT_DISPATCH_CLAIM_DURATION, PostgresRunRuntime, RunRelay};
@@ -1920,6 +1922,356 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
             {
                 return Err(format!(
                     "remote durable projection 漂移：reasoningMarkers={reasoning_markers} projectionMarkers={projection_markers} invoked={invoked} canary={canary_rows} localToolEffects={local_tool_effects}"
+                ));
+            }
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL 与 loopback socket：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn remote_agui_interrupt_resolves_through_application_and_makes_a_second_safe_request() {
+    let admin = batch6_admin_config(
+        "remote_agui_interrupt_resolves_through_application_and_makes_a_second_safe_request",
+    );
+    with_temp_database(&admin, "agentinterrupt", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let auth = AuthContextBuilder::from_verified_session(
+                deployment.clone(),
+                tenant.clone(),
+                ActorId::new("actor-a"),
+                AuthGeneration::new(0),
+                false,
+            )
+            .with_roles([Role::User])
+            .build();
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .map_err(|error| error.to_string())?;
+            let address = listener.local_addr().map_err(|error| error.to_string())?;
+            let endpoint = format!("http://{address}/ag-ui");
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "INSERT INTO public.agents(id,name,type,configuration,package_id) \
+                       SELECT 'bot-interrupt','Remote Interrupt','remote_ag_ui', \
+                              jsonb_build_object('endpoint',$1::text),id \
+                       FROM public.deployment_packages WHERE tenant_id='tenant-a'",
+                    &[&endpoint],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            client
+                .execute(
+                    "INSERT INTO public.agent_profiles( \
+                       agent_id,owner_user_id,title,role_description,avatar_seed,visibility,deleted_at \
+                     ) VALUES('bot-interrupt',NULL,'Remote Interrupt','Wait for reviewed input.', \
+                              'interrupt-seed','public',NULL)",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            drop(client);
+
+            let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+            let server_requests = requests.clone();
+            let remote_server = tokio::spawn(async move {
+                let (mut first, _) = listener.accept().await.map_err(|error| error.to_string())?;
+                let first_request = read_http_request(&mut first).await?;
+                let first_body: serde_json::Value = serde_json::from_str(
+                    first_request
+                        .split("\r\n\r\n")
+                        .nth(1)
+                        .ok_or_else(|| "first remote body missing".to_owned())?,
+                )
+                .map_err(|error| error.to_string())?;
+                if first_body["runId"] != "run-interrupt"
+                    || first_body.get("parentRunId").is_some()
+                    || first_body.get("resume").is_some()
+                {
+                    return Err(format!("first AG-UI request lineage drifted: {first_body:?}"));
+                }
+                let thread_id = first_body["threadId"]
+                    .as_str()
+                    .ok_or_else(|| "first thread id missing".to_owned())?;
+                server_requests.lock().expect("request bodies").push(first_body.clone());
+                let first_events = [
+                    serde_json::json!({"type":"RUN_STARTED","threadId":thread_id,"runId":"run-interrupt"}),
+                    serde_json::json!({
+                        "type":"RUN_FINISHED",
+                        "threadId":thread_id,
+                        "runId":"run-interrupt",
+                        "outcome":{
+                            "type":"interrupt",
+                            "interrupts":[{
+                                "id":"remote-confirm-1",
+                                "reason":"confirmation",
+                                "message":"REMOTE_INTERRUPT_MESSAGE_CANARY",
+                                "responseSchema":{"type":"object","properties":{"approved":{"type":"boolean"}}},
+                                "metadata":{"authority":"REMOTE_AUTHORITY_CANARY"}
+                            }]
+                        }
+                    }),
+                ];
+                let body = first_events
+                    .into_iter()
+                    .map(|event| format!("data: {event}\n\n"))
+                    .collect::<String>();
+                write_sse_response(&mut first, &body).await?;
+
+                let (mut second, _) = listener.accept().await.map_err(|error| error.to_string())?;
+                let second_request = read_http_request(&mut second).await?;
+                let second_body: serde_json::Value = serde_json::from_str(
+                    second_request
+                        .split("\r\n\r\n")
+                        .nth(1)
+                        .ok_or_else(|| "second remote body missing".to_owned())?,
+                )
+                .map_err(|error| error.to_string())?;
+                let second_run = second_body["runId"]
+                    .as_str()
+                    .ok_or_else(|| "second run id missing".to_owned())?;
+                if second_run == "run-interrupt"
+                    || second_body["parentRunId"] != "run-interrupt"
+                    || second_body["resume"]
+                        != serde_json::json!([{
+                            "interruptId":"remote-confirm-1",
+                            "status":"resolved",
+                            "payload":{"approved":true,"canary":"RESUME_PAYLOAD_CANARY"}
+                        }])
+                {
+                    return Err(format!("second AG-UI request lineage drifted: {second_body:?}"));
+                }
+                server_requests
+                    .lock()
+                    .expect("request bodies")
+                    .push(second_body.clone());
+                let second_events = [
+                    serde_json::json!({"type":"RUN_STARTED","threadId":thread_id,"runId":second_run}),
+                    serde_json::json!({"type":"TEXT_MESSAGE_START","messageId":"answer","role":"assistant"}),
+                    serde_json::json!({"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"resumed answer"}),
+                    serde_json::json!({"type":"TEXT_MESSAGE_END","messageId":"answer"}),
+                    serde_json::json!({"type":"RUN_FINISHED","threadId":thread_id,"runId":second_run}),
+                ];
+                let body = second_events
+                    .into_iter()
+                    .map(|event| format!("data: {event}\n\n"))
+                    .collect::<String>();
+                write_sse_response(&mut second, &body).await?;
+                Ok::<_, String>(())
+            });
+
+            let owner = "runtime-interrupt".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner.clone(),
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let remote_interrupts = Arc::new(
+                PostgresRemoteInterruptCoordinator::new(
+                    pool.clone(),
+                    owner,
+                    vec![0xb8; 32],
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let application: Arc<dyn ApplicationService> = Arc::new(
+                OpenBotApplication::new(ChannelRepo::new(pool.clone()))
+                    .with_remote_interrupts(remote_interrupts.clone()),
+            );
+            let assertion_signer = Arc::new(
+                RemoteRunAssertionSigner::new(b"interrupt-test-master".to_vec())
+                    .map_err(|error| error.to_string())?,
+            );
+            let remote_transport = Arc::new(
+                SafeRemoteAguiTransport::new(
+                    SafeDialer::new(EgressPolicy::new(
+                        CidrAllowlist::parse_exact(["127.0.0.1/32"])
+                            .map_err(|error| error.to_string())?,
+                    )),
+                    SafeHttpBudget::new(1024 * 1024, Duration::from_secs(3))
+                        .map_err(|error| error.to_string())?,
+                    Some(Duration::from_secs(1)),
+                    SchemePolicy::HttpOrHttps,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let provider: Arc<dyn ProviderAdapter> = Arc::new(RemoteAguiProvider::new(
+                remote_transport,
+            ));
+            let context = Arc::new(
+                PostgresAgentContextSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    Some(64),
+                )
+                .map_err(|error| error.to_string())?
+                .with_remote_assertions(assertion_signer),
+            );
+            let remote_runtime_port: Arc<dyn RemoteInterruptCoordinator> = remote_interrupts;
+            let agent = BuiltInAgentRuntime::start_with_remote_interrupts(
+                runtime.clone(),
+                context,
+                provider,
+                Arc::new(NoAgentToolInvoker),
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xb8; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
+                remote_runtime_port,
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 1,
+                    max_tool_concurrency: 1,
+                    lease_renew_interval: Duration::from_millis(200),
+                    run_deadline: Some(Duration::from_secs(8)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let relay = RunRelay::start(runtime, agent.consumer());
+            let mut entropy = [0_u8; 16];
+            entropy[15] = 44;
+            directory
+                .begin_thread_run(BeginThreadRunRequest {
+                    deployment: deployment.clone(),
+                    tenant: tenant.clone(),
+                    actor: ActorId::new("actor-a"),
+                    command: BeginThreadRun {
+                        thread_id: ThreadIdentity::new(&deployment).mint_from_entropy(entropy),
+                        run_id: RunId::new("run-interrupt"),
+                        bot_id: BotId::new("bot-interrupt"),
+                        anchor: ThreadRunAnchor::DirectBot,
+                        message: "Need confirmation".to_owned(),
+                    },
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let pending = tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    match application
+                        .execute(auth.clone(), AppCommand::ListPendingRemoteInterrupts)
+                        .await
+                    {
+                        Ok(AppReply::PendingRemoteInterrupts(page))
+                            if page.interrupts.len() == 1 => return Ok::<_, String>(page),
+                        Ok(_) | Err(_) => tokio::time::sleep(Duration::from_millis(25)).await,
+                    }
+                }
+            })
+            .await
+            .map_err(|_| "remote interrupt did not reach ApplicationService".to_owned())??;
+            let request_id = pending.interrupts[0].request_id.clone();
+            if pending.interrupts[0].untrusted_reason != "confirmation"
+                || pending.interrupts[0].untrusted_message.as_deref()
+                    != Some("REMOTE_INTERRUPT_MESSAGE_CANARY")
+            {
+                return Err(format!("pending projection drifted: {pending:?}"));
+            }
+            let answer = RemoteInterruptAnswer {
+                status: RemoteInterruptAnswerStatus::Resolved,
+                payload: Some(serde_json::json!({
+                    "approved":true,
+                    "canary":"RESUME_PAYLOAD_CANARY"
+                })),
+            };
+            match application
+                .execute(
+                    auth.clone(),
+                    AppCommand::ResolveRemoteInterrupt {
+                        request_id: request_id.clone(),
+                        answer: answer.clone(),
+                    },
+                )
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                AppReply::RemoteInterruptResolved(receipt)
+                    if receipt.request_id == request_id
+                        && receipt.status == RemoteInterruptAnswerStatus::Resolved
+                        && !receipt.replayed => {}
+                other => return Err(format!("resolve receipt drifted: {other:?}")),
+            }
+            wait_for_terminal(&pool, "run-interrupt", "resumed answer").await?;
+            relay.stop().await;
+            agent.stop().await;
+            remote_server.await.map_err(|error| error.to_string())??;
+
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let durable = client
+                .query_one(
+                    "SELECT count(*)::bigint AS rows, \
+                            count(*) FILTER (WHERE state='retired' AND descriptor IS NULL \
+                              AND response_payload IS NULL AND resume_protocol_run_id IS NULL)::bigint AS retired \
+                       FROM public.remote_agent_interrupts WHERE run_id='run-interrupt'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let rows: i64 = durable.get("rows");
+            let retired: i64 = durable.get("retired");
+            let audits: Vec<String> = client
+                .query(
+                    "SELECT event_type FROM public.audit_events \
+                      WHERE event_type LIKE 'agent.remote_interrupt_%' ORDER BY created_at,id",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|row| row.get(0))
+                .collect();
+            let leaked: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM ( \
+                       SELECT content::text AS value FROM public.messages \
+                       UNION ALL SELECT payload::text FROM public.run_events \
+                       UNION ALL SELECT payload::text FROM public.audit_events \
+                       UNION ALL SELECT coalesce(descriptor::text,'') FROM public.remote_agent_interrupts \
+                       UNION ALL SELECT coalesce(response_payload::text,'') FROM public.remote_agent_interrupts \
+                     ) persisted WHERE value LIKE '%REMOTE_INTERRUPT_MESSAGE_CANARY%' \
+                                      OR value LIKE '%REMOTE_AUTHORITY_CANARY%' \
+                                      OR value LIKE '%RESUME_PAYLOAD_CANARY%'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .get(0);
+            if rows != 1
+                || retired != 1
+                || audits
+                    != [
+                        "agent.remote_interrupt_requested",
+                        "agent.remote_interrupt_resolved",
+                    ]
+                || leaked != 0
+                || requests.lock().expect("request bodies").len() != 2
+            {
+                return Err(format!(
+                    "remote interrupt durable terminal drifted: rows={rows} retired={retired} audits={audits:?} leaked={leaked}"
                 ));
             }
             Ok(())

@@ -15,8 +15,8 @@ use openbot_application::tenant::package::{
     TenantPackageEnvironment, synchronize_tenant_package,
 };
 use openbot_application::{
-    AgentAudit, NoRunDispatchConsumer, ProviderAdapter, ProviderRateCard, RunDispatchConsumer,
-    RunRuntime, remember_provider_tool,
+    AgentAudit, NoRunDispatchConsumer, ProviderAdapter, ProviderRateCard,
+    RemoteInterruptCoordinator, RunDispatchConsumer, RunRuntime, remember_provider_tool,
 };
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
@@ -110,6 +110,7 @@ struct BuiltInAgentAssemblyInput {
     credential_vault: CredentialRecordVault,
     tools: Arc<dyn AgentToolInvoker>,
     audit: Arc<dyn AgentAudit>,
+    remote_interrupts: Arc<dyn RemoteInterruptCoordinator>,
     remote_assertions: Arc<RemoteRunAssertionSigner>,
     mcp_catalog: Arc<PostgresMcpCatalog>,
     components: Arc<PostgresComponentAdministration>,
@@ -363,6 +364,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sandboxed_components = application_assembly.sandboxed_components.clone();
     let mcp_connections = application_assembly.mcp_connections.clone();
     let remote_callback_auth = application_assembly.remote_callback_auth.clone();
+    let remote_interrupts = application_assembly.remote_interrupts.clone();
     let mcp_revocation_reconciler = application_assembly.mcp_revocation_reconciler;
     let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence(
         application.clone(),
@@ -396,6 +398,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         credential_vault: model_credential_vault,
         tools: agent_tools,
         audit: agent_audit,
+        remote_interrupts,
         remote_assertions: remote_assertions.clone(),
         mcp_catalog,
         components,
@@ -503,6 +506,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         credential_vault,
         tools,
         audit,
+        remote_interrupts,
         remote_assertions,
         mcp_catalog,
         components,
@@ -587,12 +591,13 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
             .with_sandboxed_components(sandboxed_components)
             .with_agent_credential_vault(credential_vault),
     );
-    let agent = BuiltInAgentRuntime::start(
+    let agent = BuiltInAgentRuntime::start_with_remote_interrupts(
         runtime,
         context,
         provider,
         tools,
         audit,
+        remote_interrupts,
         BuiltInAgentConfig {
             run_deadline: budgets.run_deadline,
             ..BuiltInAgentConfig::default()
