@@ -625,7 +625,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（截至 2026-08-30，Batch 15–86；条目内历史计数按注明批次）
+### 15.1 当前实施勾选（截至 2026-09-04，Batch 15–98；条目内历史计数按注明批次）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -716,6 +716,13 @@ G6 重写后的文本（替换 v3 原四条）：
   Stop→Cancelling→Cancelled、跨副本host cancel与mount-local queue/remove/settle。Markdown、完整tool
   boundary、sources/附件/per-channel draft/steer/Screen未落，故ChannelChat/ChatTranscript/
   ConversationView/Composer条目仍todo；
+- [x] Batch98 remote AG-UI interrupt/resume conversation子面：current active run按actor-scoped
+  `GET /api/me/remote-interrupts`取得server UUIDv7 handle与显式untrusted reason/message/schema DTO；
+  reason/message只作Leptos escaped text并置于`data-untrusted-remote-content`边界，schema不执行代码或
+  产生权限，首版用通用JSON输入返回closed resolved/cancelled。PUT成功后本地移除并继续1秒权威poll；
+  Server/Desktop共用typed ApplicationService，terminal清descriptor/answer。UI=`182/0/0`、WASM与
+  i18n=`806`绿，offline bundle连续两次SHA一致，预算=`1897481/115524/740216/1/0`。本证据不替代
+  完整channel Composer/route，也不冒充Web/Desktop golden、AX或G6整关；
 - [x] `/settings/memory`新增route：native 0022以tenant/actor独立持久化writesEnabled，缺行默认开启；
   disabled只拒绝GUI remember/correct与built-in remember tool，查看/recall/forbid/delete保持可用。
   页面以typed no-store API呈现50→52 owner keyset、status/kind/sensitivity/scope/source/origin/tags，
