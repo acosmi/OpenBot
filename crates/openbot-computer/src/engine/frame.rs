@@ -34,6 +34,30 @@ pub struct EngineFrame {
 }
 
 impl EngineFrame {
+    #[cfg(test)]
+    pub(crate) fn for_test(sequence: u64, captured_at_ms: i64, scroll_y: f32) -> Self {
+        Self {
+            sequence,
+            captured_at_ms,
+            width: 1280,
+            height: 800,
+            device_scale_factor: 1.0,
+            page_scale_factor: 1.0,
+            scroll_x: 0.0,
+            scroll_y,
+            screencast_session_id: u32::try_from(sequence).unwrap_or(u32::MAX),
+            format: ImageFormat::Jpeg,
+            bytes: vec![
+                0xff,
+                0xd8,
+                0xff,
+                u8::try_from(sequence).unwrap_or(0),
+                0xff,
+                0xd9,
+            ],
+        }
+    }
+
     /// Monotonic sequence within this engine generation.
     #[must_use]
     pub const fn sequence(&self) -> u64 {

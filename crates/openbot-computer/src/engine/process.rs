@@ -26,7 +26,7 @@ use super::protocol::{
     BootCapability, BootToken, EngineCommandWire, EngineEventWire, EngineInputKindWire,
     EngineOperationId, EngineProtocolError, encode_command,
 };
-use super::scope::EngineRole;
+use super::scope::{EngineRole, ScreenAudience};
 
 #[cfg(windows)]
 use openbot_windows_sandbox::{
@@ -259,6 +259,7 @@ pub enum EngineSandboxFidelity {
 pub struct EngineLaunchConfig {
     bundle: EngineBundle,
     role: EngineRole,
+    screen_audience: ScreenAudience,
     computer_id: ComputerId,
     generation: ComputerGeneration,
     profile_dir: PathBuf,
@@ -273,6 +274,7 @@ impl EngineLaunchConfig {
     pub fn new(
         bundle: EngineBundle,
         role: EngineRole,
+        screen_audience: ScreenAudience,
         computer_id: ComputerId,
         generation: ComputerGeneration,
         profile_dir: impl Into<PathBuf>,
@@ -281,6 +283,7 @@ impl EngineLaunchConfig {
         Self {
             bundle,
             role,
+            screen_audience,
             computer_id,
             generation,
             profile_dir: profile_dir.into(),
@@ -344,6 +347,123 @@ impl ScreenIngressStats {
 pub struct ScreenStopReceipt {
     stats: ScreenIngressStats,
     replayed: bool,
+}
+
+/// Complete immutable identity of one engine screen stream.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ScreenStreamKey {
+    scope_digest: [u8; 32],
+    computer_id: ComputerId,
+    generation: ComputerGeneration,
+    tab_id: TabId,
+}
+
+impl ScreenStreamKey {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        scope_digest: [u8; 32],
+        computer_id: ComputerId,
+        generation: ComputerGeneration,
+        tab_id: TabId,
+    ) -> Self {
+        Self {
+            scope_digest,
+            computer_id,
+            generation,
+            tab_id,
+        }
+    }
+
+    /// Opaque full security-scope digest.
+    #[must_use]
+    pub const fn scope_digest(&self) -> &[u8; 32] {
+        &self.scope_digest
+    }
+
+    /// Computer identity.
+    #[must_use]
+    pub fn computer_id(&self) -> &ComputerId {
+        &self.computer_id
+    }
+
+    /// Computer generation.
+    #[must_use]
+    pub const fn generation(&self) -> ComputerGeneration {
+        self.generation
+    }
+
+    /// Active tab identity.
+    #[must_use]
+    pub fn tab_id(&self) -> &TabId {
+        &self.tab_id
+    }
+}
+
+/// Single attachable source for a [`crate::screen::ScreenHub`].
+#[cfg(any(unix, windows))]
+pub struct EngineScreenSource {
+    key: ScreenStreamKey,
+    audience: ScreenAudience,
+    receiver: watch::Receiver<Option<Arc<EngineFrame>>>,
+    state: Arc<Mutex<ScreenIngressState>>,
+}
+
+#[cfg(any(unix, windows))]
+impl EngineScreenSource {
+    /// Exact stream identity exposed to the Rust ScreenHub owner, never to a renderer.
+    #[must_use]
+    pub fn stream_key(&self) -> &ScreenStreamKey {
+        &self.key
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        key: ScreenStreamKey,
+        audience: ScreenAudience,
+        receiver: watch::Receiver<Option<Arc<EngineFrame>>>,
+    ) -> Self {
+        Self {
+            key,
+            audience,
+            receiver,
+            state: Arc::new(Mutex::new(ScreenIngressState::default())),
+        }
+    }
+
+    /// Stream key.
+    pub(crate) fn key(&self) -> &ScreenStreamKey {
+        self.stream_key()
+    }
+
+    /// Host-authorized audience.
+    pub(crate) fn audience(&self) -> &ScreenAudience {
+        &self.audience
+    }
+
+    /// Current latest frame, marking it observed for this source.
+    pub(crate) async fn latest(&mut self) -> Result<Arc<EngineFrame>, EngineProcessError> {
+        let frame = self
+            .receiver
+            .borrow_and_update()
+            .as_ref()
+            .cloned()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?;
+        let mut state = self.state.lock().await;
+        if state.failed {
+            return Err(EngineProcessError::ScreenIngressClosed);
+        }
+        state.consumed_sequence = state.consumed_sequence.max(frame.sequence());
+        Ok(frame)
+    }
+
+    /// Wait for the next latest frame.
+    pub(crate) async fn next(&mut self) -> Result<Arc<EngineFrame>, EngineProcessError> {
+        self.receiver
+            .changed()
+            .await
+            .map_err(|_| EngineProcessError::ScreenIngressClosed)?;
+        self.latest().await
+    }
 }
 
 impl ScreenStopReceipt {
@@ -568,6 +688,7 @@ pub struct EngineProcess {
     frame_reader: Option<BufReader<EnginePipeReadHalf>>,
     _frame_writer: EnginePipeWriteHalf,
     role: EngineRole,
+    screen_audience: ScreenAudience,
     computer_id: ComputerId,
     generation: ComputerGeneration,
     _runtime: RuntimeDirectory,
@@ -575,6 +696,7 @@ pub struct EngineProcess {
     active_tab: Option<TabId>,
     session_started: bool,
     screen: Option<ScreenIngress>,
+    screen_source_issued: bool,
     last_stop: Option<(TabId, ScreenStopReceipt)>,
     fidelity: EngineSandboxFidelity,
 }
@@ -606,6 +728,14 @@ impl EngineProcess {
         config: EngineLaunchConfig,
         boundary: EngineLaunchBoundary,
     ) -> Result<Self, EngineProcessError> {
+        if config.screen_audience.tenant_id() != config.role.tenant_id()
+            || config
+                .role
+                .component_actor_id()
+                .is_some_and(|actor| actor != config.screen_audience.actor_id())
+        {
+            return Err(EngineProcessError::ScreenAudience);
+        }
         fs::create_dir_all(&config.profile_dir).map_err(EngineProcessError::Io)?;
         fs::create_dir_all(&config.temp_dir).map_err(EngineProcessError::Io)?;
         let profile_dir = config
@@ -703,6 +833,7 @@ impl EngineProcess {
             frame_reader: Some(frame_reader),
             _frame_writer: frame_writer,
             role: config.role,
+            screen_audience: config.screen_audience,
             computer_id: config.computer_id,
             generation: config.generation,
             _runtime: runtime,
@@ -710,6 +841,7 @@ impl EngineProcess {
             active_tab: None,
             session_started: false,
             screen: None,
+            screen_source_issued: false,
             last_stop: None,
             fidelity,
         })
@@ -877,6 +1009,41 @@ impl EngineProcess {
             .ok_or(EngineProcessError::ScreenIngressClosed)?
             .stats()
             .await
+    }
+
+    /// Take the sole attachable ScreenHub source for this active engine session.
+    pub fn take_screen_source(&mut self) -> Result<EngineScreenSource, EngineProcessError> {
+        if self.screen_source_issued {
+            return Err(EngineProcessError::ScreenSourceAlreadyIssued);
+        }
+        let tab_id = self
+            .active_tab
+            .clone()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?;
+        let receiver = self
+            .screen
+            .as_ref()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?
+            .receiver
+            .clone();
+        self.screen_source_issued = true;
+        Ok(EngineScreenSource {
+            key: ScreenStreamKey {
+                scope_digest: self.role.scope_digest(),
+                computer_id: self.computer_id.clone(),
+                generation: self.generation,
+                tab_id,
+            },
+            audience: self.screen_audience.clone(),
+            receiver,
+            state: Arc::clone(
+                &self
+                    .screen
+                    .as_ref()
+                    .ok_or(EngineProcessError::ScreenIngressClosed)?
+                    .state,
+            ),
+        })
     }
 
     /// Stop one exact tab and require an operation-bound acknowledgement plus joined frame stats.
@@ -1693,12 +1860,18 @@ pub enum EngineProcessError {
     /// Fresh HumanLease receipt did not match this process/generation/active tab.
     #[error("engine_input_authority")]
     InputAuthority,
+    /// Host-provided screen audience did not match the Rust-owned engine role scope.
+    #[error("engine_screen_audience")]
+    ScreenAudience,
     /// Input acknowledgement did not echo the exact operation/tab/kind.
     #[error("engine_input_applied_identity")]
     InputAppliedIdentity,
     /// The authenticated frame ingress stopped or failed before the caller consumed a frame.
     #[error("engine_screen_ingress_closed")]
     ScreenIngressClosed,
+    /// A second ScreenHub tried to attach to the same engine stream.
+    #[error("engine_screen_source_already_issued")]
+    ScreenSourceAlreadyIssued,
     /// Stop acknowledgement did not match the operation.
     #[error("engine_stopped_identity")]
     StoppedIdentity,

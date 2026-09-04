@@ -5,14 +5,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use openbot_computer::browser::{BrowserInput, ModifierMask, MouseButton};
 use openbot_computer::control::{ControlError, ControlService, HumanInputTicket};
 use openbot_computer::engine::{
     ComponentRenderScope, ComputerSecurityScope, DesktopWindowSessionId, EngineBundle,
     EngineBundleDigest, EngineFrame, EngineLaunchConfig, EngineProcess, EngineProcessError,
-    EngineRole, EngineSandboxFidelity, WorkspaceScope,
+    EngineRole, EngineSandboxFidelity, ScreenAudience, WorkspaceScope,
 };
+use openbot_computer::screen::{ScreenHub, ScreenHubError, ScreenViewerBinding};
 use openbot_contracts::auth::{AuthContext, AuthGeneration, Role};
 use openbot_contracts::ids::{
     ActorId, BotId, ChannelId, ComputerGeneration, ComputerId, CredentialPrincipalId, DeploymentId,
@@ -26,6 +28,8 @@ const ENGINE_INPUT_FIXTURE: &str =
     include_str!("../../../fixtures/computer/engine-input-wire-v2.json");
 const SCREENCAST_FIXTURE: &str =
     include_str!("../../../fixtures/computer/screencast-backpressure-v3.json");
+const SCREEN_HUB_FIXTURE: &str =
+    include_str!("../../../fixtures/computer/screen-hub-ticket-core-v1.json");
 
 #[test]
 fn engine_input_fixture_locks_protocol_and_unfinished_platform_boundaries() {
@@ -102,6 +106,48 @@ fn screencast_fixture_locks_ack_order_latest_buffer_and_remaining_screen_boundar
     }
 }
 
+#[test]
+fn screen_hub_fixture_locks_ticket_and_production_transport_boundary() {
+    let fixture =
+        serde_json::from_str::<serde_json::Value>(SCREEN_HUB_FIXTURE).expect("ScreenHub fixture");
+    assert_eq!(fixture["schema"], "openbot-screen-hub-ticket-core-v1");
+    assert_eq!(fixture["ticket"]["entropyBits"], 128);
+    assert_eq!(fixture["ticket"]["ttlSeconds"], 30);
+    assert_eq!(fixture["ticket"]["storage"], "sha256-digest-only");
+    assert_eq!(fixture["ticket"]["baseProtocol"], "openbot.screen.v1");
+    assert_eq!(fixture["ticket"]["ticketInUrlOrQuery"], false);
+    assert_eq!(fixture["ticket"]["upgradeResponseEchoesTicket"], false);
+    assert_eq!(fixture["ticket"]["singleUse"], true);
+    assert_eq!(fixture["latestFrame"]["combinedPerTabMaximum"], 2);
+    assert_eq!(fixture["latestFrame"]["perViewerPendingMaximum"], 1);
+    assert_eq!(fixture["latestFrame"]["viewerFrameMagic"], "OBSCRN01");
+    assert_eq!(fixture["latestFrame"]["viewerFrameHeaderBytes"], 68);
+    assert_eq!(fixture["macosArm64Evidence"]["viewersPerRole"], 2);
+    for completed in [
+        "engineBackedSource",
+        "screenHubLatestCore",
+        "multiViewerCore",
+        "viewerTicketCore",
+        "authGenerationInvalidationCore",
+    ] {
+        assert_eq!(fixture["evidenceBoundary"][completed], true);
+    }
+    for unfinished in [
+        "serverAuthenticatedWebSocket",
+        "desktopLoopbackWebSocket",
+        "productionAuthInvalidationHook",
+        "connectionFrameSizeBandwidthIdleLimits",
+        "fpsOrLatencyBudget",
+        "lastViewerStopsScreencastWithinTwoSeconds",
+        "captureScreenshotFallback",
+        "serverOrDesktopComputerAssembly",
+        "windowsRuntime",
+        "linuxRunscRuntime",
+    ] {
+        assert_eq!(fixture["evidenceBoundary"][unfinished], false);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires `cargo xtask engine bundle` and host permission to run the real confined Electron"]
 async fn browser_role_start_frame_stop_has_no_debug_listener_or_orphan() {
@@ -152,9 +198,20 @@ async fn run_role(role: EngineRole) {
     let temp = TestDirectories::new(tag);
     let computer_id = ComputerId::new(format!("computer-{tag}"));
     let generation = ComputerGeneration::new(1);
+    let auth = AuthContext::for_test(
+        DeploymentId::new("deployment-input"),
+        role.tenant_id().clone(),
+        role.component_actor_id()
+            .cloned()
+            .unwrap_or_else(|| ActorId::new("actor-input")),
+        [Role::User],
+        AuthGeneration::new(9),
+        false,
+    );
     let mut process = EngineProcess::launch(EngineLaunchConfig::new(
         bundle,
         role,
+        ScreenAudience::from_auth(&auth),
         computer_id.clone(),
         generation,
         &temp.profile,
@@ -193,6 +250,94 @@ async fn run_role(role: EngineRole) {
             "component://session"
         }
     );
+    let mut control = ControlService::new(computer_id.clone(), tab.clone(), generation, INPUT_TIME);
+    control
+        .take(&auth, INPUT_TIME + Duration::minutes(5), INPUT_TIME)
+        .expect("take control");
+    let ticket = control
+        .issue_human_input_ticket(INPUT_TIME)
+        .expect("human input ticket");
+    let slow_frame = prove_slow_engine_ingress(
+        &mut process,
+        &mut control,
+        &auth,
+        &ticket,
+        started.frame.clone(),
+    )
+    .await;
+    let source = process.take_screen_source().expect("sole ScreenHub source");
+    let screen_key = source.stream_key().clone();
+    assert!(process.take_screen_source().is_err());
+    let hub = ScreenHub::new(3).expect("screen hub");
+    hub.attach(source).await.expect("attach real engine source");
+    let binding_a = if tag == "browser" {
+        ScreenViewerBinding::verified_server("https://app.example.test").expect("server binding")
+    } else {
+        ScreenViewerBinding::verified_desktop("openbot://localhost", "component-a", 1)
+            .expect("desktop binding")
+    };
+    let binding_b = if tag == "browser" {
+        binding_a.clone()
+    } else {
+        ScreenViewerBinding::verified_desktop("openbot://localhost", "component-b", 2)
+            .expect("desktop binding")
+    };
+    assert!(matches!(
+        hub.issue_ticket(
+            &AuthContext::for_test(
+                auth.deployment().clone(),
+                auth.tenant().clone(),
+                ActorId::new("wrong-actor"),
+                [Role::User],
+                auth.auth_generation(),
+                false,
+            ),
+            &screen_key,
+            binding_a.clone(),
+            INPUT_TIME,
+        )
+        .await,
+        Err(ScreenHubError::NotVisible)
+    ));
+    let ticket_a = hub
+        .issue_ticket(&auth, &screen_key, binding_a.clone(), INPUT_TIME)
+        .await
+        .expect("ticket a");
+    let protocol_a = ticket_a.ticket_protocol();
+    assert!(!format!("{ticket_a:?}").contains(&protocol_a));
+    assert!(matches!(
+        hub.consume_ticket(
+            &auth,
+            &ScreenViewerBinding::verified_server("https://wrong.example.test")
+                .expect("wrong binding"),
+            &protocol_a,
+            INPUT_TIME,
+        )
+        .await,
+        Err(ScreenHubError::NotVisible)
+    ));
+    let ticket_b = hub
+        .issue_ticket(&auth, &screen_key, binding_b.clone(), INPUT_TIME)
+        .await
+        .expect("ticket b");
+    let mut viewer_a = hub
+        .consume_ticket(&auth, &binding_a, &protocol_a, INPUT_TIME)
+        .await
+        .expect("viewer a");
+    let mut viewer_b = hub
+        .consume_ticket(&auth, &binding_b, &ticket_b.ticket_protocol(), INPUT_TIME)
+        .await
+        .expect("viewer b");
+    assert!(matches!(
+        hub.consume_ticket(&auth, &binding_a, &protocol_a, INPUT_TIME)
+            .await,
+        Err(ScreenHubError::TicketInvalid)
+    ));
+    let viewer_initial_sequence = viewer_a.current().expect("viewer a initial").sequence();
+    assert_eq!(
+        viewer_b.current().expect("viewer b initial").sequence(),
+        viewer_initial_sequence
+    );
     let descendants = descendant_pids(pid);
     assert!(
         descendants.contains(&started.renderer_pid),
@@ -202,29 +347,34 @@ async fn run_role(role: EngineRole) {
         assert_no_tcp_listener(process);
     }
 
-    let auth = AuthContext::for_test(
-        DeploymentId::new("deployment-input"),
-        TenantId::new("tenant-input"),
-        ActorId::new("actor-input"),
-        [Role::User],
-        AuthGeneration::new(9),
-        false,
+    run_live_input_matrix(&mut process, &mut control, &auth, &ticket, slow_frame).await;
+    let viewer_frame_a = tokio::time::timeout(std::time::Duration::from_secs(5), viewer_a.next())
+        .await
+        .expect("viewer a latest deadline")
+        .expect("viewer a latest");
+    let viewer_frame_b = tokio::time::timeout(std::time::Duration::from_secs(5), viewer_b.next())
+        .await
+        .expect("viewer b latest deadline")
+        .expect("viewer b latest");
+    assert_eq!(viewer_frame_a.sequence(), viewer_frame_b.sequence());
+    assert!(Arc::ptr_eq(&viewer_frame_a, &viewer_frame_b));
+    assert!(viewer_frame_a.sequence() > viewer_initial_sequence);
+    assert!(viewer_a.skipped_frames() > 0);
+    assert!(viewer_b.skipped_frames() > 0);
+    assert_eq!(&viewer_frame_a.binary()[..8], b"OBSCRN01");
+    assert_eq!(
+        hub.invalidate_actor(auth.tenant(), auth.actor(), AuthGeneration::new(10),)
+            .await,
+        1
     );
-    let mut control = ControlService::new(computer_id, tab.clone(), generation, INPUT_TIME);
-    control
-        .take(&auth, INPUT_TIME + Duration::minutes(5), INPUT_TIME)
-        .expect("take control");
-    let ticket = control
-        .issue_human_input_ticket(INPUT_TIME)
-        .expect("human input ticket");
-    run_live_input_matrix(
-        &mut process,
-        &mut control,
-        &auth,
-        &ticket,
-        started.frame.clone(),
-    )
-    .await;
+    assert!(matches!(
+        viewer_a.next().await,
+        Err(ScreenHubError::ViewerRevoked)
+    ));
+    assert!(matches!(
+        viewer_b.next().await,
+        Err(ScreenHubError::ViewerRevoked)
+    ));
     control.release(INPUT_TIME).expect("release control");
     assert!(matches!(
         control.authorize_human_input_receipt(&auth, &ticket, INPUT_TIME),
@@ -263,16 +413,56 @@ async fn run_role(role: EngineRole) {
     }
 }
 
-async fn run_live_input_matrix(
+async fn prove_slow_engine_ingress(
     process: &mut EngineProcess,
     control: &mut ControlService,
     auth: &AuthContext,
     ticket: &HumanInputTicket,
     baseline: EngineFrame,
+) -> EngineFrame {
+    dispatch(
+        process,
+        control,
+        auth,
+        ticket,
+        BrowserInput::mouse_move(
+            80.0,
+            70.0,
+            MouseButton::Left,
+            ModifierMask::new(0).expect("modifiers"),
+        )
+        .expect("hover"),
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let mut sequence = baseline.sequence();
+    let hover = next_frame(process, &mut sequence).await;
+    assert_ne!(
+        frame_hash(&hover),
+        frame_hash(&baseline),
+        "mouseMoved must change :hover"
+    );
+    let slow_stats = wait_screen_caught_up(process).await;
+    assert_eq!(
+        slow_stats.received_frames(),
+        slow_stats.acknowledged_frames()
+    );
+    assert!(
+        slow_stats.dropped_before_consume() > 0,
+        "size-one engine ingress must drop old animation frames for a slow consumer"
+    );
+    hover
+}
+
+async fn run_live_input_matrix(
+    process: &mut EngineProcess,
+    control: &mut ControlService,
+    auth: &AuthContext,
+    ticket: &HumanInputTicket,
+    starting_frame: EngineFrame,
 ) {
     let none = ModifierMask::new(0).expect("modifiers");
-    let mut sequence = baseline.sequence();
-    let baseline_hash = frame_hash(&baseline);
+    let mut sequence = starting_frame.sequence();
 
     let mut wrong_scope = ControlService::new(
         ComputerId::new("other-computer"),
@@ -313,31 +503,6 @@ async fn run_live_input_matrix(
             .await,
         Err(EngineProcessError::InputAuthority)
     ));
-
-    dispatch(
-        process,
-        control,
-        auth,
-        ticket,
-        BrowserInput::mouse_move(80.0, 70.0, MouseButton::Left, none).expect("hover"),
-    )
-    .await;
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-    let hover = next_frame(process, &mut sequence).await;
-    assert_ne!(
-        frame_hash(&hover),
-        baseline_hash,
-        "mouseMoved must change :hover"
-    );
-    let slow_stats = wait_screen_caught_up(process).await;
-    assert_eq!(
-        slow_stats.received_frames(),
-        slow_stats.acknowledged_frames()
-    );
-    assert!(
-        slow_stats.dropped_before_consume() > 0,
-        "size-one latest buffer must drop old animation frames for a slow consumer"
-    );
 
     dispatch(
         process,

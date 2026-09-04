@@ -42,6 +42,8 @@ pub mod browser;
 pub mod control;
 pub mod engine;
 pub mod manager;
+#[cfg(any(unix, windows))]
+pub mod screen;
 
 pub use control::{
     AuthorizedHumanInput, ControlError, ControlHolder, ControlService, ControlSnapshot,
