@@ -1083,7 +1083,7 @@ entries:
     test_id: "T-API-0084"
     migration_rule: "preserve"
     status: "done"
-    done_evidence: "Batch99：fresh admin + trusted Origin进入typed RemoveMcpServer；同一PG事务先撤销deployment与所有actor token、删除精确server tool refs的grants，再删除server并级联tools/user joins，最后写configuration.changed hash-chain audit；任一失败全回滚。真实PG纵向实得server/tool/grant=0/0/0、两代credential revoked=2、四次配置audit row_hash非空；Server/Desktop framing绿。"
+    done_evidence: "Batch99：fresh admin + trusted Origin进入typed RemoveMcpServer并同事务撤本地credential/grant/server。Batch103补齐删除后的vendor compensation：事务冻结versioned resource/transport/exact CIDR/retained client ID且不复制secret，删除全部server-prefix stale/orphan grant，为active actor写local vendor=false audit；reconciler绝不回落same-ID replacement。vendor失败pending后可恢复；删除前/后本地材料损坏转operator_required且不无限重试；成功后擦user-token网络上下文，最后一条/零用户client与bearer进入runbook人工vendor处置，错绑credential不被误撤。PG17.11 SCRAM OAuth=2/0/0、TLS RMCP=6/0/0，Server/Desktop framing与hash-chain保持。"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "admin。错误码：401 未登录 / 403 非 admin（auth/guards.ts::requireAdmin）/ 400 malformed / 503 依赖未配置"
   - id: "api-plugins-servers-refresh-post"
