@@ -248,6 +248,8 @@ impl RemoteAguiSession {
                 // Decoder supports the pinned interrupt shape; durable human resume is a later G7 slice.
                 self.fail(ProviderFailure::GenerationFailed);
             }
+            // Remote prose/code are untrusted display inputs. Collapse them at this boundary so
+            // neither the durable run journal nor logs/audit can receive provider-controlled text.
             AguiEvent::RunError { .. } => self.fail(ProviderFailure::GenerationFailed),
             AguiEvent::StepStarted { .. }
             | AguiEvent::StepFinished { .. }
@@ -436,5 +438,59 @@ mod tests {
                 field: "remote_tool_assertion"
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn remote_error_and_malformed_message_become_closed_failures_without_remote_prose() {
+        let cases = [
+            (
+                vec![
+                    json!({"type":"RUN_STARTED","threadId":"thread-1","runId":"run-1"}).to_string(),
+                    json!({
+                        "type":"RUN_ERROR",
+                        "message":"REMOTE_ERROR_SECRET_CANARY",
+                        "code":"vendor-secret-code"
+                    })
+                    .to_string(),
+                ],
+                ProviderFailure::GenerationFailed,
+            ),
+            (
+                vec![
+                    json!({"type":"RUN_STARTED","threadId":"thread-1","runId":"run-1"}).to_string(),
+                    json!({
+                        "type":"MESSAGES_SNAPSHOT",
+                        "messages":[{"id":"m","role":"assistant","content":{"bad":true}}]
+                    })
+                    .to_string(),
+                ],
+                ProviderFailure::InvalidResponse,
+            ),
+        ];
+        for (events, expected) in &cases {
+            let transport = Arc::new(FakeTransport {
+                body: Mutex::new(None),
+                events: events.clone(),
+            });
+            let provider = RemoteAguiProvider::new(transport);
+            let mut session = provider.start(request(Vec::new())).await.unwrap();
+            assert!(matches!(
+                session.next_event().await.unwrap(),
+                Some(ProviderEvent::ResponseStarted { .. })
+            ));
+            assert_eq!(
+                session.next_event().await.unwrap(),
+                Some(ProviderEvent::Failed(*expected))
+            );
+            assert_eq!(session.next_event().await.unwrap(), None);
+        }
+        let rendered = format!("{cases:?}");
+        assert!(rendered.contains("REMOTE_ERROR_SECRET_CANARY"));
+        let local = format!(
+            "{:?}",
+            ProviderEvent::Failed(ProviderFailure::GenerationFailed)
+        );
+        assert!(!local.contains("REMOTE_ERROR_SECRET_CANARY"));
+        assert!(!local.contains("vendor-secret-code"));
     }
 }
