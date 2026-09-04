@@ -1,7 +1,7 @@
 # Batch116：AG-UI官方事件fixture主控验收
 
 日期：2026-09-04；分支：`feat/2026-09-04-G4-agui-official-fixture-audit`。
-依据：v4 §7.5、§21.2、T-FIX-0010、§28.1 R192。
+依据：v4 §7.5、§21.2、T-FIX-0010、§28.1 R192。主控修正提交：`2bdc8bd`。
 
 原候选`dd7febe7f03b01f2c3ffa515cfcd752aacfcb864`基于R188，11个新增文件；主控没有合并外部分支，
 也没有修改外部工作树。先独立核官方Git tree、本地Git blob/SHA/bytes、测试5/0/0、Agent57/0/0及Clippy/fmt。
@@ -26,3 +26,5 @@ T-FIX-0010转done；fixtures35/20/55，parity873/839/1712、overlay1273/431/2/6�
 T-FIX-0011/0012、G4/G6/G8未闭合。无production代码/Cargo/schema/UI/Grok/workflow变化，无远端写入。
 
 每份源文件的完整blob/bytes/SHA与原路径/本地改名关系见伴随provenance；详细修正见本批重写的外部交付报告。
+
+最终strict recount本轮实得160通过/0失配/0跳过；parity-check0违反。
