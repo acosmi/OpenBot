@@ -25,6 +25,11 @@ const PROVENANCE: &str = include_str!(
 );
 const TRACE_BYTES: usize = 9_070;
 const TRACE_SHA256: &str = "fe38a7a044f8de33d441d0c9bf426e1291b1401bb9099ef419f62651b50d2927";
+const SOURCE_COMMIT: &str = "19d0a3cb8e0cf0f3137a5c56c3c70a0c3f6c96f5";
+const SOURCE_RECORD_BYTES: usize = 13_211;
+const SOURCE_RECORD_BLOB_SHA1: &str = "3272bc4116a32b4472d21f68b41ce23ce363c02c";
+const SOURCE_RECORD_SHA256: &str =
+    "ff7fadb3baabc1fd1fc482fe9ec28ba93d5a899b961cce73bf19f8d9c1fe20b8";
 const RESPONSE_ID: &str = "resp_0efaed9f1deaf0e9006a9351c0441c87d0b2a10bdeadce69d1";
 const CALL_ID: &str = "call_qhXV6DQEZjbWPC51jqVwS4gh";
 const TOOL_NAME: &str = "get_weather_at_location";
@@ -70,11 +75,21 @@ async fn openai_responses_recorded_trace_replays_through_production_adapter() {
 fn assert_fixture_identity_and_provenance() {
     assert_eq!(TRACE.len(), TRACE_BYTES);
     assert_eq!(format!("{:x}", Sha256::digest(TRACE)), TRACE_SHA256);
+    assert!(
+        TRACE.ends_with(b"\n\n"),
+        "the exact vendor SSE body retains its terminal event delimiter"
+    );
 
     let provenance: Value = serde_json::from_str(PROVENANCE).expect("valid provenance JSON");
     assert_eq!(provenance["schema"], "openbot-provider-recorded-trace-v1");
     assert_eq!(provenance["provider"], "openai");
     assert_eq!(provenance["protocol"]["api"], "Responses");
+    assert_eq!(
+        provenance["protocol"]["transport"],
+        "HTTP/1.1 server-sent events"
+    );
+    assert_eq!(provenance["protocol"]["method"], "POST");
+    assert_eq!(provenance["protocol"]["status_code"], 200);
     assert_eq!(
         provenance["protocol"]["endpoint"],
         "https://api.openai.com/v1/responses"
@@ -86,6 +101,44 @@ fn assert_fixture_identity_and_provenance() {
         "gpt-4o-mini-2024-07-18"
     );
     assert_eq!(
+        provenance["protocol"]["response_created_at_utc"],
+        "2026-08-29T21:40:16Z"
+    );
+    assert_eq!(
+        provenance["provenance"]["kind"],
+        "vendor_capture_published_by_vendor"
+    );
+    assert_eq!(provenance["provenance"]["publisher"], "OpenAI");
+    assert_eq!(
+        provenance["provenance"]["repository"],
+        "https://github.com/openai/openai-dotnet"
+    );
+    assert_eq!(provenance["provenance"]["source_commit"], SOURCE_COMMIT);
+    assert_eq!(
+        provenance["provenance"]["source_commit_time_utc"],
+        "2026-09-02T18:33:36Z"
+    );
+    assert_eq!(
+        provenance["provenance"]["source_record_git_blob_sha1"],
+        SOURCE_RECORD_BLOB_SHA1
+    );
+    assert_eq!(
+        provenance["provenance"]["source_record_bytes"],
+        SOURCE_RECORD_BYTES
+    );
+    assert_eq!(
+        provenance["provenance"]["source_record_sha256"],
+        SOURCE_RECORD_SHA256
+    );
+    assert_eq!(
+        provenance["provenance"]["retrieved_at_utc"],
+        "2026-09-04T09:39:09Z"
+    );
+    assert_eq!(
+        provenance["payload"]["path"],
+        "fixtures/provider/openai-responses-function-tool-stream.sse"
+    );
+    assert_eq!(
         provenance["payload"]["raw_response_body_bytes"],
         TRACE_BYTES
     );
@@ -95,6 +148,11 @@ fn assert_fixture_identity_and_provenance() {
     );
     assert_eq!(provenance["payload"]["fixture_bytes"], TRACE_BYTES);
     assert_eq!(provenance["payload"]["fixture_sha256"], TRACE_SHA256);
+    assert_eq!(provenance["license"]["spdx"], "MIT");
+    assert_eq!(
+        provenance["license"]["copyright"],
+        "Copyright (c) 2024 OpenAI (https://openai.com)"
+    );
 
     let preserved = provenance["response_headers"]["preserved"]
         .as_object()

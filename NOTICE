@@ -8,7 +8,7 @@ NOTICE —— 第三方组件声明
 - 本文件只声明**第三方**组件；它们各自按原始条款授权，LICENSE 的「保留一切权利」
   不适用于、也不能收紧它们。
 - 机器可读的完整来源登记（固定 commit、SHA-256、purl、逐条取证记录）在
-  `provenance/sources.spdx.json`（SPDX 2.3，55 个 package）。**那份是真源**，
+  `provenance/sources.spdx.json`（SPDX 2.3，56 个 package）。**那份是真源**，
   本文件是它面向发行包的人类可读投影；两者不一致时以 SPDX 文件与实际取证为准，
   并同 PR 修订本文件。
 - 契约依据：v3 方案 §23.1「代码许可」条 1–7、§23.2、§23.4。
@@ -336,6 +336,27 @@ OFL-1.1 的两条硬约束在本项目的用法下均满足，但改变用法时
   许可证全文与本文件 §1 收录的标准 MIT 条款相同；分发时须保留上述版权行与 MIT 条款。
   Production 关闭该 crate 默认的 HTTP/file resolver features，并显式选择线性 regex engine；
   这两项是安全配置，不改变 MIT 许可义务。
+
+--------------------------------------------------------------------------------
+4.3B OpenAI .NET Responses recorded test trace —— MIT
+--------------------------------------------------------------------------------
+
+  来源仓库   : https://github.com/openai/openai-dotnet
+  固定 commit: 19d0a3cb8e0cf0f3137a5c56c3c70a0c3f6c96f5
+  源记录     : tests/SessionRecords/ResponsesToolTests/FunctionToolStreamingWorks.json
+  源字节     : 13,211 B；Git blob SHA-1
+               3272bc4116a32b4472d21f68b41ce23ce363c02c；SHA-256
+               ff7fadb3baabc1fd1fc482fe9ec28ba93d5a899b961cce73bf19f8d9c1fe20b8
+  本仓文件   : fixtures/provider/openai-responses-function-tool-stream.sse
+  派生       : `Entries[0].ResponseBody` 36段按顺序逐字节拼接，9,070 B；SHA-256
+               fe38a7a044f8de33d441d0c9bf426e1291b1401bb9099ef419f62651b50d2927
+  许可证     : MIT
+  版权行     : Copyright (c) 2024 OpenAI (https://openai.com)
+
+  源record已将Authorization、Date、组织/项目/request id等字段置为`Sanitized`。本仓只保存
+  response body；RequestHeaders、RequestBody、Variables、prompt、API key、账号/项目标识和客户数据
+  均不复制。许可证全文与本文件§1收录的标准MIT条款相同；分发该测试fixture时须同时保留上述
+  OpenAI版权行和MIT条款。
 
 --------------------------------------------------------------------------------
 4.4 binaryen / wasm-opt（构建期工具，不进发行物）

@@ -1195,6 +1195,34 @@ mod tests {
     }
 
     #[test]
+    fn responses_function_call_done_rejects_identity_drift_or_missing_name() {
+        let added_with_name = r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"item","call_id":"call","name":"tool"},"sequence_number":0}"#;
+
+        let mut renamed = ResponsesDecoder::default();
+        renamed.ingest(added_with_name).unwrap();
+        assert_eq!(
+            renamed.ingest(r#"{"type":"response.function_call_arguments.done","item_id":"item","name":"other","arguments":"{}","sequence_number":1}"#),
+            Err(ProviderFailure::InvalidResponse)
+        );
+
+        let mut reindexed = ResponsesDecoder::default();
+        reindexed.ingest(added_with_name).unwrap();
+        assert_eq!(
+            reindexed.ingest(r#"{"type":"response.function_call_arguments.done","item_id":"item","output_index":1,"arguments":"{}","sequence_number":1}"#),
+            Err(ProviderFailure::InvalidResponse)
+        );
+
+        let mut unnamed = ResponsesDecoder::default();
+        unnamed
+            .ingest(r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"item","call_id":"call","name":null},"sequence_number":0}"#)
+            .unwrap();
+        assert_eq!(
+            unnamed.ingest(r#"{"type":"response.function_call_arguments.done","item_id":"item","arguments":"{}","sequence_number":1}"#),
+            Err(ProviderFailure::InvalidResponse)
+        );
+    }
+
+    #[test]
     fn empty_deltas_are_noops_but_malformed_or_oversized_fields_fail_closed() {
         let mut responses = ResponsesDecoder::default();
         assert!(

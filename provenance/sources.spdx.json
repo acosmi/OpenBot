@@ -1124,9 +1124,34 @@
       "copyrightText": "NOASSERTION",
       "comment": "v3 §11.4 复用清单逐行登记。状态 = **权属清理后可用、当前无授权**。\n正确用途：行为 fixture、错误语义。\n禁止做法：进入最终生产控制面。\nlicenseConcluded = NOASSERTION 是硬结论不是占位：在拿到**逐文件书面授权**之前不得复制任何字节。\n复制任一文件的前置条件（v3 §11.4 末段 + §23.1 末段）——该文件必须带 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原 hash、目标 hash、许可证、修改声明、书面授权编号，八项缺一不可。\n没有书面授权时唯一合法路径是 **clean-room 重写**：只依据行为契约与黑盒可观察结果实现，不看、不引、不改上游源码（v3 §23.3 对 Intelligence 用的是同一条口径）。\n本条**不记录任何内部路径、错误字符串字面量或私有 URL**：本仓 public，粒度上限 = v3 §11.4 已经公开的那一行（CLAUDE.md §8 末条）。",
       "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-openai-dotnet-recorded-trace",
+      "name": "OpenAI .NET Responses recorded test trace",
+      "versionInfo": "19d0a3cb8e0cf0f3137a5c56c3c70a0c3f6c96f5",
+      "downloadLocation": "https://github.com/openai/openai-dotnet/blob/19d0a3cb8e0cf0f3137a5c56c3c70a0c3f6c96f5/tests/SessionRecords/ResponsesToolTests/FunctionToolStreamingWorks.json",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "ff7fadb3baabc1fd1fc482fe9ec28ba93d5a899b961cce73bf19f8d9c1fe20b8"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2024 OpenAI (https://openai.com)",
+      "comment": "v4 §24 G4 OpenAI adapter recorded-trace证据。官方commit时间2026-09-02T18:33:36Z；source record=13,211 bytes、Git blob SHA-1 3272bc4116a32b4472d21f68b41ce23ce363c02c。Entries[0].ResponseBody为36段，逐字节UTF-8拼接后9,070 bytes/SHA-256 fe38a7a044f8de33d441d0c9bf426e1291b1401bb9099ef419f62651b50d2927，与本仓SSE fixture cmp相等。源record已将Authorization、日期、组织/项目/request id等置Sanitized；本仓进一步完全排除RequestHeaders/RequestBody/Variables，只保留response body与content-type/openai-version provenance。该fixture为测试证据、不进入产品网络请求或模型上下文。",
+      "homepage": "https://github.com/openai/openai-dotnet",
+      "primaryPackagePurpose": "SOURCE"
     }
   ],
   "relationships": [
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-openai-dotnet-recorded-trace",
+      "comment": "仅fixtures/provider中的OpenAI Responses消毒response-body trace；许可证与逐字节来源见NOTICE及同目录provenance。"
+    },
     {
       "spdxElementId": "SPDXRef-Package-openbot-rs",
       "relationshipType": "DEPENDS_ON",

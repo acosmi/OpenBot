@@ -8,3 +8,6 @@
 *.ico binary
 *.icns binary
 *.jsonl text eol=lf
+# Recorded SSE response bodies intentionally retain the terminal blank event delimiter. Keep all
+# other whitespace checks while exempting only Git's blank-at-EOF diagnostic for this wire format.
+*.sse text eol=lf whitespace=-blank-at-eof
