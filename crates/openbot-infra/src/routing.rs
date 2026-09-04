@@ -297,6 +297,7 @@ async fn collect_completion(
                 ProviderEvent::ResponseStarted { .. }
                 | ProviderEvent::OutputItemAdded { .. }
                 | ProviderEvent::ReasoningDelta { .. }
+                | ProviderEvent::RemoteProjection(_)
                 | ProviderEvent::Usage(_),
             ) => {}
         }

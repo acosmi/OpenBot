@@ -13,7 +13,7 @@ use openbot_domain::thread::FencingToken;
 use serde_json::Value;
 
 use crate::chunk::{SEMANTIC_CHUNK_MAX_BYTES, SemanticChunkAccumulator};
-use crate::provider::{ProviderRateCard, ProviderUsage};
+use crate::provider::{ProviderRateCard, ProviderRemoteProjection, ProviderUsage};
 use crate::run_cost_budget::RunCostCap;
 
 /// Run runtime 的稳定内部错误域；不得携带数据库/provider 原文。
@@ -355,7 +355,7 @@ pub struct RunWriteReceipt {
 pub enum RunSemanticChannel {
     /// User-visible assistant text；terminal 时物化到 messages。
     Text,
-    /// Provider reasoning；durable/replayable，但绝不拼进 assistant text。
+    /// Provider reasoning；active-run durable/replayable，terminal时清除，且绝不拼进assistant text。
     Reasoning,
 }
 
@@ -601,6 +601,16 @@ pub trait RunRuntime: Send + Sync {
         chunk: &str,
     ) -> Result<RunWriteReceipt, RunRuntimeError>;
 
+    /// Persist one bounded, explicitly untrusted remote UI projection as an operational checkpoint.
+    async fn append_remote_projection(
+        &self,
+        _lease: &RunExecutionLease,
+        _expected_sequence: u64,
+        _projection: &ProviderRemoteProjection,
+    ) -> Result<RunWriteReceipt, RunRuntimeError> {
+        Err(RunRuntimeError::Unavailable)
+    }
+
     /// Persist assistant tool-call + tool-result messages and a checkpoint in one transaction.
     async fn append_tool_exchange(
         &self,
@@ -751,6 +761,26 @@ impl DurableTextRun {
         Ok(receipt)
     }
 
+    /// Flush preceding text, then append one remote projection at the same expected-sequence edge.
+    pub async fn append_remote_projection(
+        &mut self,
+        projection: &ProviderRemoteProjection,
+    ) -> Result<RunWriteReceipt, RunRuntimeError> {
+        self.flush().await?;
+        let receipt = self
+            .runtime
+            .append_remote_projection(&self.lease, self.expected_sequence, projection)
+            .await?;
+        self.expected_sequence =
+            receipt
+                .run_event_sequence
+                .checked_add(1)
+                .ok_or(RunRuntimeError::Corrupt {
+                    field: "next_event_sequence",
+                })?;
+        Ok(receipt)
+    }
+
     /// Pending 的最迟 flush 时刻；provider loop 应把它放入同一个 `select!`。
     #[must_use]
     pub fn next_deadline(&self) -> Option<Instant> {
@@ -813,6 +843,7 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum Call {
         Chunk(u64, RunSemanticChannel, String),
+        Projection(u64, crate::ProviderRemoteProjectionKind),
         Finish(u64, RunTerminal),
     }
 
@@ -884,6 +915,19 @@ mod tests {
             Ok(receipt(expected_sequence))
         }
 
+        async fn append_remote_projection(
+            &self,
+            _lease: &RunExecutionLease,
+            expected_sequence: u64,
+            projection: &ProviderRemoteProjection,
+        ) -> Result<RunWriteReceipt, RunRuntimeError> {
+            self.calls
+                .lock()
+                .expect("fake lock")
+                .push(Call::Projection(expected_sequence, projection.kind()));
+            Ok(receipt(expected_sequence))
+        }
+
         async fn finish_run(
             &self,
             _lease: &RunExecutionLease,
@@ -941,6 +985,30 @@ mod tests {
                     "a".repeat(SEMANTIC_CHUNK_MAX_BYTES)
                 ),
                 Call::Chunk(2, RunSemanticChannel::Text, "a".to_owned()),
+                Call::Finish(3, RunTerminal::Completed),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_projection_flushes_preceding_text_and_advances_the_shared_sequence() {
+        let runtime = Arc::new(FakeRuntime::default());
+        let mut run = DurableTextRun::new(runtime.clone(), lease());
+        run.push("before projection", Instant::now()).await.unwrap();
+        let projection = ProviderRemoteProjection::new(
+            crate::ProviderRemoteProjectionKind::State,
+            None,
+            None,
+            serde_json::json!({"phase":"working"}),
+        )
+        .unwrap();
+        run.append_remote_projection(&projection).await.unwrap();
+        run.finish(RunTerminal::Completed).await.unwrap();
+        assert_eq!(
+            runtime.calls(),
+            [
+                Call::Chunk(1, RunSemanticChannel::Text, "before projection".to_owned()),
+                Call::Projection(2, crate::ProviderRemoteProjectionKind::State),
                 Call::Finish(3, RunTerminal::Completed),
             ]
         );

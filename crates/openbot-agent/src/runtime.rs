@@ -1282,6 +1282,14 @@ async fn handle_provider_event(
             }
             false
         }
+        ProviderEvent::RemoteProjection(projection) => {
+            if let Err(error) = journal.append_remote_projection(&projection).await {
+                journal_failure(state, journal, error).await;
+                true
+            } else {
+                false
+            }
+        }
         ProviderEvent::ToolCallCompleted { .. } => {
             drive_terminal_event(
                 state,

@@ -357,6 +357,7 @@ impl ThreadDirectory for PostgresThreadDirectory {
                               AND e.seq>coalesce(( \
                                 SELECT max(c.seq) FROM public.run_events c \
                                 WHERE c.run_id=r.run_id AND c.event_type='checkpoint' \
+                                  AND c.payload->>'kind'='tool_exchange' \
                               ),-1) \
                           ),'') ORDER BY r.created_at,r.run_id) AS run_texts \
                    FROM public.runs r WHERE r.thread_id=t.thread_id AND r.foreground \

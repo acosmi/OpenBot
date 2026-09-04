@@ -7,8 +7,9 @@ use std::time::Duration as StdDuration;
 
 use harness::{admin_config, with_temp_database};
 use openbot_application::{
-    AppEventStream, BeginThreadRunRequest, RunRuntime, RunSemanticChannel, RunTerminal,
-    ThreadConversationRequest, ThreadDirectory, ThreadEventSubscription,
+    AppEventStream, BeginThreadRunRequest, ProviderRemoteProjection, ProviderRemoteProjectionKind,
+    RunRuntime, RunSemanticChannel, RunTerminal, ThreadConversationRequest, ThreadDirectory,
+    ThreadEventSubscription,
 };
 use openbot_contracts::command::{
     AppEvent, BeginThreadRun, ThreadForegroundRunState, ThreadRunAnchor, ThreadRunEventKind,
@@ -134,11 +135,22 @@ async fn atomic_snapshot_bridges_active_text_cursor_live_terminal_and_materializ
                 .append_semantic_chunk(&lease, 1, RunSemanticChannel::Text, "hel")
                 .await
                 .map_err(|error| error.to_string())?;
+            let projection = ProviderRemoteProjection::new(
+                ProviderRemoteProjectionKind::State,
+                None,
+                None,
+                serde_json::json!({"phase":"working"}),
+            )
+            .map_err(|error| error.to_string())?;
+            runtime
+                .append_remote_projection(&lease, 2, &projection)
+                .await
+                .map_err(|error| error.to_string())?;
             let partial = directory
                 .thread_conversation(request.clone())
                 .await
                 .map_err(|error| error.to_string())?;
-            if partial.active_run_text != "hel" || partial.last_event_sequence != Some(1) {
+            if partial.active_run_text != "hel" || partial.last_event_sequence != Some(2) {
                 return Err(format!("partial snapshot drifted: {partial:?}"));
             }
 
@@ -153,22 +165,22 @@ async fn atomic_snapshot_bridges_active_text_cursor_live_terminal_and_materializ
                 .await
                 .map_err(|error| error.to_string())?;
             runtime
-                .append_semantic_chunk(&lease, 2, RunSemanticChannel::Text, "lo")
+                .append_semantic_chunk(&lease, 3, RunSemanticChannel::Text, "lo")
                 .await
                 .map_err(|error| error.to_string())?;
             runtime
-                .finish_run(&lease, 3, RunTerminal::Completed)
+                .finish_run(&lease, 4, RunTerminal::Completed)
                 .await
                 .map_err(|error| error.to_string())?;
             match next_event(&mut events).await? {
                 AppEvent::ThreadRunEvent(event)
-                    if event.event_sequence == 2
+                    if event.event_sequence == 3
                         && event.event_type == ThreadRunEventKind::SemanticChunk => {}
                 event => return Err(format!("first live event drifted: {event:?}")),
             }
             match next_event(&mut events).await? {
                 AppEvent::ThreadRunEvent(event)
-                    if event.event_sequence == 3
+                    if event.event_sequence == 4
                         && event.event_type == ThreadRunEventKind::Completed => {}
                 event => return Err(format!("terminal live event drifted: {event:?}")),
             }
@@ -184,7 +196,7 @@ async fn atomic_snapshot_bridges_active_text_cursor_live_terminal_and_materializ
                 || completed.active_run_state.is_some()
                 || completed.active_run_cancellable
                 || !completed.active_run_text.is_empty()
-                || completed.last_event_sequence != Some(3)
+                || completed.last_event_sequence != Some(4)
             {
                 return Err(format!("completed snapshot drifted: {completed:?}"));
             }

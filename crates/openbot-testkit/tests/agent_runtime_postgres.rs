@@ -70,7 +70,7 @@ use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThr
 use openbot_infra::vault::CredentialRecordVault;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Barrier;
+use tokio::sync::{Barrier, oneshot};
 use url::Url;
 use uuid::Uuid;
 
@@ -1486,6 +1486,8 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                     .map_err(|error| error.to_string())?,
             );
             let assertion_verifier = assertion_signer.clone();
+            let (preterminal_sent, preterminal_received) = oneshot::channel();
+            let (allow_terminal, terminal_allowed) = oneshot::channel();
             let remote_server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.map_err(|error| error.to_string())?;
                 let request = read_http_request(&mut stream).await?;
@@ -1529,7 +1531,7 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 let thread_id = body["threadId"]
                     .as_str()
                     .ok_or_else(|| "threadId missing".to_owned())?;
-                let events = [
+                let preterminal_events = [
                     serde_json::json!({"type":"RUN_STARTED","threadId":thread_id,"runId":"run-remote"}),
                     serde_json::json!({"type":"STEP_STARTED","stepName":"investigate"}),
                     serde_json::json!({"type":"STATE_SNAPSHOT","snapshot":{"phase":"start"}}),
@@ -1537,7 +1539,7 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                     serde_json::json!({"type":"MESSAGES_SNAPSHOT","messages":[{"id":"u","role":"user","content":"hello"}]}),
                     serde_json::json!({"type":"ACTIVITY_SNAPSHOT","messageId":"a","activityType":"PLAN","content":{"done":false}}),
                     serde_json::json!({"type":"ACTIVITY_DELTA","messageId":"a","activityType":"PLAN","patch":[{"op":"replace","path":"/done","value":true}]}),
-                    serde_json::json!({"type":"RAW","event":{"untrusted":true},"source":"remote"}),
+                    serde_json::json!({"type":"RAW","event":{"untrusted":true,"canary":"REMOTE_PROJECTION_SECRET_CANARY"},"source":"remote"}),
                     serde_json::json!({"type":"CUSTOM","name":"future","value":{"permission":"none"}}),
                     serde_json::json!({"type":"REASONING_START","messageId":"reason"}),
                     serde_json::json!({"type":"REASONING_MESSAGE_START","messageId":"reason-message","role":"reasoning"}),
@@ -1549,21 +1551,37 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                     serde_json::json!({"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"remote answer"}),
                     serde_json::json!({"type":"TEXT_MESSAGE_END","messageId":"answer"}),
                     serde_json::json!({"type":"STEP_FINISHED","stepName":"investigate"}),
-                    serde_json::json!({"type":"RUN_FINISHED","threadId":thread_id,"runId":"run-remote"}),
                 ];
-                let body = events
+                let preterminal_body = preterminal_events
                     .into_iter()
                     .map(|event| format!("data: {event}\n\n"))
                     .collect::<String>();
+                let terminal_body = format!(
+                    "data: {}\n\n",
+                    serde_json::json!({"type":"RUN_FINISHED","threadId":thread_id,"runId":"run-remote"})
+                );
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
+                    preterminal_body.len() + terminal_body.len()
                 );
                 stream
                     .write_all(header.as_bytes())
                     .await
                     .map_err(|error| error.to_string())?;
-                for chunk in body.as_bytes().chunks(5) {
+                for chunk in preterminal_body.as_bytes().chunks(5) {
+                    stream
+                        .write_all(chunk)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+                stream.flush().await.map_err(|error| error.to_string())?;
+                preterminal_sent
+                    .send(())
+                    .map_err(|_| "projection observer dropped before preterminal".to_owned())?;
+                terminal_allowed
+                    .await
+                    .map_err(|_| "terminal permission dropped".to_owned())?;
+                for chunk in terminal_body.as_bytes().chunks(5) {
                     stream
                         .write_all(chunk)
                         .await
@@ -1661,6 +1679,70 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 })
                 .await
                 .map_err(|error| error.to_string())?;
+            tokio::time::timeout(Duration::from_secs(3), preterminal_received)
+                .await
+                .map_err(|_| "remote preterminal write timed out".to_owned())?
+                .map_err(|_| "remote preterminal server ended".to_owned())?;
+            wait_for_remote_projection_count(&pool, "run-remote", 9).await?;
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let active_projection = client
+                .query_one(
+                    "SELECT array_agg(payload->>'family' ORDER BY seq), \
+                            count(*) FILTER (WHERE payload->>'untrusted'='true' \
+                              AND payload->>'source'='remote_ag_ui')::bigint, \
+                            count(*) FILTER (WHERE payload->>'family'='state' \
+                              AND payload->'untrustedValue'->>'phase'='done')::bigint, \
+                            count(*) FILTER (WHERE payload->>'family'='activity' \
+                              AND payload->'untrustedValue'->>'done'='true')::bigint, \
+                            count(*) FILTER (WHERE payload::text LIKE \
+                              '%REMOTE_PROJECTION_SECRET_CANARY%')::bigint \
+                     FROM public.run_events WHERE run_id='run-remote' \
+                       AND event_type='checkpoint' \
+                       AND payload->>'kind'='remote_agui_projection'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let families: Vec<String> = active_projection
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            let untrusted: i64 = active_projection
+                .try_get(1)
+                .map_err(|error| error.to_string())?;
+            let patched_state: i64 = active_projection
+                .try_get(2)
+                .map_err(|error| error.to_string())?;
+            let patched_activity: i64 = active_projection
+                .try_get(3)
+                .map_err(|error| error.to_string())?;
+            let active_canary: i64 = active_projection
+                .try_get(4)
+                .map_err(|error| error.to_string())?;
+            if families
+                != [
+                    "step_started",
+                    "state",
+                    "state",
+                    "messages",
+                    "activity",
+                    "activity",
+                    "raw",
+                    "custom",
+                    "step_finished",
+                ]
+                || untrusted != 9
+                || patched_state != 1
+                || patched_activity != 1
+                || active_canary != 1
+            {
+                return Err(format!(
+                    "active remote projections drifted: families={families:?} untrusted={untrusted} state={patched_state} activity={patched_activity} canary={active_canary}"
+                ));
+            }
+            drop(client);
+            allow_terminal
+                .send(())
+                .map_err(|_| "remote terminal server ended before permission".to_owned())?;
             wait_for_terminal(&pool, "run-remote", "remote answer").await?;
 
             for (run_id, entropy_tail, fixture, expected_code) in [
@@ -1735,6 +1817,20 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 .map_err(|error| error.to_string())?
                 .try_get(0)
                 .map_err(|error| error.to_string())?;
+            let projection_markers: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM public.run_events \
+                     WHERE run_id='run-remote' AND event_type='checkpoint' \
+                       AND payload=jsonb_build_object( \
+                         'kind','remote_agui_projection','source','remote_ag_ui', \
+                         'retained',false,'untrusted',true \
+                       )",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
             let invoked: i64 = client
                 .query_one(
                     "SELECT count(*)::bigint FROM public.audit_events \
@@ -1753,16 +1849,21 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                        UNION ALL SELECT payload::text FROM public.audit_events
                      ) AS persisted WHERE value LIKE '%REMOTE_ERROR_SECRET_CANARY%'
                                       OR value LIKE '%ENCRYPTED_REASONING_CANARY%'
-                                      OR value LIKE '%checked evidence%'",
+                                      OR value LIKE '%checked evidence%'
+                                      OR value LIKE '%REMOTE_PROJECTION_SECRET_CANARY%'",
                     &[],
                 )
                 .await
                 .map_err(|error| error.to_string())?
                 .try_get(0)
                 .map_err(|error| error.to_string())?;
-            if reasoning_markers != 1 || invoked != 3 || canary_rows != 0 {
+            if reasoning_markers != 1
+                || projection_markers != 9
+                || invoked != 3
+                || canary_rows != 0
+            {
                 return Err(format!(
-                    "remote durable projection 漂移：reasoningMarkers={reasoning_markers} invoked={invoked} canary={canary_rows}"
+                    "remote durable projection 漂移：reasoningMarkers={reasoning_markers} projectionMarkers={projection_markers} invoked={invoked} canary={canary_rows}"
                 ));
             }
             Ok(())
@@ -2806,6 +2907,40 @@ async fn wait_for_terminal(
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     Err(format!("run {run_id} 未在本地期限内 terminal"))
+}
+
+async fn wait_for_remote_projection_count(
+    pool: &deadpool_postgres::Pool,
+    run_id: &str,
+    expected: i64,
+) -> Result<(), String> {
+    for _ in 0..200 {
+        let client = pool.get().await.map_err(|error| error.to_string())?;
+        let count: i64 = client
+            .query_one(
+                "SELECT count(*)::bigint FROM public.run_events \
+                 WHERE run_id=$1 AND event_type='checkpoint' \
+                   AND payload->>'kind'='remote_agui_projection' \
+                   AND payload->>'retained' IS NULL",
+                &[&run_id],
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .try_get(0)
+            .map_err(|error| error.to_string())?;
+        if count == expected {
+            return Ok(());
+        }
+        if count > expected {
+            return Err(format!(
+                "run {run_id} remote projection count exceeded {expected}: {count}"
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    Err(format!(
+        "run {run_id} did not persist {expected} active remote projections"
+    ))
 }
 
 async fn wait_for_failure(

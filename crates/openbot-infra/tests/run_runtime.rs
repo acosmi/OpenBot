@@ -7,9 +7,9 @@ use std::sync::Arc;
 use harness::{admin_config, with_temp_database};
 use openbot_application::{
     BeginThreadRunRequest, NoRunDispatchConsumer, ProviderBillingFamily, ProviderRateCard,
-    ProviderRateCardInput, ProviderUsage, RunExecutionLease, RunFailureCode, RunRuntime,
-    RunRuntimeError, RunSemanticChannel, RunTerminal, RunTokenUsage, RunTokenUsageReceipt,
-    ThreadDirectory,
+    ProviderRateCardInput, ProviderRemoteProjection, ProviderRemoteProjectionKind, ProviderUsage,
+    RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError, RunSemanticChannel,
+    RunTerminal, RunTokenUsage, RunTokenUsageReceipt, ThreadDirectory,
 };
 use openbot_contracts::command::{BeginThreadRun, ThreadRunAnchor};
 use openbot_contracts::ids::thread::ThreadIdentity;
@@ -599,22 +599,72 @@ async fn claim_chunk_terminal_are_exact_and_materialize_one_assistant_message() 
                 ));
             }
             drop(client);
+            let projection = ProviderRemoteProjection::new(
+                ProviderRemoteProjectionKind::Raw,
+                Some("remote".to_owned()),
+                None,
+                json!({"permission":"forged-admin","canary":"REMOTE_PROJECTION_CANARY"}),
+            )
+            .map_err(|error| error.to_string())?;
+            let projection_write = runtime
+                .append_remote_projection(&lease, 3, &projection)
+                .await
+                .map_err(|error| error.to_string())?;
+            let projection_replay = runtime
+                .append_remote_projection(&lease, 3, &projection)
+                .await
+                .map_err(|error| error.to_string())?;
+            if projection_write.replayed || !projection_replay.replayed {
+                return Err(format!(
+                    "remote projection exact replay drifted: {projection_write:?}/{projection_replay:?}"
+                ));
+            }
+            let tampered_projection = ProviderRemoteProjection::new(
+                ProviderRemoteProjectionKind::Raw,
+                Some("remote".to_owned()),
+                None,
+                json!({"permission":"forged-admin","canary":"tampered"}),
+            )
+            .map_err(|error| error.to_string())?;
+            if runtime
+                .append_remote_projection(&lease, 3, &tampered_projection)
+                .await
+                != Err(RunRuntimeError::Conflict)
+            {
+                return Err("same sequence with different remote projection must conflict".to_owned());
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let active_projection: Value = client
+                .query_one(
+                    "SELECT payload FROM public.run_events WHERE run_id='run-1' AND seq=3",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if &active_projection != projection.journal_payload() {
+                return Err(format!(
+                    "active remote projection must remain replayable: {active_projection}"
+                ));
+            }
+            drop(client);
             runtime
-                .append_semantic_chunk(&lease, 3, RunSemanticChannel::Text, "world")
+                .append_semantic_chunk(&lease, 4, RunSemanticChannel::Text, "world")
                 .await
                 .map_err(|error| error.to_string())?;
             let terminal = runtime
-                .finish_run(&lease, 4, RunTerminal::Completed)
+                .finish_run(&lease, 5, RunTerminal::Completed)
                 .await
                 .map_err(|error| error.to_string())?;
             let terminal_replay = runtime
-                .finish_run(&lease, 4, RunTerminal::Completed)
+                .finish_run(&lease, 5, RunTerminal::Completed)
                 .await
                 .map_err(|error| error.to_string())?;
             if terminal.replayed
                 || !terminal_replay.replayed
                 || terminal.message_sequence != Some(1)
-                || terminal.thread_event_sequence != 4
+                || terminal.thread_event_sequence != 5
             {
                 return Err(format!(
                     "terminal receipt 漂移：{terminal:?}/{terminal_replay:?}"
@@ -674,13 +724,13 @@ async fn claim_chunk_terminal_are_exact_and_materialize_one_assistant_message() 
             if actual
                 != (
                     "completed".to_owned(),
-                    5,
-                    Some(4),
+                    6,
+                    Some(5),
                     None,
                     2,
-                    5,
+                    6,
                     "delivered".to_owned(),
-                    5,
+                    6,
                     1,
                     "hello world".to_owned(),
                 )
@@ -704,8 +754,37 @@ async fn claim_chunk_terminal_are_exact_and_materialize_one_assistant_message() 
                     "terminal reasoning retention boundary drifted: {scrubbed}/{leaked}"
                 ));
             }
+            let remote_projection = client
+                .query_one(
+                    "SELECT payload,payload::text LIKE '%REMOTE_PROJECTION_CANARY%' \
+                     FROM public.run_events \
+                     WHERE run_id='run-1' AND event_type='checkpoint' \
+                       AND payload->>'kind'='remote_agui_projection'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let projection_marker: Value = remote_projection
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            let projection_leaked: bool = remote_projection
+                .try_get(1)
+                .map_err(|error| error.to_string())?;
+            if projection_marker
+                != json!({
+                    "kind":"remote_agui_projection",
+                    "source":"remote_ag_ui",
+                    "retained":false,
+                    "untrusted":true
+                })
+                || projection_leaked
+            {
+                return Err(format!(
+                    "terminal remote projection retention drifted: {projection_marker}/{projection_leaked}"
+                ));
+            }
             if runtime
-                .append_semantic_chunk(&lease, 5, RunSemanticChannel::Text, "late")
+                .append_semantic_chunk(&lease, 6, RunSemanticChannel::Text, "late")
                 .await
                 != Err(RunRuntimeError::Conflict)
             {
@@ -720,7 +799,7 @@ async fn claim_chunk_terminal_are_exact_and_materialize_one_assistant_message() 
                 .await
                 .map_err(|error| error.to_string())?;
             drop(client);
-            if runtime.finish_run(&lease, 4, RunTerminal::Completed).await
+            if runtime.finish_run(&lease, 5, RunTerminal::Completed).await
                 != Err(RunRuntimeError::Corrupt {
                     field: "terminal_assistant_message",
                 })

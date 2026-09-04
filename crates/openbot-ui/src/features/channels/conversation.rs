@@ -268,9 +268,24 @@ fn apply_live_event(
             }
             Ok(LiveEffect::None)
         }
-        // A checkpoint materializes a durable assistant/tool pair. Reload so completed compiled
-        // components replace any pending surface before the next provider sample finishes.
-        ThreadRunEventKind::Checkpoint => Ok(LiveEffect::ReloadSnapshot),
+        ThreadRunEventKind::Checkpoint => {
+            if event
+                .payload
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("remote_agui_projection")
+            {
+                if remote_projection_is_quarantined(&event.payload) {
+                    Ok(LiveEffect::None)
+                } else {
+                    Err(())
+                }
+            } else {
+                // A tool checkpoint materializes a durable assistant/tool pair. Reload so the
+                // completed component replaces any pending surface before resampling finishes.
+                Ok(LiveEffect::ReloadSnapshot)
+            }
+        }
         ThreadRunEventKind::Completed => {
             state.active_run_id = None;
             state.active_run_state = None;
@@ -300,6 +315,49 @@ fn apply_live_event(
             Ok(LiveEffect::ReloadSnapshot)
         }
     }
+}
+
+fn remote_projection_is_quarantined(payload: &serde_json::Value) -> bool {
+    let Some(object) = payload.as_object() else {
+        return false;
+    };
+    if object.get("kind").and_then(serde_json::Value::as_str) != Some("remote_agui_projection")
+        || object.get("source").and_then(serde_json::Value::as_str) != Some("remote_ag_ui")
+        || object.get("untrusted").and_then(serde_json::Value::as_bool) != Some(true)
+    {
+        return false;
+    }
+    if object.get("retained").and_then(serde_json::Value::as_bool) == Some(false) {
+        return object.len() == 4;
+    }
+    let family = object.get("family").and_then(serde_json::Value::as_str);
+    let known_family = matches!(
+        family,
+        Some(
+            "state"
+                | "messages"
+                | "activity"
+                | "step_started"
+                | "step_finished"
+                | "tool_result"
+                | "raw"
+                | "custom"
+        )
+    );
+    known_family
+        && object.len() == 7
+        && object.contains_key("untrustedKey")
+        && object.contains_key("untrustedType")
+        && object.contains_key("untrustedValue")
+        && [object.get("untrustedKey"), object.get("untrustedType")]
+            .into_iter()
+            .flatten()
+            .all(|value| {
+                value.is_null()
+                    || value
+                        .as_str()
+                        .is_some_and(|value| !value.is_empty() && !value.as_bytes().contains(&0))
+            })
 }
 
 fn project_history(messages: &[ThreadHistoryMessage]) -> Vec<TranscriptLine> {
@@ -1897,6 +1955,27 @@ mod tests {
                 &ThreadId::new("thread-1"),
                 &event(
                     3,
+                    ThreadRunEventKind::Checkpoint,
+                    serde_json::json!({
+                        "kind":"remote_agui_projection",
+                        "source":"remote_ag_ui",
+                        "family":"raw",
+                        "untrusted":true,
+                        "untrustedKey":"remote",
+                        "untrustedType":null,
+                        "untrustedValue":{"permission":"forged-admin","text":"not transcript"}
+                    })
+                ),
+            ),
+            Ok(LiveEffect::None)
+        );
+        assert_eq!(state.streaming_text, "hel");
+        assert_eq!(
+            apply_live_event(
+                &mut state,
+                &ThreadId::new("thread-1"),
+                &event(
+                    4,
                     ThreadRunEventKind::Completed,
                     serde_json::json!({"status":"completed"})
                 ),
@@ -1904,6 +1983,51 @@ mod tests {
             Ok(LiveEffect::ReloadSnapshot)
         );
         assert!(state.active_run_id.is_none());
+    }
+
+    #[test]
+    fn remote_projection_checkpoint_requires_closed_untrusted_wrapper() {
+        for (sequence, payload, expected) in [
+            (
+                1,
+                serde_json::json!({
+                    "kind":"remote_agui_projection",
+                    "source":"remote_ag_ui",
+                    "family":"custom",
+                    "untrusted":false,
+                    "untrustedKey":"event",
+                    "untrustedType":null,
+                    "untrustedValue":{}
+                }),
+                Err(()),
+            ),
+            (
+                2,
+                serde_json::json!({
+                    "kind":"remote_agui_projection",
+                    "source":"remote_ag_ui",
+                    "retained":false,
+                    "untrusted":true
+                }),
+                Ok(LiveEffect::None),
+            ),
+        ] {
+            let mut state = ConversationState {
+                active_run_id: Some(RunId::new("run-1")),
+                cursor: Some(sequence - 1),
+                ..ConversationState::default()
+            };
+            assert_eq!(
+                apply_live_event(
+                    &mut state,
+                    &ThreadId::new("thread-1"),
+                    &event(sequence, ThreadRunEventKind::Checkpoint, payload),
+                ),
+                expected
+            );
+            assert!(state.streaming_text.is_empty());
+            assert_eq!(state.active_run_id, Some(RunId::new("run-1")));
+        }
     }
 
     #[test]
