@@ -131,8 +131,10 @@ pub use intelligence_import::{
 pub use mcp_connections::{
     McpConnectionAdministration, McpConnectionError, McpOAuthCallback, McpOAuthCallbackInput,
     McpOAuthCallbackOutcome, NoMcpConnectionAdministration, add_curated_mcp_server,
-    add_custom_mcp_server, begin_mcp_oauth, disconnect_mcp_connection, list_mcp_admin_page,
-    list_mcp_connections, refresh_mcp_server, register_mcp_oauth_client, remove_mcp_server,
+    add_custom_mcp_server, begin_mcp_oauth, disconnect_mcp_connection, grant_plugin,
+    list_mcp_admin_page, list_mcp_connections, list_plugins_for_agent, refresh_mcp_server,
+    register_mcp_oauth_client, remove_mcp_server, remove_plugin_skill, revoke_plugin,
+    save_plugin_skill,
 };
 pub use ports::{
     AgentAdministration, AgentAdministrationError, AgentAdministrationScope, AgentDirectory,

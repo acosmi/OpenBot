@@ -306,7 +306,7 @@ pub struct McpAdminServer {
 }
 
 /// One skill visible to the current actor on the shared Plugins surface.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpAdminSkill {
     /// Stable row id.
@@ -327,6 +327,30 @@ pub struct McpAdminSkill {
     pub installed_by: Option<String>,
     /// Stable Agent ids holding a grant.
     pub granted_to: Vec<String>,
+}
+
+impl fmt::Debug for McpAdminSkill {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("McpAdminSkill")
+            .field("id", &self.id)
+            .field("slug", &self.slug)
+            .field(
+                "scope",
+                &if self.owner_user_id.is_some() {
+                    "personal"
+                } else {
+                    "deployment"
+                },
+            )
+            .field("title_bytes", &self.title.len())
+            .field("summary_bytes", &self.summary.len())
+            .field("instructions_bytes", &self.instructions.len())
+            .field("origin", &self.origin)
+            .field("installed_by_present", &self.installed_by.is_some())
+            .field("granted_count", &self.granted_to.len())
+            .finish()
+    }
 }
 
 /// Complete signed-in Plugins page projection.
@@ -369,6 +393,135 @@ pub struct McpCustomServerRegistration {
 pub struct McpServerRemoved {
     /// Always true for the successful reply variant.
     pub ok: bool,
+}
+
+/// Closed plugin grant kind shared by MCP tools and skills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginGrantKind {
+    /// One current MCP tool reference.
+    Mcp,
+    /// One installed skill slug.
+    Skill,
+}
+
+/// Create/update request for an actor-owned or deployment-wide skill.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginSkillMutation {
+    /// Stable slash-command slug.
+    pub slug: String,
+    /// Human-readable title.
+    pub title: String,
+    /// Optional short summary.
+    #[serde(default)]
+    pub summary: String,
+    /// Instructions injected only when the skill is explicitly invoked.
+    pub instructions: String,
+    /// `true` creates a deployment-owned skill and therefore requires an administrator.
+    #[serde(default, rename = "global")]
+    pub deployment_wide: bool,
+}
+
+impl fmt::Debug for PluginSkillMutation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PluginSkillMutation")
+            .field("slug", &self.slug)
+            .field("title_bytes", &self.title.len())
+            .field("summary_bytes", &self.summary.len())
+            .field("instructions_bytes", &self.instructions.len())
+            .field("deployment_wide", &self.deployment_wide)
+            .finish()
+    }
+}
+
+/// Current actor-visible skill list after a successful mutation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSkills {
+    /// Deployment skills plus the actor's own, or all skills for an administrator.
+    pub skills: Vec<McpAdminSkill>,
+}
+
+/// Grant/revoke request. Actor and role always come from `AuthContext`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginGrantMutation {
+    /// MCP or skill.
+    pub kind: PluginGrantKind,
+    /// MCP `<server>/<tool>` reference or skill slug.
+    #[serde(rename = "ref")]
+    pub reference: String,
+    /// Stable target Agent id.
+    pub agent_id: String,
+}
+
+/// Successful skill removal or grant/revoke acknowledgement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginMutationAcknowledged {
+    /// Always true for the successful reply variant.
+    pub ok: bool,
+}
+
+impl PluginMutationAcknowledged {
+    /// Construct the only successful acknowledgement.
+    #[must_use]
+    pub const fn success() -> Self {
+        Self { ok: true }
+    }
+}
+
+/// One current MCP tool offered to this actor through one visible Agent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GrantedPluginTool {
+    /// Stable `<server>/<tool>` grant reference.
+    #[serde(rename = "ref")]
+    pub reference: String,
+    /// Collision-free model-facing name.
+    pub tool_name: String,
+    /// Bounded catalog description.
+    pub description: String,
+    /// Exact current catalog schema.
+    pub input_schema: serde_json::Value,
+}
+
+/// One granted instruction visible to the current actor through one Agent.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GrantedPluginSkill {
+    /// Stable slash-command slug.
+    pub slug: String,
+    /// Human-readable title.
+    pub title: String,
+    /// Short summary.
+    pub summary: String,
+    /// Bounded instructions.
+    pub instructions: String,
+}
+
+impl fmt::Debug for GrantedPluginSkill {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GrantedPluginSkill")
+            .field("slug", &self.slug)
+            .field("title_bytes", &self.title.len())
+            .field("summary_bytes", &self.summary.len())
+            .field("instructions_bytes", &self.instructions.len())
+            .finish()
+    }
+}
+
+/// Current actor-specific plugins usable through one visible Agent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrantedPlugins {
+    /// Current catalog/grant/credential intersection.
+    pub tools: Vec<GrantedPluginTool>,
+    /// Granted deployment or actor-owned skills.
+    pub skills: Vec<GrantedPluginSkill>,
 }
 
 impl McpServerRemoved {
@@ -445,6 +598,51 @@ mod tests {
             serde_json::to_value(McpAdminAuthentication::UserOAuth).unwrap(),
             "user-oauth"
         );
+    }
+
+    #[test]
+    fn skill_and_grant_wire_cannot_smuggle_actor_or_catalog_binding() {
+        let skill: PluginSkillMutation = serde_json::from_str(
+            r#"{"slug":"standup-notes","title":"Standup notes","instructions":"Summarize decisions.","global":true}"#,
+        )
+        .unwrap();
+        assert!(skill.deployment_wide);
+        let skill_debug = format!("{skill:?}");
+        assert!(!skill_debug.contains("Standup notes"));
+        assert!(!skill_debug.contains("Summarize decisions"));
+        let grant: PluginGrantMutation =
+            serde_json::from_str(r#"{"kind":"mcp","ref":"notes/search","agentId":"bot-1"}"#)
+                .unwrap();
+        assert_eq!(grant.kind, PluginGrantKind::Mcp);
+        assert_eq!(grant.reference, "notes/search");
+        for smuggled in [
+            r#"{"slug":"x","title":"X","instructions":"Y","ownerUserId":"admin"}"#,
+            r#"{"kind":"mcp","ref":"notes/search","agentId":"bot-1","effect":"read"}"#,
+        ] {
+            assert!(serde_json::from_str::<serde_json::Value>(smuggled).is_ok());
+        }
+        assert!(
+            serde_json::from_str::<PluginSkillMutation>(
+                r#"{"slug":"x","title":"X","instructions":"Y","ownerUserId":"admin"}"#
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<PluginGrantMutation>(
+                r#"{"kind":"mcp","ref":"notes/search","agentId":"bot-1","effect":"read"}"#
+            )
+            .is_err()
+        );
+        let projection = GrantedPluginSkill {
+            slug: "standup-notes".to_owned(),
+            title: "Private title".to_owned(),
+            summary: "Private summary".to_owned(),
+            instructions: "Private instructions".to_owned(),
+        };
+        let projection_debug = format!("{projection:?}");
+        assert!(!projection_debug.contains("Private title"));
+        assert!(!projection_debug.contains("Private summary"));
+        assert!(!projection_debug.contains("Private instructions"));
     }
 }
 

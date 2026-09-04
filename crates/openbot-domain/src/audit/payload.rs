@@ -327,6 +327,8 @@ pub enum AuditFact {
     NewRole(AuditLabel),
     /// people 访问状态变更后的 revoked 值。
     AccessRevoked(bool),
+    /// Closed configuration mutation, such as `plugin_granted`; never remote or user prose.
+    ConfigurationChange(AuditLabel),
     /// 被退役 credential 的权威 owner 标识；只记 owner id，不记 token/密文。
     CredentialOwner(AuditIdentifier),
     /// credential 撤销原因的封闭分类。
@@ -411,6 +413,7 @@ impl AuditFact {
             Self::PreviousRole(_) => "previous_role",
             Self::NewRole(_) => "new_role",
             Self::AccessRevoked(_) => "access_revoked",
+            Self::ConfigurationChange(_) => "change",
             Self::CredentialOwner(_) => "credential_owner",
             Self::RevocationReason(_) => "revocation_reason",
             Self::VendorRevoked(_) => "vendor_revoked",
@@ -455,6 +458,7 @@ impl AuditFact {
             | Self::CommitState(label)
             | Self::PreviousRole(label)
             | Self::NewRole(label)
+            | Self::ConfigurationChange(label)
             | Self::RevocationReason(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
@@ -538,6 +542,7 @@ impl AuditFact {
             | Self::CommitState(label)
             | Self::PreviousRole(label)
             | Self::NewRole(label)
+            | Self::ConfigurationChange(label)
             | Self::RevocationReason(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
@@ -614,6 +619,7 @@ pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "previous_role",
     "new_role",
     "access_revoked",
+    "change",
     "credential_owner",
     "revocation_reason",
     "vendor_revoked",
@@ -796,6 +802,7 @@ mod tests {
             AuditFact::PreviousRole(AuditLabel::new("user")),
             AuditFact::NewRole(AuditLabel::new("admin")),
             AuditFact::AccessRevoked(true),
+            AuditFact::ConfigurationChange(AuditLabel::new("plugin_granted")),
             AuditFact::CredentialOwner(identifier("person-1")),
             AuditFact::RevocationReason(AuditLabel::new("person_removed")),
             AuditFact::VendorRevoked(false),

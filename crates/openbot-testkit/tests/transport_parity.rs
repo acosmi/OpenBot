@@ -528,6 +528,11 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::AddCustomMcpServer(_)
         | AppCommand::RemoveMcpServer { .. }
         | AppCommand::RefreshMcpServer { .. }
+        | AppCommand::SavePluginSkill(_)
+        | AppCommand::RemovePluginSkill { .. }
+        | AppCommand::GrantPlugin(_)
+        | AppCommand::RevokePlugin(_)
+        | AppCommand::ListPluginsForAgent { .. }
         | AppCommand::ListPendingToolApprovals
         | AppCommand::DecideToolApproval { .. }
         | AppCommand::GetUiPreferences

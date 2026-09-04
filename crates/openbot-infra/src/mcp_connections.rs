@@ -9,7 +9,7 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use deadpool_postgres::Pool;
+use deadpool_postgres::{GenericClient, Pool};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use openbot_application::{
@@ -19,12 +19,15 @@ use openbot_application::{
 use openbot_contracts::auth::{AuthContext, Role};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_contracts::mcp::{
-    McpAdminAuthentication, McpAdminCatalogueEntry, McpAdminPage, McpAdminServer, McpAdminSkill,
-    McpAdminTool, McpAdminToolEffect, McpConnection, McpConnectionDisconnected, McpConnections,
+    GrantedPluginSkill, GrantedPluginTool, GrantedPlugins, McpAdminAuthentication,
+    McpAdminCatalogueEntry, McpAdminPage, McpAdminServer, McpAdminSkill, McpAdminTool,
+    McpAdminToolEffect, McpConnection, McpConnectionDisconnected, McpConnections,
     McpCustomServerRegistration, McpOAuthAuthorization, McpOAuthClientAuthMethod,
     McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
-    McpServerRemoved, McpVendorRevocationStatus,
+    McpServerRemoved, McpVendorRevocationStatus, PluginGrantKind, PluginGrantMutation,
+    PluginMutationAcknowledged, PluginSkillMutation, PluginSkills,
 };
+use openbot_domain::agent::profile_policy::{AgentActor, AgentProfileFacts, can_access_agent};
 use openbot_domain::audit::event::{AuditEvent, AuditEventType};
 use openbot_domain::audit::payload::{AuditFact, AuditIdentifier, AuditLabel, AuditPayload};
 use openbot_domain::vault::{SecretBytes, SecretKind, SecretPrincipal, ServiceId};
@@ -33,6 +36,7 @@ use sha2::{Digest as _, Sha256};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+use tokio_postgres::IsolationLevel;
 use url::Url;
 use uuid::Uuid;
 use zeroize::{Zeroize as _, Zeroizing};
@@ -69,6 +73,10 @@ const MAX_CUSTOM_SERVER_TITLE_BYTES: usize = 256;
 const MAX_CUSTOM_SERVER_URL_BYTES: usize = 8 * 1024;
 const MAX_MCP_EGRESS_CIDRS: usize = 32;
 const MAX_MCP_EGRESS_CIDR_BYTES: usize = 2_048;
+const MAX_SKILL_TITLE_BYTES: usize = 256;
+const MAX_SKILL_SUMMARY_BYTES: usize = 4 * 1024;
+const MAX_SKILL_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+const PLUGIN_ADMIN_LOCK_SEED: i64 = 0x504c_5547_494e_4131; // `PLUGINA1`
 
 /// Production MCP OAuth connection coordinator.
 #[derive(Clone)]
@@ -202,14 +210,25 @@ impl PostgresMcpConnections {
         &self,
         auth: &AuthContext,
     ) -> Result<McpAdminPage, McpConnectionError> {
-        let client = self.pool.get().await.map_err(unavailable)?;
-        let active_grants = client
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::RepeatableRead)
+            .start()
+            .await
+            .map_err(query_unavailable)?;
+        ensure_transaction_actor(&transaction, auth, auth.has_role(Role::Admin)).await?;
+        let is_admin = auth.has_role(Role::Admin);
+        let active_grants = transaction
             .query(
                 "SELECT g.ref,g.agent_id
                    FROM public.plugin_grants g
                    JOIN public.mcp_tools t
                      ON g.kind='mcp' AND g.ref=t.server_id||'/'||t.name
                    JOIN public.mcp_servers s ON s.id=t.server_id
+                   JOIN public.agents a ON a.id=g.agent_id
+                   JOIN public.agent_profiles p ON p.agent_id=a.id
+                   LEFT JOIN public.deployment_packages dp ON dp.id=a.package_id
                   WHERE g.state='active' AND t.available=true
                     AND s.catalog_generation IS NOT NULL
                     AND g.catalog_generation=s.catalog_generation
@@ -217,8 +236,11 @@ impl PostgresMcpConnections {
                     AND g.schema_hash=t.schema_hash AND g.effect=t.effect
                     AND g.transport_fingerprint=s.catalog_transport_fingerprint
                     AND g.credential_generation=coalesce(s.credential_generation,0)
+                    AND p.deleted_at IS NULL
+                    AND (a.package_id IS NULL OR dp.tenant_id=$3)
+                    AND ($2::boolean OR p.visibility='public' OR p.owner_user_id=$1)
                   ORDER BY g.ref,g.agent_id",
-                &[],
+                &[&auth.actor().as_str(), &is_admin, &self.tenant.as_str()],
             )
             .await
             .map_err(query_unavailable)?;
@@ -231,7 +253,7 @@ impl PostgresMcpConnections {
             grants.entry(reference).or_default().push(agent_id);
         }
 
-        let tool_rows = client
+        let tool_rows = transaction
             .query(
                 "SELECT t.server_id,t.name,t.description,t.input_schema,t.effect
                    FROM public.mcp_tools t
@@ -279,7 +301,7 @@ impl PostgresMcpConnections {
             return Err(corrupt("active_grant_projection"));
         }
 
-        let server_rows = client
+        let server_rows = transaction
             .query(
                 "SELECT id,title,vendor,url,provenance,credential_id,tools_refreshed_at,
                         last_error,added_by,
@@ -355,58 +377,8 @@ impl PostgresMcpConnections {
             return Err(corrupt("tool_server_projection"));
         }
 
-        let is_admin = auth.has_role(Role::Admin);
-        let skill_rows = client
-            .query(
-                "SELECT id,slug,owner_user_id,title,summary,instructions,origin,installed_by
-                   FROM public.skills
-                  WHERE $2::boolean OR owner_user_id IS NULL OR owner_user_id=$1
-                  ORDER BY title,id",
-                &[&auth.actor().as_str(), &is_admin],
-            )
-            .await
-            .map_err(query_unavailable)?;
-        let skill_grant_rows = client
-            .query(
-                "SELECT ref,agent_id FROM public.plugin_grants
-                  WHERE kind='skill' ORDER BY ref,agent_id",
-                &[],
-            )
-            .await
-            .map_err(query_unavailable)?;
-        let mut skill_grants = BTreeMap::<String, Vec<String>>::new();
-        for row in skill_grant_rows {
-            let reference: String = row.try_get("ref").map_err(|_| corrupt("skill_ref"))?;
-            let agent_id: String = row
-                .try_get("agent_id")
-                .map_err(|_| corrupt("grant_agent_id"))?;
-            skill_grants.entry(reference).or_default().push(agent_id);
-        }
-        let mut skills = Vec::with_capacity(skill_rows.len());
-        for row in skill_rows {
-            let slug: String = row.try_get("slug").map_err(|_| corrupt("skill_slug"))?;
-            skills.push(McpAdminSkill {
-                id: row.try_get("id").map_err(|_| corrupt("skill_id"))?,
-                slug: slug.clone(),
-                owner_user_id: row
-                    .try_get("owner_user_id")
-                    .map_err(|_| corrupt("skill_owner"))?,
-                title: row.try_get("title").map_err(|_| corrupt("skill_title"))?,
-                summary: row
-                    .try_get("summary")
-                    .map_err(|_| corrupt("skill_summary"))?,
-                instructions: row
-                    .try_get("instructions")
-                    .map_err(|_| corrupt("skill_instructions"))?,
-                origin: row.try_get("origin").map_err(|_| corrupt("skill_origin"))?,
-                installed_by: row
-                    .try_get("installed_by")
-                    .map_err(|_| corrupt("skill_installed_by"))?,
-                granted_to: skill_grants.remove(&slug).unwrap_or_default(),
-            });
-        }
-
-        Ok(McpAdminPage {
+        let skills = visible_skills(&transaction, auth, &self.tenant).await?;
+        let page = McpAdminPage {
             catalogue: vec![McpAdminCatalogueEntry {
                 key: GOOGLE_DRIVE_SERVER_ID.to_owned(),
                 title: "Google Drive".to_owned(),
@@ -421,7 +393,9 @@ impl PostgresMcpConnections {
             servers,
             skills,
             redirect_uri: self.callback_uri.clone(),
-        })
+        };
+        transaction.commit().await.map_err(query_unavailable)?;
+        Ok(page)
     }
 
     async fn refresh_configured_catalog(
@@ -1957,22 +1931,14 @@ impl McpConnectionAdministration for PostgresMcpConnections {
                 .await
                 .map_err(query_unavailable)?;
         }
-        let (id, created_at) = next_event_coordinates(&transaction)
-            .await
-            .map_err(query_unavailable)?;
-        let event = AuditEvent {
-            id,
-            actor: Some(auth.actor().clone()),
-            event_type: AuditEventType::parse("configuration.changed")
-                .ok_or_else(|| corrupt("audit_event"))?,
-            target_kind: AuditLabel::new("mcp_server"),
-            target_id: Some(AuditIdentifier::new(key).map_err(|_| corrupt("server_id"))?),
-            payload: AuditPayload::empty(),
-            created_at,
-        };
-        append_event_in_transaction(&transaction, &event, self.checkpoint_key.expose())
-            .await
-            .map_err(query_unavailable)?;
+        append_configuration_audit(
+            &transaction,
+            auth.actor(),
+            key,
+            "mcp_server_saved",
+            self.checkpoint_key.expose(),
+        )
+        .await?;
         transaction.commit().await.map_err(|error| {
             tracing::error!(error = %error, "curated MCP server commit 结果未知");
             McpConnectionError::CommitUnknown
@@ -2117,6 +2083,7 @@ impl McpConnectionAdministration for PostgresMcpConnections {
             &transaction,
             auth.actor(),
             &prepared.id,
+            "mcp_server_saved",
             self.checkpoint_key.expose(),
         )
         .await?;
@@ -2195,6 +2162,7 @@ impl McpConnectionAdministration for PostgresMcpConnections {
             &transaction,
             auth.actor(),
             server_id,
+            "mcp_server_removed",
             self.checkpoint_key.expose(),
         )
         .await?;
@@ -2215,6 +2183,391 @@ impl McpConnectionAdministration for PostgresMcpConnections {
             return Err(McpConnectionError::NotVisible);
         }
         self.refresh_configured_catalog(auth, server_id).await
+    }
+
+    async fn save_skill(
+        &self,
+        auth: &AuthContext,
+        mutation: &PluginSkillMutation,
+    ) -> Result<PluginSkills, McpConnectionError> {
+        self.ensure_auth_current(auth).await?;
+        let prepared = prepare_skill_mutation(mutation)?;
+        if prepared.deployment_wide && !auth.has_role(Role::Admin) {
+            return Err(McpConnectionError::NotVisible);
+        }
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client.transaction().await.map_err(query_unavailable)?;
+        ensure_transaction_actor(
+            &transaction,
+            auth,
+            prepared.deployment_wide || auth.has_role(Role::Admin),
+        )
+        .await?;
+        transaction
+            .query_one(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1,$2))",
+                &[&prepared.slug, &PLUGIN_ADMIN_LOCK_SEED],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let existing = transaction
+            .query_opt(
+                "SELECT id,owner_user_id FROM public.skills WHERE slug=$1 FOR UPDATE",
+                &[&prepared.slug],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        if let Some(row) = existing {
+            let owner: Option<String> = row
+                .try_get("owner_user_id")
+                .map_err(|_| corrupt("skill_owner"))?;
+            if !auth.has_role(Role::Admin) && owner.as_deref() != Some(auth.actor().as_str()) {
+                return Err(McpConnectionError::NotVisible);
+            }
+            transaction
+                .execute(
+                    "UPDATE public.skills SET title=$2,summary=$3,instructions=$4,
+                       updated_at=clock_timestamp() WHERE slug=$1",
+                    &[
+                        &prepared.slug,
+                        &prepared.title,
+                        &prepared.summary,
+                        &prepared.instructions,
+                    ],
+                )
+                .await
+                .map_err(query_unavailable)?;
+        } else {
+            let owner = (!prepared.deployment_wide).then(|| auth.actor().as_str().to_owned());
+            transaction
+                .execute(
+                    "INSERT INTO public.skills(
+                       id,owner_user_id,slug,title,summary,instructions,origin,installed_by,
+                       created_at,updated_at)
+                     VALUES($1,$2,$1,$3,$4,$5,'yours',$6,clock_timestamp(),clock_timestamp())",
+                    &[
+                        &prepared.slug,
+                        &owner,
+                        &prepared.title,
+                        &prepared.summary,
+                        &prepared.instructions,
+                        &auth.actor().as_str(),
+                    ],
+                )
+                .await
+                .map_err(query_unavailable)?;
+        }
+        append_plugin_audit(
+            &transaction,
+            auth.actor(),
+            "skill",
+            &prepared.slug,
+            "skill_saved",
+            None,
+            self.checkpoint_key.expose(),
+        )
+        .await?;
+        let skills = visible_skills(&transaction, auth, &self.tenant).await?;
+        transaction.commit().await.map_err(|error| {
+            tracing::error!(error = %error, "plugin skill save commit 结果未知");
+            McpConnectionError::CommitUnknown
+        })?;
+        Ok(PluginSkills { skills })
+    }
+
+    async fn remove_skill(
+        &self,
+        auth: &AuthContext,
+        slug: &str,
+    ) -> Result<PluginMutationAcknowledged, McpConnectionError> {
+        self.ensure_auth_current(auth).await?;
+        validate_skill_slug(slug)?;
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client.transaction().await.map_err(query_unavailable)?;
+        ensure_transaction_actor(&transaction, auth, auth.has_role(Role::Admin)).await?;
+        transaction
+            .query_one(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1,$2))",
+                &[&slug, &PLUGIN_ADMIN_LOCK_SEED],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        if let Some(row) = transaction
+            .query_opt(
+                "SELECT owner_user_id FROM public.skills WHERE slug=$1 FOR UPDATE",
+                &[&slug],
+            )
+            .await
+            .map_err(query_unavailable)?
+        {
+            let owner: Option<String> = row
+                .try_get("owner_user_id")
+                .map_err(|_| corrupt("skill_owner"))?;
+            if !auth.has_role(Role::Admin) && owner.as_deref() != Some(auth.actor().as_str()) {
+                return Err(McpConnectionError::NotVisible);
+            }
+        } else if !auth.has_role(Role::Admin) {
+            return Err(McpConnectionError::NotVisible);
+        }
+        transaction
+            .execute(
+                "DELETE FROM public.plugin_grants WHERE kind='skill' AND ref=$1",
+                &[&slug],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        transaction
+            .execute("DELETE FROM public.skills WHERE slug=$1", &[&slug])
+            .await
+            .map_err(query_unavailable)?;
+        append_plugin_audit(
+            &transaction,
+            auth.actor(),
+            "skill",
+            slug,
+            "skill_removed",
+            None,
+            self.checkpoint_key.expose(),
+        )
+        .await?;
+        transaction.commit().await.map_err(|error| {
+            tracing::error!(error = %error, "plugin skill removal commit 结果未知");
+            McpConnectionError::CommitUnknown
+        })?;
+        Ok(PluginMutationAcknowledged::success())
+    }
+
+    async fn set_grant(
+        &self,
+        auth: &AuthContext,
+        mutation: &PluginGrantMutation,
+        enabled: bool,
+    ) -> Result<PluginMutationAcknowledged, McpConnectionError> {
+        self.ensure_auth_current(auth).await?;
+        validate_plugin_grant(mutation)?;
+        let mcp_requires_admin = mutation.kind == PluginGrantKind::Mcp;
+        if mcp_requires_admin && !auth.has_role(Role::Admin) {
+            return Err(McpConnectionError::NotVisible);
+        }
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client.transaction().await.map_err(query_unavailable)?;
+        ensure_transaction_actor(
+            &transaction,
+            auth,
+            mcp_requires_admin || auth.has_role(Role::Admin),
+        )
+        .await?;
+        let agent = load_agent_facts(&transaction, &self.tenant, &mutation.agent_id).await?;
+        let actor = AgentActor {
+            id: auth.actor().as_str(),
+            admin: auth.has_role(Role::Admin),
+        };
+        if !can_access_agent(&actor, &agent.as_borrowed())
+            && (enabled || !auth.has_role(Role::Admin))
+        {
+            return Err(McpConnectionError::NotVisible);
+        }
+        match mutation.kind {
+            PluginGrantKind::Mcp => {
+                let (server_id, tool_name) = parse_mcp_reference(&mutation.reference)?;
+                if enabled {
+                    let row = transaction
+                        .query_opt(
+                            "SELECT s.catalog_generation,t.schema_hash,t.effect,
+                                    s.catalog_transport_fingerprint,
+                                    coalesce(s.credential_generation,0) AS credential_generation
+                               FROM public.mcp_tools t
+                               JOIN public.mcp_servers s ON s.id=t.server_id
+                              WHERE t.server_id=$1 AND t.name=$2 AND t.available=true
+                                AND s.catalog_generation IS NOT NULL
+                                AND t.catalog_generation=s.catalog_generation
+                                AND s.catalog_transport_fingerprint IS NOT NULL
+                              FOR SHARE OF s,t",
+                            &[&server_id, &tool_name],
+                        )
+                        .await
+                        .map_err(query_unavailable)?
+                        .ok_or(McpConnectionError::NotVisible)?;
+                    let catalog_generation: i64 = row
+                        .try_get("catalog_generation")
+                        .map_err(|_| corrupt("catalog_generation"))?;
+                    let schema_hash: String = row
+                        .try_get("schema_hash")
+                        .map_err(|_| corrupt("schema_hash"))?;
+                    let effect: String = row.try_get("effect").map_err(|_| corrupt("effect"))?;
+                    let transport_fingerprint: String = row
+                        .try_get("catalog_transport_fingerprint")
+                        .map_err(|_| corrupt("transport_fingerprint"))?;
+                    let credential_generation: i64 = row
+                        .try_get("credential_generation")
+                        .map_err(|_| corrupt("credential_generation"))?;
+                    transaction
+                        .execute(
+                            "INSERT INTO public.plugin_grants(
+                               kind,ref,agent_id,granted_by,created_at,updated_at,state,
+                               catalog_generation,schema_hash,effect,transport_fingerprint,
+                               credential_generation)
+                             VALUES('mcp',$1,$2,$3,clock_timestamp(),clock_timestamp(),'active',
+                                    $4,$5,$6,$7,$8)
+                             ON CONFLICT(kind,ref,agent_id) DO UPDATE SET
+                               granted_by=EXCLUDED.granted_by,updated_at=clock_timestamp(),
+                               state='active',catalog_generation=EXCLUDED.catalog_generation,
+                               schema_hash=EXCLUDED.schema_hash,effect=EXCLUDED.effect,
+                               transport_fingerprint=EXCLUDED.transport_fingerprint,
+                               credential_generation=EXCLUDED.credential_generation",
+                            &[
+                                &mutation.reference,
+                                &mutation.agent_id,
+                                &auth.actor().as_str(),
+                                &catalog_generation,
+                                &schema_hash,
+                                &effect,
+                                &transport_fingerprint,
+                                &credential_generation,
+                            ],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                } else {
+                    transaction
+                        .execute(
+                            "DELETE FROM public.plugin_grants
+                              WHERE kind='mcp' AND ref=$1 AND agent_id=$2",
+                            &[&mutation.reference, &mutation.agent_id],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                }
+            }
+            PluginGrantKind::Skill => {
+                if enabled || !auth.has_role(Role::Admin) {
+                    let row = transaction
+                        .query_opt(
+                            "SELECT owner_user_id FROM public.skills WHERE slug=$1 FOR SHARE",
+                            &[&mutation.reference],
+                        )
+                        .await
+                        .map_err(query_unavailable)?
+                        .ok_or(McpConnectionError::NotVisible)?;
+                    let skill_owner: Option<String> = row
+                        .try_get("owner_user_id")
+                        .map_err(|_| corrupt("skill_owner"))?;
+                    if !auth.has_role(Role::Admin)
+                        && (skill_owner.as_deref() != Some(auth.actor().as_str())
+                            || agent.owner_user_id.as_deref() != Some(auth.actor().as_str()))
+                    {
+                        return Err(McpConnectionError::NotVisible);
+                    }
+                }
+                if enabled {
+                    transaction
+                        .execute(
+                            "INSERT INTO public.plugin_grants(
+                               kind,ref,agent_id,granted_by,created_at,updated_at,state,
+                               catalog_generation,schema_hash,effect,transport_fingerprint,
+                               credential_generation)
+                             VALUES('skill',$1,$2,$3,clock_timestamp(),clock_timestamp(),
+                                    NULL,NULL,NULL,NULL,NULL,NULL)
+                             ON CONFLICT(kind,ref,agent_id) DO UPDATE SET
+                               granted_by=EXCLUDED.granted_by,updated_at=clock_timestamp(),
+                               state=NULL,catalog_generation=NULL,schema_hash=NULL,effect=NULL,
+                               transport_fingerprint=NULL,credential_generation=NULL",
+                            &[
+                                &mutation.reference,
+                                &mutation.agent_id,
+                                &auth.actor().as_str(),
+                            ],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                } else {
+                    transaction
+                        .execute(
+                            "DELETE FROM public.plugin_grants
+                              WHERE kind='skill' AND ref=$1 AND agent_id=$2",
+                            &[&mutation.reference, &mutation.agent_id],
+                        )
+                        .await
+                        .map_err(query_unavailable)?;
+                }
+            }
+        }
+        append_plugin_audit(
+            &transaction,
+            auth.actor(),
+            match mutation.kind {
+                PluginGrantKind::Mcp => "mcp_tool",
+                PluginGrantKind::Skill => "skill",
+            },
+            &mutation.reference,
+            if enabled {
+                "plugin_granted"
+            } else {
+                "plugin_revoked"
+            },
+            Some(&mutation.agent_id),
+            self.checkpoint_key.expose(),
+        )
+        .await?;
+        transaction.commit().await.map_err(|error| {
+            tracing::error!(error = %error, "plugin grant mutation commit 结果未知");
+            McpConnectionError::CommitUnknown
+        })?;
+        Ok(PluginMutationAcknowledged::success())
+    }
+
+    async fn list_for_agent(
+        &self,
+        auth: &AuthContext,
+        agent_id: &openbot_contracts::ids::BotId,
+    ) -> Result<GrantedPlugins, McpConnectionError> {
+        self.ensure_auth_current(auth).await?;
+        validate_agent_id(agent_id.as_str())?;
+        let mut client = self.pool.get().await.map_err(unavailable)?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::RepeatableRead)
+            .start()
+            .await
+            .map_err(query_unavailable)?;
+        ensure_transaction_actor(&transaction, auth, auth.has_role(Role::Admin)).await?;
+        let agent = load_agent_facts(&transaction, &self.tenant, agent_id.as_str()).await?;
+        let actor = AgentActor {
+            id: auth.actor().as_str(),
+            admin: auth.has_role(Role::Admin),
+        };
+        if !can_access_agent(&actor, &agent.as_borrowed()) {
+            return Err(McpConnectionError::NotVisible);
+        }
+        let tools = self
+            .catalog
+            .granted_tools_in_transaction(&transaction, agent_id, auth.actor())
+            .await
+            .map_err(map_catalog_failure)?
+            .into_iter()
+            .map(|tool| GrantedPluginTool {
+                reference: format!("{}/{}", tool.server_id, tool.raw_name),
+                tool_name: tool.model_name,
+                description: tool.description,
+                input_schema: tool.input_schema,
+            })
+            .collect();
+        let rows = transaction
+            .query(
+                "SELECT s.slug,s.title,s.summary,s.instructions
+                   FROM public.plugin_grants g
+                   JOIN public.skills s ON g.kind='skill' AND g.ref=s.slug
+                  WHERE g.agent_id=$1 ORDER BY s.slug",
+                &[&agent_id.as_str()],
+            )
+            .await
+            .map_err(query_unavailable)?;
+        let skills = rows
+            .iter()
+            .map(decode_granted_skill)
+            .collect::<Result<Vec<_>, _>>()?;
+        transaction.commit().await.map_err(query_unavailable)?;
+        Ok(GrantedPlugins { tools, skills })
     }
 }
 
@@ -2602,6 +2955,347 @@ struct PreparedCustomServer {
     egress_allow_cidrs: Option<Vec<String>>,
 }
 
+struct PreparedSkillMutation {
+    slug: String,
+    title: String,
+    summary: String,
+    instructions: String,
+    deployment_wide: bool,
+}
+
+fn prepare_skill_mutation(
+    mutation: &PluginSkillMutation,
+) -> Result<PreparedSkillMutation, McpConnectionError> {
+    validate_skill_slug(&mutation.slug)?;
+    if mutation.title.is_empty()
+        || mutation.title.len() > MAX_SKILL_TITLE_BYTES
+        || mutation.title.chars().any(char::is_control)
+    {
+        return Err(McpConnectionError::InvalidInput { field: "title" });
+    }
+    if mutation.summary.len() > MAX_SKILL_SUMMARY_BYTES
+        || mutation.summary.chars().any(char::is_control)
+    {
+        return Err(McpConnectionError::InvalidInput { field: "summary" });
+    }
+    if mutation.instructions.is_empty()
+        || mutation.instructions.len() > MAX_SKILL_INSTRUCTIONS_BYTES
+        || mutation.instructions.as_bytes().contains(&0)
+    {
+        return Err(McpConnectionError::InvalidInput {
+            field: "instructions",
+        });
+    }
+    Ok(PreparedSkillMutation {
+        slug: mutation.slug.clone(),
+        title: mutation.title.clone(),
+        summary: mutation.summary.clone(),
+        instructions: mutation.instructions.clone(),
+        deployment_wide: mutation.deployment_wide,
+    })
+}
+
+fn validate_skill_slug(slug: &str) -> Result<(), McpConnectionError> {
+    if slug.len() < 2
+        || slug.len() > MAX_CUSTOM_SERVER_ID_BYTES
+        || !slug
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        || slug.starts_with('-')
+        || slug.ends_with('-')
+    {
+        return Err(McpConnectionError::InvalidInput { field: "slug" });
+    }
+    Ok(())
+}
+
+fn validate_agent_id(agent_id: &str) -> Result<(), McpConnectionError> {
+    if !valid_server_id(agent_id) {
+        return Err(McpConnectionError::InvalidInput { field: "agent_id" });
+    }
+    Ok(())
+}
+
+fn validate_plugin_grant(mutation: &PluginGrantMutation) -> Result<(), McpConnectionError> {
+    validate_agent_id(&mutation.agent_id)?;
+    match mutation.kind {
+        PluginGrantKind::Mcp => parse_mcp_reference(&mutation.reference).map(|_| ()),
+        PluginGrantKind::Skill => validate_skill_slug(&mutation.reference),
+    }
+}
+
+fn parse_mcp_reference(reference: &str) -> Result<(&str, &str), McpConnectionError> {
+    let (server_id, tool_name) = reference
+        .split_once('/')
+        .ok_or(McpConnectionError::InvalidInput { field: "ref" })?;
+    if tool_name.contains('/') {
+        return Err(McpConnectionError::InvalidInput { field: "ref" });
+    }
+    validate_server_id(server_id)?;
+    validate_tool_component(tool_name)?;
+    Ok((server_id, tool_name))
+}
+
+struct StoredAgentFacts {
+    owner_user_id: Option<String>,
+    visibility: openbot_contracts::agent::AgentVisibility,
+    system_owned: bool,
+    deleted: bool,
+}
+
+impl StoredAgentFacts {
+    fn as_borrowed(&self) -> AgentProfileFacts<'_> {
+        AgentProfileFacts {
+            owner_user_id: self.owner_user_id.as_deref(),
+            visibility: self.visibility,
+            system_owned: self.system_owned,
+            deleted: self.deleted,
+        }
+    }
+}
+
+const PLUGIN_AGENT_FACTS_SQL: &str =
+    "SELECT p.owner_user_id,p.visibility::text AS visibility,p.deleted_at,a.package_id,
+            (a.package_id IS NULL OR dp.tenant_id=$2) AS tenant_visible
+       FROM public.agents a JOIN public.agent_profiles p ON p.agent_id=a.id
+       LEFT JOIN public.deployment_packages dp ON dp.id=a.package_id
+      WHERE a.id=$1";
+
+async fn load_agent_facts(
+    transaction: &tokio_postgres::Transaction<'_>,
+    tenant: &TenantId,
+    agent_id: &str,
+) -> Result<StoredAgentFacts, McpConnectionError> {
+    let sql = format!("{PLUGIN_AGENT_FACTS_SQL} FOR SHARE OF a,p");
+    let row = transaction
+        .query_opt(&sql, &[&agent_id, &tenant.as_str()])
+        .await
+        .map_err(query_unavailable)?
+        .ok_or(McpConnectionError::NotVisible)?;
+    decode_agent_facts(&row)
+}
+
+fn decode_agent_facts(row: &tokio_postgres::Row) -> Result<StoredAgentFacts, McpConnectionError> {
+    let tenant_visible: bool = row
+        .try_get("tenant_visible")
+        .map_err(|_| corrupt("agent_tenant"))?;
+    if !tenant_visible {
+        return Err(McpConnectionError::NotVisible);
+    }
+    let visibility = match row
+        .try_get::<_, String>("visibility")
+        .map_err(|_| corrupt("agent_visibility"))?
+        .as_str()
+    {
+        "public" => openbot_contracts::agent::AgentVisibility::Public,
+        "private" => openbot_contracts::agent::AgentVisibility::Private,
+        _ => return Err(corrupt("agent_visibility")),
+    };
+    Ok(StoredAgentFacts {
+        owner_user_id: row
+            .try_get("owner_user_id")
+            .map_err(|_| corrupt("agent_owner"))?,
+        visibility,
+        system_owned: row
+            .try_get::<_, Option<Uuid>>("package_id")
+            .map_err(|_| corrupt("agent_package"))?
+            .is_some(),
+        deleted: row
+            .try_get::<_, Option<OffsetDateTime>>("deleted_at")
+            .map_err(|_| corrupt("agent_deleted"))?
+            .is_some(),
+    })
+}
+
+async fn ensure_transaction_actor(
+    transaction: &tokio_postgres::Transaction<'_>,
+    auth: &AuthContext,
+    require_admin: bool,
+) -> Result<(), McpConnectionError> {
+    let generation =
+        i64::try_from(auth.auth_generation().get()).map_err(|_| corrupt("auth_generation"))?;
+    let current = transaction
+        .query_opt(
+            "SELECT u.id FROM public.users u
+              WHERE u.id=$1 AND coalesce(u.auth_generation,0)=$2
+                AND EXISTS(SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id)
+                AND (NOT $3::boolean OR EXISTS(
+                      SELECT 1 FROM public.user_roles ur WHERE ur.user_id=u.id AND ur.role='admin'))
+                AND NOT EXISTS(SELECT 1 FROM public.revoked_access ra
+                                WHERE ra.email=lower(u.email))
+              FOR SHARE OF u",
+            &[&auth.actor().as_str(), &generation, &require_admin],
+        )
+        .await
+        .map_err(query_unavailable)?;
+    if current.is_some() {
+        Ok(())
+    } else {
+        Err(McpConnectionError::NotVisible)
+    }
+}
+
+async fn visible_skills<C: GenericClient + Sync>(
+    client: &C,
+    auth: &AuthContext,
+    tenant: &TenantId,
+) -> Result<Vec<McpAdminSkill>, McpConnectionError> {
+    let is_admin = auth.has_role(Role::Admin);
+    let skill_rows = client
+        .query(
+            "SELECT id,slug,owner_user_id,title,summary,instructions,origin,installed_by
+               FROM public.skills
+              WHERE $2::boolean OR owner_user_id IS NULL OR owner_user_id=$1
+              ORDER BY title,id",
+            &[&auth.actor().as_str(), &is_admin],
+        )
+        .await
+        .map_err(query_unavailable)?;
+    let skill_grant_rows = client
+        .query(
+            "SELECT g.ref,g.agent_id
+               FROM public.plugin_grants g
+               JOIN public.skills s ON g.kind='skill' AND g.ref=s.slug
+               JOIN public.agents a ON a.id=g.agent_id
+               JOIN public.agent_profiles p ON p.agent_id=a.id
+               LEFT JOIN public.deployment_packages dp ON dp.id=a.package_id
+              WHERE ($2::boolean OR s.owner_user_id IS NULL OR s.owner_user_id=$1)
+                AND p.deleted_at IS NULL
+                AND (a.package_id IS NULL OR dp.tenant_id=$3)
+                AND ($2::boolean OR p.visibility='public' OR p.owner_user_id=$1)
+              ORDER BY g.ref,g.agent_id",
+            &[&auth.actor().as_str(), &is_admin, &tenant.as_str()],
+        )
+        .await
+        .map_err(query_unavailable)?;
+    let mut skill_grants = BTreeMap::<String, Vec<String>>::new();
+    for row in skill_grant_rows {
+        let reference: String = row.try_get("ref").map_err(|_| corrupt("skill_ref"))?;
+        validate_skill_slug(&reference).map_err(|_| corrupt("skill_ref"))?;
+        let agent_id: String = row
+            .try_get("agent_id")
+            .map_err(|_| corrupt("grant_agent_id"))?;
+        validate_agent_id(&agent_id).map_err(|_| corrupt("grant_agent_id"))?;
+        skill_grants.entry(reference).or_default().push(agent_id);
+    }
+    let mut skills = Vec::with_capacity(skill_rows.len());
+    for row in skill_rows {
+        let id: String = row.try_get("id").map_err(|_| corrupt("skill_id"))?;
+        if id.is_empty() || id.len() > 256 || id.as_bytes().contains(&0) {
+            return Err(corrupt("skill_id"));
+        }
+        let slug: String = row.try_get("slug").map_err(|_| corrupt("skill_slug"))?;
+        let owner_user_id: Option<String> = row
+            .try_get("owner_user_id")
+            .map_err(|_| corrupt("skill_owner"))?;
+        let title: String = row.try_get("title").map_err(|_| corrupt("skill_title"))?;
+        let summary: String = row
+            .try_get("summary")
+            .map_err(|_| corrupt("skill_summary"))?;
+        let instructions: String = row
+            .try_get("instructions")
+            .map_err(|_| corrupt("skill_instructions"))?;
+        prepare_skill_mutation(&PluginSkillMutation {
+            slug: slug.clone(),
+            title: title.clone(),
+            summary: summary.clone(),
+            instructions: instructions.clone(),
+            deployment_wide: owner_user_id.is_none(),
+        })
+        .map_err(|_| corrupt("skill_projection"))?;
+        let origin: String = row.try_get("origin").map_err(|_| corrupt("skill_origin"))?;
+        if origin.is_empty() || origin.len() > 256 || origin.chars().any(char::is_control) {
+            return Err(corrupt("skill_origin"));
+        }
+        let installed_by: Option<String> = row
+            .try_get("installed_by")
+            .map_err(|_| corrupt("skill_installed_by"))?;
+        for identity in [owner_user_id.as_deref(), installed_by.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            if identity.is_empty() || identity.len() > 4_096 || identity.as_bytes().contains(&0) {
+                return Err(corrupt("skill_actor"));
+            }
+        }
+        skills.push(McpAdminSkill {
+            id,
+            slug: slug.clone(),
+            owner_user_id,
+            title,
+            summary,
+            instructions,
+            origin,
+            installed_by,
+            granted_to: skill_grants.remove(&slug).unwrap_or_default(),
+        });
+    }
+    Ok(skills)
+}
+
+fn decode_granted_skill(
+    row: &tokio_postgres::Row,
+) -> Result<GrantedPluginSkill, McpConnectionError> {
+    let slug: String = row.try_get("slug").map_err(|_| corrupt("skill_slug"))?;
+    validate_skill_slug(&slug).map_err(|_| corrupt("skill_slug"))?;
+    let title: String = row.try_get("title").map_err(|_| corrupt("skill_title"))?;
+    let summary: String = row
+        .try_get("summary")
+        .map_err(|_| corrupt("skill_summary"))?;
+    let instructions: String = row
+        .try_get("instructions")
+        .map_err(|_| corrupt("skill_instructions"))?;
+    prepare_skill_mutation(&PluginSkillMutation {
+        slug: slug.clone(),
+        title: title.clone(),
+        summary: summary.clone(),
+        instructions: instructions.clone(),
+        deployment_wide: false,
+    })
+    .map_err(|_| corrupt("skill_projection"))?;
+    Ok(GrantedPluginSkill {
+        slug,
+        title,
+        summary,
+        instructions,
+    })
+}
+
+async fn append_plugin_audit(
+    transaction: &tokio_postgres::Transaction<'_>,
+    actor: &ActorId,
+    target_kind: &'static str,
+    target_id: &str,
+    change: &'static str,
+    agent_id: Option<&str>,
+    checkpoint_key: &[u8],
+) -> Result<(), McpConnectionError> {
+    let mut facts = vec![AuditFact::ConfigurationChange(AuditLabel::new(change))];
+    if let Some(agent_id) = agent_id {
+        facts.push(AuditFact::Bot(
+            AuditIdentifier::new(agent_id).map_err(|_| corrupt("agent_id"))?,
+        ));
+    }
+    let payload = AuditPayload::from_facts(facts).map_err(|_| corrupt("audit_payload"))?;
+    let (id, created_at) = next_event_coordinates(transaction)
+        .await
+        .map_err(query_unavailable)?;
+    let event = AuditEvent {
+        id,
+        actor: Some(actor.clone()),
+        event_type: AuditEventType::parse("configuration.changed")
+            .ok_or_else(|| corrupt("audit_event"))?,
+        target_kind: AuditLabel::new(target_kind),
+        target_id: Some(AuditIdentifier::new(target_id).map_err(|_| corrupt("target_id"))?),
+        payload,
+        created_at,
+    };
+    append_event_in_transaction(transaction, &event, checkpoint_key)
+        .await
+        .map(|_| ())
+        .map_err(query_unavailable)
+}
+
 fn prepare_custom_server(
     registration: &McpCustomServerRegistration,
 ) -> Result<PreparedCustomServer, McpConnectionError> {
@@ -2798,6 +3492,7 @@ async fn append_configuration_audit(
     transaction: &tokio_postgres::Transaction<'_>,
     actor: &ActorId,
     server_id: &str,
+    change: &'static str,
     checkpoint_key: &[u8],
 ) -> Result<(), McpConnectionError> {
     let (id, created_at) = next_event_coordinates(transaction)
@@ -2810,7 +3505,10 @@ async fn append_configuration_audit(
             .ok_or_else(|| corrupt("audit_event"))?,
         target_kind: AuditLabel::new("mcp_server"),
         target_id: Some(AuditIdentifier::new(server_id).map_err(|_| corrupt("server_id"))?),
-        payload: AuditPayload::empty(),
+        payload: AuditPayload::from_facts([AuditFact::ConfigurationChange(AuditLabel::new(
+            change,
+        ))])
+        .map_err(|_| corrupt("audit_payload"))?,
         created_at,
     };
     append_event_in_transaction(transaction, &event, checkpoint_key)

@@ -605,6 +605,13 @@ pub fn router(state: ServerState) -> Router {
             "/api/plugins/servers/{server_id}/refresh",
             post(plugins::servers_refresh_post),
         )
+        .route("/api/plugins/skills", post(plugins::skills_post))
+        .route("/api/plugins/skills/{slug}", delete(plugins::skills_delete))
+        .route(
+            "/api/plugins/grants",
+            post(plugins::grants_post).delete(plugins::grants_delete),
+        )
+        .route("/api/plugins/for/{agent_id}", get(plugins::for_agent_get))
         .route(
             "/api/plugins/oauth/callback",
             get(plugins::oauth_callback_get),

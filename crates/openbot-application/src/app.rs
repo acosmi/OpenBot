@@ -37,8 +37,10 @@ use crate::components::{
 };
 use crate::mcp_connections::{
     McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
-    add_custom_mcp_server, begin_mcp_oauth, disconnect_mcp_connection, list_mcp_admin_page,
-    list_mcp_connections, refresh_mcp_server, register_mcp_oauth_client, remove_mcp_server,
+    add_custom_mcp_server, begin_mcp_oauth, disconnect_mcp_connection, grant_plugin,
+    list_mcp_admin_page, list_mcp_connections, list_plugins_for_agent, refresh_mcp_server,
+    register_mcp_oauth_client, remove_mcp_server, remove_plugin_skill, revoke_plugin,
+    save_plugin_skill,
 };
 use crate::ports::{
     AgentAdministration, AgentDirectory, AuditReader, ChannelAdministration, ChannelReader,
@@ -802,6 +804,21 @@ where
             )),
             AppCommand::RefreshMcpServer { server_id } => Ok(AppReply::McpServerMutation(
                 refresh_mcp_server(self.mcp_connections.as_ref(), auth, &server_id).await?,
+            )),
+            AppCommand::SavePluginSkill(mutation) => Ok(AppReply::PluginSkills(
+                save_plugin_skill(self.mcp_connections.as_ref(), auth, &mutation).await?,
+            )),
+            AppCommand::RemovePluginSkill { slug } => Ok(AppReply::PluginMutationAcknowledged(
+                remove_plugin_skill(self.mcp_connections.as_ref(), auth, &slug).await?,
+            )),
+            AppCommand::GrantPlugin(mutation) => Ok(AppReply::PluginMutationAcknowledged(
+                grant_plugin(self.mcp_connections.as_ref(), auth, &mutation).await?,
+            )),
+            AppCommand::RevokePlugin(mutation) => Ok(AppReply::PluginMutationAcknowledged(
+                revoke_plugin(self.mcp_connections.as_ref(), auth, &mutation).await?,
+            )),
+            AppCommand::ListPluginsForAgent { agent_id } => Ok(AppReply::GrantedPlugins(
+                list_plugins_for_agent(self.mcp_connections.as_ref(), auth, &agent_id).await?,
             )),
             AppCommand::ListPendingToolApprovals => Ok(AppReply::PendingToolApprovals(
                 list_pending_tool_approvals(self.tool_approvals.as_ref(), auth).await?,

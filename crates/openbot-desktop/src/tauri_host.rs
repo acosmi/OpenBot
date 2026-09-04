@@ -30,7 +30,9 @@ use openbot_contracts::desktop::{
 };
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
-use openbot_contracts::mcp::McpCustomServerRegistration;
+use openbot_contracts::mcp::{
+    McpCustomServerRegistration, PluginGrantKind, PluginGrantMutation, PluginSkillMutation,
+};
 use openbot_contracts::people::CurrentUserResponse;
 use openbot_contracts::remote_interrupt::{RemoteInterruptAnswer, RemoteInterruptResolved};
 use openbot_contracts::sandboxed::SaveSandboxedComponentRequest;
@@ -61,6 +63,7 @@ const COMPONENT_DECISION_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_GOVERNANCE_BODY_MAX_BYTES: usize = 68 * 1024;
 const SANDBOXED_COMPONENT_BODY_MAX_BYTES: usize = 1024 * 1024;
 const MCP_ADMIN_BODY_MAX_BYTES: usize = 16 * 1024;
+const PLUGIN_SKILL_BODY_MAX_BYTES: usize = 70 * 1024;
 const HTML_ROOT_MARKER: &str = "<html lang=\"en\">";
 const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
                    connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; \
@@ -549,6 +552,20 @@ impl DesktopTauriProtocol {
         if path == "/api/plugins" {
             return self.plugins(request, authority).await;
         }
+        if path == "/api/plugins/skills" {
+            return self.plugin_skills(request, authority).await;
+        }
+        if let Some(raw_slug) = path.strip_prefix("/api/plugins/skills/") {
+            return self.remove_plugin_skill(request, authority, raw_slug).await;
+        }
+        if path == "/api/plugins/grants" {
+            return self.plugin_grants(request, authority).await;
+        }
+        if let Some(raw_agent_id) = path.strip_prefix("/api/plugins/for/") {
+            return self
+                .plugins_for_agent(request, authority, raw_agent_id)
+                .await;
+        }
         if path == "/api/plugins/servers/custom" {
             return self.custom_mcp_server(request, authority).await;
         }
@@ -816,6 +833,147 @@ impl DesktopTauriProtocol {
             .await
         {
             Ok(AppReply::McpServerMutation(receipt)) => json_response(&receipt),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugin_skills(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        if request.body().len() > PLUGIN_SKILL_BODY_MAX_BYTES {
+            request.body_mut().fill(0);
+            return payload_too_large();
+        }
+        let mutation = match serde_json::from_slice::<PluginSkillMutation>(request.body()) {
+            Ok(mutation) => mutation,
+            Err(_) => {
+                request.body_mut().fill(0);
+                return error_response(AppError::MalformedPayload { field: "body" });
+            }
+        };
+        request.body_mut().fill(0);
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::SavePluginSkill(mutation))
+            .await
+        {
+            Ok(AppReply::PluginSkills(skills)) => json_response(&skills),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn remove_plugin_skill(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_slug: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::DELETE || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let Some(slug) = percent_decode_segment(raw_slug) else {
+            return error_response(AppError::MalformedPayload { field: "slug" });
+        };
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::RemovePluginSkill { slug })
+            .await
+        {
+            Ok(AppReply::PluginMutationAcknowledged(receipt)) => json_response(&receipt),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugin_grants(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let command = match *request.method() {
+            Method::POST if request.body().len() <= MCP_ADMIN_BODY_MAX_BYTES => {
+                let mutation = match serde_json::from_slice::<PluginGrantMutation>(request.body()) {
+                    Ok(mutation) => mutation,
+                    Err(_) => {
+                        request.body_mut().fill(0);
+                        return error_response(AppError::MalformedPayload { field: "body" });
+                    }
+                };
+                request.body_mut().fill(0);
+                AppCommand::GrantPlugin(mutation)
+            }
+            Method::POST => {
+                request.body_mut().fill(0);
+                return payload_too_large();
+            }
+            Method::DELETE if request.body().is_empty() => {
+                let Some(mutation) = plugin_grant_query(request.uri().query()) else {
+                    return error_response(AppError::MalformedPayload { field: "query" });
+                };
+                AppCommand::RevokePlugin(mutation)
+            }
+            _ => {
+                request.body_mut().fill(0);
+                return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+            }
+        };
+        match self.transport.execute(authority.auth, command).await {
+            Ok(AppReply::PluginMutationAcknowledged(receipt)) => json_response(&receipt),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugins_for_agent(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_agent_id: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let Some(agent_id) = percent_decode_segment(raw_agent_id) else {
+            return error_response(AppError::MalformedPayload { field: "agent_id" });
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::ListPluginsForAgent {
+                    agent_id: BotId::new(agent_id),
+                },
+            )
+            .await
+        {
+            Ok(AppReply::GrantedPlugins(plugins)) => json_response(&plugins),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -2316,6 +2474,38 @@ fn channel_list_query(query: Option<&str>) -> Option<(Option<u32>, Option<String
     Some((limit, cursor))
 }
 
+fn plugin_grant_query(query: Option<&str>) -> Option<PluginGrantMutation> {
+    let query = query?;
+    if query.is_empty() || query.len() > MCP_ADMIN_BODY_MAX_BYTES {
+        return None;
+    }
+    let mut kind = None;
+    let mut reference = None;
+    let mut agent_id = None;
+    for pair in query.split('&') {
+        let (raw_key, raw_value) = pair.split_once('=')?;
+        let key = percent_decode_query_component(raw_key)?;
+        let value = percent_decode_query_component(raw_value)?;
+        match key.as_str() {
+            "kind" if kind.is_none() => {
+                kind = Some(match value.as_str() {
+                    "mcp" => PluginGrantKind::Mcp,
+                    "skill" => PluginGrantKind::Skill,
+                    _ => return None,
+                });
+            }
+            "ref" if reference.is_none() => reference = Some(value),
+            "agentId" if agent_id.is_none() => agent_id = Some(value),
+            _ => return None,
+        }
+    }
+    Some(PluginGrantMutation {
+        kind: kind?,
+        reference: reference?,
+        agent_id: agent_id?,
+    })
+}
+
 fn percent_decode_segment(raw: &str) -> Option<String> {
     if raw.contains('/') {
         return None;
@@ -2417,9 +2607,10 @@ mod tests {
     };
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
     use openbot_contracts::mcp::{
-        McpAdminAuthentication, McpAdminCatalogueEntry, McpAdminPage, McpConnectionDisconnected,
-        McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
+        GrantedPlugins, McpAdminAuthentication, McpAdminCatalogueEntry, McpAdminPage,
+        McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
         McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation, McpServerRemoved,
+        PluginGrantMutation, PluginMutationAcknowledged, PluginSkillMutation, PluginSkills,
     };
     use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
     use openbot_contracts::remote_interrupt::{
@@ -3217,6 +3408,42 @@ mod tests {
                 catalog_generation: 2,
                 tool_count: 1,
                 suspended_grants: 0,
+            })
+        }
+
+        async fn save_skill(
+            &self,
+            _auth: &AuthContext,
+            _mutation: &PluginSkillMutation,
+        ) -> Result<PluginSkills, McpConnectionError> {
+            Ok(PluginSkills { skills: Vec::new() })
+        }
+
+        async fn remove_skill(
+            &self,
+            _auth: &AuthContext,
+            _slug: &str,
+        ) -> Result<PluginMutationAcknowledged, McpConnectionError> {
+            Ok(PluginMutationAcknowledged::success())
+        }
+
+        async fn set_grant(
+            &self,
+            _auth: &AuthContext,
+            _mutation: &PluginGrantMutation,
+            _enabled: bool,
+        ) -> Result<PluginMutationAcknowledged, McpConnectionError> {
+            Ok(PluginMutationAcknowledged::success())
+        }
+
+        async fn list_for_agent(
+            &self,
+            _auth: &AuthContext,
+            _agent_id: &BotId,
+        ) -> Result<GrantedPlugins, McpConnectionError> {
+            Ok(GrantedPlugins {
+                tools: Vec::new(),
+                skills: Vec::new(),
             })
         }
     }
@@ -5138,6 +5365,126 @@ mod tests {
                 .unwrap()
                 .ok
         );
+
+        let skill = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/skills")
+                    .body(
+                        br#"{"slug":"review-notes","title":"Review notes","summary":"Review","instructions":"Review the notes.","global":true}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(skill.status(), StatusCode::OK);
+        assert_eq!(skill.headers()[CACHE_CONTROL], "no-store");
+        assert!(
+            serde_json::from_slice::<PluginSkills>(skill.body())
+                .unwrap()
+                .skills
+                .is_empty()
+        );
+        let smuggled_skill = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/skills")
+                    .body(
+                        br#"{"slug":"review-notes","title":"Review notes","summary":"Review","instructions":"Review the notes.","global":true,"actor":"forged"}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(smuggled_skill.status(), StatusCode::BAD_REQUEST);
+
+        let granted = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/grants")
+                    .body(
+                        br#"{"kind":"skill","ref":"review-notes","agentId":"agent-one"}"#.to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(granted.status(), StatusCode::OK);
+        assert!(
+            serde_json::from_slice::<PluginMutationAcknowledged>(granted.body())
+                .unwrap()
+                .ok
+        );
+        let listed = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .uri("/api/plugins/for/agent-one")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(listed.status(), StatusCode::OK);
+        assert!(
+            serde_json::from_slice::<GrantedPlugins>(listed.body())
+                .unwrap()
+                .tools
+                .is_empty()
+        );
+        let revoked = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/plugins/grants?kind=skill&ref=review-notes&agentId=agent-one")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(revoked.status(), StatusCode::OK);
+        let duplicate_query = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(
+                        "/api/plugins/grants?kind=skill&ref=review-notes&ref=forged&agentId=agent-one",
+                    )
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(duplicate_query.status(), StatusCode::BAD_REQUEST);
+        let removed_skill = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/plugins/skills/review%2Dnotes")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(removed_skill.status(), StatusCode::OK);
+
+        let stale_grant = protocol
+            .handle(
+                "stale-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/grants")
+                    .body(
+                        br#"{"kind":"skill","ref":"review-notes","agentId":"agent-one"}"#.to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(stale_grant.status(), StatusCode::UNAUTHORIZED);
         fs::remove_dir_all(root).unwrap();
     }
 

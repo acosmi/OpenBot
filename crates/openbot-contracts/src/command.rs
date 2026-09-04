@@ -46,9 +46,10 @@ use crate::components::{
 };
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::mcp::{
-    McpAdminPage, McpConnectionDisconnected, McpConnections, McpCustomServerRegistration,
-    McpOAuthAuthorization, McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo,
-    McpServerMutation, McpServerRemoved,
+    GrantedPlugins, McpAdminPage, McpConnectionDisconnected, McpConnections,
+    McpCustomServerRegistration, McpOAuthAuthorization, McpOAuthClientRegistered,
+    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation, McpServerRemoved,
+    PluginGrantMutation, PluginMutationAcknowledged, PluginSkillMutation, PluginSkills,
 };
 use crate::memory::{
     CorrectMemory, MemoryControl, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord,
@@ -471,6 +472,27 @@ pub enum AppCommand {
         server_id: String,
     },
 
+    /// Create or update one actor/deployment-owned skill.
+    SavePluginSkill(PluginSkillMutation),
+
+    /// Remove one skill the actor may manage.
+    RemovePluginSkill {
+        /// Stable skill slug.
+        slug: String,
+    },
+
+    /// Grant one current MCP tool or skill to one authorized Agent.
+    GrantPlugin(PluginGrantMutation),
+
+    /// Revoke one MCP tool or skill from one authorized Agent.
+    RevokePlugin(PluginGrantMutation),
+
+    /// List current actor-specific plugins for one visible Agent.
+    ListPluginsForAgent {
+        /// Agent whose visibility is re-evaluated authoritatively.
+        agent_id: BotId,
+    },
+
     /// List pending proof-of-intent requests for the authenticated actor.
     ListPendingToolApprovals,
 
@@ -600,6 +622,12 @@ pub enum AppReply {
     McpServerMutation(McpServerMutation),
     /// [`AppCommand::RemoveMcpServer`] response.
     McpServerRemoved(McpServerRemoved),
+    /// Skill save response carrying the current visible list.
+    PluginSkills(PluginSkills),
+    /// Skill removal or grant/revoke acknowledgement.
+    PluginMutationAcknowledged(PluginMutationAcknowledged),
+    /// Current actor-specific plugin set for one visible Agent.
+    GrantedPlugins(GrantedPlugins),
     /// [`AppCommand::ListPendingToolApprovals`] response.
     PendingToolApprovals(PendingToolApprovals),
     /// [`AppCommand::DecideToolApproval`] response.

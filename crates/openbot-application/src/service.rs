@@ -163,6 +163,11 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::AddCustomMcpServer(_) => "add_custom_mcp_server",
         AppCommand::RemoveMcpServer { .. } => "remove_mcp_server",
         AppCommand::RefreshMcpServer { .. } => "refresh_mcp_server",
+        AppCommand::SavePluginSkill(_) => "save_plugin_skill",
+        AppCommand::RemovePluginSkill { .. } => "remove_plugin_skill",
+        AppCommand::GrantPlugin(_) => "grant_plugin",
+        AppCommand::RevokePlugin(_) => "revoke_plugin",
+        AppCommand::ListPluginsForAgent { .. } => "list_plugins_for_agent",
         AppCommand::ListPendingToolApprovals => "list_pending_tool_approvals",
         AppCommand::DecideToolApproval { .. } => "decide_tool_approval",
         AppCommand::GetUiPreferences => "get_ui_preferences",
@@ -441,6 +446,44 @@ mod tests {
                     server_id: "google-drive".to_owned(),
                 },
                 "refresh_mcp_server",
+            ),
+            (
+                AppCommand::SavePluginSkill(openbot_contracts::mcp::PluginSkillMutation {
+                    slug: "review-notes".to_owned(),
+                    title: "Review notes".to_owned(),
+                    summary: "Review".to_owned(),
+                    instructions: "Review the notes.".to_owned(),
+                    deployment_wide: false,
+                }),
+                "save_plugin_skill",
+            ),
+            (
+                AppCommand::RemovePluginSkill {
+                    slug: "review-notes".to_owned(),
+                },
+                "remove_plugin_skill",
+            ),
+            (
+                AppCommand::GrantPlugin(openbot_contracts::mcp::PluginGrantMutation {
+                    kind: openbot_contracts::mcp::PluginGrantKind::Skill,
+                    reference: "review-notes".to_owned(),
+                    agent_id: "agent-one".to_owned(),
+                }),
+                "grant_plugin",
+            ),
+            (
+                AppCommand::RevokePlugin(openbot_contracts::mcp::PluginGrantMutation {
+                    kind: openbot_contracts::mcp::PluginGrantKind::Skill,
+                    reference: "review-notes".to_owned(),
+                    agent_id: "agent-one".to_owned(),
+                }),
+                "revoke_plugin",
+            ),
+            (
+                AppCommand::ListPluginsForAgent {
+                    agent_id: BotId::new("agent-one"),
+                },
+                "list_plugins_for_agent",
             ),
             (
                 AppCommand::ListPendingToolApprovals,
