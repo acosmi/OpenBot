@@ -20,7 +20,7 @@
     "ticketSingleUse": true,
     "inboundTextOrBinaryCloseCode": 1008,
     "inputFrameLimitBytes": 1024,
-    "outputFrameLimitBytes": 16777284,
+    "outputFrameLimitBytes": 8388676,
     "defaultViewersPerStream": 8
   },
   "binary": {

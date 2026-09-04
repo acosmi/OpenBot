@@ -1942,4 +1942,4 @@ entries:
     status: "done"
     done_evidence: "Batch113 upgrade前same-origin auth、query拒绝、base+ticket恰两项并在ScreenHub消费single-use ticket；101只选择openbot.screen.v1不回显ticket。首帧立即binary，后续watch latest；Text/Binary inbound 1008、generation撤权1008。真实受管Electron Browser frame经TCP WSS收到OBSCRN01/JPEG且sequence一致。"
     evidence: "上游agent-computer/src/index.ts::serve.websocket与v4 §12.2–§12.4 replacement path"
-    notes: "本条只关闭Server frame transport；viewer input、bandwidth/idle、last-viewer stop、Desktop loopback、PG cookie浏览器/TLS和production Engine source仍分别todo，T-BROP-0027不随本条关闭。"
+    notes: "Batch114增加8MiB/s与单帧burst、control burst20/10条每秒、10秒Ping/30秒idle、1秒write/100ms close；Server233与真实Engine1均绿。只关闭Server frame transport与预算；viewer input、last-viewer stop、Desktop loopback、PG cookie浏览器/TLS和production Engine source仍分别todo，T-BROP-0027不随本条关闭。"

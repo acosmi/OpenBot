@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use futures_util::StreamExt as _;
+use futures_util::{SinkExt as _, StreamExt as _};
 use openbot_application::{
     ApplicationService, ChannelCursor, ChannelReader, OpenBotApplication, PortError,
 };
@@ -200,7 +200,42 @@ async fn real_engine_frame_crosses_ticketed_server_binary_websocket() {
         started.frame.sequence()
     );
 
-    socket.close(None).await.expect("client close");
+    // Real engine + production default liveness: a static screen must still get a host Ping.
+    // Flush its matching automatic Pong once; stop reading after that, so ongoing engine output
+    // cannot substitute for proof that the viewer is consuming the connection.
+    let ping = tokio::time::timeout(std::time::Duration::from_secs(12), socket.next())
+        .await
+        .expect("default heartbeat deadline")
+        .expect("ping")
+        .expect("valid ping");
+    assert!(matches!(ping, ClientMessage::Ping(payload) if payload.len() == 8));
+    socket.flush().await.expect("matching automatic pong");
+    tokio::time::sleep(std::time::Duration::from_secs(31)).await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match socket
+                .next()
+                .await
+                .expect("idle close")
+                .expect("valid close")
+            {
+                ClientMessage::Close(Some(frame)) => {
+                    assert_eq!(
+                        frame.code,
+                        tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy
+                    );
+                    assert_eq!(frame.reason, "screen_idle");
+                    break;
+                }
+                ClientMessage::Ping(_) | ClientMessage::Binary(_) => {}
+                other => panic!("unexpected idle message: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("default idle budget closes connection");
+    // Engine stop is still explicit: socket expiry must not be reported as the unfinished
+    // last-viewer -> Page.stopScreencast lifecycle contract.
     process.stop_session(&tab_id).await.expect("stop session");
     process.shutdown().await.expect("shutdown engine");
     let _ = stop.send(());

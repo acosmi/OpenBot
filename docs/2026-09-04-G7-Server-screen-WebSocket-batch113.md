@@ -49,7 +49,8 @@ frame行为：
 
 - 握手后立即发current `OBSCRN01` binary，之后等待同一个size-one watch latest；慢socket不会创建per-frame
   Rust队列；
-- output上限从Computer单源`MAX_ENGINE_IMAGE_BYTES + 68 = 16,777,284`，不是Server重复常量；
+- output上限从Computer单源`MAX_ENGINE_IMAGE_BYTES + 68 = 8,388,676`，不是Server重复常量；
+  Batch114/R189复核纠正本段旧文的16,777,284笔误，代码一直使用8MiB单源上限；
 - inbound message/frame上限1KiB；当前viewer input尚未装配，Text/Binary统一1008
   `screen_input_not_enabled`，Ping/Pong/Close保持协议语义；
 - source结束或auth generation撤销统一1008 `screen_revoked`，错误帧不带actor/origin/ticket/stream ID；

@@ -1,5 +1,7 @@
 //! Server same-origin ScreenSession issuance and read-only binary WebSocket framing.
 
+mod budget;
+
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
@@ -17,6 +19,9 @@ use openbot_contracts::screen::{
     ScreenSessionRequest, ScreenSessionTarget, ScreenSessionTicket, ScreenViewerBindingRequest,
 };
 use time::OffsetDateTime;
+use tokio::time::{Instant, sleep_until, timeout};
+
+use self::budget::{CLOSE_TIMEOUT, DeliveryBudget, SOCKET_LIMITS, SocketLimits};
 
 use crate::auth::OriginBoundAuthenticated;
 use crate::error::HttpError;
@@ -66,6 +71,16 @@ pub async fn websocket(
     OriginalUri(uri): OriginalUri,
     ws: WebSocketUpgrade,
 ) -> Result<Response, HttpError> {
+    websocket_with_limits(state, bound, uri, ws, SOCKET_LIMITS).await
+}
+
+async fn websocket_with_limits(
+    state: ServerState,
+    bound: OriginBoundAuthenticated,
+    uri: http::Uri,
+    ws: WebSocketUpgrade,
+    limits: SocketLimits,
+) -> Result<Response, HttpError> {
     if uri.query().is_some() {
         return Err(AppError::MalformedPayload {
             field: "websocket_query",
@@ -93,10 +108,12 @@ pub async fn websocket(
         .protocols([SCREEN_VIEWER_PROTOCOL])
         .max_message_size(SCREEN_WS_INPUT_LIMIT)
         .max_frame_size(SCREEN_WS_INPUT_LIMIT)
+        .write_buffer_size(0)
+        .max_write_buffer_size(SCREEN_VIEWER_MAX_BINARY_BYTES + SCREEN_WS_INPUT_LIMIT)
         .on_failed_upgrade(|error| {
             tracing::debug!(error = %error, "screen websocket upgrade failed");
         })
-        .on_upgrade(move |socket| drive_screen_socket(socket, viewer, first)))
+        .on_upgrade(move |socket| drive_screen_socket(socket, viewer, first, limits)))
 }
 
 fn requested_ticket(ws: &WebSocketUpgrade) -> Result<String, AppError> {
@@ -142,15 +159,55 @@ async fn drive_screen_socket(
     mut socket: WebSocket,
     mut viewer: ScreenViewer,
     first: std::sync::Arc<ScreenViewerFrame>,
+    limits: SocketLimits,
 ) {
-    if send_frame(&mut socket, &first).await.is_err() {
+    let mut budget = DeliveryBudget::new(limits, Instant::now());
+    if send_frame(&mut socket, &first, &mut budget, limits)
+        .await
+        .is_err()
+    {
         return;
     }
+    // Release the initial frame before waiting: the viewer never retains a second stale image.
+    drop(first);
     loop {
         tokio::select! {
+            biased;
+            () = sleep_until(budget.wake_at()) => {
+                let now = Instant::now();
+                if budget.idle(now) {
+                    close(&mut socket, close_code::POLICY, "screen_idle").await;
+                    return;
+                }
+                if let Some(challenge) = budget.ping(now)
+                    && send_bounded(&mut socket, Message::Ping(challenge.to_vec().into()), limits.write).await.is_err() {
+                    return;
+                }
+            },
+            incoming = socket.recv() => {
+                if !budget.incoming(Instant::now()) {
+                    close(&mut socket, close_code::POLICY, "screen_control_rate").await;
+                    return;
+                }
+                match incoming {
+                    // Tungstenite replaces its queued automatic reply with this same exact Pong
+                    // before flushing. No second frame or unbounded flush task is created.
+                    Some(Ok(Message::Ping(payload))) => {
+                        if send_bounded(&mut socket, Message::Pong(payload), limits.write).await.is_err() {
+                            return;
+                        }
+                    }
+                    Some(Ok(Message::Pong(payload))) => budget.pong(&payload, Instant::now()),
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
+                    Some(Ok(Message::Text(_) | Message::Binary(_))) => {
+                        close(&mut socket, close_code::POLICY, "screen_input_not_enabled").await;
+                        return;
+                    }
+                }
+            },
             frame = viewer.next() => match frame {
                 Ok(frame) => {
-                    if send_frame(&mut socket, &frame).await.is_err() {
+                    if send_frame(&mut socket, &frame, &mut budget, limits).await.is_err() {
                         return;
                     }
                 }
@@ -158,42 +215,61 @@ async fn drive_screen_socket(
                     close(&mut socket, close_code::POLICY, "screen_revoked").await;
                     return;
                 }
-            },
-            incoming = socket.recv() => match incoming {
-                Some(Ok(Message::Ping(payload))) => {
-                    if socket.send(Message::Pong(payload)).await.is_err() {
-                        return;
-                    }
-                }
-                Some(Ok(Message::Pong(_))) => {}
-                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
-                Some(Ok(Message::Text(_) | Message::Binary(_))) => {
-                    close(&mut socket, close_code::POLICY, "screen_input_not_enabled").await;
-                    return;
-                }
             }
         }
     }
 }
 
-async fn send_frame(socket: &mut WebSocket, frame: &ScreenViewerFrame) -> Result<(), ()> {
+async fn send_frame(
+    socket: &mut WebSocket,
+    frame: &ScreenViewerFrame,
+    budget: &mut DeliveryBudget,
+    limits: SocketLimits,
+) -> Result<(), ()> {
     if frame.binary().len() > SCREEN_VIEWER_MAX_BINARY_BYTES {
         close(socket, close_code::ERROR, "screen_frame_too_large").await;
         return Err(());
     }
-    socket
-        .send(Message::Binary(frame.binary().to_vec().into()))
-        .await
-        .map_err(|_| ())
+    if !budget.frame(frame.binary().len(), Instant::now()) {
+        close(socket, close_code::POLICY, "screen_bandwidth").await;
+        return Err(());
+    }
+    send_bounded(
+        socket,
+        Message::Binary(frame.binary().to_vec().into()),
+        limits.write,
+    )
+    .await
+}
+
+async fn send_bounded(
+    socket: &mut WebSocket,
+    message: Message,
+    limit: std::time::Duration,
+) -> Result<(), ()> {
+    bounded_write(socket.send(message), limit).await
+}
+
+async fn bounded_write<E>(
+    write: impl std::future::Future<Output = Result<(), E>>,
+    limit: std::time::Duration,
+) -> Result<(), ()> {
+    match timeout(limit, write).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) | Err(_) => Err(()),
+    }
 }
 
 async fn close(socket: &mut WebSocket, code: u16, reason: &'static str) {
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
+    let _ = send_bounded(
+        socket,
+        Message::Close(Some(CloseFrame {
             code,
             reason: reason.into(),
-        })))
-        .await;
+        })),
+        CLOSE_TIMEOUT,
+    )
+    .await;
 }
 
 fn screen_error(error: ScreenHubError) -> AppError {
@@ -282,6 +358,10 @@ mod tests {
     }
 
     fn router(hub: ScreenHub, auth: AuthContext) -> Router {
+        crate::router(server_state(hub, auth))
+    }
+
+    fn server_state(hub: ScreenHub, auth: AuthContext) -> crate::http::ServerState {
         let now = OffsetDateTime::now_utc();
         let lifetime = default_session_lifetime();
         let live = evaluate_session(
@@ -297,16 +377,14 @@ mod tests {
             OpenBotApplication::new(EmptyChannels)
                 .with_screen_sessions(Arc::new(ScreenSessionService::new(hub.clone()))),
         );
-        crate::router(
-            ServerBuilder::new(application, Arc::new(resolver))
-                .with_sensitive_write_security(SensitiveWriteSecurity::new(
-                    lifetime,
-                    TrustedOrigins::from_configured(["https://app.example.test"])
-                        .expect("trusted origin"),
-                ))
-                .with_screen_hub(hub)
-                .build(),
-        )
+        ServerBuilder::new(application, Arc::new(resolver))
+            .with_sensitive_write_security(SensitiveWriteSecurity::new(
+                lifetime,
+                TrustedOrigins::from_configured(["https://app.example.test"])
+                    .expect("trusted origin"),
+            ))
+            .with_screen_hub(hub)
+            .build()
     }
 
     async fn issue(
@@ -544,6 +622,293 @@ mod tests {
         );
     }
 
+    struct BudgetTransport {
+        hub: ScreenHub,
+        target: ScreenSessionTarget,
+        feed: openbot_computer::screen::testing::TestScreenFeed,
+        router: Router,
+        address: std::net::SocketAddr,
+        server: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for BudgetTransport {
+        fn drop(&mut self) {
+            self.server.abort();
+        }
+    }
+
+    impl BudgetTransport {
+        async fn start(limits: super::SocketLimits) -> Self {
+            let hub = ScreenHub::new(1).expect("one viewer slot");
+            let target = ScreenSessionTarget {
+                computer_id: ComputerId::new("budget-computer"),
+                computer_generation: ComputerGeneration::new(1),
+                tab_id: TabId::new("budget-tab"),
+            };
+            let feed = attach_test_stream(
+                &hub,
+                &auth(),
+                target.computer_id.clone(),
+                target.computer_generation,
+                target.tab_id.clone(),
+            )
+            .await
+            .expect("source");
+            // Only durations/byte ceiling differ. The production Origin/ticket/upgrade/driver
+            // path is identical, and no configuration seam is available from HTTP or renderer.
+            let router = Router::new()
+                .route(
+                    "/api/screen/sessions",
+                    axum::routing::post(super::issue_session),
+                )
+                .route(
+                    "/api/screen",
+                    axum::routing::get(
+                        move |axum::extract::State(state),
+                              bound,
+                              axum::extract::OriginalUri(uri),
+                              ws| {
+                            super::websocket_with_limits(state, bound, uri, ws, limits)
+                        },
+                    ),
+                )
+                .with_state(server_state(hub.clone(), auth()));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind");
+            let address = listener.local_addr().expect("address");
+            let app = router.clone();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, app).await.expect("serve");
+            });
+            Self {
+                hub,
+                target,
+                feed,
+                router,
+                address,
+                server,
+            }
+        }
+
+        async fn socket(&self) -> ClientSocket {
+            let (_, ticket) = issue(self.router.clone(), &self.target).await;
+            connect(
+                self.address,
+                &format!("{}, {}", ticket.base_protocol(), ticket.ticket_protocol()),
+            )
+            .await
+            .expect("connect")
+            .0
+        }
+
+        async fn slot_released(&self) {
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                loop {
+                    match self
+                        .hub
+                        .issue_ticket_for_target(
+                            &auth(),
+                            &self.target.computer_id,
+                            self.target.computer_generation,
+                            &self.target.tab_id,
+                            openbot_computer::screen::ScreenViewerBinding::verified_server(
+                                "https://app.example.test",
+                            )
+                            .expect("binding"),
+                            OffsetDateTime::now_utc(),
+                        )
+                        .await
+                    {
+                        Ok(_) => break,
+                        Err(openbot_computer::screen::ScreenHubError::ViewerLimit) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                        }
+                        Err(error) => panic!("unexpected slot error: {error:?}"),
+                    }
+                }
+            })
+            .await
+            .expect("viewer permit released");
+        }
+    }
+
+    async fn policy_close(socket: &mut ClientSocket, reason: &str) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                match socket.next().await.expect("server message").expect("valid message") {
+                    ClientMessage::Close(Some(frame)) => {
+                        assert_eq!(frame.code, tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy);
+                        assert_eq!(frame.reason, reason);
+                        break;
+                    }
+                    ClientMessage::Binary(_) | ClientMessage::Ping(_) | ClientMessage::Pong(_) => {}
+                    other => panic!("unexpected budget message: {other:?}"),
+                }
+            }
+        }).await.expect("bounded policy close");
+    }
+
+    #[tokio::test]
+    async fn bandwidth_and_control_flood_close_real_sockets_and_release_viewer_slots() {
+        let transport = BudgetTransport::start(super::SocketLimits {
+            burst_bytes: 80,
+            bytes_per_second: 1,
+            ..super::SOCKET_LIMITS
+        })
+        .await;
+        let mut socket = transport.socket().await;
+        assert!(matches!(
+            socket.next().await,
+            Some(Ok(ClientMessage::Binary(_)))
+        ));
+        // The consumed ticket has become the sole active slot, so another issue must fail.
+        let denied = transport
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/screen/sessions")
+                    .header(http::header::ORIGIN, "https://app.example.test")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&transport.target).expect("target"),
+                    ))
+                    .expect("issue while full"),
+            )
+            .await
+            .expect("capacity response");
+        assert_eq!(denied.status(), StatusCode::CONFLICT);
+        transport.feed.publish(2, 1.0);
+        policy_close(&mut socket, "screen_bandwidth").await;
+        transport.slot_released().await;
+
+        let transport = BudgetTransport::start(super::SOCKET_LIMITS).await;
+        let mut socket = transport.socket().await;
+        let _ = socket.next().await.expect("initial").expect("frame");
+        for _ in 0..21 {
+            socket
+                .feed(ClientMessage::Pong(vec![0; 8].into()))
+                .await
+                .expect("queue unsolicited pong");
+        }
+        socket.flush().await.expect("send flood in one write");
+        policy_close(&mut socket, "screen_control_rate").await;
+        transport.slot_released().await;
+    }
+
+    #[tokio::test]
+    async fn idle_peer_expires_despite_outgoing_frames_and_live_pong_keeps_static_screen() {
+        use std::time::Duration as StdDuration;
+        let limits = super::SocketLimits {
+            ping_interval: StdDuration::from_millis(60),
+            idle: StdDuration::from_millis(240),
+            ..super::SOCKET_LIMITS
+        };
+        let transport = BudgetTransport::start(limits).await;
+        let mut socket = transport.socket().await;
+        let _ = socket.next().await.expect("initial").expect("frame");
+        // Deliberately never read/respond to the challenge while the source keeps changing.
+        for seq in 2..=17 {
+            transport.feed.publish(seq, 1.0);
+            tokio::time::sleep(StdDuration::from_millis(20)).await;
+        }
+        policy_close(&mut socket, "screen_idle").await;
+        transport.slot_released().await;
+
+        let transport = BudgetTransport::start(limits).await;
+        let mut socket = transport.socket().await;
+        let _ = socket.next().await.expect("initial").expect("frame");
+        let mut previous = None;
+        for _ in 0..6 {
+            let message = tokio::time::timeout(StdDuration::from_millis(180), socket.next())
+                .await
+                .expect("ping deadline")
+                .expect("ping")
+                .expect("valid ping");
+            let ClientMessage::Ping(payload) = message else {
+                panic!("expected ping");
+            };
+            assert_eq!(payload.len(), 8);
+            assert_ne!(previous.as_ref(), Some(&payload));
+            // Client's own RFC6455 implementation queues the matching Pong automatically.
+            socket.flush().await.expect("flush matching pong");
+            previous = Some(payload);
+        }
+        socket.close(None).await.expect("close healthy client");
+        transport.slot_released().await;
+    }
+
+    #[tokio::test]
+    async fn stalled_write_is_cancelled_and_write_failures_are_not_success() {
+        let stalled = std::future::pending::<Result<(), ()>>();
+        assert!(
+            super::bounded_write(stalled, std::time::Duration::from_millis(20))
+                .await
+                .is_err()
+        );
+        assert!(
+            super::bounded_write(async { Err(()) }, super::SOCKET_LIMITS.write)
+                .await
+                .is_err()
+        );
+        assert!(
+            super::bounded_write(async { Ok::<_, ()>(()) }, super::SOCKET_LIMITS.write)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn delivery_fixture_locks_defaults_and_keeps_engine_lifecycle_unfinished() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/computer/screen-delivery-budget-v1.json"
+        ))
+        .expect("delivery fixture");
+        let defaults = &fixture["serverDefaults"];
+        assert_eq!(
+            defaults["imageBytesPerSecond"],
+            super::SOCKET_LIMITS.bytes_per_second
+        );
+        assert_eq!(
+            defaults["imageBurstBytes"],
+            super::SOCKET_LIMITS.burst_bytes
+        );
+        assert_eq!(
+            defaults["pingIntervalMs"],
+            super::SOCKET_LIMITS.ping_interval.as_millis() as u64
+        );
+        assert_eq!(
+            defaults["idleMs"],
+            super::SOCKET_LIMITS.idle.as_millis() as u64
+        );
+        assert_eq!(
+            defaults["writeTimeoutMs"],
+            super::SOCKET_LIMITS.write.as_millis() as u64
+        );
+        assert_eq!(
+            defaults["closeTimeoutMs"],
+            super::CLOSE_TIMEOUT.as_millis() as u64
+        );
+        assert_eq!(
+            defaults["maxWriteBufferBytes"],
+            super::SCREEN_VIEWER_MAX_BINARY_BYTES + super::SCREEN_WS_INPUT_LIMIT
+        );
+        for unfinished in [
+            "kernelSendBufferSaturation",
+            "productionManagerAttachesEngineSource",
+            "lastViewerStopsScreencastWithinTwoSeconds",
+            "productionAuthInvalidationHook",
+            "desktopLoopback",
+            "fpsAndCaptureToPaintLatency",
+            "windowsRuntime",
+            "linuxRunscRuntime",
+        ] {
+            assert_eq!(fixture["evidenceBoundary"][unfinished], false);
+        }
+    }
+
     #[test]
     fn fixture_locks_server_transport_and_remaining_production_boundary() {
         let fixture = serde_json::from_str::<serde_json::Value>(SERVER_SCREEN_FIXTURE)
@@ -559,6 +924,10 @@ mod tests {
         assert_eq!(fixture["server"]["selectedProtocolContainsTicket"], false);
         assert_eq!(fixture["server"]["ticketSingleUse"], true);
         assert_eq!(fixture["server"]["defaultViewersPerStream"], 8);
+        assert_eq!(
+            fixture["server"]["outputFrameLimitBytes"],
+            super::SCREEN_VIEWER_MAX_BINARY_BYTES
+        );
         for completed in [
             "typedApplicationTicket",
             "serverSameOriginWebSocket",

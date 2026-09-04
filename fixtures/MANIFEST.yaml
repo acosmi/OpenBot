@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 53
+    expect: 54
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 21
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 32
+    expect: 33
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 53 53
+    expect: 54 54
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 43 0
+    expect: 10 44 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -467,7 +467,7 @@ entries:
     migration_rule: "preserve: authenticated latest screen stream; replace shared JSON/base64 socket with same-origin binary WebSocket and ApplicationService-issued one-time subprotocol ticket"
     status: done
     evidence: "v4 §12.2–§12.4；POST /api/screen/sessions在trusted Origin/body前置后只接computer/generation/tab，binding由Rust header构造；GET /api/screen拒query并要求base+ticket恰两项，upgrade只选择base。ScreenHub在101前消费ticket，binary只出OBSCRN01，client Text/Binary以1008关闭"
-    done_evidence: "fixture=1970 bytes/SHA-256 6e7365a084c8ee9b33ed916ccfbd5e5cca399a23189a8cdd0be5ec784bfb2a2d；Server screen unit=4/0/0：错误Origin先于坏JSON、protocol缺失/多余/query、base-only response、ticket replay、binary latest、client input1008、generation close1008；Computer port=1/0/0；macOS真实受管Electron Browser role经authenticated pipe→ScreenHub→ApplicationService ticket→Axum TCP WebSocket收到sequence一致的OBSCRN01+JPEG，1/0/0并bounded shutdown"
+    done_evidence: "Batch114纠正fixture帧上限为contracts单源8MiB+68，现1969 bytes/SHA-256 7f9f021c17e097aaf91e35f389282bbe4d0a5f8df39e21450efc48101535cf0e；原Batch113证据；Server screen unit=4/0/0：错误Origin先于坏JSON、protocol缺失/多余/query、base-only response、ticket replay、binary latest、client input1008、generation close1008；Computer port=1/0/0；macOS真实受管Electron Browser role经authenticated pipe→ScreenHub→ApplicationService ticket→Axum TCP WebSocket收到sequence一致的OBSCRN01+JPEG，1/0/0并bounded shutdown"
     notes: >-
       本fixture关闭Server ticket与binary WebSocket transport，不关闭T-BROP-0027或完整G7。
       production Server main已注入同一Hub/port，但BrowserRuntimeManager尚未把生产Engine source attach进去；
@@ -884,3 +884,18 @@ entries:
       只写"全部通过"而不附原文的归档不算数（§24 G0 要的是原始结果）。
       阻塞原因：本轮明确要求上游克隆只读，跑测试会写 node_modules 与数据库；本机也未起 PostgreSQL。
       解除条件：把上游克隆复制到一个可写目录（不改动只读副本），起一个一次性 PostgreSQL，再逐条归档。
+
+  - id: screen-delivery-budget
+    upstream: "-"
+    label: 新增
+    target: fixtures/computer/screen-delivery-budget-v1.json -> openbot_server::http::screen
+    owner: openbot-server
+    test_id: T-FIX-0054
+    migration_rule: "n/a: v4 per-viewer bandwidth, idle and bounded writer; fixed host defaults added by R189"
+    status: done
+    evidence: "cargo test -p openbot-server --lib --locked；cargo test -p openbot-server --test screen_engine_conformance --locked -- --ignored --nocapture"
+    done_evidence: "fixture=1301 bytes/SHA-256 2e7a844fc68e559c9b789e4dd8c7d8940819165fb096a3f59740281e26ea9ad2；Server lib233/0/0、screen11/0/0。真实TCP覆盖带宽/control flood关闭、active slot409及断线释放、静态画面matching Pong续期/持续outgoing不续期；macOS真实Engine以生产10秒Ping/30秒idle实跑1/0/0（49.92秒），随后显式stop/shutdown。整数纳秒byte budget无round-up；pending write future超时为failure。"
+    notes: >-
+      只关闭Server transport预算；write future deadline不冒充kernel buffer saturation。
+      最后viewer到Page.stopScreencast仍未接，Engine在测试里显式停止；production source、auth hook、
+      Desktop、fps/latency/fallback、Windows/runsc及G7均未闭合。无live provider、PG cookie或TLS终止证据。

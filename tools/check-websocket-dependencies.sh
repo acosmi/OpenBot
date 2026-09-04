@@ -59,6 +59,16 @@ grep -qF '.protocols([SCREEN_VIEWER_PROTOCOL])' \
   crates/openbot-server/src/http/screen.rs || fail 'screen upgrade base-only protocol选择漂移'
 grep -qF '"screen_input_not_enabled"' \
   crates/openbot-server/src/http/screen.rs || fail 'screen read-only 1008 close边界缺失'
+grep -qF '.write_buffer_size(0)' crates/openbot-server/src/http/screen.rs \
+  || fail 'screen immediate write buffer边界缺失'
+grep -qF '.max_write_buffer_size(SCREEN_VIEWER_MAX_BINARY_BYTES + SCREEN_WS_INPUT_LIMIT)' \
+  crates/openbot-server/src/http/screen.rs || fail 'screen单帧write buffer上限漂移'
+for reason in screen_idle screen_bandwidth screen_control_rate; do
+  grep -qF "\"$reason\"" crates/openbot-server/src/http/screen.rs \
+    || fail "screen transport budget关闭码缺失: $reason"
+done
+grep -qF 'timeout(limit, write)' crates/openbot-server/src/http/screen.rs \
+  || fail 'screen write deadline缺失'
 
 metadata=$(cargo metadata --format-version 1 --locked)
 printf '%s' "$metadata" | python3 -c '

@@ -5,6 +5,12 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  - id: T-API-0175
+    disposition: revalidate
+    notes: "Batch114 reruns the exact Origin-before-body ticket path, active+pending capacity and socket-close permit release."
+  - id: T-API-0176
+    disposition: revalidate
+    notes: "Batch114 reruns query/base-only/replay/generation framing and real Engine TCP heartbeat/idle; adds bandwidth, control flood and write limits."
   # Batch110 closes the three screencast operations only after protocol-v3 executes them in both
   # real macOS roles and Rust's size-one latest buffer drives every CDP acknowledgement.
   - id: T-BROP-0030
