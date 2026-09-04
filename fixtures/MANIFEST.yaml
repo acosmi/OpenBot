@@ -375,6 +375,23 @@ entries:
       T-FIX-0018仍需完整官方conformance的initialize/capability/list/call/cancel/timeout/progress全套，
       computer/file/shell进程树与各自协议取消继续todo。
 
+  - id: browser-runtime-budget
+    upstream: "CopilotKit/openbot@891df72f1827454d8b353d108fe5dd2313b7e30d:agent-computer/src/browser-eviction.ts+profiles.ts"
+    label: 新增
+    target: fixtures/computer/browser-runtime-budget.json -> openbot_computer::browser::eviction + openbot_computer::manager
+    owner: openbot-computer
+    test_id: T-FIX-0048
+    migration_rule: "preserve: fixed LRU/idle behavior + strengthen with full ComputerSecurityScope, generation fencing, active-lease refusal and owned-driver retirement"
+    status: done
+    evidence: "closed fixture固定max=8、idle=1800000ms与七类runtime case；13条固定上游selector测试逐项相等，manager另证同scope并发冷启动1次、非活动LRU实际close、all-leased effect前busy、idle inclusive且跳过lease、generation/stale/collision、launch rollback、shutdown"
+    done_evidence: "fixture=1579 bytes/SHA-256 1dc491809ec8f7b84919349f492cfbff955ce034923ccc4b15858aea5c6e53ce；openbot-computer=43/0/2 ignored，其中selector=15/0/0、manager=10/0/0；all-target/all-feature locked Clippy -D warnings与fmt绿。BrowserInstance按完整ComputerSecurityScope digest+ComputerId+generation绑定，driver handle由manager独占；cap/idle只选leases=0项，全部在用时computer_runtime_busy且extra launch=0；launch失败恢复预留victim；Display/Debug只出stable code不出driver canary"
+    notes: >-
+      本fixture只关闭固定上游13条browser-eviction纯判据与Rust manager-owned residency state machine；
+      evidenceBoundary明确serverOrDesktopEngineAssembly=false、cpuRssPidsDiskBudget=false。生产host尚未把
+      BrowserRuntimeManager接EngineProcess/Supervisor，COMPUTER_MAX_BROWSERS与
+      COMPUTER_BROWSER_IDLE_MS配置入口仍todo；因此完整Computer runtime budget、ComputerManager、
+      G4/G5及P1/P2均不得勾选。
+
   - id: db-seed-0012
     upstream: "-"
     label: 新增

@@ -15,7 +15,7 @@ pub const DEFAULT_BROWSER_IDLE_TIMEOUT_MS: i64 = 30 * 60_000;
 /// Equal timestamps retain input order. The runtime inserts a newly launched browser after existing
 /// entries and calls this function only after insertion, so a positive cap never chooses that newest
 /// browser ahead of an older equal-timestamp entry.
-pub fn choose_evictions<K>(running: impl IntoIterator<Item = (K, i64)>, maximum: usize) -> Vec<K> {
+pub fn choose_evictions<K>(running: impl IntoIterator<Item = (K, i128)>, maximum: usize) -> Vec<K> {
     let mut entries = running.into_iter().collect::<Vec<_>>();
     let excess = entries.len().saturating_sub(maximum);
     if excess == 0 {
@@ -34,17 +34,19 @@ pub fn choose_evictions<K>(running: impl IntoIterator<Item = (K, i64)>, maximum:
 /// A non-positive timeout disables idle eviction. Arithmetic is widened so hostile or erroneous
 /// clock values cannot overflow into a fresh-looking or stale-looking timestamp.
 pub fn choose_idle<K>(
-    running: impl IntoIterator<Item = (K, i64)>,
-    idle_timeout_ms: i64,
-    now_ms: i64,
+    running: impl IntoIterator<Item = (K, i128)>,
+    idle_timeout_ms: i128,
+    now_ms: i128,
 ) -> Vec<K> {
     if idle_timeout_ms <= 0 {
         return Vec::new();
     }
-    let cutoff = i128::from(now_ms) - i128::from(idle_timeout_ms);
+    let Some(cutoff) = now_ms.checked_sub(idle_timeout_ms) else {
+        return Vec::new();
+    };
     running
         .into_iter()
-        .filter(|(_, used_at_ms)| i128::from(*used_at_ms) <= cutoff)
+        .filter(|(_, used_at_ms)| *used_at_ms <= cutoff)
         .map(|(key, _)| key)
         .collect()
 }
@@ -55,7 +57,7 @@ mod tests {
         DEFAULT_BROWSER_IDLE_TIMEOUT_MS, DEFAULT_MAX_LIVE_BROWSERS, choose_evictions, choose_idle,
     };
 
-    fn running(used_at: &[i64]) -> Vec<(String, i64)> {
+    fn running(used_at: &[i128]) -> Vec<(String, i128)> {
         used_at
             .iter()
             .enumerate()
@@ -159,9 +161,9 @@ mod tests {
 
     #[test]
     fn idle_cutoff_arithmetic_cannot_overflow() {
-        assert!(choose_idle(running(&[i64::MAX]), 1, i64::MIN).is_empty());
+        assert!(choose_idle(running(&[i128::MAX]), 1, i128::MIN).is_empty());
         assert_eq!(
-            choose_idle(running(&[i64::MIN]), i64::MAX, i64::MAX),
+            choose_idle(running(&[i128::MIN]), i128::MAX, i128::MAX),
             ["bot-0"]
         );
     }
