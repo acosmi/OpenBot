@@ -10,6 +10,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[[bin]]
+name = "wrok-bot-server"
+path = "src/main.rs"
+
 [features]
 default = []
 # 打开 `auth::FixedAuthResolver`（固定身份的测试替身）。默认关，理由与

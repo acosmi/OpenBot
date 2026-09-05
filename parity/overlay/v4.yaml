@@ -1476,3 +1476,18 @@ entries:
   - id: T-TEST-0971
     disposition: revalidate
     notes: "Batch83 reruns the full 514-test infra PostgreSQL matrix, agent_runtime_postgres 8/0/0, and Server 216/0/0 after splitting the Desktop Local feature graph."
+  - id: T-TEST-0535
+    disposition: revalidate
+    notes: "R202 startup alias/local composition changed the config module prefix; the existing policy and migration rejection tests were rerun in Server 240/0/0. Final launch tests 7/0/0 retain legacy retired-variable checks. See docs/2026-09-05-WrokBot-本机启动与后端首版进度.md; this does not close Alpha or live provider gates."
+  - id: T-TEST-0536
+    disposition: revalidate
+    notes: "R202 startup alias/local composition changed the config module prefix; the existing policy and migration rejection tests were rerun in Server 240/0/0. Final launch tests 7/0/0 retain legacy retired-variable checks. See docs/2026-09-05-WrokBot-本机启动与后端首版进度.md; this does not close Alpha or live provider gates."
+  - id: T-TEST-0537
+    disposition: revalidate
+    notes: "R202 startup alias/local composition changed the config module prefix; the existing policy and migration rejection tests were rerun in Server 240/0/0. Final launch tests 7/0/0 retain legacy retired-variable checks. See docs/2026-09-05-WrokBot-本机启动与后端首版进度.md; this does not close Alpha or live provider gates."
+  - id: T-TEST-0921
+    disposition: revalidate
+    notes: "R202 startup alias/local composition changed the config module prefix; the existing policy and migration rejection tests were rerun in Server 240/0/0. Final launch tests 7/0/0 retain legacy retired-variable checks. See docs/2026-09-05-WrokBot-本机启动与后端首版进度.md; this does not close Alpha or live provider gates."
+  - id: T-TEST-0923
+    disposition: revalidate
+    notes: "R202 startup alias/local composition changed the config module prefix; the existing policy and migration rejection tests were rerun in Server 240/0/0. Final launch tests 7/0/0 retain legacy retired-variable checks. See docs/2026-09-05-WrokBot-本机启动与后端首版进度.md; this does not close Alpha or live provider gates."

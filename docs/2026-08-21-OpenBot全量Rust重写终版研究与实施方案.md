@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R201，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R202，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -39,7 +39,7 @@
 
 | 发行物 | 固定用途 | 数据与通信 | Browser Computer |
 | --- | --- | --- | --- |
-| `openbot-server` | 多用户、团队、自托管 Web 部署 | Axum HTTP/SSE/WebSocket；PostgreSQL 17 | 每个 `ComputerSecurityScope` 一个受监管容器；生产固定 `runsc` |
+| `wrok-bot-server` | 多用户、团队、自托管 Web 部署 | Axum HTTP/SSE/WebSocket；PostgreSQL 17 | 每个 `ComputerSecurityScope` 一个受监管容器；生产固定 `runsc` |
 | `openbot-desktop` | 单机个人使用或连接团队服务器 | 本地模式使用 Tauri typed in-process；远程模式使用同一 Axum API；本地 PostgreSQL 由 Rust 监管 | 每个 `ComputerSecurityScope` 一个受监管 Electron/Chromium 进程 |
 
 数据库只实现 PostgreSQL 一套语义。桌面版管理仅监听本机的 PostgreSQL 17 sidecar，避免 SQLite/PostgreSQL 双 schema、双 migration 和双事务语义长期漂移。数据库引擎不是第一方业务代码；schema、migration、repository、transaction、加密和访问逻辑全部是 Rust。
@@ -85,6 +85,23 @@ Electron/Chromium browser engine（无业务裁决权）
 执行方案与候选Alpha闸门见`docs/2026-09-04-OpenBot开源共建与渐进上线策略-研究方案.md`。
 开源方向已确认，但具体许可授权、干净发行文件范围及whole-tree审计须按§23.2完成；本轮不把复制评估
 或公开可见性当成已授予开源许可。R63、Grok固定树与不擅自合并/上传的既有边界保持。
+
+### 0.6 Wrok Bot 命名与本机启动入口（2026-09-05，R202）
+
+用户明确要求项目和底层名称改为 **Wrok Bot**，本窗口优先后端首版，GUI 由独立窗口实施。
+新 Server 发行入口为 `wrok-bot-server`；全仓历史来源、既有数据身份与密码学标签不做盲目文本替换。
+crate/path、Desktop/Engine identity和协议更名按独立兼容迁移继续，未完成之前不宣称整体更名闭合。
+
+新增显式 `--local` 选择第一方 `examples/wrok-bot`（一个package built-in助手、一个workspace、空knowledge），
+使工作台可在模型key配置前启动；原部署不带该参数时保留已有默认与显式包路径，避免改变既有tenant。
+local仅loopback，SSO把身份解析成多用户时拒绝，不转0.0.0.0；默认policy仍deny。
+16个`WROK_BOT_*`配置名由唯一启动快照移交原校验器；新旧同时存在、未知新字段均拒绝，
+原remove/rename检查不旁路。映射及T-ENV-0081–0096见本批报告和机器台账。
+
+真实PG17.11/SCRAM+正式Server已验证无key终态失败/请求0、API写Vault、环回模拟provider完成、
+重启conversation摘要相同及Origin403；模型端是测试模拟器，不作为live vendor或A0–A7通过。
+企业SSO管理在local尚未装配，完整安装/控制面/Browser/原生电脑与首版真实模型旅程继续未完成。
+详见`2026-09-05-WrokBot-本机启动与后端首版进度.md`。
 
 ## 1. 第一真源与证据冻结
 
@@ -2816,6 +2833,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R199 | §11.2 / §11.3 / §17.2 / §24 G5（2026-09-05 Batch123：Engine父环境隔离） | R126/R127只过滤四项Electron/Node变量，Unix默认继承、Windows枚举父环境；provider/DB凭据与其它loader/key-log变量仍可能进入引擎。真实两role探针证实main/renderer四处canary为true。 | Unixenv_clear后固定五键和scope cwd，Linux只加固定DISPLAY；Windows从只读OS目录API构造九键有界UTF-16 block，删除父环境枚举并同步唯一unsafe边界许可。角色测试用隔离父进程注入synthetic canary，实际PS观测只输出固定布尔事实，完成cleanup后判定，不读取生产凭据或打印原始环境。 | 修复前4 true，修复后4 false，真实两role完整conformance由1个父测试复算；Computer67/fixture5、Windows portable4、两crate Clippy与Windows/Linux check绿。T-FIX-0058，fixtures38/20/58；其余parity/overlay不变，strict160/0/0、Grok/shim/六target bans-sources通过。Windows/runtime、runsc、macOS读取/localhost/UDS/helper-exec仍未通过，不能把HOME变量当文件隔离。磁盘满只回收本仓3.1GiB incremental后原命令重跑；不改E远程R196基线、不上传或合并，详见Batch123。 |
 | R200 | §10.1 / §10.3 / §11.3 / §24 G5（2026-09-05 Batch124：macOS main直接读取） | R199关闭env继承后，SBPL仍allow-default而只约束write；实际kernel探针证明邻接文件、symlink、DataVolume别名可读，不能开放真实网页后再补。 | deny file-read*，仅scope/bundle/具名OS资源和ancestor metadata允许；避免 /System 覆盖Data卷。根据本机dyld事实只加literal /目录openat锚点，拒NUL注入。明确native cat/ls/ln探针与真实Engine兼容性分开；不宣称完成任意main compromise防线。 | 修复前3可读，后5负向全拒绝，scope内read/list/link及无sandbox hardlink正向成立；native1/0/0、真实两role父测试1/0/0，完整input/frame/env/stop/cleanup保持。Computer67+fixture5、Clippy、Windows/Linux check通过；跨平台仅编译。fixture1790 bytes/SHA 3f2e5ef4…，F0059后39/20/59；parity/overlay不变，strict160/0/0、Grok/shim通过。固定Chromium150.0.7871.212三source与本机dyld哈希已记录；helper exec/Mach/FD/UDS/kernel/production余项继续，详见Batch124。 |
 | R201 | §10.5 / §11.2 / §24 G5（2026-09-05 Batch125：macOS main精确pipe出口） | R200读取已收紧，但main仍可连接任意UDS/localhost；实际Rust子进程probe确认runtime额外socket、邻接scope socket和其它loopback端口均可达。 | 删两项通配，仅放当前runtime control/frame两literal；保持peer/token检查。native probe每个拒绝端点都有同client/endpoint unconfined正向，真实Engine兼容另跑。guard仅登记末尾cfg(test)一个数字TCP调用；不扩production出网面。 | native1/0/0：3错误端点由true变false、两正确pipe可连；真实两role父测试1/0/0，完整input/frame/env/cleanup保持。Computer/Clippy和Windows/Linux check绿；F0060后40/20/60，parity/overlay不变；strict160/0/0、Grok/shim/唯一出网guard通过。helper实查adhoc/flags0x2，with-no-sandbox执行/loader/网络仍未验证，不能由main规则推全Engine隔离；epoch4、gateway/native平台/production继续，详见Batch125。 |
+| R202 | §0.6 / §15.4 / §16.1 / §23.4 / §24.2（2026-09-05：Wrok Bot命名与本机启动） | 产品入口仍为旧名，默认金融包managed插槽要求预置key | 用户要求全部命名改Wrok Bot并优先可启动核心；默认包使初次配置key的工作台无法打开 | 新Server binary与16个品牌配置名；显式local包和loopback/default-origin，原部署不自动迁tenant；保留旧校验器与durable身份，逐步迁移底层名称；未配置key可进入工作台但run明确failed | Server242+7与最终launch7、Clippy；真实PG/SCRAM/正式Server/环回模拟provider/Vault/restart摘要与Origin403；非live/非Alpha通过，详见本批报告 |
 
 ### 28.2 复核通过、原样保留的断言
 

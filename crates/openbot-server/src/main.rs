@@ -1,4 +1,4 @@
-//! OpenBot Server 生产二进制组装入口。
+//! Wrok Bot Server 生产二进制组装入口。
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -123,8 +123,24 @@ struct BuiltInAgentAssemblyInput {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let local = match arguments.as_slice() {
+        [] => false,
+        [flag] if flag == "--local" => true,
+        [flag] if flag == "--help" || flag == "-h" => {
+            println!(
+                "Wrok Bot Server\nUsage: wrok-bot-server [--local | --help | --version]\n\n--local selects the first-party local workspace and loopback single-user mode.\nSet WROK_BOT_DATABASE_URL and WROK_BOT_KEY_ENCRYPTION_KEY before starting.\nSet WROK_BOT_APP_DIST_DIR to serve the compiled workbench.\nModel credentials can be added through /admin/credentials after startup.\nExisting deployments may keep their original configuration variable names."
+            );
+            return Ok(());
+        }
+        [flag] if flag == "--version" => {
+            println!("Wrok Bot Server {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        _ => return Err(startup_error("wrok_bot_arguments_invalid").into()),
+    };
     telemetry::init(LogFormat::Json)?;
-    let env = env_map_from_process();
+    let env = openbot_server::config::launch::prepare_environment(env_map_from_process(), local)?;
     let server = ServerConfig::from_env_map(&env)?;
     if let Some(warning) = server.public_transport().startup_warning() {
         tracing::warn!(code = server.public_transport().as_str(), "{warning}");
@@ -209,6 +225,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let has_provider = auth_config.is_some();
     let single_user = single_user_enabled(&env, has_provider)?;
+    // An existing database can contain dynamic SSO even when the process environment does not.
+    // Explicit local mode must never select the multi-user 0.0.0.0 listener in that case.
+    if local && !single_user {
+        return Err(openbot_server::config::launch::LaunchError::LocalModeConflict.into());
+    }
     let environment_provider_ids = auth_config
         .as_ref()
         .map(|config| {
@@ -479,7 +500,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         format!("0.0.0.0:{}", server.port)
     };
     let listener = tokio::net::TcpListener::bind(&address).await?;
-    tracing::info!(bind = %address, single_user, "OpenBot Server 已启动");
+    tracing::info!(bind = %address, single_user, "Wrok Bot Server 已启动");
     let serve_result = axum::serve(
         listener,
         builder
