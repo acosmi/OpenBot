@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R204，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R205，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1194,6 +1194,13 @@ fresh、non-Clone/non-serde `AuthorizedHumanInput`在Rust重验scope/generation/
 
 ### 11.4 CrabCode 复用清单
 
+R205（2026-09-05）：用户明确补充允许参考/复制适配自有CrabCode的**Rust记忆数据管理层**，
+并要求持续记账；该会话授权适用于本次记忆层复用，不重复索要同一授权。按固定提交只读核验真实调用链，
+优先评估检索/排序/去重/来源/增量进度中可拆模块，接入本项目PG与当前actor/scope、预算及取消语义。
+具体候选、证据与状态见`docs/2026-09-05-WrokBot-记忆数据层复用评估与台账.md`。不改源仓，不将
+评估快照当产品实现；原§4.3显式记忆入口和唯一PG真源保持，自动抽取/关系图等新增面单独落规格与验收。
+
+
 | 资产 | 正确用途 | 禁止做法 |
 | --- | --- | --- |
 | `acosmi-supervisor` / daemon launcher / heartbeat | 进程 registry、PID identity、watchdog、shutdown、socket lock | 整 crate 无审计复制 |
@@ -1203,8 +1210,9 @@ fresh、non-Clone/non-serde `AuthorizedHumanInput`在Rust重验scope/generation/
 | app-server protocol/transport | framing、origin、auth、thread/turn fixture | 复制 200+ method 的产品专属 dispatcher |
 | 历史 Tauri host | path/artifact/log/menu/deep-link/single-instance/cleanup 模式 | 回滚整个已删除提交 |
 | TS Agent/MCP | 行为 fixture、错误语义 | 进入最终生产控制面 |
+| Rust记忆数据管理层（R205用户明确授权） | 可拆检索策略、去重、来源与增量进度；按当前PG/ACL适配并独立验收 | 整套复制宿主/数据真源；旧scope或模型建议绕过本项目授权；评估即记完成 |
 
-所有行目前都是“权属清理后可用”，不是自动授权。每个复制文件须有 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原/目标 hash、许可证、修改声明、书面授权编号。
+除R191/R205已被用户明确授权的自有模块范围外，其他行仍为“权属清理后可用”，不是自动授权。每个复制文件须有 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原/目标 hash、许可证、修改声明、授权记录（本次会话的明确授权如实登记，不伪造第三方授权编号）。
 
 ### 11.5 `grok-bot/` 参考树：定位、方法与 census（R115 / R116，2026-08-28）
 
@@ -2854,6 +2862,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R202 | §0.6 / §15.4 / §16.1 / §23.4 / §24.2（2026-09-05：Wrok Bot命名与本机启动） | 产品入口仍为旧名，默认金融包managed插槽要求预置key | 用户要求全部命名改Wrok Bot并优先可启动核心；默认包使初次配置key的工作台无法打开 | 新Server binary与16个品牌配置名；显式local包和loopback/default-origin，原部署不自动迁tenant；保留旧校验器与durable身份，逐步迁移底层名称；未配置key可进入工作台但run明确failed | Server242+7与最终launch7、Clippy；真实PG/SCRAM/正式Server/环回模拟provider/Vault/restart摘要与Origin403；非live/非Alpha通过，详见本批报告 |
 | R203 | §9.6（2026-09-05：显式技能调用） | Skills管理/授权已落，BeginThreadRun仅接受message，指令未入runtime | 自动全量grant或拼接用户文字均不符固定上游chip→system语义，renderer任意system正文不可信 | 可选有序slug经Rust当前授权与同事务快照；保留用户原文、历史选择与精确重试，新增16项预算，不增加tool capability | PG17.11/SCRAM9通过含并发撤销锁等待；Contracts110/Application166/Server242/Desktop134与Clippy通过，Desktop3项真实宿主测试忽略；非live/非完整GUI/G4/G6，详见本批报告 |
 | R204 | §0.5 / §24.2（2026-09-05：macOS首版发布裁决） | Alpha原按平台实际通过逐腿开放，近期估算混含Windows首版 | 用户明确首版先上mac并要求修正文档 | 首发平台固定macOS，Windows E2保留到后续版独立验收，不作为mac首发前置；mac实际启用范围仍逐项过A0–A7，全量v4与全部平台todo保留 | 用户本次明确裁决；同步首发范围、策略、进度、工作单与前端窗口，不新增通过标记或发布日期承诺 |
+| R205 | §11.4 / §4.3（2026-09-05：Rust记忆数据层复用） | 复用清单未包含用户再次强调的记忆数据管理层 | 用户明确允许参考/复用且要求更新台账；模块存在不能替代真实调用与适配验收 | 增加固定来源的记忆检索/排序/去重/来源/进度候选，优先首版可靠性，保持PG及本项目ACL；扩展自动写入等独立规格；会话授权已登记，不改源仓 | 固定提交只读调用核验与逐文件hash登记；当前为评估快照，尚无产品源码复制或测试通过声明，详见复用台账 |
 
 
 ### 28.2 复核通过、原样保留的断言
