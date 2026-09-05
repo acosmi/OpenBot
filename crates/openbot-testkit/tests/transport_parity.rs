@@ -528,7 +528,9 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::ListPendingToolApprovals
         | AppCommand::DecideToolApproval { .. }
         | AppCommand::GetUiPreferences
-        | AppCommand::UpdateUiPreferences(_) => None,
+        | AppCommand::UpdateUiPreferences(_)
+        | AppCommand::GetRunCostBudget
+        | AppCommand::ReplaceRunCostBudget(_) => None,
     }
 }
 

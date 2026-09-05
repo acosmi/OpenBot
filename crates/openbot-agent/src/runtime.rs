@@ -308,13 +308,13 @@ async fn supervise(
 
 async fn execute_activation(inner: Arc<Inner>, mut activation: Activation) {
     if *activation.cancel.borrow() {
-        cleanup(&inner, &activation.lease).await;
+        cancel_before_execution(&inner, &activation.lease).await;
         return;
     }
     let permit = tokio::select! {
         changed = activation.cancel.changed() => {
             if changed.is_err() || *activation.cancel.borrow() {
-                cleanup(&inner, &activation.lease).await;
+                cancel_before_execution(&inner, &activation.lease).await;
                 return;
             }
             return;
@@ -331,6 +331,21 @@ async fn execute_activation(inner: Arc<Inner>, mut activation: Activation) {
     execute_run(&inner, &mut activation).await;
     inner.tools.release(activation.lease.run_id());
     cleanup(&inner, &activation.lease).await;
+}
+
+async fn cancel_before_execution(inner: &Inner, lease: &RunExecutionLease) {
+    let mut state = AgentState::queued(lease.run_id().clone());
+    let mut journal = DurableTextRun::new(inner.runtime.clone(), lease.clone());
+    cancel_and_commit(
+        &mut state,
+        &mut journal,
+        inner.audit.as_ref(),
+        lease,
+        CancellationSource::User,
+    )
+    .await;
+    inner.tools.release(lease.run_id());
+    cleanup(inner, lease).await;
 }
 
 async fn cleanup(inner: &Inner, lease: &RunExecutionLease) {
@@ -1547,6 +1562,10 @@ mod tests {
 
     struct HoldingContext;
 
+    struct NotifyingHoldingContext {
+        started: Notify,
+    }
+
     #[derive(Default)]
     struct CountingContext {
         loads: AtomicUsize,
@@ -1639,6 +1658,17 @@ mod tests {
             &self,
             _lease: &RunExecutionLease,
         ) -> Result<ProviderRequest, AgentContextError> {
+            pending().await
+        }
+    }
+
+    #[async_trait]
+    impl AgentContextSource for NotifyingHoldingContext {
+        async fn load(
+            &self,
+            _lease: &RunExecutionLease,
+        ) -> Result<ProviderRequest, AgentContextError> {
+            self.started.notify_one();
             pending().await
         }
     }
@@ -2614,6 +2644,62 @@ mod tests {
         assert_eq!(
             runtime.calls(),
             [RuntimeCall::Finish(1, RunTerminal::Cancelled)]
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn revoke_activated_run_waiting_for_concurrency_commits_cancelled() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let context = Arc::new(NotifyingHoldingContext {
+            started: Notify::new(),
+        });
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            context.clone(),
+            Arc::new(FakeProvider {
+                events: Vec::new(),
+                hold: true,
+            }),
+            Arc::new(NoAgentToolInvoker),
+            Arc::new(NoAgentAudit),
+            BuiltInAgentConfig {
+                queue_capacity: 2,
+                max_concurrency: 1,
+                lease_renew_interval: Duration::from_secs(1),
+                run_deadline: Some(Duration::from_secs(2)),
+            },
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let active = lease("run-active");
+        let queued = lease("run-queued-cancel");
+        assert_eq!(
+            consumer.dispatch(active.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&active).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), context.started.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            consumer.dispatch(queued.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&queued).await.unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(
+            consumer.revoke(&queued).await,
+            RunCancellationDisposition::ChildSignalled
+        );
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .expect("等待并发许可的 run 也必须提交 durable terminal");
+        assert!(
+            runtime
+                .calls()
+                .iter()
+                .any(|call| { matches!(call, RuntimeCall::Finish(1, RunTerminal::Cancelled)) })
         );
         agent.stop().await;
     }
