@@ -46,8 +46,10 @@ use crate::components::{
 };
 use crate::ids::{ActorId, BotId, ChannelId, RunId, ThreadId};
 use crate::mcp::{
-    McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
-    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
+    GrantedPlugins, McpAdminPage, McpConnectionDisconnected, McpConnections,
+    McpCustomServerRegistration, McpOAuthAuthorization, McpOAuthClientRegistered,
+    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation, McpServerRemoved,
+    PluginGrantMutation, PluginMutationAcknowledged, PluginSkillMutation, PluginSkills,
 };
 use crate::memory::{
     CorrectMemory, MemoryControl, MemoryMutation, MemoryPage, MemoryRecall, MemoryRecord,
@@ -55,10 +57,14 @@ use crate::memory::{
 };
 use crate::people::{AdminStatus, CurrentUser, PeoplePage, Person};
 use crate::policy::ActionPolicyDocument;
+use crate::remote_interrupt::{
+    PendingRemoteInterrupts, RemoteInterruptAnswer, RemoteInterruptResolved,
+};
 use crate::sandboxed::{
     PublishedSandboxedComponents, SandboxedComponentDeleted, SandboxedComponentResponse,
     SandboxedComponents, SaveSandboxedComponentRequest,
 };
+use crate::screen::{ScreenSessionRequest, ScreenSessionTicket};
 use crate::tool::{
     PendingToolApprovals, ToolApprovalActivityEvent, ToolApprovalDecision, ToolApprovalResolved,
     ToolInvocation, ToolResult,
@@ -359,6 +365,17 @@ pub enum AppCommand {
         thread_id: ThreadId,
     },
 
+    /// List current-actor pending remote AG-UI interrupts.
+    ListPendingRemoteInterrupts,
+
+    /// Resolve one server-minted remote AG-UI interrupt handle.
+    ResolveRemoteInterrupt {
+        /// Opaque server-minted handle; remote interrupt ids are not control authority.
+        request_id: String,
+        /// Closed status and bounded optional JSON payload.
+        answer: RemoteInterruptAnswer,
+    },
+
     /// GUI “记住这条”；application 固定 origin=user_action。
     RememberMemory(RememberMemory),
 
@@ -410,6 +427,26 @@ pub enum AppCommand {
     /// List only the authenticated actor's per-user MCP connections.
     ListMcpConnections,
 
+    /// Read bounded safe deployment credential metadata as an administrator.
+    ListCredentials(crate::credential_admin::CredentialPageRequest),
+    /// Create an encrypted manual credential; no managed identity can be supplied.
+    CreateCredential(crate::credential_admin::CredentialWrite),
+    /// Replace a credential and retire its predecessor atomically.
+    RotateCredential {
+        /// Existing credential identity.
+        credential_id: String,
+        /// Closed replacement input; actor comes only from AuthContext.
+        input: crate::credential_admin::CredentialWrite,
+    },
+    /// Retire one credential locally and schedule applicable external cleanup.
+    RevokeCredential {
+        /// Existing credential identity.
+        credential_id: String,
+    },
+
+    /// Read the deployment-wide Plugins administration projection visible to this actor.
+    ListMcpAdminPage,
+
     /// Begin an OAuth authorization-code flow for the authenticated actor.
     BeginMcpOAuth {
         /// Stable server id; endpoint and client are resolved authoritatively.
@@ -438,10 +475,40 @@ pub enum AppCommand {
         key: String,
     },
 
+    /// Register a custom Streamable HTTP server under explicit administrator authority.
+    AddCustomMcpServer(McpCustomServerRegistration),
+
+    /// Remove one configured server and its cascading catalog/connection rows.
+    RemoveMcpServer {
+        /// Stable configured server id.
+        server_id: String,
+    },
+
     /// Refresh one configured server catalogue under admin authority.
     RefreshMcpServer {
         /// Stable configured server id.
         server_id: String,
+    },
+
+    /// Create or update one actor/deployment-owned skill.
+    SavePluginSkill(PluginSkillMutation),
+
+    /// Remove one skill the actor may manage.
+    RemovePluginSkill {
+        /// Stable skill slug.
+        slug: String,
+    },
+
+    /// Grant one current MCP tool or skill to one authorized Agent.
+    GrantPlugin(PluginGrantMutation),
+
+    /// Revoke one MCP tool or skill from one authorized Agent.
+    RevokePlugin(PluginGrantMutation),
+
+    /// List current actor-specific plugins for one visible Agent.
+    ListPluginsForAgent {
+        /// Agent whose visibility is re-evaluated authoritatively.
+        agent_id: BotId,
     },
 
     /// List pending proof-of-intent requests for the authenticated actor.
@@ -466,6 +533,9 @@ pub enum AppCommand {
 
     /// Fully replace the authenticated actor's per-run provider cost cap.
     ReplaceRunCostBudget(RunCostBudgetPreference),
+
+    /// Issue one actor/generation/host-bound ScreenSession ticket.
+    IssueScreenSession(ScreenSessionRequest),
 }
 
 /// 应用层应答。封闭 enum，与 [`AppCommand`] 一一对应。
@@ -543,6 +613,10 @@ pub enum AppReply {
     ThreadHistory(ThreadHistory),
     /// [`AppCommand::GetThreadConversation`] response.
     ThreadConversation(ThreadConversationSnapshot),
+    /// [`AppCommand::ListPendingRemoteInterrupts`] response.
+    PendingRemoteInterrupts(PendingRemoteInterrupts),
+    /// [`AppCommand::ResolveRemoteInterrupt`] response.
+    RemoteInterruptResolved(RemoteInterruptResolved),
     /// Remember/correct/mutate 后的记录。
     Memory(MemoryRecord),
     /// Actor-scoped runtime memory write control.
@@ -557,6 +631,14 @@ pub enum AppReply {
     AgentCallbackTokenRevoked(CallbackTokenRevoked),
     /// [`AppCommand::ListMcpConnections`] response.
     McpConnections(McpConnections),
+    /// [`AppCommand::ListCredentials`] safe inventory page.
+    Credentials(crate::credential_admin::CredentialPage),
+    /// [`AppCommand::CreateCredential`] / [`AppCommand::RotateCredential`] receipt.
+    CredentialWritten(crate::credential_admin::CredentialWritten),
+    /// [`AppCommand::RevokeCredential`] local retirement receipt.
+    CredentialRevoked(crate::credential_admin::CredentialRevoked),
+    /// [`AppCommand::ListMcpAdminPage`] response.
+    McpAdminPage(McpAdminPage),
     /// [`AppCommand::BeginMcpOAuth`] response.
     McpOAuthAuthorization(McpOAuthAuthorization),
     /// [`AppCommand::DisconnectMcpConnection`] response.
@@ -565,6 +647,14 @@ pub enum AppReply {
     McpOAuthClientRegistered(McpOAuthClientRegistered),
     /// [`AppCommand::AddCuratedMcpServer`] or [`AppCommand::RefreshMcpServer`] response.
     McpServerMutation(McpServerMutation),
+    /// [`AppCommand::RemoveMcpServer`] response.
+    McpServerRemoved(McpServerRemoved),
+    /// Skill save response carrying the current visible list.
+    PluginSkills(PluginSkills),
+    /// Skill removal or grant/revoke acknowledgement.
+    PluginMutationAcknowledged(PluginMutationAcknowledged),
+    /// Current actor-specific plugin set for one visible Agent.
+    GrantedPlugins(GrantedPlugins),
     /// [`AppCommand::ListPendingToolApprovals`] response.
     PendingToolApprovals(PendingToolApprovals),
     /// [`AppCommand::DecideToolApproval`] response.
@@ -573,6 +663,8 @@ pub enum AppReply {
     UiPreferences(UiPreferences),
     /// Per-run cost budget read/replacement response.
     RunCostBudget(RunCostBudgetPreference),
+    /// One-time screen viewer ticket; its `Debug` implementation redacts the secret protocol.
+    ScreenSession(ScreenSessionTicket),
 }
 
 /// 探活结果。

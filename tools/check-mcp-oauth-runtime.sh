@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# G4 Batch 12: MCP OAuth must stay on SafeDialer, exact issuer/resource and local-first revocation.
+# G4 Batch 12/102/103: MCP OAuth must stay on per-server SafeDialer authority, exact
+# issuer/resource, local-first revocation and retained admin-removal compensation.
 set -euo pipefail
 
 fail() {
@@ -28,6 +29,30 @@ grep -qF 'code_challenge_method", "S256"' crates/openbot-infra/src/mcp_oauth.rs 
   || fail 'PKCE S256 authorization binding disappeared'
 grep -qF 'metadata.issuer != client.issuer' crates/openbot-infra/src/mcp_oauth.rs \
   || fail 'authorization-server exact issuer validation disappeared'
+grep -qF 'dialer: self.dialer.with_egress_policy(EgressPolicy::new(allowlist))' \
+  crates/openbot-infra/src/mcp_oauth.rs \
+  || fail 'MCP OAuth no longer clones the shared dialer with exact per-server egress authority'
+[[ $(grep -c '\.with_egress_allowlist' crates/openbot-infra/src/mcp_connections.rs) -eq 4 ]] \
+  || fail 'register/begin/code/revoke do not all consume per-server OAuth egress authority'
+grep -qF 'self.with_egress_allowlist(request.egress_allowlist().clone())' \
+  crates/openbot-infra/src/mcp_oauth.rs \
+  || fail 'runtime refresh rotation lost its selected server egress authority'
+grep -qF 'coalesce(s.egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs' \
+  crates/openbot-infra/src/store/plugin_user_credential.rs \
+  || fail 'runtime credential selection no longer carries current server egress authority'
+grep -qF "coalesce(s.transport,'mcp') AS server_transport" \
+  crates/openbot-infra/src/store/plugin_user_credential.rs \
+  || fail 'runtime credential selection no longer binds the closed vendor transport'
+grep -qF 'FOR SHARE OF s,d' crates/openbot-infra/src/store/plugin_user_credential.rs \
+  || fail 'post-token refresh rotation no longer locks current server/client authority'
+grep -qF 'if request.transport() != "mcp"' crates/openbot-infra/src/mcp_oauth.rs \
+  || fail 'generic MCP refresh accepted another vendor transport'
+grep -qF '|| request.transport() != "google_drive_rest"' \
+  crates/openbot-infra/src/google_drive_oauth.rs \
+  || fail 'curated Drive refresh accepted another vendor transport'
+grep -qF '|| !request.egress_allowlist().is_empty()' \
+  crates/openbot-infra/src/google_drive_oauth.rs \
+  || fail 'curated Google Drive OAuth accepted an MCP private-egress override'
 
 grep -qF 'openbot-mcp-oauth-state-v1' crates/openbot-infra/src/mcp_connections.rs \
   || fail 'OAuth state HMAC purpose separation disappeared'
@@ -39,6 +64,32 @@ grep -qF "FOR UPDATE SKIP LOCKED" crates/openbot-infra/src/mcp_connections.rs \
   || fail 'pending vendor revocation is no longer multi-replica claimed'
 grep -qF "'revocation_status','pending'" crates/openbot-infra/src/mcp_connections.rs \
   || fail 'local-first disconnect tombstone disappeared'
+grep -qF 'const ATTEMPT_VERSION: u8 = 3;' crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'sealed OAuth attempt no longer binds the v3 egress authority shape'
+grep -qF 'material.egress_allow_cidrs != attempt.egress_allow_cidrs' \
+  crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'OAuth callback no longer rejects egress authority drift before token exchange'
+grep -qF 'validate_stored_client' crates/openbot-infra/src/mcp_oauth.rs \
+  || fail 'admin removal no longer validates retained OAuth client material without network'
+grep -qF 'struct RemovedServerRevocationContext' crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'versioned admin-removal revocation context disappeared'
+grep -qF 'removed_server_client_material' crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'admin removal no longer reloads its exact retained client/context'
+grep -qF 'match self.removed_server_client_material(&claim).await' \
+  crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'removed-server claim no longer routes through its retained context'
+if grep -qF 'let material = if removed_server' crates/openbot-infra/src/mcp_connections.rs; then
+  fail 'removed-server tombstones can fall back to a re-added same-id server'
+fi
+grep -qF "'revocation_status','operator_required'" crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'irrecoverable retained revocation material no longer exits the retry loop'
+grep -qF "metadata=metadata-'server_removal_revocation'" \
+  crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'successful user-token revoke no longer scrubs retained network context'
+grep -qF "split_part(g.ref,'/',1)=\$1" crates/openbot-infra/src/mcp_connections.rs \
+  || fail 'admin removal no longer deletes stale/orphan grants by exact server prefix'
+test -f docs/runbooks/mcp-server-removal-vendor-revocation.md \
+  || fail 'admin-removal vendor compensation runbook disappeared'
 
 grep -qF 'ADD COLUMN credential_generation bigint' crates/openbot-infra/sql/native_0018.sql \
   || fail 'credential generation migration disappeared'
@@ -54,4 +105,4 @@ fi
 grep -qF '.field("client_secret", &"[redacted]")' crates/openbot-contracts/src/mcp.rs \
   || fail 'admin OAuth client Debug redaction disappeared'
 
-printf 'MCP OAuth runtime guard: ok (SafeDialer PRM/issuer/resource; HMAC+AEAD state; credential generation; local-first revoke)\n'
+printf 'MCP OAuth runtime guard: ok (per-server egress + rotation CAS; SafeDialer PRM/issuer/resource; HMAC+AEAD state v3; credential generation; local-first + admin-removal compensation)\n'

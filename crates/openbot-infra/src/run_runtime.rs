@@ -7,10 +7,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use openbot_application::{
     ClaimedRunCancellation, ClaimedRunDispatch, ProviderBillingFamily, ProviderCostUpperBound,
-    ProviderRateCard, ProviderRateCardInput, ProviderUsage, RunCancellationDisposition, RunCostCap,
-    RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode, RunRuntime,
-    RunRuntimeError, RunSemanticChannel, RunTerminal, RunTokenUsage, RunTokenUsageReceipt,
-    RunToolExchange, RunWriteReceipt, SEMANTIC_CHUNK_MAX_BYTES,
+    ProviderRateCard, ProviderRateCardInput, ProviderRemoteProjection, ProviderUsage,
+    RunCancellationDisposition, RunCostCap, RunDispatchConsumer, RunDispatchDecision,
+    RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError, RunSemanticChannel,
+    RunTerminal, RunTokenUsage, RunTokenUsageReceipt, RunToolExchange, RunWriteReceipt,
+    SEMANTIC_CHUNK_MAX_BYTES,
 };
 use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId};
 use openbot_domain::audit::hash::Sha256Digest;
@@ -315,6 +316,28 @@ impl RunRuntime for PostgresRunRuntime {
             expected_sequence,
             channel,
             chunk,
+        )
+        .await;
+        finish_transaction(transaction, result).await
+    }
+
+    async fn append_remote_projection(
+        &self,
+        lease: &RunExecutionLease,
+        expected_sequence: u64,
+        projection: &ProviderRemoteProjection,
+    ) -> Result<RunWriteReceipt, RunRuntimeError> {
+        let mut client = self.client().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|error| unavailable("开始 remote projection 事务", error))?;
+        let result = append_remote_projection_in_transaction(
+            &transaction,
+            &self.owner_id,
+            lease,
+            expected_sequence,
+            projection,
         )
         .await;
         finish_transaction(transaction, result).await
@@ -1318,6 +1341,71 @@ async fn append_chunk_in_transaction(
     })
 }
 
+async fn append_remote_projection_in_transaction(
+    transaction: &Transaction<'_>,
+    owner: &str,
+    lease: &RunExecutionLease,
+    expected_sequence: u64,
+    projection: &ProviderRemoteProjection,
+) -> Result<RunWriteReceipt, RunRuntimeError> {
+    let expected = sequence_i64(expected_sequence)?;
+    let payload = projection.journal_payload();
+    let Some(locked) = lock_run(transaction, lease.run_id().as_str()).await? else {
+        return Err(RunRuntimeError::StaleLease);
+    };
+    validate_lease_identity(&locked, lease)?;
+    if locked.next_event_seq > expected {
+        return replay_event(transaction, lease, expected, "checkpoint", payload, false)
+            .await?
+            .ok_or(RunRuntimeError::Conflict);
+    }
+    if locked.next_event_seq != expected || locked.status != "running" {
+        return Err(RunRuntimeError::Conflict);
+    }
+    let now = database_now(transaction).await?;
+    validate_active_lease(&locked, owner, lease, now)?;
+    let thread_event = locked.thread_next_event_seq;
+    let next_run = checked_increment(expected, "next_event_sequence")?;
+    let next_thread = checked_increment(thread_event, "thread_next_event_sequence")?;
+    transaction
+        .execute(
+            "INSERT INTO public.run_events( \
+               run_id,seq,thread_id,event_seq,event_type,payload,terminal,created_at \
+             ) VALUES($1,$2,$3,$4,'checkpoint',$5,false,$6)",
+            &[
+                &lease.run_id().as_str(),
+                &expected,
+                &lease.thread_id().as_str(),
+                &thread_event,
+                payload,
+                &now,
+            ],
+        )
+        .await
+        .map_err(|error| write_error("写 remote projection checkpoint", error))?;
+    transaction
+        .execute(
+            "UPDATE public.runs SET next_event_seq=$2 WHERE run_id=$1",
+            &[&lease.run_id().as_str(), &next_run],
+        )
+        .await
+        .map_err(|error| write_error("推进 remote projection run sequence", error))?;
+    transaction
+        .execute(
+            "UPDATE public.threads SET next_event_seq=$2,updated_at=$3 WHERE thread_id=$1",
+            &[&lease.thread_id().as_str(), &next_thread, &now],
+        )
+        .await
+        .map_err(|error| write_error("推进 remote projection thread sequence", error))?;
+    notify_thread(transaction).await?;
+    Ok(RunWriteReceipt {
+        run_event_sequence: expected_sequence,
+        thread_event_sequence: sequence_u64(thread_event, "thread_event_sequence")?,
+        message_sequence: None,
+        replayed: false,
+    })
+}
+
 async fn append_tool_exchange_in_transaction(
     transaction: &Transaction<'_>,
     owner: &str,
@@ -2048,6 +2136,9 @@ async fn finish_run_in_transaction(
     let next_run = checked_increment(expected, "next_event_sequence")?;
     let next_thread = checked_increment(thread_event, "thread_next_event_sequence")?;
     let assistant_text = aggregate_text_chunks(transaction, lease.run_id()).await?;
+    scrub_reasoning_chunks(transaction, lease.run_id()).await?;
+    scrub_remote_projections(transaction, lease.run_id()).await?;
+    retire_remote_interrupts(transaction, lease.run_id(), now).await?;
     let message_sequence = if assistant_text.is_empty() {
         None
     } else {
@@ -2144,6 +2235,71 @@ async fn finish_run_in_transaction(
         message_sequence,
         replayed: false,
     })
+}
+
+async fn scrub_reasoning_chunks(
+    transaction: &Transaction<'_>,
+    run_id: &RunId,
+) -> Result<(), RunRuntimeError> {
+    transaction
+        .execute(
+            "UPDATE public.run_events \
+             SET payload=jsonb_build_object( \
+               'channel','reasoning','delta','','retained',false \
+             ) \
+             WHERE run_id=$1 AND event_type='semantic_chunk' \
+               AND payload->>'channel'='reasoning' \
+               AND payload IS DISTINCT FROM jsonb_build_object( \
+                 'channel','reasoning','delta','','retained',false \
+               )",
+            &[&run_id.as_str()],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| write_error("清除 terminal reasoning payload", error))
+}
+
+async fn scrub_remote_projections(
+    transaction: &Transaction<'_>,
+    run_id: &RunId,
+) -> Result<(), RunRuntimeError> {
+    transaction
+        .execute(
+            "UPDATE public.run_events \
+             SET payload=jsonb_build_object( \
+               'kind','remote_agui_projection','source','remote_ag_ui', \
+               'retained',false,'untrusted',true \
+             ) \
+             WHERE run_id=$1 AND event_type='checkpoint' \
+               AND payload->>'kind'='remote_agui_projection' \
+               AND payload IS DISTINCT FROM jsonb_build_object( \
+                 'kind','remote_agui_projection','source','remote_ag_ui', \
+                 'retained',false,'untrusted',true \
+               )",
+            &[&run_id.as_str()],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| write_error("清除 terminal remote projection payload", error))
+}
+
+async fn retire_remote_interrupts(
+    transaction: &Transaction<'_>,
+    run_id: &RunId,
+    now: OffsetDateTime,
+) -> Result<(), RunRuntimeError> {
+    transaction
+        .execute(
+            "UPDATE public.remote_agent_interrupts \
+                SET descriptor=NULL,state='retired',response_payload=NULL, \
+                    resume_protocol_run_id=NULL,resolved_at=coalesce(resolved_at,$2), \
+                    resolved_by=NULL,updated_at=$2 \
+              WHERE run_id=$1 AND state<>'retired'",
+            &[&run_id.as_str(), &now],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| write_error("retire terminal remote interrupts", error))
 }
 
 async fn recover_one_in_transaction(

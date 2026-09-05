@@ -8,8 +8,8 @@
 //!   shadow Agent 只重放录制的 provider stream，**不执行 live tool**（v3 §20.1）。
 //! - fault injection 与 fake provider：让 retry / cancel / budget / stall 这些路径在没有真实
 //!   厂商端点的情况下也能被确定性覆盖。
-//! - golden 截图比对工具面（设计系统文档 §10.4；仅本 crate 使用 `image` `0.25.10` 与
-//!   `xcap` `0.9.8`，G6 开工时引入）。
+//! - golden 截图工具面（设计系统文档 §10.4）；当前库面只提供无第三方依赖的 RGBA8
+//!   像素比较核心，不解码 PNG、不截图、不生成 diff 图，也不冒充完整 golden gate。
 //! - **xtask**：仓库闸门驱动器，落在本 crate 的 bin target `src/bin/xtask.rs`，
 //!   `required-features = ["xtask"]`。v3 §5.1 的 crate 表里本 crate 的职责原文就含 "xtask"，
 //!   所以这是方案内既定归属，不是本轮新增的第 11 个 crate。
@@ -21,16 +21,17 @@
 //!   逐字把"测试"与 Axum、Tauri、迁移工具并列为只做认证 / framing / 限制 / 错误映射的一方）。
 //! - 替代 CI：`xtask ci` 只是把 v3 §16.3 的固定清单按顺序跑一遍，不新增也不删减判据。
 //!
-//! # G1 状态
-//!
-//! **库面仍然刻意为空。** 已落地的是两个 target：
+//! # 当前落地面
 //!
 //! | target | 内容 | 出处 |
 //! | --- | --- | --- |
-//! | `src/bin/xtask.rs` | 仓库闸门驱动器（`parity-check` / `ci` / `test-inventory`） | §19.3 / §24 G0 |
+//! | [`golden`] | 已解码 RGBA8 的阈值、比例、8×8 差异块与显式 mask 比较核心 | GUI v2 §10.4 |
+//! | `src/bin/xtask.rs` | 仓库闸门驱动器（含PNG-only `golden check-manifest/compare/verify`） | §19.3 / §24 G0/G6 |
 //! | `tests/transport_parity.rs` | **G1 判据第 2 条**的执行面：同一个 `ApplicationService` 经 Axum HTTP 与 in-process 两条 transport，结果一致 | §24 G1 / §5.2 |
 //!
-//! golden trace / fault injection / fake provider 随各自闸门逐步落地。
+//! PNG解码、deterministic diff图、manifest/mask/matrix fail-closed gate已落；Web CDP/desktop xcap
+//! 截图、固定Linux容器/fonts与245张正式基线仍未落。golden trace、fault injection与fake provider继续
+//! 按各自闸门逐步实施。
 //!
 //! ## 为什么对拍装置落在 `tests/` 而不是库面
 //!
@@ -47,6 +48,8 @@
 //! `-desktop` 四个业务 crate，全部只在 `[dev-dependencies]` 里。所以依赖箭头是
 //! **testkit → 业务 crate**，且只在 `cargo test` 时存在；`cargo build --workspace` 的
 //! 依赖图里，本 crate 与它们零关系。
+
+pub mod golden;
 
 #[cfg(test)]
 mod fixtures;

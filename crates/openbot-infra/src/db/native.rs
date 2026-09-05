@@ -4,7 +4,9 @@
 //!
 //! - [`crate::db::baseline`] 把空库一次建成上游 0012 终态；
 //! - [`crate::db::compat`] 只读 `drizzle.__drizzle_migrations`，确认旧库至少到 0012；
-//! - 本模块从 0012 往后施加 Rust-owned 的 expand-only migration，**绝不写上游账本**。
+//! - 本模块从 0012 往后施加 Rust-owned migration，schema 只允许 expand，**绝不写上游账本**；
+//! - 唯一数据覆写例外是具名、可审计的隐私保留期清除；它只能把已终态 run 的 reasoning
+//!   payload 收敛为固定无内容标记，不能改业务身份、序列或 terminal 事实。
 //!
 //! # 自有账本与并发
 //!
@@ -157,8 +159,35 @@ pub const NATIVE_0026_NAME: &str = "native_0026_user_run_cost_budgets";
 /// 0026 SQL source.
 pub const NATIVE_0026_SQL: &str = include_str!("../../sql/native_0026.sql");
 
+/// Terminal-run reasoning retention redaction version.
+pub const NATIVE_0027_VERSION: i32 = 27;
+
+/// 0027 stable name.
+pub const NATIVE_0027_NAME: &str = "native_0027_terminal_reasoning_retention";
+
+/// 0027 SQL source.
+pub const NATIVE_0027_SQL: &str = include_str!("../../sql/native_0027.sql");
+
+/// Durable remote AG-UI interrupt/resume version.
+pub const NATIVE_0028_VERSION: i32 = 28;
+
+/// 0028 stable name.
+pub const NATIVE_0028_NAME: &str = "native_0028_remote_agent_interrupts";
+
+/// 0028 SQL source.
+pub const NATIVE_0028_SQL: &str = include_str!("../../sql/native_0028.sql");
+
+/// Explicit custom-MCP private-egress authority version.
+pub const NATIVE_0029_VERSION: i32 = 29;
+
+/// 0029 stable name.
+pub const NATIVE_0029_NAME: &str = "native_0029_mcp_private_egress";
+
+/// 0029 SQL source.
+pub const NATIVE_0029_SQL: &str = include_str!("../../sql/native_0029.sql");
+
 /// 当前二进制认识的最新 native schema 版本。
-pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0026_VERSION;
+pub const NATIVE_LATEST_VERSION: i32 = NATIVE_0029_VERSION;
 
 /// 当前二进制钉住的 native migration 数量。
 pub const NATIVE_MIGRATION_COUNT: usize = MIGRATIONS.len();
@@ -244,6 +273,21 @@ const MIGRATIONS: &[MigrationSpec] = &[
         version: NATIVE_0026_VERSION,
         name: NATIVE_0026_NAME,
         sql: NATIVE_0026_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0027_VERSION,
+        name: NATIVE_0027_NAME,
+        sql: NATIVE_0027_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0028_VERSION,
+        name: NATIVE_0028_NAME,
+        sql: NATIVE_0028_SQL,
+    },
+    MigrationSpec {
+        version: NATIVE_0029_VERSION,
+        name: NATIVE_0029_NAME,
+        sql: NATIVE_0029_SQL,
     },
 ];
 
@@ -381,6 +425,24 @@ pub fn native_0025_checksum() -> String {
 #[must_use]
 pub fn native_0026_checksum() -> String {
     Sha256Digest::of(NATIVE_0026_SQL.as_bytes()).to_hex()
+}
+
+/// SHA-256 of the exact native 0027 SQL bytes.
+#[must_use]
+pub fn native_0027_checksum() -> String {
+    Sha256Digest::of(NATIVE_0027_SQL.as_bytes()).to_hex()
+}
+
+/// SHA-256 of the exact native 0028 SQL bytes.
+#[must_use]
+pub fn native_0028_checksum() -> String {
+    Sha256Digest::of(NATIVE_0028_SQL.as_bytes()).to_hex()
+}
+
+/// SHA-256 of the exact native 0029 SQL bytes.
+#[must_use]
+pub fn native_0029_checksum() -> String {
+    Sha256Digest::of(NATIVE_0029_SQL.as_bytes()).to_hex()
 }
 
 /// 在一个已到 0012 的数据库上施加当前二进制认识的全部 Rust-owned migrations。
@@ -536,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_sql_is_mechanically_expand_only() {
+    fn schema_migration_sql_is_mechanically_expand_only() {
         let forbidden_prefixes = ["DROP ", "TRUNCATE ", "DELETE ", "UPDATE "];
         for line in statement_lines(NATIVE_0013_SQL)
             .chain(statement_lines(NATIVE_0014_SQL))
@@ -607,6 +669,48 @@ mod tests {
         assert!(NATIVE_0026_SQL.contains("CREATE TABLE public.user_run_cost_budgets"));
         assert!(NATIVE_0026_SQL.contains("ADD COLUMN budget_cost_currency text"));
         assert!(NATIVE_0026_SQL.contains("runs_cost_budget_shape"));
+        assert!(NATIVE_0028_SQL.contains("CREATE TABLE public.remote_agent_interrupts"));
+        assert!(NATIVE_0028_SQL.contains("remote_agent_interrupts_state_shape"));
+        assert!(NATIVE_0029_SQL.contains("ADD COLUMN egress_allow_cidrs text[]"));
+        assert!(NATIVE_0029_SQL.contains("provenance = 'custom'"));
+    }
+
+    #[test]
+    fn terminal_reasoning_retention_is_the_only_narrow_data_redaction() {
+        let statements = statement_lines(NATIVE_0027_SQL).collect::<Vec<_>>();
+        let statement_sql = statements.join("\n");
+        assert_eq!(statement_sql.matches(';').count(), 1);
+        assert_eq!(
+            statements
+                .iter()
+                .filter(|line| line.to_ascii_uppercase().starts_with("UPDATE "))
+                .count(),
+            1
+        );
+        assert!(statements[0].starts_with("UPDATE public.run_events AS reasoning_event"));
+        assert!(NATIVE_0027_SQL.contains(
+            "SET payload = jsonb_build_object(\n    'channel', 'reasoning',\n    'delta', '',\n    'retained', false\n)"
+        ));
+        assert!(NATIVE_0027_SQL.contains("reasoning_event.event_type = 'semantic_chunk'"));
+        assert!(NATIVE_0027_SQL.contains(
+            "run.status IN ('completed', 'failed', 'cancelled', 'reconciliation_required')"
+        ));
+        assert!(NATIVE_0027_SQL.contains("reasoning_event.payload->>'channel' = 'reasoning'"));
+        for forbidden in [
+            "DROP ",
+            "TRUNCATE ",
+            "DELETE ",
+            "ALTER ",
+            "CREATE ",
+            "INSERT ",
+            " RENAME ",
+            "SET NOT NULL",
+        ] {
+            assert!(
+                !statement_sql.to_ascii_uppercase().contains(forbidden),
+                "0027 privacy redaction escaped its DML boundary: {forbidden}"
+            );
+        }
     }
 
     #[test]
@@ -626,6 +730,9 @@ mod tests {
                 .chain(statement_lines(NATIVE_0024_SQL))
                 .chain(statement_lines(NATIVE_0025_SQL))
                 .chain(statement_lines(NATIVE_0026_SQL))
+                .chain(statement_lines(NATIVE_0027_SQL))
+                .chain(statement_lines(NATIVE_0028_SQL))
+                .chain(statement_lines(NATIVE_0029_SQL))
                 .any(|line| line.contains("IF NOT EXISTS"))
         );
         assert!(LEDGER_BOOTSTRAP_SQL.contains("IF NOT EXISTS"));
@@ -682,7 +789,16 @@ mod tests {
         let native_run_cost_budget = native_0026_checksum();
         assert_eq!(native_run_cost_budget.len(), 64);
         assert_ne!(native_run_cost, native_run_cost_budget);
-        assert_eq!(MIGRATIONS.len(), 14);
-        assert_eq!(MIGRATIONS[13].version, NATIVE_LATEST_VERSION);
+        let native_reasoning_retention = native_0027_checksum();
+        assert_eq!(native_reasoning_retention.len(), 64);
+        assert_ne!(native_run_cost_budget, native_reasoning_retention);
+        let native_remote_interrupts = native_0028_checksum();
+        assert_eq!(native_remote_interrupts.len(), 64);
+        assert_ne!(native_reasoning_retention, native_remote_interrupts);
+        let native_mcp_private_egress = native_0029_checksum();
+        assert_eq!(native_mcp_private_egress.len(), 64);
+        assert_ne!(native_remote_interrupts, native_mcp_private_egress);
+        assert_eq!(MIGRATIONS.len(), 17);
+        assert_eq!(MIGRATIONS[16].version, NATIVE_LATEST_VERSION);
     }
 }

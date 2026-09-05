@@ -9,7 +9,8 @@
 #   `cargo xtask engine bundle`   P1：rebrand → shim ASAR → fuses → integrity → sidecar manifest（零 npm）
 #   `cargo xtask engine runsc-spike ...` P1：只在Ubuntu24 x64真机全绿后打印runsc pin candidate
 # 当前 macOS verify 同时覆盖 archive sha256 / SHASUMS / `--version` 与 bundle 的 ASAR、fuses、
-# rebrand、integrity、signature、release epoch、protocol、manifest。Batch54 的 Windows PE
+# rebrand、integrity、signature、release epoch、protocol、manifest；Batch109又在macOS以v2重建并
+# 实跑普通输入。Batch54 的 Windows PE
 # `Integrity/ElectronAsar`、Named Pipe、Job/restricted-token 只取得 target check/Clippy；Windows/Linux
 # 平台专属 runtime 证据仍缺，不能从 macOS 外推。`cargo xtask tools` 不读本文件。
 # Batch55刻意没有runsc/Xvfb条目：harness未在Linux运行前，runsc版本/URL/hash与rootfs
@@ -30,8 +31,8 @@ generated_at = "2026-08-28"
 # ===========================================================================
 [engines.electron]
 version = "43.3.0"
-release_epoch = 1
-protocol_version = 1
+release_epoch = 4
+protocol_version = 4
 chromium = "150.0.7871.212"
 node = "24.18.1"
 license = "MIT"
@@ -47,7 +48,7 @@ checksums_manifest = "https://github.com/electron/electron/releases/download/v43
 checksums_manifest_http_status = 200
 checksums_manifest_copy = "tools/electron-v43.3.0.SHASUMS256.txt"
 status = "done"
-done_evidence = "五个平台 zip 的 sha256 与上游 SHASUMS256.txt 逐字相等；windows-x64 真下载 144,396,349 B、macos-arm64 真下载 122,102,881 B，二者 `--version` = `v43.3.0`。Batch53 macOS `engine bundle|verify` 又实得 Rust-only ASAR+4MiB integrity、九 fuse 000011001、外层rebrand、ElectronAsarIntegrity、ad-hoc signature、release epoch/protocol 1 与 manifest digest；双 role 真进程证据另见 Batch53。Windows/Linux bundle 专属证据仍未跑，不冒充三平台已验"
+done_evidence = "五个平台 zip 的 sha256 与上游 SHASUMS256.txt 逐字相等；windows-x64 真下载 144,396,349 B、macos-arm64 真下载 122,102,881 B，二者 `--version` = `v43.3.0`。Batch53/109先取得macOS protocol 1/2基线；Batch110升级到epoch/protocol 3后重跑bundle/verify，ASAR=29806 B/header 02972340…/fuses 000011001，并以双role正式screencast/ACK/latest-buffer 4/0/0闭合本平台证据。Batch115升级epoch/protocol4，ASAR30069 B/header d795c804…/shim595，双role暂停恢复与既有输入回归通过；Windows/Linux bundle专属证据仍未跑，不冒充三平台已验"
 notes = """
 获取渠道只有官方 GitHub release zip（v3 §1.2 / R117）；不经 npm，因此没有 package-lock。
 Electron zip 解压后是未签名的通用二进制：rebrand、shim ASAR、fuses、ASAR integrity 与签名全部在

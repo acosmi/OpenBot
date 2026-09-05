@@ -290,13 +290,14 @@ async fn collect_completion(
                     Ok(output)
                 };
             }
-            Some(ProviderEvent::Failed(_)) | None => {
+            Some(ProviderEvent::Failed(_) | ProviderEvent::Interrupted(_)) | None => {
                 return Err(ChannelRoutingBackendError::Unavailable);
             }
             Some(
                 ProviderEvent::ResponseStarted { .. }
                 | ProviderEvent::OutputItemAdded { .. }
                 | ProviderEvent::ReasoningDelta { .. }
+                | ProviderEvent::RemoteProjection(_)
                 | ProviderEvent::Usage(_),
             ) => {}
         }

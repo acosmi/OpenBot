@@ -235,11 +235,12 @@ entries:
   - id: admin-credentials
     upstream: app/src/routes/_authed/admin/credentials.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_credentials -> /admin/credentials"
+    target: "openbot_ui::features::admin::credentials::AdminCredentialsPage -> /admin/credentials"
     owner: openbot-ui
     test_id: T-ROUTE-0018
     migration_rule: "preserve"
-    status: todo
+    status: done
+    done_evidence: "Batch120：AdminCredentialsPage复用AdminShell与SecretInput，完整分页/list/create/rotate/revoke及安全metadata呈现。真实PG/session Browser：默认model引用预填、空secret不写、create/rotate/revoke后2条v2记录全部retired与三audit，无plaintext；100+3分页/返回、降权+generation后NotFound且rows/dialog0，中英、focus/h1/overflow/console验证。Server和Desktop同typed usecase，原生Wry/全站golden/AX由G6其它判据继续保持todo。"
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/credentials.tsx 得 title=\"Credentials\" / \"Configured credentials\" + description=\"Credentials are write-only. OpenBot never displays their secret values.\""
     notes: "模板 Form（设计系统文档 §5.2 Form 行点名 credential）。journey：管理员写入 / 轮换凭据；凭据只写不读，界面永不回显密文（v3 §6.4 Vault）。权限：仅 admin。"
   - id: admin-identity-providers
@@ -278,33 +279,33 @@ entries:
   - id: admin-plugins-index
     upstream: app/src/routes/_authed/admin/plugins/index.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_plugins_index -> /admin/plugins"
+    target: "openbot_ui::features::admin::AdminPluginsPage -> /admin/plugins"
     owner: openbot-ui
     test_id: T-ROUTE-0022
     migration_rule: "preserve"
     status: todo
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/plugins/index.tsx 得 title=\"Plugins\" / \"Connected\" + description=\"What this deployment can reach, and which Bots may reach it. Adding a plugin is account-wide...\""
-    notes: "模板 List。journey：管理员浏览已连接的 plugin 与可加的一方 catalog，添加是账户级的（v3 §3.1 条 9、§9.1）。权限：仅 admin。"
+    notes: "模板 List。journey：管理员浏览已连接的 plugin 与可加的一方 catalog，添加是账户级的（v3 §3.1 条 9、§9.1）。权限：仅 admin。 Batch117新增Server Web配置/目录/custom列表与AdminSidebar入口，release浏览器中英通过；production PG/session→GUI整体权限与Desktop实际宿主仍缺，保持todo。"
   - id: admin-plugin-detail
     upstream: app/src/routes/_authed/admin/plugins/$key.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_plugin_detail -> /admin/plugins/:key"
+    target: "openbot_ui::features::admin::AdminPluginsPage -> /admin/plugins/:key"
     owner: openbot-ui
     test_id: T-ROUTE-0023
     migration_rule: "preserve"
     status: todo
     evidence: "grep -oE 'title=\"[^\"]*\"|description=\"[^\"]*\"' app/src/routes/_authed/admin/plugins/$key.tsx 得 title=\"Plugin\" / \"Connection\" / \"Not a plugin\" + description=\"A Bot is told about a tool only when it holds it. Every call is decided again when it happens...\""
-    notes: "模板 Form（设计系统文档 §5.2 Form 行点名 plugin 配置与 OAuth client）。journey：管理员填 connector 所需配置 / 完成 OAuth，并决定哪些 Bot 持有它的 tool；未知 key 走「不是 plugin」空态。权限：仅 admin；discovery 不产生权限（v3 §3.2 末条、§9.3）。"
+    notes: "模板 Form（设计系统文档 §5.2 Form 行点名 plugin 配置与 OAuth client）。journey：管理员填 connector 所需配置 / 完成 OAuth，并决定哪些 Bot 持有它的 tool；未知 key 走「不是 plugin」空态。权限：仅 admin；discovery 不产生权限（v3 §3.2 末条、§9.3）。 Batch117新增Server Web启用/删除、custom HTTPS/CIDR、OAuth client/本人连接及刷新；失败保留/unknown读回/离页与键盘实走；完整Bearer创建编辑产品面、production整体权限、Desktop transport/Local OAuth/宿主仍缺，保持todo。"
   - id: admin-plugin-tool-grant
     upstream: app/src/routes/_authed/admin/plugins/$key_.tools.$tool.tsx
     label: parity
-    target: "openbot_ui::shell::routes::admin_plugin_tool_grant -> /admin/plugins/:key/tools/:tool"
+    target: "openbot_ui::features::admin::AdminPluginsPage -> /admin/plugins/:key/tools/:tool"
     owner: openbot-ui
     test_id: T-ROUTE-0024
     migration_rule: "preserve"
     status: todo
     evidence: "grep -A2 -n 'createFileRoute($' app/src/routes/_authed/admin/plugins/$key_.tools.$tool.tsx 得路由串 \"/_authed/admin/plugins/$key_/tools/$tool\"；grep -oE 'title=\"[^\"]*\"' 同文件得 title=\"Tool\" / \"What it does\" / \"Bots\""
-    notes: "模板 Form。journey：管理员看单个 tool 的说明并逐个 Bot 开关 grant；关掉在下一次调用即生效、中间不缓存（v3 §3.1 条 9）。权限：仅 admin；上游 `$key_` 的下划线是 TanStack 的「脱离父路由布局」标记，Leptos 侧不需要该记号，URL 形状不变。"
+    notes: "模板 Form。journey：管理员看单个 tool 的说明并逐个 Bot 开关 grant；关掉在下一次调用即生效、中间不缓存（v3 §3.1 条 9）。权限：仅 admin；上游 `$key_` 的下划线是 TanStack 的「脱离父路由布局」标记，Leptos 侧不需要该记号，URL 形状不变。 Batch117新增Server Web作用说明、visible+hidden Agent grant/revoke及读回焦点；PG调用权限/审计和release浏览器分别通过，production PG/session→GUI整旅程与Desktop实际宿主仍缺，保持todo。"
   - id: admin-skills
     upstream: app/src/routes/_authed/admin/skills.tsx
     label: parity

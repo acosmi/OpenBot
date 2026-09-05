@@ -848,6 +848,17 @@ async fn drive_oauth_catalog_grant_agent_retry_disconnect_and_revoke_are_one_rea
             {
                 return Err(format!("curated Drive add drift: {added:?}"));
             }
+            let admin_page = connections
+                .list_admin_page(&auth)
+                .await
+                .map_err(|error| error.to_string())?;
+            if admin_page.servers.len() != 1
+                || admin_page.servers[0].authentication
+                    != openbot_contracts::mcp::McpAdminAuthentication::UserOAuth
+                || admin_page.servers[0].has_credential
+            {
+                return Err("Drive OAuth presentation depended on an existing client secret".to_owned());
+            }
             connections
                 .register_oauth_client(
                     &auth,

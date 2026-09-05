@@ -37,8 +37,10 @@ use crate::components::{
 };
 use crate::mcp_connections::{
     McpConnectionAdministration, NoMcpConnectionAdministration, add_curated_mcp_server,
-    begin_mcp_oauth, disconnect_mcp_connection, list_mcp_connections, refresh_mcp_server,
-    register_mcp_oauth_client,
+    add_custom_mcp_server, begin_mcp_oauth, disconnect_mcp_connection, grant_plugin,
+    list_mcp_admin_page, list_mcp_connections, list_plugins_for_agent, refresh_mcp_server,
+    register_mcp_oauth_client, remove_mcp_server, remove_plugin_skill, revoke_plugin,
+    save_plugin_skill,
 };
 use crate::ports::{
     AgentAdministration, AgentDirectory, AuditReader, ChannelAdministration, ChannelReader,
@@ -47,6 +49,8 @@ use crate::ports::{
     NoPeopleAdministration, NoPolicyAdministration, NoThreadDirectory, PeopleAdministration,
     PolicyAdministration, ThreadDirectory,
 };
+use crate::provider::{NoRemoteInterruptCoordinator, RemoteInterruptCoordinator};
+use crate::remote_interrupt::{list_pending_remote_interrupts, resolve_remote_interrupt};
 use crate::run_cost_budget::{
     NoRunCostBudgetAdministration, RunCostBudgetAdministration, get_run_cost_budget,
     replace_run_cost_budget,
@@ -55,6 +59,9 @@ use crate::sandboxed_components::{
     NoSandboxedComponentAdministration, SandboxedComponentAdministration,
     authorize_sandboxed_component, delete_sandboxed_component, list_published_sandboxed_components,
     list_sandboxed_components, publish_sandboxed_component, save_sandboxed_component,
+};
+use crate::screen_sessions::{
+    NoScreenSessionAdministration, ScreenSessionAdministration, issue_screen_session,
 };
 use crate::service::{AppEventStream, ApplicationService, command_kind, subscription_kind};
 use crate::tool::{NoToolControlPlane, NoToolJournal, ToolControlPlane, ToolJournal, invoke_tool};
@@ -106,9 +113,12 @@ pub struct OpenBotApplication<
     channel_administration: std::sync::Arc<dyn ChannelAdministration>,
     channel_routing: std::sync::Arc<dyn ChannelRoutingBackend>,
     mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
+    credentials: std::sync::Arc<dyn crate::credential_admin::CredentialAdministration>,
     tool_approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
     ui_preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
     run_cost_budgets: std::sync::Arc<dyn RunCostBudgetAdministration>,
+    remote_interrupts: std::sync::Arc<dyn RemoteInterruptCoordinator>,
+    screen_sessions: std::sync::Arc<dyn ScreenSessionAdministration>,
     heartbeat_period: Duration,
 }
 
@@ -144,9 +154,12 @@ impl<R>
             channel_administration: std::sync::Arc::new(NoChannelAdministration),
             channel_routing: std::sync::Arc::new(NoChannelRoutingBackend),
             mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
+            credentials: std::sync::Arc::new(crate::credential_admin::NoCredentialAdministration),
             tool_approvals: std::sync::Arc::new(NoToolApprovalAdministration),
             ui_preferences: std::sync::Arc::new(NoUiPreferenceAdministration),
             run_cost_budgets: std::sync::Arc::new(NoRunCostBudgetAdministration),
+            remote_interrupts: std::sync::Arc::new(NoRemoteInterruptCoordinator),
+            screen_sessions: std::sync::Arc::new(NoScreenSessionAdministration),
             heartbeat_period: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
@@ -173,9 +186,12 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -200,9 +216,12 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -227,9 +246,12 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -258,9 +280,12 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -285,9 +310,12 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -312,9 +340,12 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -342,9 +373,12 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
+            remote_interrupts: self.remote_interrupts,
+            screen_sessions: self.screen_sessions,
             heartbeat_period: self.heartbeat_period,
         }
     }
@@ -436,6 +470,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
         self
     }
 
+    /// Attach the same credential administration and audit boundary to both transports.
+    #[must_use]
+    pub fn with_credentials(
+        mut self,
+        credentials: std::sync::Arc<dyn crate::credential_admin::CredentialAdministration>,
+    ) -> Self {
+        self.credentials = credentials;
+        self
+    }
+
     /// Attach authenticated run-cost budget storage shared by Server and Desktop.
     #[must_use]
     pub fn with_run_cost_budgets(
@@ -443,6 +487,26 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
         budgets: std::sync::Arc<dyn RunCostBudgetAdministration>,
     ) -> Self {
         self.run_cost_budgets = budgets;
+        self
+    }
+
+    /// Attach durable remote AG-UI interrupt administration shared by runtime and transports.
+    #[must_use]
+    pub fn with_remote_interrupts(
+        mut self,
+        remote_interrupts: std::sync::Arc<dyn RemoteInterruptCoordinator>,
+    ) -> Self {
+        self.remote_interrupts = remote_interrupts;
+        self
+    }
+
+    /// Attach the shared Computer-owned ScreenSession ticket authority.
+    #[must_use]
+    pub fn with_screen_sessions(
+        mut self,
+        screen_sessions: std::sync::Arc<dyn ScreenSessionAdministration>,
+    ) -> Self {
+        self.screen_sessions = screen_sessions;
         self
     }
 
@@ -691,6 +755,20 @@ where
             AppCommand::GetThreadConversation { thread_id } => Ok(AppReply::ThreadConversation(
                 get_thread_conversation(&self.threads, auth, thread_id).await?,
             )),
+            AppCommand::ListPendingRemoteInterrupts => Ok(AppReply::PendingRemoteInterrupts(
+                list_pending_remote_interrupts(self.remote_interrupts.as_ref(), auth).await?,
+            )),
+            AppCommand::ResolveRemoteInterrupt { request_id, answer } => {
+                Ok(AppReply::RemoteInterruptResolved(
+                    resolve_remote_interrupt(
+                        self.remote_interrupts.as_ref(),
+                        auth,
+                        request_id,
+                        answer,
+                    )
+                    .await?,
+                ))
+            }
             AppCommand::RememberMemory(input) => Ok(AppReply::Memory(
                 remember_memory(&self.memory, auth, input).await?,
             )),
@@ -726,8 +804,43 @@ where
                     revoke_agent_callback_token(&self.callback_tokens, auth, &agent_id).await?,
                 ))
             }
+            AppCommand::ListCredentials(request) => Ok(AppReply::Credentials(
+                crate::credential_admin::list_credentials(
+                    self.credentials.as_ref(),
+                    auth,
+                    &request,
+                )
+                .await?,
+            )),
+            AppCommand::CreateCredential(input) => Ok(AppReply::CredentialWritten(
+                crate::credential_admin::create_credential(self.credentials.as_ref(), auth, &input)
+                    .await?,
+            )),
+            AppCommand::RotateCredential {
+                credential_id,
+                input,
+            } => Ok(AppReply::CredentialWritten(
+                crate::credential_admin::rotate_credential(
+                    self.credentials.as_ref(),
+                    auth,
+                    &credential_id,
+                    &input,
+                )
+                .await?,
+            )),
+            AppCommand::RevokeCredential { credential_id } => Ok(AppReply::CredentialRevoked(
+                crate::credential_admin::revoke_credential(
+                    self.credentials.as_ref(),
+                    auth,
+                    &credential_id,
+                )
+                .await?,
+            )),
             AppCommand::ListMcpConnections => Ok(AppReply::McpConnections(
                 list_mcp_connections(self.mcp_connections.as_ref(), auth).await?,
+            )),
+            AppCommand::ListMcpAdminPage => Ok(AppReply::McpAdminPage(
+                list_mcp_admin_page(self.mcp_connections.as_ref(), auth).await?,
             )),
             AppCommand::BeginMcpOAuth {
                 server_id,
@@ -756,8 +869,29 @@ where
             AppCommand::AddCuratedMcpServer { key } => Ok(AppReply::McpServerMutation(
                 add_curated_mcp_server(self.mcp_connections.as_ref(), auth, &key).await?,
             )),
+            AppCommand::AddCustomMcpServer(registration) => Ok(AppReply::McpServerMutation(
+                add_custom_mcp_server(self.mcp_connections.as_ref(), auth, &registration).await?,
+            )),
+            AppCommand::RemoveMcpServer { server_id } => Ok(AppReply::McpServerRemoved(
+                remove_mcp_server(self.mcp_connections.as_ref(), auth, &server_id).await?,
+            )),
             AppCommand::RefreshMcpServer { server_id } => Ok(AppReply::McpServerMutation(
                 refresh_mcp_server(self.mcp_connections.as_ref(), auth, &server_id).await?,
+            )),
+            AppCommand::SavePluginSkill(mutation) => Ok(AppReply::PluginSkills(
+                save_plugin_skill(self.mcp_connections.as_ref(), auth, &mutation).await?,
+            )),
+            AppCommand::RemovePluginSkill { slug } => Ok(AppReply::PluginMutationAcknowledged(
+                remove_plugin_skill(self.mcp_connections.as_ref(), auth, &slug).await?,
+            )),
+            AppCommand::GrantPlugin(mutation) => Ok(AppReply::PluginMutationAcknowledged(
+                grant_plugin(self.mcp_connections.as_ref(), auth, &mutation).await?,
+            )),
+            AppCommand::RevokePlugin(mutation) => Ok(AppReply::PluginMutationAcknowledged(
+                revoke_plugin(self.mcp_connections.as_ref(), auth, &mutation).await?,
+            )),
+            AppCommand::ListPluginsForAgent { agent_id } => Ok(AppReply::GrantedPlugins(
+                list_plugins_for_agent(self.mcp_connections.as_ref(), auth, &agent_id).await?,
             )),
             AppCommand::ListPendingToolApprovals => Ok(AppReply::PendingToolApprovals(
                 list_pending_tool_approvals(self.tool_approvals.as_ref(), auth).await?,
@@ -780,6 +914,9 @@ where
             )),
             AppCommand::ReplaceRunCostBudget(preference) => Ok(AppReply::RunCostBudget(
                 replace_run_cost_budget(self.run_cost_budgets.as_ref(), auth, preference).await?,
+            )),
+            AppCommand::IssueScreenSession(request) => Ok(AppReply::ScreenSession(
+                issue_screen_session(self.screen_sessions.as_ref(), auth, request).await?,
             )),
         }
     }

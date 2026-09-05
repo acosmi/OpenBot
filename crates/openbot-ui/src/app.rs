@@ -6,8 +6,9 @@ use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
 
 use crate::features::admin::{
-    AdminAuditPage, AdminBoundariesPage, AdminHomePage, AdminIdentityProvidersPage,
-    AdminPeoplePage, AdminShell, SandboxPlaygroundPage,
+    AdminAuditPage, AdminBoundariesPage, AdminCredentialsPage, AdminHomePage,
+    AdminIdentityProvidersPage, AdminPeoplePage, AdminPluginsPage, AdminShell,
+    SandboxPlaygroundPage,
 };
 use crate::features::agents::AgentsPage;
 use crate::features::approvals::ApprovalPage;
@@ -27,6 +28,7 @@ use crate::shell::{
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+    provide_context(crate::features::admin::plugins::PluginActions::new());
     view! {
         <I18nContextProvider set_lang_attr_on_html=true enable_cookie=false>
             <Title text="OpenBot" />
@@ -60,8 +62,12 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/admin/components/:name") view=AdminComponentDetailRoute />
                 <Route path=path!("/admin/components") view=AdminComponentsRoute />
                 <Route path=path!("/admin/identity-providers") view=AdminIdentityProvidersRoute />
+                <Route path=path!("/admin/credentials") view=AdminCredentialsRoute />
                 <Route path=path!("/admin/people") view=AdminPeopleRoute />
                 <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
+                <Route path=path!("/admin/plugins/:key/tools/:tool") view=AdminPluginsRoute />
+                <Route path=path!("/admin/plugins/:key") view=AdminPluginsRoute />
+                <Route path=path!("/admin/plugins") view=AdminPluginsRoute />
                 <Route path=path!("/channel/new") view=ChannelNewPage />
                 <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
                 <Route path=path!("/settings/connected-accounts/:server_id") view=SettingsConnectedAccountDetailRoute />
@@ -87,8 +93,12 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/admin/components/:name") view=AdminComponentDetailRoute />
                 <Route path=path!("/admin/components") view=AdminComponentsRoute />
                 <Route path=path!("/admin/identity-providers") view=AdminIdentityProvidersRoute />
+                <Route path=path!("/admin/credentials") view=AdminCredentialsRoute />
                 <Route path=path!("/admin/people") view=AdminPeopleRoute />
                 <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
+                <Route path=path!("/admin/plugins/:key/tools/:tool") view=AdminPluginsRoute />
+                <Route path=path!("/admin/plugins/:key") view=AdminPluginsRoute />
+                <Route path=path!("/admin/plugins") view=AdminPluginsRoute />
                 <Route path=path!("/channel/new") view=ChannelNewPage />
                 <Route path=path!("/channel/:channel_id") view=ChannelDetailPage />
                 <Route path=path!("/settings/connected-accounts/:server_id") view=SettingsConnectedAccountDetailRoute />
@@ -100,6 +110,16 @@ fn AppRoutes() -> impl IntoView {
             </Routes>
         }
     }
+}
+
+#[component]
+fn AdminCredentialsRoute() -> impl IntoView {
+    view! { <AdminShell><AdminCredentialsPage /></AdminShell> }
+}
+
+#[component]
+fn AdminPluginsRoute() -> impl IntoView {
+    view! { <AdminShell><AdminPluginsPage /></AdminShell> }
 }
 
 #[component]

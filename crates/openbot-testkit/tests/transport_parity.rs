@@ -520,17 +520,32 @@ fn http_route_of(command: &AppCommand) -> Option<String> {
         | AppCommand::IssueAgentCallbackToken { .. }
         | AppCommand::RevokeAgentCallbackToken { .. }
         | AppCommand::ListMcpConnections
+        | AppCommand::ListCredentials(_)
+        | AppCommand::CreateCredential(_)
+        | AppCommand::RotateCredential { .. }
+        | AppCommand::RevokeCredential { .. }
+        | AppCommand::ListMcpAdminPage
         | AppCommand::BeginMcpOAuth { .. }
         | AppCommand::DisconnectMcpConnection { .. }
         | AppCommand::RegisterMcpOAuthClient { .. }
         | AppCommand::AddCuratedMcpServer { .. }
+        | AppCommand::AddCustomMcpServer(_)
+        | AppCommand::RemoveMcpServer { .. }
         | AppCommand::RefreshMcpServer { .. }
+        | AppCommand::SavePluginSkill(_)
+        | AppCommand::RemovePluginSkill { .. }
+        | AppCommand::GrantPlugin(_)
+        | AppCommand::RevokePlugin(_)
+        | AppCommand::ListPluginsForAgent { .. }
         | AppCommand::ListPendingToolApprovals
         | AppCommand::DecideToolApproval { .. }
         | AppCommand::GetUiPreferences
         | AppCommand::UpdateUiPreferences(_)
         | AppCommand::GetRunCostBudget
-        | AppCommand::ReplaceRunCostBudget(_) => None,
+        | AppCommand::ReplaceRunCostBudget(_)
+        | AppCommand::IssueScreenSession(_)
+        | AppCommand::ListPendingRemoteInterrupts
+        | AppCommand::ResolveRemoteInterrupt { .. } => None,
     }
 }
 

@@ -24,8 +24,9 @@ mod linux {
     use openbot_computer::engine::{
         ComponentRenderScope, ComputerSecurityScope, DesktopWindowSessionId, EngineBundle,
         EngineBundleDigest, EngineLaunchConfig, EngineProcess, EngineRole, EngineSandboxFidelity,
-        RunscAttestation, WorkspaceScope,
+        RunscAttestation, ScreenAudience, WorkspaceScope,
     };
+    use openbot_contracts::auth::AuthGeneration;
     use openbot_contracts::ids::{
         ActorId, BotId, ChannelId, ComputerGeneration, ComputerId, CredentialPrincipalId, TabId,
         TenantId,
@@ -134,10 +135,18 @@ mod linux {
     ) -> Result<RoleReport, Box<dyn std::error::Error>> {
         let directories = TestDirectories::new(tag)?;
         let generation = ComputerGeneration::new(1);
+        let audience = ScreenAudience::new(
+            role.tenant_id().clone(),
+            role.component_actor_id()
+                .cloned()
+                .unwrap_or_else(|| ActorId::new("actor-runsc-browser")),
+            AuthGeneration::new(1),
+        );
         let mut process = EngineProcess::launch_inside_runsc(
             EngineLaunchConfig::new(
                 bundle,
                 role,
+                audience,
                 ComputerId::new(format!("computer-runsc-{tag}")),
                 generation,
                 &directories.profile,

@@ -173,15 +173,26 @@ pub async fn list(
         | AppReply::MemoryRecall(_)
         | AppReply::AgentCallbackToken(_)
         | AppReply::AgentCallbackTokenRevoked(_)
+        | AppReply::Credentials(_)
+        | AppReply::CredentialWritten(_)
+        | AppReply::CredentialRevoked(_)
         | AppReply::McpConnections(_)
+        | AppReply::McpAdminPage(_)
         | AppReply::McpOAuthAuthorization(_)
         | AppReply::McpConnectionDisconnected(_)
         | AppReply::McpOAuthClientRegistered(_)
         | AppReply::McpServerMutation(_)
+        | AppReply::McpServerRemoved(_)
+        | AppReply::PluginSkills(_)
+        | AppReply::PluginMutationAcknowledged(_)
+        | AppReply::GrantedPlugins(_)
         | AppReply::PendingToolApprovals(_)
         | AppReply::ToolApprovalResolved(_)
         | AppReply::UiPreferences(_)
-        | AppReply::RunCostBudget(_) => {
+        | AppReply::RunCostBudget(_)
+        | AppReply::ScreenSession(_)
+        | AppReply::PendingRemoteInterrupts(_)
+        | AppReply::RemoteInterruptResolved(_) => {
             tracing::error!(
                 "ListVisibleChannels 收到非 Channels 应答 —— ApplicationService 契约破损"
             );
@@ -249,15 +260,26 @@ pub async fn get(
         | AppReply::MemoryRecall(_)
         | AppReply::AgentCallbackToken(_)
         | AppReply::AgentCallbackTokenRevoked(_)
+        | AppReply::Credentials(_)
+        | AppReply::CredentialWritten(_)
+        | AppReply::CredentialRevoked(_)
         | AppReply::McpConnections(_)
+        | AppReply::McpAdminPage(_)
         | AppReply::McpOAuthAuthorization(_)
         | AppReply::McpConnectionDisconnected(_)
         | AppReply::McpOAuthClientRegistered(_)
         | AppReply::McpServerMutation(_)
+        | AppReply::McpServerRemoved(_)
+        | AppReply::PluginSkills(_)
+        | AppReply::PluginMutationAcknowledged(_)
+        | AppReply::GrantedPlugins(_)
         | AppReply::PendingToolApprovals(_)
         | AppReply::ToolApprovalResolved(_)
         | AppReply::UiPreferences(_)
-        | AppReply::RunCostBudget(_) => {
+        | AppReply::RunCostBudget(_)
+        | AppReply::ScreenSession(_)
+        | AppReply::PendingRemoteInterrupts(_)
+        | AppReply::RemoteInterruptResolved(_) => {
             tracing::error!("GetVisibleChannel received a non-Channel application reply");
             Err(AppError::DependencyUnavailable {
                 dependency: "application",
@@ -331,15 +353,26 @@ pub async fn create(
         | AppReply::MemoryRecall(_)
         | AppReply::AgentCallbackToken(_)
         | AppReply::AgentCallbackTokenRevoked(_)
+        | AppReply::Credentials(_)
+        | AppReply::CredentialWritten(_)
+        | AppReply::CredentialRevoked(_)
         | AppReply::McpConnections(_)
+        | AppReply::McpAdminPage(_)
         | AppReply::McpOAuthAuthorization(_)
         | AppReply::McpConnectionDisconnected(_)
         | AppReply::McpOAuthClientRegistered(_)
         | AppReply::McpServerMutation(_)
+        | AppReply::McpServerRemoved(_)
+        | AppReply::PluginSkills(_)
+        | AppReply::PluginMutationAcknowledged(_)
+        | AppReply::GrantedPlugins(_)
         | AppReply::PendingToolApprovals(_)
         | AppReply::ToolApprovalResolved(_)
         | AppReply::UiPreferences(_)
-        | AppReply::RunCostBudget(_) => {
+        | AppReply::RunCostBudget(_)
+        | AppReply::ScreenSession(_)
+        | AppReply::PendingRemoteInterrupts(_)
+        | AppReply::RemoteInterruptResolved(_) => {
             tracing::error!("CreateChannel received a non-Channel application reply");
             Err(AppError::DependencyUnavailable {
                 dependency: "application",

@@ -37,6 +37,7 @@
 //! | [`use_cases`] | health/channel、people/audit、thread/history、remember/list/correct/forbid/delete/recall | §4.1–§4.3 / R56 / R64–R66 |
 //! | [`chunk`] | 50ms/8KiB UTF-8 semantic chunk accumulator；真实 provider 接线仍待 G4 | §4.3 / R65 |
 //! | [`run_runtime`] | 非 serde dispatch/lease、expected-sequence writer 与 accumulator→durable journal | §4.3 / §7.2 / R67 |
+//! | [`screen_sessions`] | 经唯一ApplicationService发放actor/generation/host-bound viewer ticket | §12.4 / R188 |
 //! | [`intelligence_import`] | verified neutral bundle、mapping/claim、ordered checksum、cursor resume | §20.3 / R68 |
 //! | [`tool`] | metadata→scope→policy→approval→journal→capability→execute→outcome/audit | §8.1 / R41 |
 //!
@@ -77,14 +78,17 @@ pub mod approval_admin;
 pub mod builtin_tools;
 pub mod chunk;
 pub mod components;
+pub mod credential_admin;
 pub mod cursor;
 pub mod intelligence_import;
 pub mod mcp_connections;
 pub mod ports;
 pub mod provider;
+pub mod remote_interrupt;
 pub mod run_cost_budget;
 pub mod run_runtime;
 pub mod sandboxed_components;
+pub mod screen_sessions;
 pub mod service;
 pub mod tenant;
 pub mod tool;
@@ -130,8 +134,10 @@ pub use intelligence_import::{
 pub use mcp_connections::{
     McpConnectionAdministration, McpConnectionError, McpOAuthCallback, McpOAuthCallbackInput,
     McpOAuthCallbackOutcome, NoMcpConnectionAdministration, add_curated_mcp_server,
-    begin_mcp_oauth, disconnect_mcp_connection, list_mcp_connections, refresh_mcp_server,
-    register_mcp_oauth_client,
+    add_custom_mcp_server, begin_mcp_oauth, disconnect_mcp_connection, grant_plugin,
+    list_mcp_admin_page, list_mcp_connections, list_plugins_for_agent, refresh_mcp_server,
+    register_mcp_oauth_client, remove_mcp_server, remove_plugin_skill, revoke_plugin,
+    save_plugin_skill,
 };
 pub use ports::{
     AgentAdministration, AgentAdministrationError, AgentAdministrationScope, AgentDirectory,
@@ -151,12 +157,19 @@ pub use ports::{
 };
 pub use provider::{
     AgentAudit, AgentAuditError, AgentAuditKind, AgentAuthorizationError, AgentAuthorizationSource,
-    AgentContextError, AgentContextSource, NoAgentAudit, ProviderAdapter, ProviderBillingFamily,
+    AgentContextError, AgentContextSource, NoAgentAudit, NoRemoteInterruptCoordinator,
+    PROVIDER_REMOTE_INTERRUPT_MAX_ITEMS, PROVIDER_REMOTE_PROJECTION_MAX_BYTES,
+    PROVIDER_REMOTE_RESUME_PAYLOAD_MAX_BYTES, ProviderAdapter, ProviderBillingFamily,
     ProviderCostUpperBound, ProviderEvent, ProviderFailure, ProviderMessage, ProviderMessageRole,
     ProviderOutputKind, ProviderPortError, ProviderRateCard, ProviderRateCardError,
-    ProviderRateCardInput, ProviderRequest, ProviderRoute, ProviderSession, ProviderToolCall,
+    ProviderRateCardInput, ProviderRemoteInterrupt, ProviderRemoteInterruptBatch,
+    ProviderRemoteInterruptInput, ProviderRemoteProjection, ProviderRemoteProjectionError,
+    ProviderRemoteProjectionKind, ProviderRemoteResume, ProviderRemoteResumeEntry,
+    ProviderRemoteResumeStatus, ProviderRequest, ProviderRoute, ProviderSession, ProviderToolCall,
     ProviderToolDefinition, ProviderUsage, RemoteAguiAuthorization, RemoteAguiEventStream,
-    RemoteAguiRoute, RemoteAguiTransport, RemoteAguiTransportError,
+    RemoteAguiRoute, RemoteAguiTransport, RemoteAguiTransportError, RemoteInterruptCoordinator,
+    RemoteInterruptError, RemoteInterruptPending, RemoteInterruptPendingInput,
+    RemoteInterruptResolutionReceipt,
 };
 pub use run_cost_budget::{
     NoRunCostBudgetAdministration, RunCostBudgetAdministration, RunCostBudgetAdministrationError,
@@ -175,6 +188,10 @@ pub use sandboxed_components::{
     delete_sandboxed_component, list_published_sandboxed_components, list_sandboxed_components,
     publish_sandboxed_component, save_sandboxed_component,
 };
+pub use screen_sessions::{
+    NoScreenSessionAdministration, ScreenSessionAdministration, ScreenSessionAdministrationError,
+    issue_screen_session,
+};
 pub use service::{
     APPLICATION_SPAN_FIELDS, AppEventStream, ApplicationService, EXECUTE_SPAN_NAME,
     SUBSCRIBE_SPAN_NAME, TRACE_ONLY_SPAN_FIELDS, command_kind, subscription_kind,
@@ -182,9 +199,11 @@ pub use service::{
 pub use tool::{
     AuthorizedToolCall, ExecutableToolCall, NoToolControlPlane, NoToolJournal, ResolvedToolScope,
     ToolApprovalPresentation, ToolApprovalRequest, ToolAuditDraftError, ToolCallSequence,
-    ToolCallSequenceError, ToolControlPlane, ToolDecisionDraft, ToolExecutionReport, ToolJournal,
-    ToolOutcomeDraft, ToolPolicyEvaluation, ToolPortError, ToolPreflightRefusal, ToolRefusalDraft,
-    invoke_tool,
+    ToolCallSequenceError, ToolCancellationHandle, ToolCancellationReason,
+    ToolCancellationRegistration, ToolCancellationRegistry, ToolControlPlane, ToolDecisionDraft,
+    ToolExecutionCancellation, ToolExecutionReport, ToolJournal, ToolOutcomeDraft,
+    ToolPolicyEvaluation, ToolPortError, ToolPreflightRefusal, ToolRefusalDraft, invoke_tool,
+    tool_execution_cancellation,
 };
 pub use ui_preferences::{
     NoUiPreferenceAdministration, UiPreferenceAdministration, UiPreferenceAdministrationError,

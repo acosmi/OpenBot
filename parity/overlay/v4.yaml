@@ -5,6 +5,217 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  - id: T-API-0011
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-API-0012
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-API-0013
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-API-0014
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-EVT-0050
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-EVT-0051
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-EVT-0052
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0675
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0676
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0683
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0684
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0685
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-ROUTE-0018
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  # Batch119 only adds the SecretInput export in primitives/mod.rs; sibling implementation bytes
+  # are unchanged. All UI unit tests and the release forms are rerun; no new golden claim.
+  - id: T-UI-0001
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0002
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0003
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0004
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0005
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0006
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0009
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0010
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0011
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0012
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0013
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0014
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0015
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0016
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0017
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0018
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0019
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0021
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0022
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0023
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0024
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0025
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0026
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0027
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-API-0081
+    disposition: revalidate
+    notes: "Batch118 shares the closed catalogue selection DTO and verifies Desktop fresh-admin/size/unknown-field boundaries before port effects; Server lib 233 and Desktop tauri-host lib 112 rerun."
+  - id: T-API-0086
+    disposition: revalidate
+    notes: "Batch118 adds Desktop connection reads with host-window actor binding, no-store and query rejection; unbound/revoked windows reach no port. Deterministic adapter evidence only, not native-window or OAuth proof."
+  - id: T-API-0175
+    disposition: revalidate
+    notes: "Batch114 reruns the exact Origin-before-body ticket path, active+pending capacity and socket-close permit release."
+  - id: T-API-0176
+    disposition: revalidate
+    notes: "Batch114 reruns query/base-only/replay/generation framing and real Engine TCP heartbeat/idle; adds bandwidth, control flood and write limits."
+  # Batch110 closes the three screencast operations only after protocol-v3 executes them in both
+  # real macOS roles and Rust's size-one latest buffer drives every CDP acknowledgement.
+  - id: T-BROP-0030
+    disposition: revalidate
+    notes: "Batch110 reruns exact Page.startScreencast settings and validates the first full-metadata binary frame in both real roles."
+  - id: T-BROP-0031
+    disposition: revalidate
+    notes: "Batch110 reruns Page.stopScreencast, bounded drain/detach/cleanup and exact idempotent stop replay in both roles."
+  - id: T-BROP-0032
+    disposition: revalidate
+    notes: "Batch110 proves every real frame is ACKed only after Rust latest-buffer publish and slow consumers drop old frames."
+  # Batch109 closes the seven ordinary BrowserInput variants only after protocol-v2 executes each
+  # one in both real macOS Seatbelt Electron roles and observes the exact next frame/effect.
+  - id: T-BROP-0037
+    disposition: revalidate
+    notes: "Batch109 reruns mouseMoved through fresh HumanLease authority and observes the fixed :hover frame change in both real roles."
+  - id: T-BROP-0038
+    disposition: revalidate
+    notes: "Batch109 reruns mousePressed with nonzero click count and observes the fixed :active frame change in both real roles."
+  - id: T-BROP-0039
+    disposition: revalidate
+    notes: "Batch109 reruns mouseReleased and observes :active clear with exact operation/tab/kind acknowledgement."
+  - id: T-BROP-0040
+    disposition: revalidate
+    notes: "Batch109 reruns two-axis mouseWheel and observes the fixed overflow surface scroll in both real roles."
+  - id: T-BROP-0041
+    disposition: revalidate
+    notes: "Batch109 reruns keyDown/rawKeyDown, Backspace, the exact 17-key table and unknown F1 virtual-code zero through literal CDP."
+  - id: T-BROP-0042
+    disposition: revalidate
+    notes: "Batch109 reruns keyUp for printable, editing and unknown multi-unit keys with one exact next frame each."
+  - id: T-BROP-0043
+    disposition: revalidate
+    notes: "Batch109 reruns Input.insertText with Unicode and proves cross-scope/expired/ordinary-secret refusals emit zero frames."
+  # Batch107 adds an optional PNG-only testkit edge. R124 maps that package diff to these existing
+  # done targets, so the real PostgreSQL/OpenAI vertical and fintech fixture are rerun explicitly.
+  - id: T-TEST-0652
+    disposition: revalidate
+    notes: "Batch107 reruns the exact real OpenAI HTTP/PG vertical after the testkit feature graph gains image."
+  - id: T-TEST-0657
+    disposition: revalidate
+    notes: "Batch107 reruns the same three-run fresh credential/config test with the new optional edge absent from product graphs."
+  - id: T-TEST-1040
+    disposition: revalidate
+    notes: "Batch107 reruns the complete fintech package fixture in openbot-testkit lib 19/0/0."
+  # Batch106 adds the fixed-upstream browser-residency selector and reruns all thirteen mapped
+  # browser-eviction tests plus two Rust hardening boundaries.
+  - id: T-TEST-0034
+    disposition: revalidate
+    notes: "Batch106 runs the exact room-below-cap browser eviction vector."
+  - id: T-TEST-0035
+    disposition: revalidate
+    notes: "Batch106 runs the exact-at-cap boundary vector."
+  - id: T-TEST-0036
+    disposition: revalidate
+    notes: "Batch106 runs the least-recently-used ordering vector."
+  - id: T-TEST-0037
+    disposition: revalidate
+    notes: "Batch106 runs the multi-eviction len-minus-cap vector."
+  - id: T-TEST-0038
+    disposition: revalidate
+    notes: "Batch106 proves the just-used browser is not selected."
+  - id: T-TEST-0039
+    disposition: revalidate
+    notes: "Batch106 runs the cap-of-one newest-survives boundary."
+  - id: T-TEST-0040
+    disposition: revalidate
+    notes: "Batch106 runs the stale-versus-fresh idle vector."
+  - id: T-TEST-0041
+    disposition: revalidate
+    notes: "Batch106 runs the exact idle cutoff and one-millisecond-inside boundary."
+  - id: T-TEST-0042
+    disposition: revalidate
+    notes: "Batch106 proves non-positive pure idle timeouts disable selection."
+  - id: T-TEST-0043
+    disposition: revalidate
+    notes: "Batch106 runs the multiple-idle-browser vector."
+  - id: T-TEST-0044
+    disposition: revalidate
+    notes: "Batch106 runs both selectors over an empty runtime."
+  - id: T-TEST-0045
+    disposition: revalidate
+    notes: "Batch106 preserves the cap-zero negative control."
+  - id: T-TEST-0046
+    disposition: revalidate
+    notes: "Batch106 locks the fixed defaults and no-eviction default vector."
   # Added mechanically because Batch87 extends the Agent failure enum in the same source file.
   - id: T-TEST-0298
     disposition: revalidate
@@ -324,7 +535,7 @@ entries:
   # Added mechanically because the Batch62 Admin Identity Providers diff closes this target.
   - id: T-ROUTE-0019
     disposition: revalidate
-    notes: "Batch62 reruns closed SAML/OIDC forms, real PostgreSQL registration/removal and non-admin child suppression."
+    notes: "Batch119 replaces OIDC reactive client_secret with DOM ownership and zeroizing outbound DTO; protocol switch and failed submit require re-entry. Only one fixture registration request; no new PG/vendor or golden proof."
   # Added mechanically because the Batch63 Home Composer diff closes this target.
   - id: T-ROUTE-0006
     disposition: revalidate
@@ -377,7 +588,7 @@ entries:
     notes: "Batch64 reruns InputGroup composition after Input gains type-derived email autofill and optional IME-safe Enter submit."
   - id: T-UI-0008
     disposition: revalidate
-    notes: "Batch64 reruns Input type/state/Field wiring and release-browser email Enter behavior."
+    notes: "Batch119 removes controlled Password and verifies DOM-owned SecretInput on all three current secret-entry forms; UI188/Contracts108, release failure/re-entry/cancel/probe/save pass. No formal golden claim."
   # Added mechanically because Batch64 closes the authenticated boundary, sign route and tests.
   - id: T-ROUTE-0002
     disposition: revalidate
@@ -781,7 +992,7 @@ entries:
   # Batch70 closes and reruns the fixed-upstream Agent route/component targets with release Browser evidence.
   - id: T-ROUTE-0007
     disposition: revalidate
-    notes: "Batch70 reruns the complete /agents create/edit/duplicate/hide/recover/delete/start journey in the release Browser bundle."
+    notes: "Batch119 revalidates Agent Authorization: no reactive plaintext, probe invalidated on edit, cancel then managed creation hasAuth=false, explicit secret save/blank edit hasAuth=true. Existing backend and golden scopes remain separate."
   - id: T-UI-0031
     disposition: revalidate
     notes: "Batch70 reruns shared Agent fields, reactive validation, connection probe, and write-only auth behavior."

@@ -11,7 +11,8 @@ use std::time::Duration;
 use deadpool_postgres::Pool;
 use openbot_application::provider::RemoteAguiTransport;
 use openbot_application::{
-    ApplicationService, OpenBotApplication, ProviderAdapter, RunRuntime, UiPreferenceAdministration,
+    ApplicationService, OpenBotApplication, ProviderAdapter, RunRuntime,
+    ScreenSessionAdministration, ToolCancellationRegistry, UiPreferenceAdministration,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use openbot_domain::identity::roles::AdminFloor;
@@ -22,6 +23,7 @@ use url::Url;
 use crate::agent_callback::{PostgresAgentCallbackTokens, PostgresRemoteCallbackAuthenticator};
 use crate::agent_tools::PostgresBuiltInToolControlPlane;
 use crate::component_catalogue::PostgresComponentAdministration;
+use crate::credential_admin::PostgresCredentialAdministration;
 use crate::google_drive::GoogleDriveRestTransport;
 use crate::google_drive_oauth::GoogleDriveOAuthClient;
 use crate::mcp::SafeRmcpClient;
@@ -36,6 +38,7 @@ use crate::net::safe_http::{
 use crate::policy::PolicyStore;
 use crate::provider::credential::PostgresOpenAiCredentialSource;
 use crate::provider::openai::{OpenAiApiKey, OpenAiProtocol, OpenAiProvider, OpenAiProviderConfig};
+use crate::remote_interrupt::PostgresRemoteInterruptCoordinator;
 use crate::repo::ChannelRepo;
 use crate::repo::agents::{PostgresAgentAdministration, PostgresAgentDirectory};
 use crate::repo::audit::PostgresAuditReader;
@@ -98,6 +101,7 @@ pub struct PostgresApplicationAssemblyInput {
     pub mcp_oauth_state_key: SecretBytes,
     pub policy_store: PolicyStore,
     pub ui_preferences: Arc<dyn UiPreferenceAdministration>,
+    pub screen_sessions: Arc<dyn ScreenSessionAdministration>,
     pub remote_agent_probe: Arc<dyn RemoteAguiTransport>,
     pub managed_slot_available: bool,
     pub channel_routing_provider: ChannelRoutingProviderInput,
@@ -120,6 +124,7 @@ impl core::fmt::Debug for PostgresApplicationAssemblyInput {
             .field("remote_assertions", &self.remote_assertions)
             .field("mcp_oauth_state_key", &"[REDACTED]")
             .field("ui_preferences", &"Arc<dyn UiPreferenceAdministration>")
+            .field("screen_sessions", &"Arc<dyn ScreenSessionAdministration>")
             .field("managed_slot_available", &self.managed_slot_available)
             .field("channel_routing_provider", &self.channel_routing_provider)
             .field("stall_timeout", &self.stall_timeout)
@@ -133,11 +138,13 @@ impl core::fmt::Debug for PostgresApplicationAssemblyInput {
 pub struct PostgresApplicationAssembly {
     pub application: Arc<dyn ApplicationService>,
     pub run_runtime: Arc<dyn RunRuntime>,
+    pub remote_interrupts: Arc<PostgresRemoteInterruptCoordinator>,
     pub mcp_catalog: Arc<PostgresMcpCatalog>,
     pub components: Arc<PostgresComponentAdministration>,
     pub sandboxed_components: Arc<PostgresSandboxedComponentAdministration>,
     pub mcp_connections: Arc<PostgresMcpConnections>,
     pub remote_callback_auth: Arc<PostgresRemoteCallbackAuthenticator>,
+    pub tool_cancellations: Arc<ToolCancellationRegistry>,
     pub mcp_revocation_reconciler: McpRevocationReconciler,
 }
 
@@ -147,6 +154,7 @@ impl core::fmt::Debug for PostgresApplicationAssembly {
             .debug_struct("PostgresApplicationAssembly")
             .field("application", &"Arc<dyn ApplicationService>")
             .field("run_runtime", &"Arc<dyn RunRuntime>")
+            .field("remote_interrupts", &"PostgresRemoteInterruptCoordinator")
             .field("mcp_catalog", &"PostgresMcpCatalog")
             .field("components", &"PostgresComponentAdministration")
             .field(
@@ -158,6 +166,7 @@ impl core::fmt::Debug for PostgresApplicationAssembly {
                 "remote_callback_auth",
                 &"PostgresRemoteCallbackAuthenticator",
             )
+            .field("tool_cancellations", &self.tool_cancellations)
             .field("mcp_revocation_reconciler", &"running")
             .finish()
     }
@@ -195,6 +204,7 @@ pub async fn assemble_postgres_application(
         mcp_oauth_state_key,
         policy_store,
         ui_preferences,
+        screen_sessions,
         remote_agent_probe,
         managed_slot_available,
         channel_routing_provider,
@@ -235,6 +245,14 @@ pub async fn assemble_postgres_application(
             DEFAULT_DISPATCH_CLAIM_DURATION,
         )
         .map_err(|_| fail("run_runtime"))?,
+    );
+    let remote_interrupts = Arc::new(
+        PostgresRemoteInterruptCoordinator::new(
+            pool.clone(),
+            runtime_owner.clone(),
+            audit_key.to_vec(),
+        )
+        .map_err(|_| fail("remote_interrupts"))?,
     );
     let thread_directory = PostgresThreadDirectory::with_runtime(
         pool.clone(),
@@ -306,6 +324,7 @@ pub async fn assemble_postgres_application(
             SchemePolicy::HttpsOnly,
         )
         .map_err(|_| fail("mcp_connections"))?
+        .with_mcp_credentials(mcp_credentials.clone())
         .with_google_drive_oauth(drive_oauth),
     );
     let tool_approvals = Arc::new(
@@ -317,6 +336,7 @@ pub async fn assemble_postgres_application(
         )
         .map_err(|_| fail("tool_approvals"))?,
     );
+    let tool_cancellations = Arc::new(ToolCancellationRegistry::default());
     let tool_control = PostgresBuiltInToolControlPlane::new(
         pool.clone(),
         deployment.clone(),
@@ -327,6 +347,7 @@ pub async fn assemble_postgres_application(
     .with_mcp(mcp_catalog.clone(), mcp_client)
     .with_google_drive(drive_transport)
     .with_tool_approvals(tool_approvals.clone())
+    .with_tool_cancellations(tool_cancellations.clone())
     .with_mcp_credentials(mcp_credentials);
     let tool_journal = PostgresToolJournal::new(pool.clone(), audit_key.to_vec())
         .map_err(|_| fail("tool_journal"))?;
@@ -348,6 +369,19 @@ pub async fn assemble_postgres_application(
         )
         .map_err(|_| fail("remote_callback_auth"))?
         .with_mcp_catalog(mcp_catalog.clone()),
+    );
+    let credentials = Arc::new(
+        PostgresCredentialAdministration::new(
+            pool.clone(),
+            credential_vault.clone(),
+            deployment.clone(),
+            tenant.clone(),
+            SecretBytes::new(audit_key.to_vec()),
+            mcp_connections.clone(),
+        )
+        .map_err(|_| fail("credential_administration"))?
+        .with_model_reference("openai".to_owned(), credential_key_id.clone())
+        .map_err(|_| fail("credential_model_reference"))?,
     );
     let channel_routing = build_channel_routing(
         pool.clone(),
@@ -383,21 +417,26 @@ pub async fn assemble_postgres_application(
         .with_component_administration(components.clone())
         .with_sandboxed_component_administration(sandboxed_components.clone())
         .with_mcp_connections(mcp_connections.clone())
+        .with_credentials(credentials)
         .with_tool_approvals(tool_approvals)
         .with_ui_preferences(ui_preferences)
         .with_run_cost_budgets(Arc::new(PostgresRunCostBudgetAdministration::new(
             pool.clone(),
-        )));
+        )))
+        .with_remote_interrupts(remote_interrupts.clone())
+        .with_screen_sessions(screen_sessions);
     let application: Arc<dyn ApplicationService> = Arc::new(application);
     let mcp_revocation_reconciler = McpRevocationReconciler::start(mcp_connections.clone());
     Ok(PostgresApplicationAssembly {
         application,
         run_runtime,
+        remote_interrupts,
         mcp_catalog,
         components,
         sandboxed_components,
         mcp_connections,
         remote_callback_auth,
+        tool_cancellations,
         mcp_revocation_reconciler,
     })
 }

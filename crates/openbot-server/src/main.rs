@@ -15,8 +15,11 @@ use openbot_application::tenant::package::{
     TenantPackageEnvironment, synchronize_tenant_package,
 };
 use openbot_application::{
-    AgentAudit, NoRunDispatchConsumer, ProviderAdapter, ProviderRateCard, RunDispatchConsumer,
-    RunRuntime, remember_provider_tool,
+    AgentAudit, NoRunDispatchConsumer, ProviderAdapter, ProviderRateCard,
+    RemoteInterruptCoordinator, RunDispatchConsumer, RunRuntime, remember_provider_tool,
+};
+use openbot_computer::screen::{
+    DEFAULT_SCREEN_VIEWERS_PER_STREAM, ScreenHub, ScreenSessionService,
 };
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_domain::identity::groups::IdentityProviderId;
@@ -110,6 +113,7 @@ struct BuiltInAgentAssemblyInput {
     credential_vault: CredentialRecordVault,
     tools: Arc<dyn AgentToolInvoker>,
     audit: Arc<dyn AgentAudit>,
+    remote_interrupts: Arc<dyn RemoteInterruptCoordinator>,
     remote_assertions: Arc<RemoteRunAssertionSigner>,
     mcp_catalog: Arc<PostgresMcpCatalog>,
     components: Arc<PostgresComponentAdministration>,
@@ -327,6 +331,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "MCP OAuth Server callback 要求 HTTPS public URL；connect 保持不可用"
         );
     }
+    let screen_hub = ScreenHub::new(DEFAULT_SCREEN_VIEWERS_PER_STREAM)?;
+    let screen_sessions = Arc::new(ScreenSessionService::new(screen_hub.clone()));
     let application_assembly = assemble_postgres_application(PostgresApplicationAssemblyInput {
         pool: pool.clone(),
         listener_database: database.clone().into(),
@@ -342,6 +348,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         mcp_oauth_state_key: SecretBytes::new(mcp_oauth_state_key.expose().to_vec()),
         policy_store: policy_store.clone(),
         ui_preferences: Arc::new(PostgresUiPreferenceAdministration::new(pool.clone())),
+        screen_sessions,
         remote_agent_probe,
         managed_slot_available: managed_provider_for_slot(&server).is_some(),
         channel_routing_provider: ChannelRoutingProviderInput {
@@ -363,8 +370,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sandboxed_components = application_assembly.sandboxed_components.clone();
     let mcp_connections = application_assembly.mcp_connections.clone();
     let remote_callback_auth = application_assembly.remote_callback_auth.clone();
+    let remote_interrupts = application_assembly.remote_interrupts.clone();
+    let tool_cancellations = application_assembly.tool_cancellations.clone();
     let mcp_revocation_reconciler = application_assembly.mcp_revocation_reconciler;
-    let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence(
+    let governed_tools = Arc::new(AuthorizedAgentToolGateway::with_sequence_and_cancellations(
         application.clone(),
         Arc::new(PostgresAgentAuthorizationSource::new(
             pool.clone(),
@@ -373,6 +382,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             single_user,
         )),
         Arc::new(PostgresAgentToolSequence::new(pool.clone())),
+        tool_cancellations,
     ));
     let agent_tools: Arc<dyn AgentToolInvoker> = governed_tools.clone();
     let remote_callback_tools: Arc<dyn RemoteAgentToolInvoker> = governed_tools;
@@ -396,6 +406,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         credential_vault: model_credential_vault,
         tools: agent_tools,
         audit: agent_audit,
+        remote_interrupts,
         remote_assertions: remote_assertions.clone(),
         mcp_catalog,
         components,
@@ -438,6 +449,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_insecure_transport(server.public_transport().insecure_transport())
         .with_remote_callback_authenticator(remote_callback_auth)
         .with_remote_callback_tools(remote_callback_tools)
+        .with_screen_hub(screen_hub)
         .with_readiness_probe(Arc::new(db_probe));
     if let Some(dist) = server.app_dist_dir.as_deref() {
         builder = builder.with_static_app(StaticApp::open(dist)?);
@@ -503,6 +515,7 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
         credential_vault,
         tools,
         audit,
+        remote_interrupts,
         remote_assertions,
         mcp_catalog,
         components,
@@ -587,12 +600,13 @@ fn build_built_in_agent(input: BuiltInAgentAssemblyInput) -> Result<AgentAssembl
             .with_sandboxed_components(sandboxed_components)
             .with_agent_credential_vault(credential_vault),
     );
-    let agent = BuiltInAgentRuntime::start(
+    let agent = BuiltInAgentRuntime::start_with_remote_interrupts(
         runtime,
         context,
         provider,
         tools,
         audit,
+        remote_interrupts,
         BuiltInAgentConfig {
             run_deadline: budgets.run_deadline,
             ..BuiltInAgentConfig::default()

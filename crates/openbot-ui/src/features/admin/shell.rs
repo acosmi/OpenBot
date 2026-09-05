@@ -76,6 +76,8 @@ fn admin_shell_view(
     let components_location = location.clone();
     let identity_providers_location = location.clone();
     let people_location = location.clone();
+    let plugins_location = location.clone();
+    let credentials_location = location.clone();
     let playground_location = location;
     view! {
         <div class="ob-settings-shell">
@@ -152,6 +154,17 @@ fn admin_shell_view(
                             })
                             icon=Icon::Code
                             label=move || t_string!(i18n, admin.playground_title).to_owned()
+                        />
+                        <AdminNavItem href="/admin/credentials"
+                            current=Signal::derive(move || credentials_location.pathname.get() == "/admin/credentials")
+                            icon=Icon::Key label=move || t_string!(i18n, credentials.title).to_owned() />
+                        <AdminNavItem href="/admin/plugins"
+                            current=Signal::derive(move || {
+                                let path = plugins_location.pathname.get();
+                                path == "/admin/plugins" || path.starts_with("/admin/plugins/")
+                            })
+                            icon=Icon::Plug
+                            label=move || t_string!(i18n, plugins.title).to_owned()
                         />
                     </ul>
                 </nav>

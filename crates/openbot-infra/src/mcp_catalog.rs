@@ -19,6 +19,8 @@ use crate::google_drive::{
 };
 use crate::mcp::{McpBearerToken, McpClientError, McpListedTool, SafeRmcpClient};
 use crate::mcp_credentials::PostgresMcpCredentialBroker;
+use crate::mcp_egress::parse_stored_mcp_egress;
+use crate::net::safe_http::CidrAllowlist;
 use crate::repo::audit::{append_event_in_transaction, next_event_coordinates};
 
 const MAX_COMPILED_SCHEMA_CACHE_ENTRIES: usize = 4_096;
@@ -67,6 +69,8 @@ pub struct GrantedMcpTool {
     pub authentication: McpAuthentication,
     /// Protocol adapter selected by the reviewed server row.
     pub transport: VendorTransportKind,
+    /// Exact administrator-authorized CIDRs for this server's SafeDialer operations.
+    pub egress_allowlist: CidrAllowlist,
 }
 
 /// Closed production vendor transport set.
@@ -118,6 +122,7 @@ impl core::fmt::Debug for GrantedMcpTool {
             .field("credential_generation", &self.credential_generation)
             .field("authentication", &self.authentication)
             .field("transport", &self.transport)
+            .field("egress_allowlist_entries", &self.egress_allowlist.len())
             .field("endpoint", &"[redacted-origin]")
             .finish()
     }
@@ -339,7 +344,8 @@ impl PostgresMcpCatalog {
         let client = self.pool.get().await.map_err(unavailable)?;
         let server = client
             .query_opt(
-                "SELECT url,vendor,provenance,coalesce(transport,'mcp') AS transport
+                "SELECT url,vendor,provenance,coalesce(transport,'mcp') AS transport,
+                        coalesce(egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs
                    FROM public.mcp_servers WHERE id=$1",
                 &[&server_id],
             )
@@ -347,25 +353,42 @@ impl PostgresMcpCatalog {
             .map_err(query_unavailable)?
             .ok_or(McpCatalogError::NotVisible)?;
         let endpoint: String = server
-            .try_get(0)
+            .try_get("url")
             .map_err(|_| McpCatalogError::Corrupt { field: "url" })?;
         let vendor: String = server
-            .try_get(1)
+            .try_get("vendor")
             .map_err(|_| McpCatalogError::Corrupt { field: "vendor" })?;
-        let provenance: String = server.try_get(2).map_err(|_| McpCatalogError::Corrupt {
-            field: "provenance",
-        })?;
+        let provenance: String =
+            server
+                .try_get("provenance")
+                .map_err(|_| McpCatalogError::Corrupt {
+                    field: "provenance",
+                })?;
         let transport = parse_transport(
             &server
                 .try_get::<_, String>("transport")
                 .map_err(|_| McpCatalogError::Corrupt { field: "transport" })?,
         )?;
-        let transport_digest = transport_fingerprint(&endpoint, &vendor, &provenance, transport)?;
+        let egress_allow_cidrs: Vec<String> =
+            server
+                .try_get("egress_allow_cidrs")
+                .map_err(|_| McpCatalogError::Corrupt {
+                    field: "egress_allow_cidrs",
+                })?;
+        let egress_allowlist = parse_egress_allowlist(&egress_allow_cidrs)?;
+        let transport_digest = transport_fingerprint(
+            &endpoint,
+            &vendor,
+            &provenance,
+            transport,
+            &egress_allow_cidrs,
+        )?;
         let transport_fingerprint_hex = transport_digest.to_hex();
         drop(client);
         let listed = match transport {
             VendorTransportKind::Mcp => self
                 .rmcp
+                .with_egress_allowlist(egress_allowlist)
                 .list_tools(&endpoint, bearer)
                 .await
                 .map_err(|_| McpCatalogError::Unavailable)?,
@@ -394,7 +417,8 @@ impl PostgresMcpCatalog {
             .query_opt(
                 "SELECT coalesce(catalog_generation,0) AS catalog_generation,
                         coalesce(credential_generation,0) AS credential_generation,
-                        url,vendor,provenance,coalesce(transport,'mcp') AS transport \
+                        url,vendor,provenance,coalesce(transport,'mcp') AS transport,
+                        coalesce(egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs \
                    FROM public.mcp_servers WHERE id=$1 FOR UPDATE",
                 &[&server_id],
             )
@@ -430,12 +454,20 @@ impl PostgresMcpCatalog {
                 .try_get::<_, String>("transport")
                 .map_err(|_| McpCatalogError::Corrupt { field: "transport" })?,
         )?;
+        let locked_egress_allow_cidrs: Vec<String> =
+            server
+                .try_get("egress_allow_cidrs")
+                .map_err(|_| McpCatalogError::Corrupt {
+                    field: "egress_allow_cidrs",
+                })?;
+        parse_egress_allowlist(&locked_egress_allow_cidrs)?;
         if locked_transport != transport
             || transport_fingerprint(
                 &locked_endpoint,
                 &locked_vendor,
                 &locked_provenance,
                 locked_transport,
+                &locked_egress_allow_cidrs,
             )? != transport_digest
         {
             return Err(McpCatalogError::Unavailable);
@@ -755,6 +787,7 @@ impl PostgresMcpCatalog {
                         c.kind AS credential_kind,s.catalog_transport_fingerprint,
                         coalesce(s.credential_generation,0) AS credential_generation,
                         coalesce(s.transport,'mcp') AS transport,
+                        coalesce(s.egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs,
                         s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.plugin_grants g
@@ -819,6 +852,7 @@ impl PostgresMcpCatalog {
                         c.kind AS credential_kind,s.catalog_transport_fingerprint,
                         coalesce(s.credential_generation,0) AS credential_generation,
                         coalesce(s.transport,'mcp') AS transport,
+                        coalesce(s.egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs,
                         s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.mcp_tools t JOIN public.mcp_servers s ON s.id=t.server_id
@@ -856,6 +890,7 @@ impl PostgresMcpCatalog {
                         c.kind AS credential_kind,s.catalog_transport_fingerprint,
                         coalesce(s.credential_generation,0) AS credential_generation,
                         coalesce(s.transport,'mcp') AS transport,
+                        coalesce(s.egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs,
                         s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.plugin_grants g
@@ -906,6 +941,7 @@ impl PostgresMcpCatalog {
                         c.kind AS credential_kind,s.catalog_transport_fingerprint,
                         coalesce(s.credential_generation,0) AS credential_generation,
                         coalesce(s.transport,'mcp') AS transport,
+                        coalesce(s.egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs,
                         s.catalog_generation,t.name,t.description,
                         t.input_schema,t.schema_hash,t.effect
                    FROM public.mcp_tools t JOIN public.mcp_servers s ON s.id=t.server_id
@@ -1102,6 +1138,7 @@ fn transport_fingerprint(
     vendor: &str,
     provenance: &str,
     transport: VendorTransportKind,
+    egress_allow_cidrs: &[String],
 ) -> Result<Sha256Digest, McpCatalogError> {
     if vendor.is_empty()
         || vendor.len() > 256
@@ -1125,11 +1162,19 @@ fn transport_fingerprint(
     {
         return Err(McpCatalogError::Corrupt { field: "url" });
     }
-    let mut writer = CanonicalWriter::new("openbot:mcp-transport:v1");
+    let mut writer = CanonicalWriter::new("openbot:mcp-transport:v2");
     writer.str(parsed.as_str());
     writer.str(vendor);
     writer.str(provenance);
     writer.str(transport.as_str());
+    writer.u64(
+        u64::try_from(egress_allow_cidrs.len()).map_err(|_| McpCatalogError::Corrupt {
+            field: "egress_allow_cidrs",
+        })?,
+    );
+    for cidr in egress_allow_cidrs {
+        writer.str(cidr);
+    }
     writer.str(match transport {
         VendorTransportKind::Mcp => "2026-07-28",
         VendorTransportKind::GoogleDriveRest => "drive-v3",
@@ -1187,6 +1232,12 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
         &row.try_get::<_, String>("transport")
             .map_err(|_| McpCatalogError::Corrupt { field: "transport" })?,
     )?;
+    let egress_allow_cidrs: Vec<String> =
+        row.try_get("egress_allow_cidrs")
+            .map_err(|_| McpCatalogError::Corrupt {
+                field: "egress_allow_cidrs",
+            })?;
+    let egress_allowlist = parse_egress_allowlist(&egress_allow_cidrs)?;
     let endpoint: String = row
         .try_get("url")
         .map_err(|_| McpCatalogError::Corrupt { field: "url" })?;
@@ -1230,6 +1281,7 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
             &vendor,
             &provenance,
             transport,
+            &egress_allow_cidrs,
         )?)
     {
         return Err(McpCatalogError::Corrupt {
@@ -1273,6 +1325,13 @@ fn decode_granted(row: &tokio_postgres::Row) -> Result<GrantedMcpTool, McpCatalo
         endpoint,
         authentication,
         transport,
+        egress_allowlist,
+    })
+}
+
+fn parse_egress_allowlist(entries: &[String]) -> Result<CidrAllowlist, McpCatalogError> {
+    parse_stored_mcp_egress(entries).map_err(|_| McpCatalogError::Corrupt {
+        field: "egress_allow_cidrs",
     })
 }
 

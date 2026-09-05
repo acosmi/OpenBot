@@ -33,6 +33,8 @@ openbot-domain.workspace = true
 # W-4 生产组装与 PostgreSQL session resolver；依赖方向 server -> infra -> application，无环。
 openbot-infra = { workspace = true, features = ["server-sso"] }
 openbot-agent.workspace = true
+# Screen ticket consumption and binary latest-frame transport remain in the Computer authority.
+openbot-computer.workspace = true
 
 # `AuthResolver` / `ReadinessProbe` 都要对象安全（state 里持的是 `dyn`），
 # edition 2024 的 AFIT 仍不给对象安全，所以走 `async_trait`。
@@ -92,6 +94,7 @@ metrics-exporter-prometheus.workspace = true
 # `AuthContext::for_test`（contracts 的 `testkit` 默认关，只在 dev 侧打开；feature 可加，
 # 生产构建不受影响）。
 openbot-contracts = { workspace = true, features = ["testkit"] }
+openbot-computer = { workspace = true, features = ["testkit"] }
 
 # `ServiceExt::oneshot` —— 内存里跑 Axum service，不监听端口。它在 `util` feature 下，
 # 而 workspace 根给 `tower` 开的是 `timeout` / `limit`。feature 是可加的：这里追加

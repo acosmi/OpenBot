@@ -1,5 +1,6 @@
 //! Authority-owned engine role and scope models from v4 §10.1 / §10.6.
 
+use openbot_contracts::auth::{AuthContext, AuthGeneration};
 use openbot_contracts::ids::{
     ActorId, BotId, ChannelId, CredentialPrincipalId, TenantId, ThreadId,
 };
@@ -100,6 +101,57 @@ pub enum EngineRole {
     SandboxedComponent(ComponentRenderScope),
 }
 
+/// Host-authorized actor allowed to receive this engine's screen stream.
+///
+/// It is never serialized to the engine. The Computer manager must mint it from current authority
+/// before launch; subsequent auth-generation changes invalidate the whole attached stream.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScreenAudience {
+    tenant_id: TenantId,
+    actor_id: ActorId,
+    auth_generation: AuthGeneration,
+}
+
+impl ScreenAudience {
+    /// Mint an audience from a verified current authentication context.
+    #[must_use]
+    pub fn from_auth(auth: &AuthContext) -> Self {
+        Self {
+            tenant_id: auth.tenant().clone(),
+            actor_id: auth.actor().clone(),
+            auth_generation: auth.auth_generation(),
+        }
+    }
+
+    /// Explicit authority-layer constructor for non-HTTP hosts such as the runsc probe.
+    #[must_use]
+    pub fn new(tenant_id: TenantId, actor_id: ActorId, auth_generation: AuthGeneration) -> Self {
+        Self {
+            tenant_id,
+            actor_id,
+            auth_generation,
+        }
+    }
+
+    /// Audience tenant.
+    #[must_use]
+    pub fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    /// Audience actor.
+    #[must_use]
+    pub fn actor_id(&self) -> &ActorId {
+        &self.actor_id
+    }
+
+    /// Auth generation current when the host authorized the stream.
+    #[must_use]
+    pub const fn auth_generation(&self) -> AuthGeneration {
+        self.auth_generation
+    }
+}
+
 impl EngineRole {
     /// Closed wire tag.
     #[must_use]
@@ -139,6 +191,24 @@ impl EngineRole {
             }
         }
         hash.finalize().into()
+    }
+
+    /// Tenant axis retained only in the Rust authority layer.
+    #[must_use]
+    pub fn tenant_id(&self) -> &TenantId {
+        match self {
+            Self::BrowserComputer(scope) => &scope.tenant_id,
+            Self::SandboxedComponent(scope) => &scope.tenant_id,
+        }
+    }
+
+    /// Component role is additionally actor-bound; browser access is authorized by its manager.
+    #[must_use]
+    pub fn component_actor_id(&self) -> Option<&ActorId> {
+        match self {
+            Self::BrowserComputer(_) => None,
+            Self::SandboxedComponent(scope) => Some(&scope.actor_id),
+        }
     }
 }
 

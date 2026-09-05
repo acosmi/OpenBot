@@ -328,7 +328,9 @@ impl RotatingOAuthTokenExchanger for GoogleDriveOAuthClient {
     ) -> Result<RotatingOAuthGrant, OAuthTokenExchangeError> {
         if request.server_id() != GOOGLE_DRIVE_SERVER_ID
             || request.endpoint() != self.endpoints.resource.as_str().trim_end_matches('/')
+            || request.transport() != "google_drive_rest"
             || request.granted_scope() != GOOGLE_DRIVE_READONLY_SCOPE
+            || !request.egress_allowlist().is_empty()
         {
             return Err(OAuthTokenExchangeError::InsufficientScope);
         }

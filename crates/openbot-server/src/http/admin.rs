@@ -1,11 +1,16 @@
 //! `/api/me` 与首批 admin people HTTP framing；业务规则只在 application。
 
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use http::HeaderMap;
 use openbot_contracts::audit::AuditPage;
 use openbot_contracts::command::{AppCommand, AppReply};
+use openbot_contracts::credential_admin::{
+    CredentialPage, CredentialPageRequest, CredentialRevocationReceipt, CredentialWrite,
+    CredentialWritten,
+};
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::ActorId;
 use openbot_contracts::people::{
@@ -17,9 +22,111 @@ use openbot_contracts::people::{CurrentUser, Person};
 use openbot_domain::text::is_ecmascript_whitespace;
 use serde::Deserialize;
 
-use crate::auth::{Authenticated, SensitiveAuthenticated};
+use crate::auth::{Authenticated, SensitiveAuthenticated, SensitiveOriginAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
+
+#[cfg(test)]
+#[path = "credential_admin_tests.rs"]
+mod credential_tests;
+
+/// `GET /api/admin/credentials`; a cursor is data, never authority.
+pub async fn credentials_list(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+    query: Result<Query<CredentialPageRequest>, QueryRejection>,
+) -> Result<(HeaderMap, Json<CredentialPage>), HttpError> {
+    if !auth.has_role(openbot_contracts::auth::Role::Admin) {
+        return Err(AppError::ForbiddenRole {
+            required: openbot_contracts::auth::Role::Admin,
+        }
+        .into());
+    }
+    let Query(query) = query.map_err(|_| AppError::MalformedPayload { field: "query" })?;
+    match state
+        .application()
+        .execute(auth, AppCommand::ListCredentials(query))
+        .await?
+    {
+        AppReply::Credentials(page) => Ok((credential_headers(), Json(page))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/admin/credentials`; fresh admin and Origin are decided before body extraction.
+pub async fn credentials_create(
+    State(state): State<ServerState>,
+    SensitiveOriginAuthenticated(auth): SensitiveOriginAuthenticated,
+    body: Result<Json<CredentialWrite>, JsonRejection>,
+) -> Result<(http::StatusCode, HeaderMap, Json<CredentialWritten>), HttpError> {
+    let Json(input) = body.map_err(|_| AppError::MalformedPayload { field: "body" })?;
+    match state
+        .application()
+        .execute(auth, AppCommand::CreateCredential(input))
+        .await?
+    {
+        AppReply::CredentialWritten(receipt) => Ok((
+            http::StatusCode::CREATED,
+            credential_headers(),
+            Json(receipt),
+        )),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/admin/credentials/{id}/rotate`; no separate create/revoke transport calls.
+pub async fn credentials_rotate(
+    State(state): State<ServerState>,
+    SensitiveOriginAuthenticated(auth): SensitiveOriginAuthenticated,
+    Path(credential_id): Path<String>,
+    body: Result<Json<CredentialWrite>, JsonRejection>,
+) -> Result<(HeaderMap, Json<CredentialWritten>), HttpError> {
+    let Json(input) = body.map_err(|_| AppError::MalformedPayload { field: "body" })?;
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::RotateCredential {
+                credential_id,
+                input,
+            },
+        )
+        .await?
+    {
+        AppReply::CredentialWritten(receipt) => Ok((credential_headers(), Json(receipt))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/admin/credentials/{id}/revoke`; an empty body cannot smuggle lifecycle metadata.
+pub async fn credentials_revoke(
+    State(state): State<ServerState>,
+    SensitiveOriginAuthenticated(auth): SensitiveOriginAuthenticated,
+    Path(credential_id): Path<String>,
+    body: Bytes,
+) -> Result<(HeaderMap, Json<CredentialRevocationReceipt>), HttpError> {
+    if !body.is_empty() {
+        return Err(AppError::MalformedPayload { field: "body" }.into());
+    }
+    match state
+        .application()
+        .execute(auth, AppCommand::RevokeCredential { credential_id })
+        .await?
+    {
+        AppReply::CredentialRevoked(credential) => Ok((
+            credential_headers(),
+            Json(CredentialRevocationReceipt { credential }),
+        )),
+        _ => Err(application_contract_error()),
+    }
+}
+
+fn credential_headers() -> HeaderMap {
+    HeaderMap::from_iter([(
+        http::header::CACHE_CONTROL,
+        http::HeaderValue::from_static("no-store"),
+    )])
+}
 
 /// people query；limit 先保留原串，按 JS `Number.parseInt(value, 10)` 的十进制前缀语义解析。
 #[derive(Debug, Default, Deserialize)]

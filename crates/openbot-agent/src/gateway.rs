@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use openbot_application::{
     AgentAuthorizationSource, ApplicationService, RemoteCallbackAuthorization, RunExecutionLease,
-    ToolCallSequence, ToolCallSequenceError,
+    ToolCallSequence, ToolCallSequenceError, ToolCancellationRegistry, ToolExecutionCancellation,
 };
 use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
@@ -175,6 +175,23 @@ pub trait AgentToolInvoker: Send + Sync {
         arguments: Value,
     ) -> Result<AgentToolReply, AgentToolInvokeError>;
 
+    /// Invoke with a private Rust-host cancellation receiver.
+    ///
+    /// The conservative default preserves existing local/test implementations. Production
+    /// gateways override it so an already-started protocol effect can cooperatively stop before
+    /// the run records reconciliation.
+    async fn invoke_cancellable(
+        &self,
+        lease: &RunExecutionLease,
+        provider_call_id: &str,
+        tool_name: &str,
+        arguments: Value,
+        _cancellation: ToolExecutionCancellation,
+    ) -> Result<AgentToolReply, AgentToolInvokeError> {
+        self.invoke(lease, provider_call_id, tool_name, arguments)
+            .await
+    }
+
     /// Release bounded per-run sequence state after terminal cleanup.
     fn release(&self, _run_id: &RunId) {}
 }
@@ -214,6 +231,7 @@ impl AgentToolInvoker for NoAgentToolInvoker {
 pub struct AgentToolGateway {
     application: Arc<dyn ApplicationService>,
     sequence: Arc<dyn ToolCallSequence>,
+    cancellations: Option<Arc<ToolCancellationRegistry>>,
 }
 
 impl AgentToolGateway {
@@ -232,6 +250,21 @@ impl AgentToolGateway {
         Self {
             application,
             sequence,
+            cancellations: None,
+        }
+    }
+
+    /// Bind the same process-local cancellation registry used by the production executor.
+    #[must_use]
+    pub fn with_sequence_and_cancellations(
+        application: Arc<dyn ApplicationService>,
+        sequence: Arc<dyn ToolCallSequence>,
+        cancellations: Arc<ToolCancellationRegistry>,
+    ) -> Self {
+        Self {
+            application,
+            sequence,
+            cancellations: Some(cancellations),
         }
     }
 
@@ -257,6 +290,19 @@ impl AgentToolGateway {
         tool_name: String,
         arguments: Value,
     ) -> (ToolCallId, Result<ToolResult, AppError>) {
+        self.invoke_captured_with_cancellation(auth, run_id, bot_id, tool_name, arguments, None)
+            .await
+    }
+
+    async fn invoke_captured_with_cancellation(
+        &self,
+        auth: AuthContext,
+        run_id: RunId,
+        bot_id: BotId,
+        tool_name: String,
+        arguments: Value,
+        cancellation: Option<ToolExecutionCancellation>,
+    ) -> (ToolCallId, Result<ToolResult, AppError>) {
         let call_seq = match self.sequence.next(&run_id).await {
             Ok(sequence) => sequence,
             Err(ToolCallSequenceError::Unavailable | ToolCallSequenceError::Exhausted) => {
@@ -269,6 +315,22 @@ impl AgentToolGateway {
             }
         };
         let call_id = ToolCallId::new(Uuid::now_v7().to_string());
+        let _cancellation_registration = match (cancellation, &self.cancellations) {
+            (Some(cancellation), Some(registry)) => {
+                let Some(registration) = registry.register(call_id.clone(), cancellation) else {
+                    return (
+                        call_id,
+                        Err(AppError::DependencyUnavailable {
+                            dependency: "tool_cancellation",
+                        }),
+                    );
+                };
+                Some(registration)
+            }
+            // Narrow tests may have no protocol executor sharing a registry. Production
+            // Server/Desktop always use the explicit constructor below.
+            (Some(_), None) | (None, _) => None,
+        };
         let invocation = ToolInvocation {
             call_id: call_id.clone(),
             run_id,
@@ -317,6 +379,8 @@ impl AgentToolGateway {
                 | AppReply::ThreadRunCancellation(_)
                 | AppReply::ThreadHistory(_)
                 | AppReply::ThreadConversation(_)
+                | AppReply::PendingRemoteInterrupts(_)
+                | AppReply::RemoteInterruptResolved(_)
                 | AppReply::Memory(_)
                 | AppReply::MemoryControl(_)
                 | AppReply::Memories(_)
@@ -324,14 +388,23 @@ impl AgentToolGateway {
                 | AppReply::AgentCallbackToken(_)
                 | AppReply::AgentCallbackTokenRevoked(_)
                 | AppReply::McpConnections(_)
+                | AppReply::Credentials(_)
+                | AppReply::CredentialWritten(_)
+                | AppReply::CredentialRevoked(_)
+                | AppReply::McpAdminPage(_)
                 | AppReply::McpOAuthAuthorization(_)
                 | AppReply::McpConnectionDisconnected(_)
                 | AppReply::McpOAuthClientRegistered(_)
                 | AppReply::McpServerMutation(_)
+                | AppReply::McpServerRemoved(_)
+                | AppReply::PluginSkills(_)
+                | AppReply::PluginMutationAcknowledged(_)
+                | AppReply::GrantedPlugins(_)
                 | AppReply::PendingToolApprovals(_)
                 | AppReply::ToolApprovalResolved(_)
                 | AppReply::UiPreferences(_)
-                | AppReply::RunCostBudget(_),
+                | AppReply::RunCostBudget(_)
+                | AppReply::ScreenSession(_),
             ) => Err(AppError::DependencyUnavailable {
                 dependency: "application",
             }),
@@ -383,6 +456,69 @@ impl AuthorizedAgentToolGateway {
             gateway: AgentToolGateway::with_sequence(application, sequence),
             authorization,
         }
+    }
+
+    /// Production constructor sharing exact-call cancellation with the tool executor.
+    #[must_use]
+    pub fn with_sequence_and_cancellations(
+        application: Arc<dyn ApplicationService>,
+        authorization: Arc<dyn AgentAuthorizationSource>,
+        sequence: Arc<dyn ToolCallSequence>,
+        cancellations: Arc<ToolCancellationRegistry>,
+    ) -> Self {
+        Self {
+            gateway: AgentToolGateway::with_sequence_and_cancellations(
+                application,
+                sequence,
+                cancellations,
+            ),
+            authorization,
+        }
+    }
+
+    async fn invoke_inner(
+        &self,
+        lease: &RunExecutionLease,
+        provider_call_id: &str,
+        tool_name: &str,
+        arguments: Value,
+        cancellation: Option<ToolExecutionCancellation>,
+    ) -> Result<AgentToolReply, AgentToolInvokeError> {
+        let auth = self
+            .authorization
+            .load(lease)
+            .await
+            .map_err(|_| AgentToolInvokeError::Unavailable)?;
+        if let Some(result) = self
+            .invoke_human_component(auth.clone(), lease, provider_call_id, tool_name, &arguments)
+            .await
+        {
+            return result;
+        }
+        if let Some(result) = self
+            .invoke_component(auth.clone(), lease, tool_name, &arguments)
+            .await
+        {
+            return result;
+        }
+        if let Some(result) = self
+            .invoke_sandboxed_component(auth.clone(), lease, tool_name, &arguments)
+            .await
+        {
+            return result;
+        }
+        let (call_id, result) = self
+            .gateway
+            .invoke_captured_with_cancellation(
+                auth,
+                lease.run_id().clone(),
+                lease.bot_id().clone(),
+                tool_name.to_owned(),
+                arguments,
+                cancellation,
+            )
+            .await;
+        map_application_reply(call_id, result)
     }
 
     async fn invoke_component(
@@ -627,40 +763,26 @@ impl AgentToolInvoker for AuthorizedAgentToolGateway {
         tool_name: &str,
         arguments: Value,
     ) -> Result<AgentToolReply, AgentToolInvokeError> {
-        let auth = self
-            .authorization
-            .load(lease)
+        self.invoke_inner(lease, provider_call_id, tool_name, arguments, None)
             .await
-            .map_err(|_| AgentToolInvokeError::Unavailable)?;
-        if let Some(result) = self
-            .invoke_human_component(auth.clone(), lease, provider_call_id, tool_name, &arguments)
-            .await
-        {
-            return result;
-        }
-        if let Some(result) = self
-            .invoke_component(auth.clone(), lease, tool_name, &arguments)
-            .await
-        {
-            return result;
-        }
-        if let Some(result) = self
-            .invoke_sandboxed_component(auth.clone(), lease, tool_name, &arguments)
-            .await
-        {
-            return result;
-        }
-        let (call_id, result) = self
-            .gateway
-            .invoke_captured(
-                auth,
-                lease.run_id().clone(),
-                lease.bot_id().clone(),
-                tool_name.to_owned(),
-                arguments,
-            )
-            .await;
-        map_application_reply(call_id, result)
+    }
+
+    async fn invoke_cancellable(
+        &self,
+        lease: &RunExecutionLease,
+        provider_call_id: &str,
+        tool_name: &str,
+        arguments: Value,
+        cancellation: ToolExecutionCancellation,
+    ) -> Result<AgentToolReply, AgentToolInvokeError> {
+        self.invoke_inner(
+            lease,
+            provider_call_id,
+            tool_name,
+            arguments,
+            Some(cancellation),
+        )
+        .await
     }
 
     fn release(&self, run_id: &RunId) {

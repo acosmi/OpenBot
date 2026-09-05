@@ -29,7 +29,7 @@ crate::db::tables::define_table! {
 pub const CURRENT_COLUMNS: &[&str] = &[
     "id", "title", "vendor", "url", "provenance", "credential_id", "tools_refreshed_at",
     "last_error", "added_by", "created_at", "updated_at", "catalog_generation", "catalog_hash",
-    "catalog_transport_fingerprint", "credential_generation", "transport",
+    "catalog_transport_fingerprint", "credential_generation", "transport", "egress_allow_cidrs",
 ];
 
 /// Current MCP server row with catalog identity.
@@ -47,6 +47,8 @@ pub struct CurrentRow {
     pub credential_generation: Option<i64>,
     /// `mcp` or `google_drive_rest`; legacy NULL reads as MCP.
     pub transport: Option<String>,
+    /// Exact numeric CIDRs that may override default-deny special/private destinations.
+    pub egress_allow_cidrs: Option<Vec<String>>,
 }
 
 impl TryFrom<&tokio_postgres::Row> for CurrentRow {
@@ -75,6 +77,9 @@ impl TryFrom<&tokio_postgres::Row> for CurrentRow {
             })?,
             transport: row.try_get("transport").map_err(|source| {
                 crate::db::RowDecodeError::column(TABLE_NAME, "transport", source)
+            })?,
+            egress_allow_cidrs: row.try_get("egress_allow_cidrs").map_err(|source| {
+                crate::db::RowDecodeError::column(TABLE_NAME, "egress_allow_cidrs", source)
             })?,
         })
     }

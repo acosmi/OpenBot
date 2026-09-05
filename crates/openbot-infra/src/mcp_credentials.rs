@@ -1,8 +1,8 @@
 //! Fresh PostgreSQL/Vault credential selection for one MCP operation.
 //!
-//! Batch 12 starts with the fully specified deployment-bearer branch. User OAuth remains an
-//! explicit `AuthRequired` until protected-resource/authorization-server discovery, RFC 8707
-//! resource binding and refresh rotation are connected; no caller can receive an empty bearer.
+//! Deployment bearer, generic MCP actor OAuth and curated Drive actor OAuth all resolve here.
+//! Generic OAuth refresh uses the current server's canonical egress authority selected with the
+//! credential snapshot; no caller can receive an empty bearer or a token from another actor.
 
 use openbot_contracts::ids::ActorId;
 use openbot_domain::vault::{SecretKind, SecretPrincipal, ServiceId};
@@ -71,8 +71,9 @@ impl PostgresMcpCredentialBroker {
     }
 
     /// Attach the production actor-OAuth runtime and the audit key needed for atomic refresh-token
-    /// rotation. Production passes `HttpsOnly`; local conformance servers may use `HttpOrHttps`
-    /// together with an explicit loopback CIDR allowlist.
+    /// rotation. The base dialer contributes resolver/TLS; each operation replaces its destination
+    /// policy with the current server's PostgreSQL-bound exact CIDR set. Production passes
+    /// `HttpsOnly`; local conformance servers may use `HttpOrHttps`.
     pub fn with_user_oauth(
         mut self,
         dialer: SafeDialer,

@@ -43,9 +43,10 @@
 //! [`SECRET_COLUMN_NAME_ROOTS`] 却既不在 [`SECRET_COLUMNS`] 也不在 [`SECRET_SCAN_EXEMPTIONS`]
 //! 的，当场判红。将来有人加一列 `refresh_token` 而忘了登记，闸门会拦住。
 //!
-//! 0013、0016、0020、0021、0022、0023 与 0026 的 native 表分别登记在 [`NATIVE_0013_TABLES`] /
+//! 0013、0016、0020、0021、0022、0023、0026 与 0028 的 native 表分别登记在 [`NATIVE_0013_TABLES`] /
 //! [`NATIVE_0016_TABLES`] / [`NATIVE_0020_TABLES`] / [`NATIVE_0021_TABLES`] /
-//! [`NATIVE_0022_TABLES`] / [`NATIVE_0023_TABLES`] / [`NATIVE_0026_TABLES`]，
+//! [`NATIVE_0022_TABLES`] / [`NATIVE_0023_TABLES`] / [`NATIVE_0026_TABLES`] /
+//! [`NATIVE_0028_TABLES`]，
 //! 始终不混进只代表固定上游 0012 的 [`ALL_TABLES`]。
 
 use std::fmt;
@@ -96,6 +97,8 @@ pub const SECRET_COLUMNS: &[(&str, &str)] = &[
     ("messages", "content"),
     ("messages", "search_text"),
     ("outbox", "payload"),
+    ("remote_agent_interrupts", "descriptor"),
+    ("remote_agent_interrupts", "response_payload"),
     ("run_events", "payload"),
     ("runs", "fencing_token"),
     ("sessions", "token"),
@@ -626,6 +629,15 @@ pub const NATIVE_0026_TABLES: &[TableSpec] = &[TableSpec {
     column_specs: user_run_cost_budgets::COLUMN_SPECS,
 }];
 
+pub mod remote_agent_interrupts;
+
+/// Native 0028 actor-scoped remote AG-UI interrupt/resume table.
+pub const NATIVE_0028_TABLES: &[TableSpec] = &[TableSpec {
+    name: remote_agent_interrupts::TABLE_NAME,
+    columns: remote_agent_interrupts::COLUMNS,
+    column_specs: remote_agent_interrupts::COLUMN_SPECS,
+}];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,6 +652,7 @@ mod tests {
             .chain(NATIVE_0022_TABLES.iter())
             .chain(NATIVE_0023_TABLES.iter())
             .chain(NATIVE_0026_TABLES.iter())
+            .chain(NATIVE_0028_TABLES.iter())
     }
 
     /// 每张表的列数。数值取自参照库（`fixtures/db/schema-0012.json`），合计必须是 204。
@@ -732,7 +745,7 @@ mod tests {
         }
     }
 
-    /// 每个 `sql_type` 都必须落在实测出来的 12 个类型里。
+    /// 每个 `sql_type` 都必须落在实测出来的类型里。
     ///
     /// 反面：写错成 `varchar` / `timestamptz` 这类"看起来对"的别名会被当场判红 ——
     /// `format_type()` 不会输出它们，比对时只会得到一堆"类型不符"。
@@ -747,6 +760,7 @@ mod tests {
             "integer",
             "jsonb",
             "role",
+            "smallint",
             "text",
             "text[]",
             "timestamp with time zone",
@@ -979,7 +993,7 @@ mod tests {
             "这些列命中 secret 词根却既没登记也没豁免，请补进 SECRET_COLUMNS 或 \
              SECRET_SCAN_EXEMPTIONS（豁免必须带书面理由）：{unclassified:?}",
         );
-        // signature/capability_id 以及 component arguments/answer 不含词根但仍是主动登记项，
+        // signature/capability_id、component arguments/answer 与 remote descriptor 不含词根但仍是主动登记项，
         // 所以只比较会命中词根的子集。
         let registered_root_hits = SECRET_COLUMNS
             .iter()
@@ -998,7 +1012,7 @@ mod tests {
             })
             .count();
         assert_eq!(hits, registered_root_hits + exemption_root_hits);
-        assert_eq!(SECRET_COLUMNS.len(), 32);
+        assert_eq!(SECRET_COLUMNS.len(), 34);
         assert_eq!(SECRET_SCAN_EXEMPTIONS.len(), 20);
     }
 

@@ -11,8 +11,9 @@ use openbot_application::tenant::package::{
     BuiltInProviderSource, LoadedTenantPackage, TenantAgentConfiguration, TenantAgentType,
 };
 use openbot_application::{
-    AgentAudit, ApplicationService, NoRunDispatchConsumer, ProviderAdapter, RunDispatchConsumer,
-    RunRuntime, remember_provider_tool,
+    AgentAudit, ApplicationService, NoRunDispatchConsumer, ProviderAdapter,
+    RemoteInterruptCoordinator, RunDispatchConsumer, RunRuntime, ToolCancellationRegistry,
+    remember_provider_tool,
 };
 use openbot_contracts::ids::{DeploymentId, TenantId};
 use openbot_domain::remote_callback::RemoteRunAssertionSigner;
@@ -177,7 +178,9 @@ pub(crate) struct DesktopAgentHostInput {
     pub(crate) tenant: TenantId,
     pub(crate) package: LoadedTenantPackage,
     pub(crate) application: Arc<dyn ApplicationService>,
+    pub(crate) tool_cancellations: Arc<ToolCancellationRegistry>,
     pub(crate) runtime: Arc<dyn RunRuntime>,
+    pub(crate) remote_interrupts: Arc<dyn RemoteInterruptCoordinator>,
     pub(crate) credential_vault: CredentialRecordVault,
     pub(crate) audit_key: Vec<u8>,
     pub(crate) remote_assertions: Arc<RemoteRunAssertionSigner>,
@@ -213,7 +216,9 @@ pub(crate) fn start_desktop_agent_host(
         tenant,
         package,
         application,
+        tool_cancellations,
         runtime,
+        remote_interrupts,
         credential_vault,
         audit_key,
         remote_assertions,
@@ -245,16 +250,18 @@ pub(crate) fn start_desktop_agent_host(
 
     let (consumer, agent): (Arc<dyn RunDispatchConsumer>, Option<BuiltInAgentRuntime>) = if required
     {
-        let tools: Arc<dyn AgentToolInvoker> = Arc::new(AuthorizedAgentToolGateway::with_sequence(
-            application,
-            Arc::new(PostgresAgentAuthorizationSource::new(
-                pool.clone(),
-                deployment.clone(),
-                tenant.clone(),
-                true,
-            )),
-            Arc::new(PostgresAgentToolSequence::new(pool.clone())),
-        ));
+        let tools: Arc<dyn AgentToolInvoker> =
+            Arc::new(AuthorizedAgentToolGateway::with_sequence_and_cancellations(
+                application,
+                Arc::new(PostgresAgentAuthorizationSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    true,
+                )),
+                Arc::new(PostgresAgentToolSequence::new(pool.clone())),
+                tool_cancellations,
+            ));
         let audit: Arc<dyn AgentAudit> = Arc::new(
             PostgresAgentAudit::new(pool.clone(), audit_key)
                 .map_err(|_| DesktopAgentRuntimeError::Assembly)?,
@@ -310,12 +317,13 @@ pub(crate) fn start_desktop_agent_host(
             .with_sandboxed_components(sandboxed_components)
             .with_agent_credential_vault(credential_vault),
         );
-        let agent = BuiltInAgentRuntime::start(
+        let agent = BuiltInAgentRuntime::start_with_remote_interrupts(
             Arc::clone(&runtime),
             context,
             provider,
             tools,
             audit,
+            remote_interrupts,
             BuiltInAgentConfig {
                 run_deadline: budgets.run_deadline,
                 ..BuiltInAgentConfig::default()

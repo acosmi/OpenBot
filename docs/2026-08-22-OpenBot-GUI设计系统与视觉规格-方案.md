@@ -267,7 +267,7 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 | `empty.tsx` | `EmptyState` | — | 纯展示 | — |
 | `field.tsx` | `Field`（label + 控件 + 说明 + 错误，`aria-describedby` / `aria-invalid` 自动接线） | — | — | invalid/disabled |
 | `input-group.tsx` | `InputGroup`（前后缀槽） | — | — | focus-within |
-| `input.tsx` | `Input` | base-ui Input | textbox | focus/disabled/invalid |
+| `input.tsx` | `Input` / 同家族 `SecretInput` | base-ui Input | textbox | focus/disabled/invalid |
 | `item.tsx` | `Item`（列表行：media / 标题 / 描述 / 动作槽） | — | 可为 link 或 button | hover/selected/disabled |
 | `label.tsx` | `Label` | — | `for` 绑定 | — |
 | `message-scroller.tsx` | `MessageScroller`（自动贴底、"回到底部"胶囊、新消息时保持阅读位置） | — | `role="log"`、`aria-live="polite"` | — |
@@ -281,6 +281,13 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 | `switch.tsx` | `Switch` | base-ui Switch | switch；`Space` | checked/disabled |
 | `textarea.tsx` | `Textarea`（自动增高，上限 10 行） | — | textbox multiline | focus/disabled/invalid |
 | `tooltip.tsx` | `Tooltip` | base-ui Tooltip | tooltip；hover/focus 显示、`Esc` 隐藏、延迟 400ms | open |
+
+R195规定Input家族的密钥专用实现：普通受控Input只含text/email/search/url，密码由SecretInput
+持DOM值，响应式层只有校验事实和修改代次。不得给密码控件绑定RwSignal<String>、StoredValue原文或
+明文change callback。Field继续提供label/ARIA及双语重填说明；保存消费输入，失败不回填，关闭/协议切换/
+卸载清理，Agent显式probe保留当前DOM输入但不存响应式副本。它不是新增产品能力或新的route/golden分母。
+Batch119在三个现有密码入口均实施，Contracts108/UI188、release中英局部旅程及静态闸门通过；正式AX/golden
+与浏览器底层物理擦除不由这些证据推出。
 
 **新增原语**（上游无，本项目需要）：`Toast`（非阻塞反馈，`role="status"`，5s 自动消失，用于一切 `accepted:false` 类用户可见反馈）、`Badge`（纯文字状态，语义色只落文字 + 状态点）、`Kbd`、`Avatar`（§6.6）、`ThemeToggle`（§7）、`LocaleSwitch`（§8）。
 
@@ -437,6 +444,12 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 
 数量：Web = 27 × 2 × 2 + 画廊 1 × 2 = **110** 张；Desktop = 27 × 2 = **54** 张 / 平台。
 
+Batch107固定文件名算法，避免“数量正确但页面被换掉”仍通过：从
+`fixtures/ui/seed.json::pages_covered`逐segment替换`golden_param`，根路由=`home`，segment以`--`连接，
+只收ASCII字母数字/连字符/下划线；`$key_`尾下划线只作TanStack路由消歧，参数仍取`key`。画廊键固定
+`design-gallery`且只截1440×900。该算法机械导出245条exact relative path；gate同时校目录数量、完整
+路径集合和文件名末尾viewport对应的真实PNG尺寸，不能用245张任意1×1 PNG占位。
+
 ### 10.2 确定性条件（缺一则 golden 不可信）
 
 - 数据：`openbot-server` 以 `openbot-testkit` 的 fake `ApplicationService` 从 `fixtures/ui/seed.json` 加载（无 PostgreSQL、无模型调用）；seed 含固定用户 / coworker / channel / 消息 / 审计行 / 时间戳。
@@ -453,6 +466,11 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 ### 10.4 比对规则与更新流程
 
 - 比对在 `openbot-testkit` 用 `image` **0.25.10** 实现：逐像素任一通道差 > 16/255 记为差异像素；**失败判据 = 差异像素 > 0.1% 或存在任一 8×8 全差异块**（后者防小区域真回归被比例稀释）。
+- Batch107已落`cargo xtask golden check-manifest|compare|verify`：只启`image`的PNG feature，输入≤16MiB、
+  strict尺寸≤4096、decoder allocation≤64MiB；compare生成确定性review diff，verify要求245条seed-derived
+  exact path、actual/baseline集合相等、无symlink、mask selector/page在reviewed allowlist。容器digest或CJK
+  包版本仍TBD、基线缺件、只数量相等但错名、伪PNG或错误viewport均必须判红；check-manifest显示
+  `ready=false`不等于正式verify通过。
 - golden 更新 = 同 PR 提交新 PNG + harness 生成的 diff 图（`fixtures/ui/golden/_diff/` 不入库、附在 PR）+ 评审批准；禁止 CI 自动覆盖。
 - Desktop：同一 bundle 摘要（`dist/` 的 sha256 清单）在三平台相等 + 各平台对自己的 golden 基线比对；**不做跨引擎逐像素比对**（WKWebView / WebView2 / Chromium 的字体栅格化不同，逐像素相等构造上不可达）。这就是 v3 G6 "web/desktop visual parity" 的可判定定义。
 - Desktop 截图用 `xcap` **0.9.8**（Apache-2.0，仅 testkit 依赖）捕获窗口。
@@ -625,7 +643,7 @@ G6 重写后的文本（替换 v3 原四条）：
 
 本地 commit 前必跑（与 v3 §16.3 并列）：`cargo test -p openbot-ui`（含 `token_contrast_wcag_aa`、`streaming_render_equals_batch_render`）+ `xtask i18n-check design-lint css-check`；golden 与 AX 检查在 CI。
 
-### 15.1 当前实施勾选（截至 2026-08-30，Batch 15–86；条目内历史计数按注明批次）
+### 15.1 当前实施勾选（截至 2026-09-04，Batch 15–98；条目内历史计数按注明批次）
 
 - [x] exact GUI 工具链、token/icon/font 生成、strict-CSP Trunk bundle 与 Axum static/首帧改写；
 - [x] `/approvals` 可点击 authority-only 竖切；ThemeToggle/LocaleSwitch APG 键盘与 ARIA；
@@ -716,6 +734,13 @@ G6 重写后的文本（替换 v3 原四条）：
   Stop→Cancelling→Cancelled、跨副本host cancel与mount-local queue/remove/settle。Markdown、完整tool
   boundary、sources/附件/per-channel draft/steer/Screen未落，故ChannelChat/ChatTranscript/
   ConversationView/Composer条目仍todo；
+- [x] Batch98 remote AG-UI interrupt/resume conversation子面：current active run按actor-scoped
+  `GET /api/me/remote-interrupts`取得server UUIDv7 handle与显式untrusted reason/message/schema DTO；
+  reason/message只作Leptos escaped text并置于`data-untrusted-remote-content`边界，schema不执行代码或
+  产生权限，首版用通用JSON输入返回closed resolved/cancelled。PUT成功后本地移除并继续1秒权威poll；
+  Server/Desktop共用typed ApplicationService，terminal清descriptor/answer。UI=`182/0/0`、WASM与
+  i18n=`806`绿，offline bundle连续两次SHA一致，预算=`1897481/115524/740216/1/0`。本证据不替代
+  完整channel Composer/route，也不冒充Web/Desktop golden、AX或G6整关；
 - [x] `/settings/memory`新增route：native 0022以tenant/actor独立持久化writesEnabled，缺行默认开启；
   disabled只拒绝GUI remember/correct与built-in remember tool，查看/recall/forbid/delete保持可用。
   页面以typed no-store API呈现50→52 owner keyset、status/kind/sensitivity/scope/source/origin/tags，
@@ -763,6 +788,23 @@ G6 重写后的文本（替换 v3 原四条）：
   CPU/内存硬隔离、具名a11y豁免、admin正式route journey/golden/AX仍todo。Batch51只补其前置
   HumanLease/epoch与closed BrowserInput，browser-operations=`7/39/46`、总parity=`693/993/1686`；没有
   Electron/CDP/ScreenHub实证，不改变上述Desktop renderer与a11y todo；
+- [x] Batch120/R196补`/admin/credentials`与AdminSidebar入口：shared typed API/PG/Vault，100行keyset、
+  默认model引用预填、write-only SecretInput、create/rotate/revoke、local/vendor状态分开；真实PG/session
+  浏览器中英与100+3分页/降权/键盘/焦点通过。4 API/3 event/5 test/1 route闭合，不关闭正式golden/AX、
+  Wry/Windows或G2/G6整关；i18n904、wasm gzip2074750B/CSS116942B/字体740216B。元信息不会回显密文或明文；
+- [ ] Plugins/Skills GUI仍不勾：Batch99–100已给Server/Desktop同一typed ApplicationService补齐
+  `GET /api/plugins`、custom add/delete/general refresh、custom private-egress CIDR、personal/deployment
+  skills、MCP/skill grants与actor-specific for-Agent后端；管理页的`grantedTo`按tenant与actor-visible
+  Agent收窄，skill正文Debug脱敏。Batch101又以固定上游无调用者与真实typed run替代证据退役legacy
+  browser call；Batch102把custom private CIDR贯穿registration/connect/code/refresh/revoke后端，但不包含
+  Desktop installed-app OAuth或任何页面。Batch117/R193再补`/admin/plugins` index/detail/tool三条
+  Server Web路由与AdminSidebar入口，接custom HTTPS/CIDR、OAuth client/本人连接、刷新/移除与逐Agent grant。
+  Rust投影认证三态；串行写入、unknown读回、表单局部错误、开关/模态焦点已在release浏览器中英实走。
+  PG43/UI187/Contracts105/Server233绿、i18n869键、wasm gzip2007787B/CSS116942B/字体740216B。
+  三route仍todo：尚缺production PG/session→GUI整体权限旅程、完整Bearer凭据产品面、Desktop部分transport与
+  实际宿主/Local OAuth；`/admin/skills`、完整AppSidebar、正式golden/AX仍未完成。不得以本批关闭G6；
+  Batch118/R194补Desktop connections读/curated启用framing，Desktop112、Contracts105、Server233与Windows
+  cross-check通过；不冒充实际Wry/GUI、Local OAuth或新的golden证据，以上三route仍todo；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；
@@ -771,6 +813,10 @@ G6 重写后的文本（替换 v3 原四条）：
   尚未闭合；
 - [ ] Web 110 + zh-CN 27 + Desktop 每平台 54 张 golden、完整 AX/键盘/reduced-motion 与三平台
   bundle 摘要尚未闭合；
+- [x] Batch107已闭合Golden **比较/闸门工具本身**：RGBA core 18条、PNG/manifest/diff gate 7条，
+  testkit all-features=`137/0/10 ignored`；`check-manifest=matrix245/masks0/ready=false`，真实1024×1024
+  PNG自比0差异，formal verify因TBD容器/font按预期红。`image 0.25.10`只在testkit xtask optional图，
+  产品图0；这不勾上一条245张基线/AX/reduced-motion，也不冒充xcap/Web CDP capture已接；
 - [ ] Tauri 图的 MPL-2.0×5、runtime UNIC unmaintained×5、Cargo Vet macOS 270/Windows 269
   仍红；不得把 bans/sources 已绿写成供应链整关已绿。
 - [x] 2026-08-28 R123：`xtask bundle-budget` 的 `CSS_LIMIT` 96 → 128 KiB 并新增 `CSS_WARN` 120 KiB
@@ -826,6 +872,7 @@ G6 整关继续不勾。
 - WAI-ARIA Authoring Practices Guide（键盘模式）：<https://www.w3.org/WAI/ARIA/apg/patterns/>
 - WCAG 2.2 对比度（1.4.3 / 1.4.11）：<https://www.w3.org/TR/WCAG22/#contrast-minimum>
 - CDP `Emulation.setEmulatedMedia` / `Accessibility.getFullAXTree` / `Page.captureScreenshot`：<https://chromedevtools.github.io/devtools-protocol/>
+- image 0.25.10（PNG-only golden decoder/encoder）：<https://github.com/image-rs/image/tree/v0.25.10>
 
 ---
 

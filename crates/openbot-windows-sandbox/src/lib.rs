@@ -8,6 +8,8 @@
 #![allow(unsafe_code)]
 
 mod command_line;
+#[cfg(any(windows, test))]
+mod environment;
 
 pub use command_line::{FILETIME_UNIX_EPOCH_TICKS, filetime_ticks_to_unix_millis};
 

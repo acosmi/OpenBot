@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 590
+    expect: 572
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -474,7 +474,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0034
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f的browser-eviction.test.ts逐项移植；Rust pure selector同输入在cap=8、room充足时返回空。browser::eviction定向15/0/0，完整openbot-computer=33/0/2 ignored，Clippy -D warnings绿；另有equal-time stable与i64 cutoff overflow负向。只证明驱逐选择，不冒充ComputerManager/Engine装配。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[42]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「closes nothing while there is room」。"
   - id: "agent-computer-tests-browser-eviction--keeping-the-number-of-running-browsers-u--closes-nothing-at-exactly-the-cap"
@@ -484,7 +485,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0035
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f的browser-eviction.test.ts逐项移植；Rust在running.len()==cap边界严格返回空，防止最后一个合法slot反复重启。browser::eviction定向15/0/0，完整openbot-computer=33/0/2 ignored，Clippy绿。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[43]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「closes nothing at exactly the cap」。"
   - id: "agent-computer-tests-browser-eviction--keeping-the-number-of-running-browsers-u--closes-the-least-recently-used"
@@ -494,7 +496,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0036
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f的500/100/300向量在cap=2精确选择bot-1；Rust stable sort以used-at而非started-at决定LRU。browser::eviction定向15/0/0，完整openbot-computer=33/0/2 ignored，Clippy绿。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[44]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「closes the least recently used」。"
   - id: "agent-computer-tests-browser-eviction--keeping-the-number-of-running-browsers-u--closes-as-many-as-it-takes-to-get-under-the-cap"
@@ -504,7 +507,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0037
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f的500/100/300/200向量在cap=2精确选择bot-1与bot-3，数量为len-cap且不只逐出一项。browser::eviction定向15/0/0，完整openbot-computer=33/0/2 ignored，Clippy绿。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[45]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「closes as many as it takes to get under the cap」。"
   - id: "agent-computer-tests-browser-eviction--keeping-the-number-of-running-browsers-u--the-one-that-just-asked-is-never-the-one-closed"
@@ -514,7 +518,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0038
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f的后置cap不变量逐项复现：刚touch/launch、usedAt最新的key不在eviction plan；equal timestamp另锁stable insertion order。browser::eviction定向15/0/0，完整openbot-computer=33/0/2 ignored。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[46]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「the one that just asked is never the one closed」。"
   - id: "agent-computer-tests-browser-eviction--keeping-the-number-of-running-browsers-u--a-cap-of-one-still-leaves-the-newest-running"
@@ -524,7 +529,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0039
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f的cap=1边界精确逐出旧key并保留最新key；selector使用saturating len-cap避免usize underflow。browser::eviction定向15/0/0，完整openbot-computer=33/0/2 ignored。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[47]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「a cap of one still leaves the newest running」。"
   - id: "agent-computer-tests-browser-eviction--closing-browsers-nothing-has-touched--closes-what-is-past-the-timeout"
@@ -534,7 +540,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0040
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f的NOW/stale/fresh向量逐项复现：usedAt<=NOW-timeout才进入idle plan。Rust以i128 widening计算cutoff，不让极端时钟输入溢出。browser::eviction定向15/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[49]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「closes what is past the timeout」。"
   - id: "agent-computer-tests-browser-eviction--closing-browsers-nothing-has-touched--keeps-one-used-exactly-at-the-boundary-out-of-it"
@@ -544,7 +551,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0041
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "按固定OpenBot@891df72f测试实际断言锁定边界：恰在cutoff计为idle，cutoff内1ms保留；测试标题虽写keeps，行为以源码expect为准。browser::eviction定向15/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[50]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「keeps one used exactly at the boundary out of it」。"
   - id: "agent-computer-tests-browser-eviction--closing-browsers-nothing-has-touched--a-timeout-of-zero-switches-it-off"
@@ -554,7 +562,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0042
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f pure chooseIdle的timeout=0与-1均返回空；这只锁selector语义，不声称env parser允许0（上游numberFromEnv会回落默认）。browser::eviction定向15/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[51]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「a timeout of zero switches it off」。"
   - id: "agent-computer-tests-browser-eviction--closing-browsers-nothing-has-touched--closes-several-at-once"
@@ -564,7 +573,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0043
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f的两stale+一fresh向量精确一次返回两项，保持输入顺序且不误选fresh。browser::eviction定向15/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[52]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「closes several at once」。"
   - id: "agent-computer-tests-browser-eviction--closing-browsers-nothing-has-touched--nothing-running-closes-nothing"
@@ -574,7 +584,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0044
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f空集合对cap与idle两selector均为空；无panic、无伪造关闭事实。browser::eviction定向15/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[53]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「nothing running closes nothing」。"
   - id: "agent-computer-tests-browser-eviction--reading-the-limits-an-operator-set--a-cap-of-zero-closes-everything-which-is-why-empty-must"
@@ -584,7 +595,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0045
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f负向精确复现：pure cap=0选择全部running keys，明确解释为何配置层不得把空字符串读为0。browser::eviction定向15/0/0。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[55]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「a cap of zero closes everything, which is why empty must not read as zero」。"
   - id: "agent-computer-tests-browser-eviction--reading-the-limits-an-operator-set--the-default-keeps-several-browsers-which-is-what-an-unse"
@@ -594,7 +606,8 @@ entries:
     owner: openbot-computer
     test_id: T-TEST-0046
     migration_rule: "preserve: ported"
-    status: todo
+    status: done
+    done_evidence: "固定OpenBot@891df72f默认常量逐值锁定MAX_LIVE_BROWSERS=8与IDLE_TIMEOUT_MS=1800000；三项running在cap8不驱逐。browser::eviction定向15/0/0，完整openbot-computer=33/0/2 ignored，Clippy/fmt绿。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[56]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §11.3 Browser 安全配置：并发上限、闲置回收与运营方配额读取判据逐条移植。上游用例标题：「the default keeps several browsers, which is what an unset variable must produce」。"
   # ---------------------------------------------------------------------------
@@ -7298,21 +7311,23 @@ entries:
   - id: "server-tests-credentials--credential-encryption--creates-a-write-only-credential-and-audits-safe-metadata"
     upstream: "server/tests/credentials.test.ts::credential encryption"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::creates_a_write_only_credential_and_audits_safe_metadata"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0675
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[807]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「creates a write-only credential and audits safe metadata」。"
   - id: "server-tests-credentials--credential-encryption--rotates-then-revokes-credentials-without-returning-plain"
     upstream: "server/tests/credentials.test.ts::credential encryption"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::rotates_then_revokes_credentials_without_returning_plain"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0676
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[808]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「rotates then revokes credentials without returning plaintext」。"
   - id: "server-tests-credentials--credential-encryption--decrypts-only-an-active-credential-for-server-side-use"
@@ -7383,31 +7398,34 @@ entries:
   - id: "server-tests-credentials--admin-credential-api--returns-only-credential-status-and-metadata"
     upstream: "server/tests/credentials.test.ts::admin credential API"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::returns_only_credential_status_and_metadata"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0683
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[818]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「returns only credential status and metadata」。"
   - id: "server-tests-credentials--admin-credential-api--accepts-plaintext-only-on-credential-creation-and-return"
     upstream: "server/tests/credentials.test.ts::admin credential API"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::accepts_plaintext_only_on_credential_creation_and_return"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0684
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[819]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「accepts plaintext only on credential creation and returns safe status」。"
   - id: "server-tests-credentials--admin-credential-api--rotates-and-revokes-through-write-only-administrator-ope"
     upstream: "server/tests/credentials.test.ts::admin credential API"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::rotates_and_revokes_through_write_only_administrator_ope"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0685
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[820]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「rotates and revokes through write-only administrator operations」。"
   # ---------------------------------------------------------------------------

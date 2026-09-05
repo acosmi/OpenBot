@@ -299,6 +299,47 @@ enabled，保持升级兼容。它不是 memory 记录，不进入 list/recall�
 correct 与 built-in `remember` tool 这些会保留新 content 的入口；list/recall/forbid/delete 始终可用，
 因此关闭未来写入不能反过来阻止用户查看或擦除既有数据。
 
+## schema-0028.json：remote AG-UI interrupt/resume
+
+`schema-0028.json`在PostgreSQL **17.11**隔离实例上按baseline 0012 → native 0013..0028 →
+schema facts机械生成，SHA-256为
+`7c6c2351a113423357705e67412679fede1dcdde59cfe19dc77ef8cd2e6d4a2f`。
+
+| 项 | 0028 数量 | 相对 0027 |
+| --- | ---: | ---: |
+| public 表 | 47 | +1 |
+| 列 | 477 | +22 |
+| NOT NULL 列 | 342 | +16 |
+| 约束 | 268 | +15 |
+| 索引 | 97 | +5 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+新增`remote_agent_interrupts`专表；remote descriptor和人的response payload在typed Row Debug中
+强制脱敏，并在run terminal同一事务收敛为无内容retired行。完整生成、scope/audit/resume与
+terminal scrub证据见`fixtures/MANIFEST.yaml::db-schema-0028`和Batch98文档。
+
+## schema-0029.json：custom MCP private egress
+
+`schema-0029.json`在PostgreSQL **17.11**隔离实例上按baseline 0012 → native 0013..0029 →
+schema facts机械生成，SHA-256为
+`c661463f04f2bd38c308191697b6f84625fb091c8089e1fc7b1e42a453e7e4dc`。
+
+| 项 | 0029 数量 | 相对 0028 |
+| --- | ---: | ---: |
+| public 表 | 47 | 0 |
+| 列 | 478 | +1 |
+| NOT NULL 列 | 342 | 0 |
+| 约束 | 269 | +1 |
+| 索引 | 97 | 0 |
+| 触发器 | 4 | 0 |
+| enum / public 函数 / extension | 4 / 1 / 0 | 0 / 0 / 0 |
+
+`mcp_servers.egress_allow_cidrs`只允许custom provenance携带显式numeric CIDR；NULL/空集合
+保持默认public-only。Rust还要求canonical network、排序去重、最多32项/2048字节，并把集合
+绑定进transport fingerprint以及refresh/call两条SafeDialer路径。完整生成与真实TLS RMCP
+正负向证据见`fixtures/MANIFEST.yaml::db-schema-0029`和Batch99文档。
+
 ## 复算命令
 
 ```bash
@@ -340,6 +381,12 @@ python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0021.json',en
 
 # post-0022
 python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0022.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 44 408 299 225 87 4
+
+# post-0028
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0028.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 47 477 342 268 97 4
+
+# post-0029（当前）
+python3 -c "import json,io;d=json.load(io.open('fixtures/db/schema-0029.json',encoding='utf-8'));print(len(d['tables']),sum(len(t['columns']) for t in d['tables']),sum(c['notnull'] for t in d['tables'] for c in t['columns']),sum(len(t['constraints']) for t in d['tables']),sum(len(t['indexes']) for t in d['tables']),sum(len(t['triggers']) for t in d['tables']))"  # 47 478 342 269 97 4
 
 # 表名集合与 parity/tables.yaml 的上游表条目逐字相等（双向差集都必须为空）
 python3 -c "

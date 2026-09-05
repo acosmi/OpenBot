@@ -4748,3 +4748,12 @@ textarea:focus-visible,
     animation: none !important;
   }
 }
+
+.ob-plugin-link, .ob-plugin-grant { @apply flex items-center gap-3 py-3 px-2 min-w-0; }
+.ob-plugin-link { @apply rounded-md text-fg; transition: background-color 120ms; }
+.ob-plugin-link:hover { @apply bg-bg-subtle; }
+.ob-plugin-copy { @apply flex min-w-0 flex-1 flex-col gap-1; overflow-wrap: anywhere; }
+.ob-plugin-copy strong { @apply font-medium; }
+.ob-plugin-value { @apply flex flex-col gap-1 my-4 text-sm text-fg-secondary; overflow-wrap: anywhere; }
+.ob-plugin-value code { @apply text-fg; }
+.ob-plugin-controls { @apply flex flex-col items-start gap-3 mb-6; }

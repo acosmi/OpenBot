@@ -6,7 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use openbot_application::{ProviderMessage, ProviderMessageRole, ProviderToolDefinition};
+use openbot_application::{
+    ProviderMessage, ProviderMessageRole, ProviderRemoteResume, ProviderToolDefinition,
+};
 use serde_json::{Map, Value};
 
 /// Pinned AG-UI version used by the upstream oracle.
@@ -94,6 +96,18 @@ pub enum AguiRole {
     Reasoning,
 }
 
+/// Known-field-only fixed-schema interrupt descriptor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AguiInterrupt {
+    pub(crate) id: String,
+    pub(crate) reason: String,
+    pub(crate) message: Option<String>,
+    pub(crate) tool_call_id: Option<String>,
+    pub(crate) response_schema: Option<Value>,
+    pub(crate) expires_at: Option<String>,
+    pub(crate) metadata: Option<Value>,
+}
+
 /// Normalized, bounded protocol event. Open JSON is always marked `untrusted` in the variant name.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AguiEvent {
@@ -104,7 +118,7 @@ pub enum AguiEvent {
     /// Interrupt terminal; resume is represented on the next RunAgentInput.
     RunInterrupted {
         /// Bounded, schema-validated interrupt descriptors.
-        interrupts: Vec<Value>,
+        interrupts: Vec<AguiInterrupt>,
     },
     /// Error terminal. Message is untrusted display content, never a log/audit value.
     RunError {
@@ -980,8 +994,38 @@ pub fn encode_run_agent_input(
     tools: &[ProviderToolDefinition],
     forwarded_props: Value,
 ) -> Result<Vec<u8>, AguiProtocolError> {
+    encode_run_agent_input_with_resume(
+        thread_id,
+        run_id,
+        messages,
+        tools,
+        forwarded_props,
+        None,
+        None,
+    )
+}
+
+/// Encode a resumed 0.0.57 request with explicit protocol lineage and `resume[]`.
+pub fn encode_run_agent_input_with_resume(
+    thread_id: &str,
+    run_id: &str,
+    messages: &[ProviderMessage],
+    tools: &[ProviderToolDefinition],
+    forwarded_props: Value,
+    parent_run_id: Option<&str>,
+    resume: Option<&ProviderRemoteResume>,
+) -> Result<Vec<u8>, AguiProtocolError> {
     bounded_id(thread_id.to_owned())?;
     bounded_id(run_id.to_owned())?;
+    if let Some(parent_run_id) = parent_run_id {
+        bounded_id(parent_run_id.to_owned())?;
+    }
+    if resume.is_some_and(|resume| {
+        resume.protocol_run_id() != run_id || Some(resume.parent_protocol_run_id()) != parent_run_id
+    }) || parent_run_id.is_some() != resume.is_some()
+    {
+        return Err(AguiProtocolError::InvalidSequence);
+    }
     if messages.is_empty()
         || messages.len() > MAX_AGUI_COLLECTION_ITEMS
         || tools.len() > 256
@@ -1085,7 +1129,7 @@ pub fn encode_run_agent_input(
             }))
         })
         .collect::<Result<Vec<_>, AguiProtocolError>>()?;
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "threadId":thread_id,
         "runId":run_id,
         "state":{},
@@ -1094,6 +1138,21 @@ pub fn encode_run_agent_input(
         "context":[],
         "forwardedProps":forwarded_props,
     });
+    let body_object = body
+        .as_object_mut()
+        .ok_or(AguiProtocolError::InvalidEvent)?;
+    if let Some(parent_run_id) = parent_run_id {
+        body_object.insert(
+            "parentRunId".to_owned(),
+            Value::String(parent_run_id.to_owned()),
+        );
+    }
+    if let Some(resume) = resume {
+        body_object.insert(
+            "resume".to_owned(),
+            Value::Array(resume.wire_entries().to_vec()),
+        );
+    }
     let encoded = serde_json::to_vec(&body).map_err(|_| AguiProtocolError::InvalidEvent)?;
     if encoded.len() > MAX_AGUI_RUN_INPUT_BYTES {
         return Err(AguiProtocolError::TooLarge);
@@ -1220,25 +1279,35 @@ fn patch_array(
     Ok(patch)
 }
 
-fn validate_interrupts(value: Option<&Value>) -> Result<Vec<Value>, AguiProtocolError> {
+fn validate_interrupts(value: Option<&Value>) -> Result<Vec<AguiInterrupt>, AguiProtocolError> {
     let values = value
         .and_then(Value::as_array)
         .filter(|values| !values.is_empty() && values.len() <= 256)
         .ok_or(AguiProtocolError::InvalidEvent)?;
+    let mut interrupts = Vec::with_capacity(values.len());
     for value in values {
         let object = value.as_object().ok_or(AguiProtocolError::InvalidEvent)?;
-        required_bounded_string(object, "id")?;
-        required_bounded_string(object, "reason")?;
-        optional_bounded_string(object, "message")?;
-        optional_bounded_string(object, "toolCallId")?;
-        optional_bounded_string(object, "expiresAt")?;
+        let id = required_bounded_string(object, "id")?;
+        let reason = required_bounded_string(object, "reason")?;
+        let message = optional_bounded_string(object, "message")?;
+        let tool_call_id = optional_bounded_string(object, "toolCallId")?;
+        let expires_at = optional_bounded_string(object, "expiresAt")?;
         for field in ["responseSchema", "metadata"] {
             if object.get(field).is_some_and(|value| !value.is_object()) {
                 return Err(AguiProtocolError::InvalidEvent);
             }
         }
+        interrupts.push(AguiInterrupt {
+            id,
+            reason,
+            message,
+            tool_call_id,
+            response_schema: object.get("responseSchema").cloned(),
+            expires_at,
+            metadata: object.get("metadata").cloned(),
+        });
     }
-    Ok(values.clone())
+    Ok(interrupts)
 }
 
 fn validate_messages(value: Option<&Value>) -> Result<Vec<Value>, AguiProtocolError> {
@@ -1509,7 +1578,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use openbot_application::{ProviderMessage, ProviderMessageRole, ProviderToolCall};
+    use openbot_application::{
+        ProviderMessage, ProviderMessageRole, ProviderRemoteResume, ProviderRemoteResumeEntry,
+        ProviderRemoteResumeStatus, ProviderToolCall,
+    };
 
     fn event(decoder: &mut AguiDecoder, value: Value) -> Vec<AguiEvent> {
         decoder.ingest(&value.to_string()).unwrap()
@@ -1849,6 +1921,67 @@ mod tests {
         assert!(body.get("actor").is_none());
         assert!(body.get("capability").is_none());
         assert!(body.get("target").is_none());
+    }
+
+    #[test]
+    fn resumed_run_input_has_new_run_lineage_and_exact_closed_entries() {
+        let resume = ProviderRemoteResume::new(
+            "run-1".to_owned(),
+            "run-2".to_owned(),
+            vec![
+                ProviderRemoteResumeEntry::new(
+                    "interrupt-1".to_owned(),
+                    ProviderRemoteResumeStatus::Resolved,
+                    Some(json!({"approved":true})),
+                )
+                .unwrap(),
+                ProviderRemoteResumeEntry::new(
+                    "interrupt-2".to_owned(),
+                    ProviderRemoteResumeStatus::Cancelled,
+                    None,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let messages = [ProviderMessage {
+            role: ProviderMessageRole::System,
+            content: "standing".to_owned(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: Vec::new(),
+        }];
+        let encoded = encode_run_agent_input_with_resume(
+            "thread-1",
+            "run-2",
+            &messages,
+            &[],
+            json!({"openbotRun":"signed-local-run"}),
+            Some("run-1"),
+            Some(&resume),
+        )
+        .unwrap();
+        let body: Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(body["runId"], "run-2");
+        assert_eq!(body["parentRunId"], "run-1");
+        assert_eq!(body["resume"][0]["interruptId"], "interrupt-1");
+        assert_eq!(body["resume"][0]["status"], "resolved");
+        assert_eq!(body["resume"][0]["payload"]["approved"], true);
+        assert_eq!(body["resume"][1]["status"], "cancelled");
+        assert!(body["resume"][1].get("payload").is_none());
+        assert_eq!(body["forwardedProps"]["openbotRun"], "signed-local-run");
+        assert_eq!(
+            encode_run_agent_input_with_resume(
+                "thread-1",
+                "run-2",
+                &messages,
+                &[],
+                json!({}),
+                Some("wrong-parent"),
+                Some(&resume),
+            ),
+            Err(AguiProtocolError::InvalidSequence)
+        );
     }
 
     #[test]

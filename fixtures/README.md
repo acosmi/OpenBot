@@ -13,7 +13,7 @@ Phase 0（Evidence Freeze）的 fixture 目录。真源：
 
 | 路径 | 内容 | 状态 |
 | --- | --- | --- |
-| `MANIFEST.yaml` | 本目录的 parity ledger。每条 fixture 一行，`test_id` 前缀 `T-FIX`。 | 37 条：15 done / 22 todo |
+| `MANIFEST.yaml` | 本目录的 parity ledger。每条 fixture 一行，`test_id` 前缀 `T-FIX`。 | 53 条：32 done / 21 todo |
 | `policy/cel-corpus.json` | CEL corpus。69 条表达式 × context，结果类别由 `cel-js@0.8.2` 实跑测出。 | done |
 | `ui/seed.json` | GUI golden 的确定性数据（§10.2）。25 张实体表 95 行 + native 段 + runtime views，覆盖 27 页。 | done |
 | `ui/golden/MANIFEST.toml` | golden 清单：镜像 digest 位、字体、视口、阈值、平台矩阵、mask 规则、bundle 预算。 | done（digest 为 TBD 占位） |
@@ -21,7 +21,8 @@ Phase 0（Evidence Freeze）的 fixture 目录。真源：
 | `agui/*.jsonl` | AG-UI 事件族与畸形事件录像。 | todo（T-FIX-0010..0012） |
 | `provider/*.jsonl` | provider 流录像。 | todo（T-FIX-0013..0017） |
 | `mcp/*.json` | MCP conformance、catalog 漂移、OAuth、恶意载荷。 | todo（T-FIX-0018..0021） |
-| `browser/*.json` | Browser engine 操作、陈旧 ref、被拒副作用、screencast 帧。 | todo（T-FIX-0022..0025） |
+| `browser/*.json` | Browser engine 操作、陈旧 ref、被拒副作用。 | todo（T-FIX-0022..0024） |
+| `computer/*.json` | Browser residency、CDP输入、protocol-v3 screencast/背压、ScreenHub ticket、viewer坐标与Server binary WS边界。 | done（T-FIX-0025/0048..0053；Desktop/生产source/跨平台仍todo） |
 | `upstream-baseline/` | 上游基线测试原始输出归档（§24 G0）。 | todo（T-FIX-0026） |
 
 > `todo` 是 v3 §19.3 允许的状态。G0 的判据是"未归类项 = 0"，不是"全部 done"。
@@ -54,9 +55,9 @@ Phase 0（Evidence Freeze）的 fixture 目录。真源：
 本机复算（六条 recount 全部跑过，见 `MANIFEST.yaml::recount`）：
 
 ```bash
-python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))"          # 26
-python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))"  # 23
-python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))"  # 3
+python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))"          # 53
+python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))"  # 21
+python3 -c "import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))"  # 32
 ```
 
 ---
@@ -182,7 +183,7 @@ jq '.native.messages | length' fixtures/ui/seed.json                            
 - zh-CN 的 27 来自 Phase 0 任务书；§10.1 的矩阵表本身没有 locale 维度，所以清单把 zh-CN 腿的主题与视口各钉死为一个值（light / 1440×900）来让 27 成立，改任一维度就要同 PR 改 §10.1。
 - 比对：任一通道差 `> 16/255` 记为差异像素；**失败判据 = 差异像素 > 0.1% 或存在任一 8×8 全差异块**。
 - mask 清单首版为**空**，并写死"新增 mask 需评审"的规则。空不是遗漏：seed + Clock + 确定性头像已覆盖 27 页的全部动态源，实时 screencast 帧不在这 27 页里。
-- bundle 预算三行：`app.wasm` gzip ≤ 3.5 MiB、`app.css` ≤ 96 KiB、两份 woff2 ≤ 800 KiB（实测 740,216 B = 352,240 + 387,976）。
+- bundle 预算三行：`app.wasm` gzip ≤ 3.5 MiB、`app.css` ≤ 128 KiB（120 KiB warning）、两份 woff2 ≤ 800 KiB（实测 740,216 B = 352,240 + 387,976）。
 
 复算：
 
@@ -193,13 +194,16 @@ python3 -c "import tomllib,pathlib;d=tomllib.loads(pathlib.Path('fixtures/ui/gol
 
 ---
 
-## 6. 四类"必须实录"的 fixture 为什么现在录不了
+## 6. 四类“必须实录”fixture 的当前边界
 
-`agui` / `provider` / `mcp` / `browser` 四类是**录像**，不是可静态推导的产物。把它们写成 `done` 会同时骗过校验器与主控，所以它们全部是 `todo`，并在 `MANIFEST.yaml` 里逐条写明解除条件。共同的阻塞面有三个：
+本节最初的“crates 为空、四类全部 todo”已被后续批次推翻，当前状态只认
+`fixtures/MANIFEST.yaml`与v4最新R行。AG-UI十一事件族已有production PostgreSQL纵向；OpenAI recorded
+trace为provider `1/3`；RMCP已有产品协议纵向但完整官方conformance仍todo；Browser/CDP/Screen真实矩阵仍缺。
 
-1. **本仓零实现代码。** `crates/` 下十个 crate 目前是空骨架，`openbot-agent` / `openbot-computer` / `openbot-server` / `openbot-testkit` 都不存在，因此"录下来给谁重放"这一半还没有。`openbot-testkit` 的 fault injection 是 `agui-transport-interruption` 与 `provider-commit-divergence` 两条的硬前提。
-2. **没有上游运行环境。** 本轮的上游克隆是**只读**的：`bun install` 会写 `node_modules`，Playwright 会下载浏览器，`*.integration.test.ts` 需要 PostgreSQL。要录 `browser/*` 与 `upstream-baseline/`，必须先把克隆复制到可写目录并起一个一次性 PostgreSQL。
-3. **没有外部凭据与官方 schema 副本。** `provider/*` 需要一份可用于录制的 provider 凭据；`agui/official-event-family` 需要 AG-UI 官方 schema 的固定版本；`mcp/rmcp-conformance` 需要 RMCP 3.1.4 的 conformance 套件。三者都应按 v3 §16.3 的供应链条目 vendored 进仓并写进 `tools/pins.toml`（含 sha256），之后就能离线重跑——**而不是每次录制时联网现取**。
+尚存的共同外部边界是：Anthropic/Google官方recorded或live credential证据、固定官方RMCP conformance
+runner、Ubuntu runsc/Xvfb与Windows真机，以及Web golden的固定Linux镜像/fonts和Desktop正式发行窗口。
+这些缺口不得用手写事件、compile-only、单元测试或本机另一平台结果替代。Batch107已经提供PNG-only
+比较/diff/manifest gate；容器digest或245张基线缺失时`cargo xtask golden verify`必须判红。
 
 依赖顺序（先做上面的才能做下面的）：
 

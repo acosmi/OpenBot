@@ -258,10 +258,9 @@ entries:
     test_id: "T-UI-0008"
     migration_rule: "preserve"
     status: "done"
-    done_evidence: "controlled Input 只接受闭集 text/email/password/search/url；Field context 自动接线，standalone 要 id/aria-label；invalid/disabled/focus 有 explicit aria/data state。Chromium fill 后 value=Ada Lovelace、aria-invalid=false、description exact；另一个 Field-disabled Input 原生 disabled=true，search input 可命名且获得真 focus。"
+    done_evidence: "历史controlled Input包含password；Batch119按§6.4改为普通Input仅text/email/search/url，密码由同家族SecretInput的DOM所有权实现；Field context 自动接线，standalone 要 id/aria-label；invalid/disabled/focus 有 explicit aria/data state。Chromium fill 后 value=Ada Lovelace、aria-invalid=false、description exact；另一个 Field-disabled Input 原生 disabled=true，search input 可命名且获得真 focus。 Batch119 Contracts108/UI188、WASM/Clippy与三类release密钥表单的失败/重填/取消/保存通过；不缓存响应式明文，正式golden仍独立todo。"
     evidence: "ls app/src/components/ui | wc -l = 21（上游 891df72f 干净克隆，本轮实跑）"
     notes: "键盘 / ARIA（WAI-ARIA APG）：APG textbox。状态子集：focus/disabled/invalid。替代的无头库 = base-ui Input。invalid 态由 Field 下传 `aria-invalid`，不由 Input 自己判断。 状态由 `data-state` 驱动，CSS 以 `&:is(:hover, [data-state~=\"hover\"])` 同时响应真实交互与强制态，使 §10.3 设计画廊能静态渲染每个状态（否则 hover/active 这类态在 golden 里根本拍不到）。"
-
   - id: "prim-item"
     upstream: "app/src/components/ui/item.tsx"
     label: "parity"

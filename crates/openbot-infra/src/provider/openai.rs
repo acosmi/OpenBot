@@ -658,12 +658,25 @@ impl ResponsesDecoder {
             }
             "response.function_call_arguments.done" => {
                 let item_id = string_field(&value, "item_id")?;
-                let name = string_field(&value, "name")?;
+                let name = match value.get("name") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(name))
+                        if !name.is_empty() && name.len() <= MAX_PROVIDER_FIELD_BYTES =>
+                    {
+                        Some(name.as_str())
+                    }
+                    _ => return Err(ProviderFailure::InvalidResponse),
+                };
                 let arguments = string_field(&value, "arguments")?;
                 let tool = self
                     .tools
                     .remove(item_id)
                     .ok_or(ProviderFailure::InvalidResponse)?;
+                if value.get("output_index").is_some()
+                    && u32_field(&value, "output_index")? != tool.index
+                {
+                    return Err(ProviderFailure::InvalidResponse);
+                }
                 output.push(tool.complete(name, arguments)?);
             }
             "response.completed" => {
@@ -846,11 +859,20 @@ impl ToolAccumulator {
         }
     }
 
-    fn complete(self, name: &str, arguments: &str) -> Result<ProviderEvent, ProviderFailure> {
-        if self.name.as_deref().is_some_and(|known| known != name)
-            || (!self.arguments.is_empty() && self.arguments != arguments)
-            || name.is_empty()
-        {
+    fn complete(
+        self,
+        completed_name: Option<&str>,
+        arguments: &str,
+    ) -> Result<ProviderEvent, ProviderFailure> {
+        let name = match (self.name.as_deref(), completed_name) {
+            (Some(known), Some(completed)) if known != completed => {
+                return Err(ProviderFailure::InvalidResponse);
+            }
+            (Some(known), _) => known,
+            (None, Some(completed)) => completed,
+            (None, None) => return Err(ProviderFailure::InvalidResponse),
+        };
+        if !self.arguments.is_empty() && self.arguments != arguments {
             return Err(ProviderFailure::InvalidResponse);
         }
         let arguments: Value =
@@ -1168,6 +1190,34 @@ mod tests {
         }
         assert_eq!(
             decoder.ingest(r#"{"type":"response.function_call_arguments.done","item_id":"item","name":"tool","arguments":"{}","sequence_number":2}"#),
+            Err(ProviderFailure::InvalidResponse)
+        );
+    }
+
+    #[test]
+    fn responses_function_call_done_rejects_identity_drift_or_missing_name() {
+        let added_with_name = r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"item","call_id":"call","name":"tool"},"sequence_number":0}"#;
+
+        let mut renamed = ResponsesDecoder::default();
+        renamed.ingest(added_with_name).unwrap();
+        assert_eq!(
+            renamed.ingest(r#"{"type":"response.function_call_arguments.done","item_id":"item","name":"other","arguments":"{}","sequence_number":1}"#),
+            Err(ProviderFailure::InvalidResponse)
+        );
+
+        let mut reindexed = ResponsesDecoder::default();
+        reindexed.ingest(added_with_name).unwrap();
+        assert_eq!(
+            reindexed.ingest(r#"{"type":"response.function_call_arguments.done","item_id":"item","output_index":1,"arguments":"{}","sequence_number":1}"#),
+            Err(ProviderFailure::InvalidResponse)
+        );
+
+        let mut unnamed = ResponsesDecoder::default();
+        unnamed
+            .ingest(r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"item","call_id":"call","name":null},"sequence_number":0}"#)
+            .unwrap();
+        assert_eq!(
+            unnamed.ingest(r#"{"type":"response.function_call_arguments.done","item_id":"item","arguments":"{}","sequence_number":1}"#),
             Err(ProviderFailure::InvalidResponse)
         );
     }

@@ -9,10 +9,12 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use openbot_application::{
     AgentAudit, AgentAuditKind, AgentContextError, AgentContextSource, DurableTextRun,
-    ProviderAdapter, ProviderEvent, ProviderFailure, ProviderPortError, ProviderRateCard,
-    RunCancellationDisposition, RunCostCap, RunDispatchConsumer, RunDispatchDecision,
-    RunExecutionLease, RunFailureCode, RunRuntime, RunRuntimeError, RunTerminal,
-    RunTokenUsageReceipt, RunToolExchange,
+    NoRemoteInterruptCoordinator, ProviderAdapter, ProviderEvent, ProviderFailure,
+    ProviderPortError, ProviderRateCard, ProviderRemoteInterruptBatch, ProviderRemoteResume,
+    ProviderRoute, RemoteInterruptCoordinator, RemoteInterruptError, RunCancellationDisposition,
+    RunCostCap, RunDispatchConsumer, RunDispatchDecision, RunExecutionLease, RunFailureCode,
+    RunRuntime, RunRuntimeError, RunTerminal, RunTokenUsageReceipt, RunToolExchange,
+    ToolCancellationHandle, ToolCancellationReason, tool_execution_cancellation,
 };
 use openbot_contracts::components::is_component_human_decision_name;
 use openbot_domain::agent::{
@@ -40,6 +42,8 @@ pub const DEFAULT_AGENT_CONCURRENCY: usize = 8;
 pub const DEFAULT_AGENT_TOOL_CONCURRENCY: usize = 8;
 /// Hard configuration ceiling for process-wide tool concurrency.
 pub const MAX_AGENT_TOOL_CONCURRENCY: usize = 256;
+/// Bounded grace for a protocol-aware tool to transmit cancellation and stop its child.
+const TOOL_CANCELLATION_GRACE: Duration = Duration::from_secs(5);
 
 /// Built-in runtime configuration。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +114,27 @@ impl BuiltInAgentRuntime {
         audit: Arc<dyn AgentAudit>,
         config: BuiltInAgentConfig,
     ) -> Result<Self, RunFailureCode> {
+        Self::start_with_remote_interrupts(
+            runtime,
+            context,
+            provider,
+            tools,
+            audit,
+            Arc::new(NoRemoteInterruptCoordinator),
+            config,
+        )
+    }
+
+    /// Start with a durable remote AG-UI interrupt coordinator.
+    pub fn start_with_remote_interrupts(
+        runtime: Arc<dyn RunRuntime>,
+        context: Arc<dyn AgentContextSource>,
+        provider: Arc<dyn ProviderAdapter>,
+        tools: Arc<dyn AgentToolInvoker>,
+        audit: Arc<dyn AgentAudit>,
+        remote_interrupts: Arc<dyn RemoteInterruptCoordinator>,
+        config: BuiltInAgentConfig,
+    ) -> Result<Self, RunFailureCode> {
         let config = config.validate()?;
         let (sender, receiver) = mpsc::channel(config.queue_capacity);
         let (stop, stop_rx) = watch::channel(false);
@@ -119,6 +144,7 @@ impl BuiltInAgentRuntime {
             provider,
             tools,
             audit,
+            remote_interrupts,
             config,
             sender,
             reservations: Mutex::new(BTreeMap::new()),
@@ -238,6 +264,7 @@ struct Inner {
     provider: Arc<dyn ProviderAdapter>,
     tools: Arc<dyn AgentToolInvoker>,
     audit: Arc<dyn AgentAudit>,
+    remote_interrupts: Arc<dyn RemoteInterruptCoordinator>,
     config: BuiltInAgentConfig,
     sender: mpsc::Sender<Activation>,
     reservations: Mutex<BTreeMap<String, Reservation>>,
@@ -388,6 +415,11 @@ enum ControlledChild<T> {
     LeaseLost,
 }
 
+enum SamplingOutcome {
+    Tools(Vec<AgentToolCall>),
+    Interrupted(ProviderRemoteInterruptBatch),
+}
+
 async fn supervise(
     inner: Arc<Inner>,
     mut receiver: mpsc::Receiver<Activation>,
@@ -505,6 +537,9 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
     let mut run_output_ceiling = None::<Option<u64>>;
     let mut run_rate_card = None::<Option<ProviderRateCard>>;
     let mut run_cost_cap = None::<Option<RunCostCap>>;
+    let mut current_protocol_run_id = lease.run_id().as_str().to_owned();
+    let mut pending_remote_resume = None::<ProviderRemoteResume>;
+    let mut bound_remote_endpoint = None::<String>;
     if inner
         .audit
         .record(lease, AgentAuditKind::Invoked)
@@ -522,7 +557,20 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
         .run_deadline
         .map(|duration| tokio::time::Instant::now() + duration);
     loop {
-        let request = match await_run_child(
+        // The run-wide output ceiling is derived from at most nine provider invocations
+        // (initial + eight continuations). Interrupt resumes consume the same continuation
+        // budget as tool-result resampling, so disabling the wall-clock deadline cannot create
+        // an unbounded remote human loop or an unbounded native interrupt table.
+        if sampling_index > u32::from(TOOL_STEP_CAP) {
+            drive_terminal_event(
+                &mut state,
+                &mut journal,
+                AgentEvent::ContextFailed(AgentFailure::ProviderInvalidResponse),
+            )
+            .await;
+            return;
+        }
+        let mut request = match await_run_child(
             inner.context.load(lease),
             &mut activation.cancel,
             &mut renew,
@@ -558,6 +606,73 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
                 return;
             }
         };
+        if let Some(resume) = pending_remote_resume.take() {
+            let next_protocol_run_id = resume.protocol_run_id().to_owned();
+            let fresh_route = match &request.route {
+                ProviderRoute::RemoteAgUi(route)
+                    if route.local_run_id() == lease.run_id().as_str() =>
+                {
+                    route
+                        .clone()
+                        .with_fresh_resume(&current_protocol_run_id, resume)
+                }
+                _ => Err(AgentContextError::Corrupt {
+                    field: "remote_resume_route",
+                }),
+            };
+            let route = match fresh_route {
+                Ok(route) => route,
+                Err(error) => {
+                    drive_terminal_event(
+                        &mut state,
+                        &mut journal,
+                        AgentEvent::ContextFailed(context_failure(error)),
+                    )
+                    .await;
+                    return;
+                }
+            };
+            request.route = ProviderRoute::RemoteAgUi(route);
+            current_protocol_run_id = next_protocol_run_id;
+        }
+        match &request.route {
+            ProviderRoute::RemoteAgUi(route)
+                if route.local_run_id() != lease.run_id().as_str()
+                    || route.thread_id() != lease.thread_id().as_str()
+                    || route.bot_id() != lease.bot_id().as_str() =>
+            {
+                drive_terminal_event(
+                    &mut state,
+                    &mut journal,
+                    AgentEvent::ContextFailed(AgentFailure::ProviderInvalidResponse),
+                )
+                .await;
+                return;
+            }
+            ProviderRoute::RemoteAgUi(route) => match &bound_remote_endpoint {
+                None => bound_remote_endpoint = Some(route.endpoint().to_owned()),
+                Some(endpoint) if endpoint == route.endpoint() => {}
+                Some(_) => {
+                    drive_terminal_event(
+                        &mut state,
+                        &mut journal,
+                        AgentEvent::ContextFailed(AgentFailure::ProviderInvalidResponse),
+                    )
+                    .await;
+                    return;
+                }
+            },
+            _ if bound_remote_endpoint.is_some() => {
+                drive_terminal_event(
+                    &mut state,
+                    &mut journal,
+                    AgentEvent::ContextFailed(AgentFailure::ProviderInvalidResponse),
+                )
+                .await;
+                return;
+            }
+            _ => {}
+        }
         let max_output_tokens = request.max_output_tokens;
         let candidate_rate_card = request.rate_card.clone();
         let candidate_cost_cap = request.cost_cap.clone();
@@ -749,7 +864,23 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
                             ).await;
                             return;
                         }
-                        break pending_tools.into_values().collect::<Vec<_>>();
+                        break SamplingOutcome::Tools(
+                            pending_tools.into_values().collect::<Vec<_>>(),
+                        );
+                    }
+                    Ok(Some(ProviderEvent::Interrupted(batch))) => {
+                        if !pending_tools.is_empty()
+                            || (max_output_tokens.is_some() && !usage_seen)
+                            || batch.protocol_run_id() != current_protocol_run_id
+                        {
+                            drive_terminal_event(
+                                &mut state,
+                                &mut journal,
+                                AgentEvent::ProviderFailed(AgentFailure::ProviderInvalidResponse),
+                            ).await;
+                            return;
+                        }
+                        break SamplingOutcome::Interrupted(batch);
                     }
                     Ok(Some(event)) => {
                         let sampling = ProviderSamplingContext {
@@ -792,6 +923,106 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
             }
         };
         drop(session);
+        let calls = match calls {
+            SamplingOutcome::Tools(calls) => calls,
+            SamplingOutcome::Interrupted(batch) => {
+                let Ok((next, effects)) = reduce(&state, AgentEvent::HumanRequired) else {
+                    return;
+                };
+                state = next;
+                if !matches!(effects.as_slice(), [AgentEffect::AwaitHuman]) {
+                    return;
+                }
+                let resume = match await_run_child(
+                    inner.remote_interrupts.persist_and_wait(lease, &batch),
+                    &mut activation.cancel,
+                    &mut renew,
+                    deadline,
+                    inner.runtime.as_ref(),
+                    lease,
+                )
+                .await
+                {
+                    ControlledChild::Ready(Ok(resume)) => resume,
+                    ControlledChild::Ready(Err(RemoteInterruptError::Stale)) => {
+                        drive_terminal_event(&mut state, &mut journal, AgentEvent::LeaseLost).await;
+                        return;
+                    }
+                    ControlledChild::Ready(Err(RemoteInterruptError::CommitUnknown)) => {
+                        drive_terminal_event(
+                            &mut state,
+                            &mut journal,
+                            AgentEvent::JournalCommitUnknown,
+                        )
+                        .await;
+                        return;
+                    }
+                    ControlledChild::Ready(Err(RemoteInterruptError::Unavailable)) => {
+                        drive_terminal_event(
+                            &mut state,
+                            &mut journal,
+                            AgentEvent::RemoteResumeFailed(AgentFailure::ProviderUnavailable),
+                        )
+                        .await;
+                        return;
+                    }
+                    ControlledChild::Ready(Err(
+                        RemoteInterruptError::Conflict | RemoteInterruptError::Corrupt { .. },
+                    )) => {
+                        drive_terminal_event(
+                            &mut state,
+                            &mut journal,
+                            AgentEvent::RemoteResumeFailed(AgentFailure::ProviderInvalidResponse),
+                        )
+                        .await;
+                        return;
+                    }
+                    ControlledChild::Cancelled(source) => {
+                        cancel_and_commit(
+                            &mut state,
+                            &mut journal,
+                            inner.audit.as_ref(),
+                            lease,
+                            source,
+                        )
+                        .await;
+                        return;
+                    }
+                    ControlledChild::LeaseLost => {
+                        drive_terminal_event(&mut state, &mut journal, AgentEvent::LeaseLost).await;
+                        return;
+                    }
+                };
+                if resume.parent_protocol_run_id() != batch.protocol_run_id() {
+                    drive_terminal_event(
+                        &mut state,
+                        &mut journal,
+                        AgentEvent::RemoteResumeFailed(AgentFailure::ProviderInvalidResponse),
+                    )
+                    .await;
+                    return;
+                }
+                let Ok((next, effects)) = reduce(&state, AgentEvent::RemoteResumeReady) else {
+                    return;
+                };
+                state = next;
+                if !matches!(effects.as_slice(), [AgentEffect::LoadContext]) {
+                    return;
+                }
+                pending_remote_resume = Some(resume);
+                let Some(next_sampling_index) = sampling_index.checked_add(1) else {
+                    drive_terminal_event(
+                        &mut state,
+                        &mut journal,
+                        AgentEvent::ContextFailed(AgentFailure::RunTokenBudgetExceeded),
+                    )
+                    .await;
+                    return;
+                };
+                sampling_index = next_sampling_index;
+                continue;
+            }
+        };
         let Ok((next, effects)) = reduce(&state, AgentEvent::ProviderToolCalls(calls)) else {
             return;
         };
@@ -943,10 +1174,17 @@ async fn invoke_serial_tool(
     let invocation_lease = lease.clone();
     let provider_call_id = call.call_id.clone();
     let tool_name = call.name.clone();
+    let (tool_cancel, tool_cancellation) = tool_execution_cancellation();
     let invocation = async move {
         let _budget = budget;
         tools
-            .invoke(&invocation_lease, &provider_call_id, &tool_name, arguments)
+            .invoke_cancellable(
+                &invocation_lease,
+                &provider_call_id,
+                &tool_name,
+                arguments,
+                tool_cancellation,
+            )
             .await
     };
     let outcome = if waits_for_human {
@@ -974,8 +1212,9 @@ async fn invoke_serial_tool(
             ControlledChild::LeaseLost => ControlledChild::LeaseLost,
         }
     } else {
-        await_run_child(
-            invocation,
+        match await_cancellable_tool_task(
+            tokio::spawn(invocation),
+            &tool_cancel,
             control.cancel,
             control.renew,
             control.deadline,
@@ -983,6 +1222,18 @@ async fn invoke_serial_tool(
             lease,
         )
         .await
+        {
+            ControlledChild::Ready(Ok(result)) => ControlledChild::Ready(result),
+            ControlledChild::Ready(Err(error)) => {
+                tracing::error!(
+                    cancelled = error.is_cancelled(),
+                    "tool invocation task ended without a result"
+                );
+                ControlledChild::Ready(Err(AgentToolInvokeError::Unavailable))
+            }
+            ControlledChild::Cancelled(source) => ControlledChild::Cancelled(source),
+            ControlledChild::LeaseLost => ControlledChild::LeaseLost,
+        }
     };
     if waits_for_human && matches!(&outcome, ControlledChild::Ready(_)) {
         let Ok((next, effects)) = reduce(state, AgentEvent::HumanReleased) else {
@@ -1230,6 +1481,68 @@ where
     }
 }
 
+async fn await_cancellable_tool_task<T>(
+    mut child: JoinHandle<T>,
+    tool_cancel: &ToolCancellationHandle,
+    cancel: &mut watch::Receiver<bool>,
+    renew: &mut tokio::time::Interval,
+    deadline: Option<tokio::time::Instant>,
+    runtime: &dyn RunRuntime,
+    lease: &RunExecutionLease,
+) -> ControlledChild<Result<T, tokio::task::JoinError>> {
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut child => return ControlledChild::Ready(result),
+            changed = cancel.changed() => {
+                if changed.is_err() || *cancel.borrow() {
+                    tool_cancel.cancel(ToolCancellationReason::User);
+                    stop_cancellable_tool_task(&mut child, renew, runtime, lease).await;
+                    return ControlledChild::Cancelled(CancellationSource::User);
+                }
+            }
+            () = wait_optional(deadline) => {
+                tool_cancel.cancel(ToolCancellationReason::Deadline);
+                stop_cancellable_tool_task(&mut child, renew, runtime, lease).await;
+                return ControlledChild::Cancelled(CancellationSource::Deadline);
+            }
+            _ = renew.tick() => {
+                if runtime.renew_lease(lease).await.is_err() {
+                    tool_cancel.cancel(ToolCancellationReason::LeaseLost);
+                    stop_cancellable_tool_task(&mut child, renew, runtime, lease).await;
+                    return ControlledChild::LeaseLost;
+                }
+            }
+        }
+    }
+}
+
+async fn stop_cancellable_tool_task<T>(
+    child: &mut JoinHandle<T>,
+    renew: &mut tokio::time::Interval,
+    runtime: &dyn RunRuntime,
+    lease: &RunExecutionLease,
+) {
+    let stop_deadline = tokio::time::Instant::now() + TOOL_CANCELLATION_GRACE;
+    loop {
+        tokio::select! {
+            _ = &mut *child => return,
+            () = tokio::time::sleep_until(stop_deadline) => {
+                child.abort();
+                let _ = child.await;
+                return;
+            }
+            _ = renew.tick() => {
+                if runtime.renew_lease(lease).await.is_err() {
+                    child.abort();
+                    let _ = child.await;
+                    return;
+                }
+            }
+        }
+    }
+}
+
 struct ProviderSamplingContext<'a> {
     max_output_tokens: Option<u32>,
     usage_seen: &'a mut bool,
@@ -1281,6 +1594,25 @@ async fn handle_provider_event(
                 return true;
             }
             false
+        }
+        ProviderEvent::RemoteProjection(projection) => {
+            if let Err(error) = journal.append_remote_projection(&projection).await {
+                journal_failure(state, journal, error).await;
+                true
+            } else {
+                false
+            }
+        }
+        ProviderEvent::Interrupted(_) => {
+            // The provider boundary preserves the fixed interrupt contract. Until the durable
+            // human coordinator consumes it, retain the previous fail-closed run behavior.
+            drive_terminal_event(
+                state,
+                journal,
+                AgentEvent::ProviderFailed(AgentFailure::ProviderGenerationFailed),
+            )
+            .await;
+            true
         }
         ProviderEvent::ToolCallCompleted { .. } => {
             drive_terminal_event(
@@ -1606,8 +1938,10 @@ mod tests {
 
     use openbot_application::{
         AgentAuditError, ClaimedRunDispatch, NoAgentAudit, ProviderBillingFamily, ProviderMessage,
-        ProviderMessageRole, ProviderPortError, ProviderRateCardInput, ProviderRequest,
-        ProviderSession, ProviderUsage, RunSemanticChannel, RunTokenUsage, RunToolExchange,
+        ProviderMessageRole, ProviderPortError, ProviderRateCardInput, ProviderRemoteInterrupt,
+        ProviderRemoteInterruptInput, ProviderRemoteResumeEntry, ProviderRemoteResumeStatus,
+        ProviderRequest, ProviderSession, ProviderUsage, RemoteAguiRoute, RemoteInterruptPending,
+        RemoteInterruptResolutionReceipt, RunSemanticChannel, RunTokenUsage, RunToolExchange,
         RunWriteReceipt,
     };
     use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId, ToolCallId};
@@ -2047,6 +2381,170 @@ mod tests {
         starts: AtomicUsize,
     }
 
+    struct RemoteResumeContext;
+
+    #[derive(Default)]
+    struct DriftingRemoteResumeContext {
+        loads: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl AgentContextSource for RemoteResumeContext {
+        async fn load(
+            &self,
+            lease: &RunExecutionLease,
+        ) -> Result<ProviderRequest, AgentContextError> {
+            Ok(ProviderRequest {
+                route: ProviderRoute::RemoteAgUi(RemoteAguiRoute::new(
+                    "https://agent.example.test/run".to_owned(),
+                    lease.thread_id().as_str().to_owned(),
+                    lease.run_id().as_str().to_owned(),
+                    lease.bot_id().as_str().to_owned(),
+                    None,
+                )?),
+                messages: vec![ProviderMessage {
+                    role: ProviderMessageRole::User,
+                    content: "hello".to_owned(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_calls: Vec::new(),
+                }],
+                tools: Vec::new(),
+                max_output_tokens: None,
+                rate_card: None,
+                cost_cap: None,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl AgentContextSource for DriftingRemoteResumeContext {
+        async fn load(
+            &self,
+            lease: &RunExecutionLease,
+        ) -> Result<ProviderRequest, AgentContextError> {
+            let endpoint = if self.loads.fetch_add(1, AtomicOrdering::SeqCst) == 0 {
+                "https://agent.example.test/run"
+            } else {
+                "https://replacement.example.test/run"
+            };
+            Ok(ProviderRequest {
+                route: ProviderRoute::RemoteAgUi(RemoteAguiRoute::new(
+                    endpoint.to_owned(),
+                    lease.thread_id().as_str().to_owned(),
+                    lease.run_id().as_str().to_owned(),
+                    lease.bot_id().as_str().to_owned(),
+                    None,
+                )?),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                max_output_tokens: None,
+                rate_card: None,
+                cost_cap: None,
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingRemoteProvider {
+        routes: StdMutex<Vec<RemoteAguiRoute>>,
+    }
+
+    #[async_trait]
+    impl ProviderAdapter for RecordingRemoteProvider {
+        async fn start(
+            &self,
+            request: ProviderRequest,
+        ) -> Result<Box<dyn ProviderSession>, ProviderPortError> {
+            let ProviderRoute::RemoteAgUi(route) = request.route else {
+                return Err(ProviderPortError::InvalidRequest {
+                    field: "test_remote_route",
+                });
+            };
+            let first = self.routes.lock().expect("remote routes").is_empty();
+            self.routes
+                .lock()
+                .expect("remote routes")
+                .push(route.clone());
+            let events = if first {
+                vec![ProviderEvent::Interrupted(
+                    ProviderRemoteInterruptBatch::new(
+                        route.run_id().to_owned(),
+                        vec![
+                            ProviderRemoteInterrupt::new(ProviderRemoteInterruptInput {
+                                id: "interrupt-1".to_owned(),
+                                reason: "human_input".to_owned(),
+                                message: Some("Choose".to_owned()),
+                                tool_call_id: None,
+                                response_schema: Some(serde_json::json!({"type":"string"})),
+                                expires_at: None,
+                                metadata: None,
+                            })
+                            .expect("test interrupt"),
+                        ],
+                    )
+                    .expect("test batch"),
+                )]
+            } else {
+                vec![ProviderEvent::Completed]
+            };
+            Ok(Box::new(FakeSession {
+                events: events.into(),
+                hold: false,
+            }))
+        }
+    }
+
+    #[derive(Default)]
+    struct ImmediateRemoteCoordinator {
+        waits: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl RemoteInterruptCoordinator for ImmediateRemoteCoordinator {
+        async fn list_pending(
+            &self,
+            _auth: &openbot_contracts::auth::AuthContext,
+        ) -> Result<Vec<RemoteInterruptPending>, RemoteInterruptError> {
+            Ok(Vec::new())
+        }
+
+        async fn resolve(
+            &self,
+            _auth: &openbot_contracts::auth::AuthContext,
+            _request_id: &str,
+            _status: ProviderRemoteResumeStatus,
+            _payload: Option<serde_json::Value>,
+        ) -> Result<RemoteInterruptResolutionReceipt, RemoteInterruptError> {
+            Err(RemoteInterruptError::Unavailable)
+        }
+
+        async fn persist_and_wait(
+            &self,
+            _lease: &RunExecutionLease,
+            batch: &ProviderRemoteInterruptBatch,
+        ) -> Result<ProviderRemoteResume, RemoteInterruptError> {
+            self.waits.fetch_add(1, AtomicOrdering::SeqCst);
+            ProviderRemoteResume::new(
+                batch.protocol_run_id().to_owned(),
+                "protocol-resumed-1".to_owned(),
+                vec![
+                    ProviderRemoteResumeEntry::new(
+                        "interrupt-1".to_owned(),
+                        ProviderRemoteResumeStatus::Resolved,
+                        Some(serde_json::json!("yes")),
+                    )
+                    .map_err(|_| RemoteInterruptError::Corrupt {
+                        field: "test_resume",
+                    })?,
+                ],
+            )
+            .map_err(|_| RemoteInterruptError::Corrupt {
+                field: "test_resume",
+            })
+        }
+    }
+
     #[async_trait]
     impl ProviderAdapter for SequencedProvider {
         async fn start(
@@ -2127,6 +2625,47 @@ mod tests {
         started: AtomicUsize,
         first_started: Notify,
         second_scheduled: Notify,
+    }
+
+    struct CooperativeCancellationToolInvoker {
+        started: Notify,
+        stopped: Arc<AtomicBool>,
+        reason: StdMutex<Option<ToolCancellationReason>>,
+    }
+
+    struct StopAwareDeadlineAudit {
+        stopped: Arc<AtomicBool>,
+        observed: AtomicBool,
+    }
+
+    impl CooperativeCancellationToolInvoker {
+        fn new() -> Self {
+            Self {
+                started: Notify::new(),
+                stopped: Arc::new(AtomicBool::new(false)),
+                reason: StdMutex::new(None),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AgentAudit for StopAwareDeadlineAudit {
+        async fn record(
+            &self,
+            _lease: &RunExecutionLease,
+            kind: AgentAuditKind,
+        ) -> Result<(), AgentAuditError> {
+            if kind == AgentAuditKind::RunDeadlineExceeded {
+                assert!(
+                    self.stopped.load(AtomicOrdering::SeqCst),
+                    "deadline audit must follow cooperative child stop"
+                );
+                self.observed.store(true, AtomicOrdering::SeqCst);
+            } else {
+                assert_eq!(kind, AgentAuditKind::Invoked);
+            }
+            Ok(())
+        }
     }
 
     impl BudgetBlockingToolInvoker {
@@ -2268,6 +2807,36 @@ mod tests {
                 self.first_started.notify_one();
             }
             pending().await
+        }
+    }
+
+    #[async_trait]
+    impl AgentToolInvoker for CooperativeCancellationToolInvoker {
+        async fn invoke(
+            &self,
+            _lease: &RunExecutionLease,
+            _provider_call_id: &str,
+            _tool_name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
+            pending().await
+        }
+
+        async fn invoke_cancellable(
+            &self,
+            _lease: &RunExecutionLease,
+            _provider_call_id: &str,
+            tool_name: &str,
+            arguments: serde_json::Value,
+            mut cancellation: openbot_application::ToolExecutionCancellation,
+        ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
+            assert_eq!(tool_name, "remember");
+            assert_eq!(arguments, serde_json::json!({"content":"tea"}));
+            self.started.notify_one();
+            let reason = cancellation.cancelled().await;
+            *self.reason.lock().expect("cancellation reason") = Some(reason);
+            self.stopped.store(true, AtomicOrdering::SeqCst);
+            Err(AgentToolInvokeError::ReconciliationRequired)
         }
     }
 
@@ -2444,6 +3013,91 @@ mod tests {
                 RuntimeCall::Chunk(1, RunSemanticChannel::Text, "hello".to_owned()),
                 RuntimeCall::Finish(2, RunTerminal::Completed),
             ]
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn remote_interrupt_waits_then_reloads_fresh_context_with_new_protocol_lineage() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let provider = Arc::new(RecordingRemoteProvider::default());
+        let coordinator = Arc::new(ImmediateRemoteCoordinator::default());
+        let agent = BuiltInAgentRuntime::start_with_remote_interrupts(
+            runtime.clone(),
+            Arc::new(RemoteResumeContext),
+            provider.clone(),
+            Arc::new(NoAgentToolInvoker),
+            Arc::new(NoAgentAudit),
+            coordinator.clone(),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-remote-resume");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+
+        assert_eq!(coordinator.waits.load(AtomicOrdering::SeqCst), 1);
+        {
+            let routes = provider.routes.lock().expect("remote routes");
+            assert_eq!(routes.len(), 2);
+            assert_eq!(routes[0].local_run_id(), "run-remote-resume");
+            assert_eq!(routes[0].run_id(), "run-remote-resume");
+            assert!(routes[0].resume().is_none());
+            assert_eq!(routes[1].local_run_id(), "run-remote-resume");
+            assert_eq!(routes[1].run_id(), "protocol-resumed-1");
+            assert_eq!(
+                routes[1].parent_protocol_run_id(),
+                Some("run-remote-resume")
+            );
+            let resume = routes[1].resume().expect("second route resume");
+            assert_eq!(resume.entries().len(), 1);
+            assert_eq!(resume.entries()[0].interrupt_id(), "interrupt-1");
+        }
+        assert_eq!(
+            runtime.calls(),
+            [RuntimeCall::Finish(1, RunTerminal::Completed)]
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn remote_resume_refuses_endpoint_drift_before_a_second_provider_effect() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let provider = Arc::new(RecordingRemoteProvider::default());
+        let agent = BuiltInAgentRuntime::start_with_remote_interrupts(
+            runtime.clone(),
+            Arc::new(DriftingRemoteResumeContext::default()),
+            provider.clone(),
+            Arc::new(NoAgentToolInvoker),
+            Arc::new(NoAgentAudit),
+            Arc::new(ImmediateRemoteCoordinator::default()),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-remote-drift");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert_eq!(provider.routes.lock().expect("remote routes").len(), 1);
+        assert_eq!(
+            runtime.calls(),
+            [RuntimeCall::Finish(
+                1,
+                RunTerminal::Failed(RunFailureCode::ProviderInvalidResponse)
+            )]
         );
         agent.stop().await;
     }
@@ -3420,6 +4074,152 @@ mod tests {
                 RunTerminal::Failed(RunFailureCode::ProviderInvalidResponse)
             )]
         );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn serial_tool_receives_run_cancel_and_stops_before_reconciliation_terminal() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let provider = Arc::new(SequencedProvider {
+            sessions: StdMutex::new(
+                vec![vec![
+                    ProviderEvent::ToolCallCompleted {
+                        index: 0,
+                        call_id: "provider-cooperative-cancel".to_owned(),
+                        name: "remember".to_owned(),
+                        arguments: serde_json::json!({"content":"tea"}),
+                    },
+                    ProviderEvent::Usage(ProviderUsage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                    }),
+                    ProviderEvent::Completed,
+                ]]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        });
+        let tools = Arc::new(CooperativeCancellationToolInvoker::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            provider,
+            tools.clone(),
+            Arc::new(NoAgentAudit),
+            test_config(),
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-cooperative-tool-cancel");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), tools.started.notified())
+            .await
+            .expect("tool invocation starts");
+
+        assert_eq!(
+            consumer.revoke(&lease).await,
+            RunCancellationDisposition::ChildSignalled
+        );
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .expect("reconciliation terminal");
+        assert!(tools.stopped.load(AtomicOrdering::SeqCst));
+        assert_eq!(
+            *tools.reason.lock().expect("cancellation reason"),
+            Some(ToolCancellationReason::User)
+        );
+        assert!(runtime.calls().iter().any(|call| {
+            matches!(
+                call,
+                RuntimeCall::Finish(
+                    1,
+                    RunTerminal::ReconciliationRequired(RunFailureCode::JournalCommitUnknown)
+                )
+            )
+        }));
+        assert!(
+            !runtime
+                .calls()
+                .iter()
+                .any(|call| matches!(call, RuntimeCall::ToolExchange(..)))
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn serial_tool_receives_deadline_reason_before_reconciliation_terminal() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let provider = Arc::new(SequencedProvider {
+            sessions: StdMutex::new(
+                vec![vec![
+                    ProviderEvent::ToolCallCompleted {
+                        index: 0,
+                        call_id: "provider-cooperative-deadline".to_owned(),
+                        name: "remember".to_owned(),
+                        arguments: serde_json::json!({"content":"tea"}),
+                    },
+                    ProviderEvent::Usage(ProviderUsage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                    }),
+                    ProviderEvent::Completed,
+                ]]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        });
+        let tools = Arc::new(CooperativeCancellationToolInvoker::new());
+        let audit = Arc::new(StopAwareDeadlineAudit {
+            stopped: tools.stopped.clone(),
+            observed: AtomicBool::new(false),
+        });
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            provider,
+            tools.clone(),
+            audit.clone(),
+            BuiltInAgentConfig {
+                run_deadline: Some(Duration::from_millis(100)),
+                ..test_config()
+            },
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-cooperative-tool-deadline");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), tools.started.notified())
+            .await
+            .expect("tool invocation starts before deadline");
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .expect("deadline reconciliation terminal");
+
+        assert!(tools.stopped.load(AtomicOrdering::SeqCst));
+        assert_eq!(
+            *tools.reason.lock().expect("deadline reason"),
+            Some(ToolCancellationReason::Deadline)
+        );
+        assert!(audit.observed.load(AtomicOrdering::SeqCst));
+        assert!(runtime.calls().iter().any(|call| {
+            matches!(
+                call,
+                RuntimeCall::Finish(
+                    1,
+                    RunTerminal::ReconciliationRequired(RunFailureCode::JournalCommitUnknown)
+                )
+            )
+        }));
         agent.stop().await;
     }
 

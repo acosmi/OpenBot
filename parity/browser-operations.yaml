@@ -30,9 +30,9 @@
 #   配第 6 条（server/src 得 2）；dialog 的负向（第 7 条得 0）配第 8 条（app/src 得 10）。
 #   recount 里所有 command 都是可直接执行的裸命令，不带任何说明前缀，方便 CI 逐条重跑。
 #
-# Batch52 后本表 7 done / 43 todo：只关闭不依赖 Electron/CDP 的 control/HumanLease 状态机与
-# closed input-union 裁决。mouse/wheel/key/secret 的真实 CDP execution、engine reject、screen/frame/
-# viewer ticket 仍全部 todo，不能用 Rust enum 冒充运行时。
+# Batch110 后本表 17 done / 33 todo：Batch109普通input七项保持；protocol v3又在macOS arm64两
+# 真实Seatbelt role关闭Page.start/stop/FrameAck三项。secret typed effect、其它Browser操作与viewer
+# ticket/WS/fps/latency仍todo。
 #
 # owner 全表固定 openbot-computer（v3 §5.1 十 crate 之一；§18 里 Browser actions / Supervisor /
 # File/shell 三行的 Rust owner 都是 computer）。Screen/input 行在 §18 写作
@@ -100,7 +100,7 @@ recount:
     expect: 3
   - command: "grep -c '^    status: todo$' parity/browser-operations.yaml"
     cwd: repo
-    expect: 43
+    expect: 33
   - command: "grep -c '^    upstream: \"-\"$' parity/browser-operations.yaml"
     cwd: repo
     expect: 9
@@ -418,7 +418,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0030
     migration_rule: "preserve: format=jpeg、quality 70、maxWidth 1280、maxHeight 800、everyNthFrame 1（一帧一变化，不是定时轮询）"
-    status: todo
+    status: done
+    done_evidence: "Batch110 protocol-v3在macOS arm64 BrowserComputer+SandboxedComponent两真实Seatbelt role调用literal Page.startScreencast；descriptor逐值钉jpeg/70/1280/800/every1/maxInFlight1/sendLastFrame，首帧带完整metadata经Rust验证"
     evidence: "grep -c 'quality: options.quality ?? 70' agent-computer/src/screencast.ts 得 1；grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u 得 3"
     notes: "v3 §12.6 与这四个值逐值相同，属 parity。**新增**的是 fps 上限（10 passive / 15 driving）这条背压——v3 §12.6 自己写明「上游不限 fps」，所以它不算在本条里，登记在 screen/性能面而不是这里。§12.2 另钉死：只有 JPEG（生产）与 PNG（诊断）两种格式，不得把 WebP 写成已支持。"
   - id: op-screencast-stop
@@ -428,7 +429,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0031
     migration_rule: "preserve: 幂等（上游 stop 用 stopped 标志守卫，调两次安全），停完 detach CDP session"
-    status: todo
+    status: done
+    done_evidence: "Batch110两真实role调用literal Page.stopScreencast，先停源、移除event listener、排空已发送帧与Rust ACK，再detach/destroy；同tab第二次stop返回冻结stats且replayed=true，PID/profile lock均0"
     evidence: "grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u 含 Page.stopScreencast；返回对象的 stop() 先置 stopped 再 send('Page.stopScreencast') 再 detach()"
     notes: "v3 §12.6 要求「最后一个 viewer 断开后 2 秒内停止 screencast」——上游是断开即停（websocket.close -> stopViewer），2 秒宽限是新增的抖动容忍，登记在 screen 面。幂等这条必须保留：切页时上游是「新 cast 起来后再停旧的」，两条路径都会调 stop。"
   - id: op-screencast-ack
@@ -438,7 +440,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0032
     migration_rule: "preserve: 每帧必 ack，且 ack 是 Chromium 侧背压的唯一来源"
-    status: todo
+    status: done
+    done_evidence: "Batch110 frame_ack只在Rust验证frame并发布进size-one latest buffer后经独立control write返回shim；多次双role实跑received=ack均成立（49..52帧）且slow-consumer drop=37..40，fixture只钉相等/下界而不钉调度相关精确帧数；shim exact sequence/session guard由closed code与static checker锁定"
     evidence: "grep -oE 'Page\\.(startScreencast|stopScreencast|screencastFrameAck)' agent-computer/src/screencast.ts | sort -u 含 Page.screencastFrameAck；Page.screencastFrame 处理器里无条件先 ack 再判 stopped"
     notes: "上游注释点名了这条的失败模式：忘了 ack 的实现会「发一帧然后看起来卡住」。v3 §12.2 加了一条时序约束：ack 在帧成功进入 size-1 latest buffer 之后发（上游是收到即 ack，先于任何投递）——这是**行为差异**，慢消费者语义从「Chromium 侧排队」变成「只丢旧帧」。差异本身属 screen 面的背压契约，本条只登记 ack 这个操作成员本身。"
   - id: op-profile-ensure
@@ -488,6 +491,8 @@ entries:
 
   # ===========================================================================
   # D 段：§12.5 输入 union 成员（T-BROP-0037..0044）
+  # Batch109以protocol v2 + fresh HumanLease receipt在两个真实macOS Electron role关闭普通七项；
+  # T-BROP-0044仍等待独立secret typed effect，不由ordinary plan拒绝冒充。
   # ===========================================================================
   - id: input-mouse-move
     upstream: agent-computer/src/screencast.ts::InputMessage
@@ -496,7 +501,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0037
     migration_rule: "preserve: 映射到 Input.dispatchMouseEvent type=mouseMoved，clickCount 必须为 0"
-    status: todo
+    status: done
+    done_evidence: "Batch109 protocol-v2 macOS arm64 BrowserComputer+SandboxedComponent真实conformance=2/0/0；fresh HumanLease receipt后Input.dispatchMouseEvent(mouseMoved/clickCount0)使固定页面:hover截图SHA变化；operation ACK与独立frame通道均按scope/sequence核验"
     evidence: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u 得 4 个变体；mouse 变体的 event 域是 'pressed' | 'released' | 'moved'；send() 内 moved 分支把 clickCount 置 0"
     notes: "上游把 pressed/released/moved 压在一个 mouse 变体的 event 字段里；v3 §12.5 把三者写成 union 的三个成员。语义 parity，形态在 Rust 侧展开成三个变体（封闭 enum 才能让漏掉一种在编译期红）。button 缺省 left、modifiers 缺省 0 这两条缺省值是契约。"
   - id: input-mouse-down
@@ -506,7 +512,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0038
     migration_rule: "preserve: 映射到 Input.dispatchMouseEvent type=mousePressed，clickCount 缺省 1 且不得为 0"
-    status: todo
+    status: done
+    done_evidence: "Batch109两真实Seatbelt role以Input.dispatchMouseEvent(mousePressed/clickCount1)命中固定button，:active截图SHA相对move帧变化；zero click在BrowserInput构造前拒绝，expired receipt frame0"
     evidence: "screencast.ts 的 send() 内 pressed -> 'mousePressed'，clickCount 取 message.clickCount ?? 1；同文件注释写明 clickCount 为 0 时页面只看到一次带按钮的移动，click 永远不触发"
     notes: "clickCount 非零这条不是风格问题而是功能：上游注释点名了「按下 clickCount=0 则 click 事件永不触发」这个失败模式。Rust 侧的类型应该让 0 不可表达（NonZeroU32 或构造函数校验），而不是靠调用方记得。"
   - id: input-mouse-up
@@ -516,7 +523,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0039
     migration_rule: "preserve: 映射到 Input.dispatchMouseEvent type=mouseReleased，clickCount 同 down"
-    status: todo
+    status: done
+    done_evidence: "Batch109两真实Seatbelt role以Input.dispatchMouseEvent(mouseReleased/clickCount1)清除:active，截图SHA相对pressed帧变化；operation/tab/kind ack与frame scope/generation/sequence均由Rust核验"
     evidence: "screencast.ts 的 send() 内 released -> 'mouseReleased'；三个 mouse 事件共用同一个 dispatchMouseEvent 调用与同一套缺省值"
     notes: "与 down/move 一起构成 v3 §12.5 的 drag 序列（down -> move -> up），engine 不需要知道「这是一次拖拽」，见裁决 T-BROP-0045。"
   - id: input-wheel
@@ -526,7 +534,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0040
     migration_rule: "preserve: 映射到 Input.dispatchMouseEvent type=mouseWheel，带 deltaX/deltaY 与 modifiers"
-    status: todo
+    status: done
+    done_evidence: "Batch109两真实Seatbelt role以Input.dispatchMouseEvent(mouseWheel)保留x/y/deltaX/deltaY/modifiers，固定overflow区域截图SHA变化；shim只接受literal CDP allowlist"
     evidence: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u 含 wheel；send() 内 wheel 分支发 type='mouseWheel' 并透传 deltaX/deltaY"
     notes: "与 T-BROP-0017（HTTP /human/scroll）是两条路：这里带 deltaX 且坐标由 viewer 给，那里横向恒 0 且 deltaY 缺省 400。两条都保留。"
   - id: input-key-down
@@ -536,8 +545,9 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0041
     migration_rule: "preserve: 有 text 时发 keyDown，无 text 时发 rawKeyDown；windowsVirtualKeyCode 与 nativeVirtualKeyCode 必填"
-    status: todo
-    evidence: "grep -oE 'Input\\.(dispatchMouseEvent|dispatchKeyEvent|insertText)' agent-computer/src/screencast.ts | sort -u 得 3，含 dispatchKeyEvent；同文件 VIRTUAL_KEY_CODES 表给 16 个键显式码，其余单字符取 key.toUpperCase().charCodeAt(0)"
+    status: done
+    done_evidence: "Batch109两真实Seatbelt role实跑text keyDown插入字符、rawKeyDown Backspace删除字符且截图SHA逐态变化；17项具名码与unknown F1 virtual code0均经protocol-v2成功，oversize在pipe前拒绝"
+    evidence: "grep -oE 'Input\\.(dispatchMouseEvent|dispatchKeyEvent|insertText)' agent-computer/src/screencast.ts | sort -u 得 3，含 dispatchKeyEvent；同文件 VIRTUAL_KEY_CODES 表给 17 个键显式码（含空格→32），其余单UTF-16单元取 key.toUpperCase().charCodeAt(0)，未知多单元返回0"
     notes: "v3 §12.5 明写「含 modifiers 与 Input.dispatchKeyEvent 所需的 keyCode 表」，指的就是 VIRTUAL_KEY_CODES。上游注释点名了失败模式：只给 key 不给 virtual key code，表单会忽略 Backspace 与 Enter——「字母能打、编辑键不行」正是这个原因。keyDown / rawKeyDown 的二分同理：无文本却发 keyDown，编辑键会变成什么都没发生。这张表是 Rust 侧必须逐条搬的 fixture，不是可以「大致对齐」的东西。"
   - id: input-key-up
     upstream: agent-computer/src/screencast.ts::InputMessage
@@ -546,7 +556,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0042
     migration_rule: "preserve: 映射到 Input.dispatchKeyEvent type=keyUp，同样带 virtual key code 与 modifiers"
-    status: todo
+    status: done
+    done_evidence: "Batch109两真实Seatbelt role实跑keyUp并收到exact operation/tab/input_kind ack；a/Backspace/F1三类up均不依赖自由CDP method，独立conformance capture frame sequence连续"
     evidence: "screencast.ts 的 key 变体 event 域是 'down' | 'up'；send() 内 up -> 'keyUp'"
     notes: "与 T-BROP-0016（HTTP /human/key 的一次性 press）分开：那条是「按一下」，这条是「松开」。组合键与长按只有靠 down/up 分离才可能。"
   - id: input-insert-text
@@ -556,7 +567,8 @@ entries:
     owner: openbot-computer
     test_id: T-BROP-0043
     migration_rule: "preserve: 映射到 Input.insertText，完全绕开按键事件（它不假装自己是键盘）"
-    status: todo
+    status: done
+    done_evidence: "Batch109两真实Seatbelt role以Input.insertText插入A中，固定input截图SHA变化；空串仍可表达、Debug不含正文，expired receipt与ordinary SecretInsert均frame0且session后续继续"
     evidence: "grep -oE 'type: \"(mouse|wheel|key|text)\"' agent-computer/src/screencast.ts | sort -u 含 text；send() 的末尾分支 client.send('Input.insertText', {text: message.text})"
     notes: "v3 §12.5：paste 用 Input.insertText，不读取系统 clipboard——上游已经是这样（socket 上收到的是 viewer 自己那侧取到的文本，engine 从不碰宿主剪贴板），属 parity。IME 合成完成的文本也走这条（裁决 T-BROP-0045）。"
   - id: input-secret-insert

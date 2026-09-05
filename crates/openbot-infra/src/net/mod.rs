@@ -4,3 +4,4 @@
 //! 封闭请求计划交给 [`safe_http`]。这样 DNS/IP/redirect/header/size/time 规则只有一个真源。
 
 pub mod safe_http;
+pub mod scope_gateway;

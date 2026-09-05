@@ -143,6 +143,8 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::CancelThreadRun(_) => "cancel_thread_run",
         AppCommand::GetThreadHistory { .. } => "get_thread_history",
         AppCommand::GetThreadConversation { .. } => "get_thread_conversation",
+        AppCommand::ListPendingRemoteInterrupts => "list_pending_remote_interrupts",
+        AppCommand::ResolveRemoteInterrupt { .. } => "resolve_remote_interrupt",
         AppCommand::RememberMemory(_) => "remember_memory",
         AppCommand::GetMemoryControl => "get_memory_control",
         AppCommand::UpdateMemoryControl(_) => "update_memory_control",
@@ -153,17 +155,30 @@ pub const fn command_kind(command: &AppCommand) -> &'static str {
         AppCommand::IssueAgentCallbackToken { .. } => "issue_agent_callback_token",
         AppCommand::RevokeAgentCallbackToken { .. } => "revoke_agent_callback_token",
         AppCommand::ListMcpConnections => "list_mcp_connections",
+        AppCommand::ListCredentials(_) => "list_credentials",
+        AppCommand::CreateCredential(_) => "create_credential",
+        AppCommand::RotateCredential { .. } => "rotate_credential",
+        AppCommand::RevokeCredential { .. } => "revoke_credential",
+        AppCommand::ListMcpAdminPage => "list_mcp_admin_page",
         AppCommand::BeginMcpOAuth { .. } => "begin_mcp_oauth",
         AppCommand::DisconnectMcpConnection { .. } => "disconnect_mcp_connection",
         AppCommand::RegisterMcpOAuthClient { .. } => "register_mcp_oauth_client",
         AppCommand::AddCuratedMcpServer { .. } => "add_curated_mcp_server",
+        AppCommand::AddCustomMcpServer(_) => "add_custom_mcp_server",
+        AppCommand::RemoveMcpServer { .. } => "remove_mcp_server",
         AppCommand::RefreshMcpServer { .. } => "refresh_mcp_server",
+        AppCommand::SavePluginSkill(_) => "save_plugin_skill",
+        AppCommand::RemovePluginSkill { .. } => "remove_plugin_skill",
+        AppCommand::GrantPlugin(_) => "grant_plugin",
+        AppCommand::RevokePlugin(_) => "revoke_plugin",
+        AppCommand::ListPluginsForAgent { .. } => "list_plugins_for_agent",
         AppCommand::ListPendingToolApprovals => "list_pending_tool_approvals",
         AppCommand::DecideToolApproval { .. } => "decide_tool_approval",
         AppCommand::GetUiPreferences => "get_ui_preferences",
         AppCommand::UpdateUiPreferences(_) => "update_ui_preferences",
         AppCommand::GetRunCostBudget => "get_run_cost_budget",
         AppCommand::ReplaceRunCostBudget(_) => "replace_run_cost_budget",
+        AppCommand::IssueScreenSession(_) => "issue_screen_session",
     }
 }
 
@@ -379,6 +394,7 @@ mod tests {
                 "revoke_agent_callback_token",
             ),
             (AppCommand::ListMcpConnections, "list_mcp_connections"),
+            (AppCommand::ListMcpAdminPage, "list_mcp_admin_page"),
             (
                 AppCommand::BeginMcpOAuth {
                     server_id: "notes".to_owned(),
@@ -413,10 +429,66 @@ mod tests {
                 "add_curated_mcp_server",
             ),
             (
+                AppCommand::AddCustomMcpServer(
+                    openbot_contracts::mcp::McpCustomServerRegistration {
+                        id: "notes".to_owned(),
+                        title: "Notes".to_owned(),
+                        url: "https://notes.example/mcp".to_owned(),
+                        credential_id: None,
+                        egress_allow_cidrs: Vec::new(),
+                    },
+                ),
+                "add_custom_mcp_server",
+            ),
+            (
+                AppCommand::RemoveMcpServer {
+                    server_id: "notes".to_owned(),
+                },
+                "remove_mcp_server",
+            ),
+            (
                 AppCommand::RefreshMcpServer {
                     server_id: "google-drive".to_owned(),
                 },
                 "refresh_mcp_server",
+            ),
+            (
+                AppCommand::SavePluginSkill(openbot_contracts::mcp::PluginSkillMutation {
+                    slug: "review-notes".to_owned(),
+                    title: "Review notes".to_owned(),
+                    summary: "Review".to_owned(),
+                    instructions: "Review the notes.".to_owned(),
+                    deployment_wide: false,
+                }),
+                "save_plugin_skill",
+            ),
+            (
+                AppCommand::RemovePluginSkill {
+                    slug: "review-notes".to_owned(),
+                },
+                "remove_plugin_skill",
+            ),
+            (
+                AppCommand::GrantPlugin(openbot_contracts::mcp::PluginGrantMutation {
+                    kind: openbot_contracts::mcp::PluginGrantKind::Skill,
+                    reference: "review-notes".to_owned(),
+                    agent_id: "agent-one".to_owned(),
+                }),
+                "grant_plugin",
+            ),
+            (
+                AppCommand::RevokePlugin(openbot_contracts::mcp::PluginGrantMutation {
+                    kind: openbot_contracts::mcp::PluginGrantKind::Skill,
+                    reference: "review-notes".to_owned(),
+                    agent_id: "agent-one".to_owned(),
+                }),
+                "revoke_plugin",
+            ),
+            (
+                AppCommand::ListPluginsForAgent {
+                    agent_id: BotId::new("agent-one"),
+                },
+                "list_plugins_for_agent",
             ),
             (
                 AppCommand::ListPendingToolApprovals,
@@ -443,6 +515,20 @@ mod tests {
                     openbot_contracts::budget::RunCostBudgetPreference::default(),
                 ),
                 "replace_run_cost_budget",
+            ),
+            (
+                AppCommand::ListPendingRemoteInterrupts,
+                "list_pending_remote_interrupts",
+            ),
+            (
+                AppCommand::ResolveRemoteInterrupt {
+                    request_id: "018f6f8a-5f4b-7c2d-8a31-111111111111".to_owned(),
+                    answer: openbot_contracts::remote_interrupt::RemoteInterruptAnswer {
+                        status: openbot_contracts::remote_interrupt::RemoteInterruptAnswerStatus::Cancelled,
+                        payload: None,
+                    },
+                },
+                "resolve_remote_interrupt",
             ),
         ];
         for (command, expected) in commands {

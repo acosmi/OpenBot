@@ -29,15 +29,31 @@
 //! Batch53 adds a real macOS Electron P1 baseline: dual-role scope, digest-before-spawn bundle,
 //! authenticated UDS boot/control/frame paths, SBPL confinement and two host conformance loops.
 //! Batch54/55 add executable Windows and runsc probes, but P1 is still open because neither has
-//! corresponding machine evidence. ScreenHub, product CDP mappings, file/shell executors and
-//! supervisor remain separate unfinished boundaries; the fixture page is not a browser product
-//! operation.
+//! corresponding machine evidence. `BrowserRuntimeManager` now makes the fixed-upstream LRU/idle
+//! selector effective over opaque driver handles, but no Server/Desktop production host assembles
+//! that manager with `EngineProcess` yet. Protocol v2 now consumes fresh HumanLease receipts and
+//! executes the fixed-upstream ordinary `BrowserInput` plan in both real macOS Electron roles; the
+//! Server/Desktop Computer assembly and secret typed effect remain open. Protocol v3 now owns the
+//! formal Page.startScreencast/stop/ACK loop, full frame metadata and a Rust size-one latest buffer;
+//! viewer ticket/WS, multi-viewer fps/latency, file/shell executors and supervisor remain separate
+//! unfinished boundaries. Protocol v4 adds capture-only pause/resume; a Rust ScreenEngineOwner
+//! reacts to ScreenHub viewer demand, revalidates queued input under the current ControlService
+//! lock and retires failed transports. Production ComputerManager assembly is still pending.
+//! The internal page is conformance evidence, not a production destination.
 
 pub mod browser;
 pub mod control;
 pub mod engine;
+pub mod manager;
+#[cfg(any(unix, windows))]
+pub mod screen;
 
 pub use control::{
-    ControlError, ControlHolder, ControlService, ControlSnapshot, HumanInputTicket,
-    HumanLeaseEpoch, PendingSecretTarget,
+    AuthorizedHumanInput, ControlError, ControlHolder, ControlService, ControlSnapshot,
+    HumanInputTicket, HumanLeaseEpoch, PendingSecretTarget,
+};
+pub use manager::{
+    BrowserBudgetError, BrowserDriverFuture, BrowserInstance, BrowserLease,
+    BrowserRetirementReason, BrowserRuntimeBudget, BrowserRuntimeDriver, BrowserRuntimeError,
+    BrowserRuntimeManager,
 };

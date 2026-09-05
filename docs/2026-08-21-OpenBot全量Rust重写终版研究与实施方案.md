@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-03 实施裁决 R126–R166，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R201，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -66,6 +66,25 @@ Electron/Chromium browser engine（无业务裁决权）
 ### 0.4 交付基线
 
 （R125，2026-08-28）**12 人 / 52 周的日历基线作废**：§19 改为只用入口条件、产物与退出证据控制的阶段门（P0-code → P1 → … 与既有 G3 / G4 / G6 余项并行），不再给没有实证的周数。两次不参与编码的独立安全审计保留：第一次仍按 §24 G2，第二次在 G8 之前、P3 之后。范围约束不变：任何新增数据库、额外 MCP 协议面、第二浏览器 driver、移动端、Firecracker、ACP、新模型专用集成，或**来自参考源的产品能力**（R115），都不得挤入本次重写范围。
+
+### 0.5 受控Alpha与开源共建方向（2026-09-04，R191）
+
+用户明确要求尽早上线可用、逐步补全v4，并将本项目面向社区开源共建，由维护者审查PR。
+首批为本人及少量受邀用户的受控本机试用；首版必须同时具备基础工作台、AI对话/工具闭环、
+浏览器和原生电脑操控。原生OS桌面控制超出既有Browser/file/shell parity的部分标为新增，不能借旧T-ID勾选。
+
+本方向新增独立Alpha里程碑，**不改变§25所定义的v4完整完成条件**；G0–G8、parity/fixtures和平台/外审等
+仍全量保留。Alpha支持面按准确平台、部署和数据边界声明，哪个平台先实际通过适用闸门，哪个先准入。
+不能把单用户服务共享给多用户，也不允许P0/P1、跨scope泄漏、audit-before-action违规或数据损坏以Alpha豁免。
+
+复用自有项目采用固定提交复制到本项目处理，禁止修改源仓。最新已合并基线已核实有macOS和Windows
+原生实现，旧checkout的macOS-only判断已撤销；复制副本独立编译/纯测试不替代OpenBot真实平台验收。
+最小Rust底层、browser request/timeout、supervisor/sandbox/exec依§11.4逐文件授权和差量适配；
+不复制完整TS宿主、账户桥、证书、密钥或产品身份，不引入npm、第二条browser生产链或第二套权限真源。
+
+执行方案与候选Alpha闸门见`docs/2026-09-04-OpenBot开源共建与渐进上线策略-研究方案.md`。
+开源方向已确认，但具体许可授权、干净发行文件范围及whole-tree审计须按§23.2完成；本轮不把复制评估
+或公开可见性当成已授予开源许可。R63、Grok固定树与不擅自合并/上传的既有边界保持。
 
 ## 1. 第一真源与证据冻结
 
@@ -204,7 +223,7 @@ Electron/Chromium browser engine（无业务裁决权）
 | --- | --- |
 | [Agent endpoint 30x 可绕过初始 URL 检查；DNS rebinding 仍未解决](https://github.com/CopilotKit/openbot/issues/36) | 每一跳重新做 scheme/host/IP policy；安全 dialer 固定已校验 IP 与 TLS SNI；Server 再以 egress gateway 强制执行 |
 | [malformed AG-UI `message.content` 可使 transcript 崩溃](https://github.com/CopilotKit/openbot/issues/44) | 所有外部 payload 做结构验证；未知/损坏事件隔离成可展示错误，UI 不崩溃 |
-| [credential rotate 先写新值、再 revoke 旧值，失败会留下 orphan](https://github.com/CopilotKit/openbot/issues/53) | 单事务切换 active pointer；外部 revoke 独立进入 reconciliation；失败时新凭据不生效 |
+| [credential rotate 先写新值、再 revoke 旧值，失败会留下 orphan](https://github.com/CopilotKit/openbot/issues/53) | 单事务切换 active pointer；外部 revoke 独立进入 reconciliation；本地校验/事务失败时新凭据不生效 |
 | [从未运行的 thread history 返回 500](https://github.com/CopilotKit/openbot/issues/72) | 明确返回空 history；真实上游/数据库错误仍返回 5xx |
 | [withdrawn tool 的 stale grant 可能在 transport 切换后复活](https://github.com/CopilotKit/openbot/issues/106) | catalog refresh 将 grant 标为 `suspended_missing`；工具重现后仍需管理员重新启用，永不静默复活 |
 | Google Drive disconnect 尚未实现 | 本地立即 deny 并 tombstone；调用 vendor revoke；失败进入 `revocation_pending` 重试，UI 不谎报 vendor 已撤权 |
@@ -504,11 +523,31 @@ record AEAD 的 AAD 固定绑定 `tenant_id + secret_id + kind + owner + consume
 
 以下值永不进入 Leptos state、Agent prompt、AG-UI、browser event、普通日志、trace、metric、crash dump 或 screen URL：model key、MCP/OAuth refresh token、OIDC/SAML secret、computer bootstrap secret、run signing key、updater key。
 
+R195将上述规则落实到现有密码输入面：用户输入只暂存在密码DOM，Leptos只持NodeRef与非secret的
+校验事实/修改代次，不用RwSignal或StoredValue缓存输入原文、前缀或hash。Plugins OAuth、OIDC、Agent
+Authorization统一使用Input家族的SecretInput；普通受控Input不再支持Password。保存时清空输入并把
+临时零化分配转交typed DTO，失败不得回填；连接测试只允许为同一次显式测试临时复制，编辑后使旧结果失效。
+请求字段反序列化失败、constructor失败与serialize阶段均保持零化所有权；Rust JSON/DTO在交给浏览器后、
+await前释放。不能由此声称物理擦除了JS/浏览器/HTTP/OS的全部瞬时副本。旧Batch62/70/117的视觉遮挡和
+回显负例不是此所有权边界的证明，当前修正及复算见Batch119。
+
 持有这些明文/密钥字节的 `SecretBytes` 内部固定为 `zeroize::Zeroizing<Vec<u8>>`：
 drop 时清除 `Vec` 当前长度和整个 capacity，并以稳定 Rust 优化屏障保证写不被删。
 它仍不伪称能擦除所有副本：调用方交出所有权之前的读缓冲/拷贝，以及该 `Vec`
 交出前扩容留下的旧 allocation，都不在类型可达范围。`SecretBytes` 仍无 Clone /
 Serialize / Display / PartialEq，只能显式 `expose`。（§28.1 R46）
+
+Batch120（R196）实现部署凭据管理完整工作链：固定上游manual allowlist只含model/connector/mcp，
+Agent/OAuth client/个人token不由该输入制造。四个shared typed command经Server/Desktop进入同一PG/Vault
+服务；fresh admin/Origin先于body，数据库重验configured scope/current role/generation并锁actor。
+每记录随机DEK/v2 AAD、存后回读、新旧记录切换/MCP pointer与grant失效/audit同事务，双并发轮换只有一胜。
+keyId仍按固定模型配置使用；旧newest-active/tie-break/stored-first/env-fallback/corrupt-no-fallback不变。
+本地事务失败不激活新记录，外部清理独立且明确为pending或operator_required，不能称vendor已撤权。
+受管OAuth撤销冻结原client/resource/transport/CIDR，重试、client替换与server删除后不重绑定新身份；
+坏snapshot一次转人工且无网络。公开metadata与内部生命周期namespace分离，100行keyset与默认模型引用提示
+接入AdminCredentialsPage；SecretInput不回填。真实PG/session GUI create/rotate/revoke、100+3分页、降权拒绝，
+以及PG4+OAuth3+RMCP11、Server235/Desktop113、Contracts109/Domain372/Application166/UI188通过。
+关闭4 API、3 event、5 test、1 route后parity886/826/1712，fixtures35/20/55不变；完整G2/G6/G8与Alpha仍未通过。
 
 ### 6.5 Group access 的修正
 
@@ -623,6 +662,16 @@ SHA-256 合成仅用于 trace/correlation 的确定 id，不把它当授权或�
 `Completed` 前给出单调、自洽的 normalized `Usage`；缺失、重复或回退按 invalid response fail-closed。
 这些是本地协议实现证据，不等于 provider gate 要求的三家 recorded vendor trace。（§28.1 R70）
 
+Batch104 从 OpenAI 官方 `openai-dotnet` 固定 commit 的公开 RecordedTest session record 逐字节提取
+Responses SSE response body，并经 production `OpenAiProvider`、唯一 SafeDialer 与真实 HTTP/SSE 分块回放；
+source record/blob/SHA、派生规则、fixture SHA、MIT/copyright、消毒范围同时进入一对一 provenance、SPDX、
+NOTICE 与离线 guard。实录中的 `response.function_call_arguments.done` 不带 `name`：只有此前 added item
+已经给出非空有界 name 时才接受缺失/null，双 name 必须相等，可选 output index 必须匹配；改名、索引漂移、
+全程无 name 均 fail-closed。该证据只关闭 OpenAI recorded trace **1/3** 与 T-FIX-0046；Anthropic/Google、
+live credential、没有被此 function-only trace 覆盖的 text/reasoning skeleton 及完整 G4 均保持红灯。测试
+fixture 是供应链登记的离线证据，不改变“生产不持久化原始 provider stream/HTTP body”的产品约束。
+（§28.1 R178）
+
 ### 7.4 Retry、Cancel、Budget 与 Commit
 
 - `CancellationToken` 按 run → provider/tool/computer/process tree 传播；
@@ -631,8 +680,19 @@ SHA-256 合成仅用于 trace/correlation 的确定 id，不把它当授权或�
 - 非幂等请求已发送但未确认时，`commit_state=Unknown`，进入 reconciliation；
 - tool 只有 Rust first-party scheduling metadata 显式 `parallel_safe=true` 且资源锁不冲突才并行；模型字段、MCP annotation、数据库 description、sandboxed component 名字与 renderer 输入都不是调度 authority。当前 production allowlist 只含 11 个 ordinary compiled component；`askApproval` / `askChoice`、`remember`、MCP/Drive、`custom_*` 与 unknown name 全部 serial。resource lock key 排序去重，单调用超过 32 个不截断而降为 serial；同 sampling 冲突 key 分 wave，跨 run 同 key 由 runtime-owned keyed semaphore 互斥。结果始终按原 call 顺序回注（R165）；
 - 一次 sampling 先收齐 complete tool-call batch，再按稳定 output index 排序；`parallel_safe=false`（首个 `remember` 即此类）严格串行。provider call id 只配对 assistant call/result，Rust gateway 另铸 UUIDv7 + per-run sequence 作为 decision/attempt/capability 的唯一身份。每个确定 outcome 先以 assistant/tool 两条 message + `tool_exchange` checkpoint 同事务持久化，context 重读成功后才开始下一次 sampling；exact expected-sequence replay 返回原 receipt，任何参数/结果篡改 conflict。batch 跨 sampling 累计仍受 8-step cap，超过上限时一个新 effect 都不执行；
-- budget 同时限制 absolute deadline、idle deadline、provider token、tool steps、并发 tool、computer runtime 和用户配置的费用上限；首版新增 `OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS`，缺省 16384，只接受 1..=1000000，0 不能静默关闭；它是**每次 sampling 输出上限**，三家 request 和 host 的 normalized usage 双重校验。R161–R163 已闭合 run-wide token/cost/user cap；R165 的 process-wide tool concurrency 独立于 provider-run concurrency，默认 8、typed config 只收 `1..=256`，无新环境变量。等待 tool permit 时取消且 effect=0 走普通 Cancelled；任一 parallel child 已开始后取消/期限则先停全 child再进 reconciliation。完整 budget 仍缺 computer runtime，不得以 tool budget 冒充 Computer 已接入；
+- budget 同时限制 absolute deadline、idle deadline、provider token、tool steps、并发 tool、computer runtime 和用户配置的费用上限；首版新增 `OPENBOT_PROVIDER_MAX_OUTPUT_TOKENS`，缺省 16384，只接受 1..=1000000，0 不能静默关闭；它是**每次 sampling 输出上限**，三家 request 和 host 的 normalized usage 双重校验。R161–R163 已闭合 run-wide token/cost/user cap；R165 的 process-wide tool concurrency 独立于 provider-run concurrency，默认 8、typed config 只收 `1..=256`，无新环境变量。等待 tool permit 时取消且 effect=0 走普通 Cancelled；任一 parallel child 已开始后取消/期限则先停全 child再进 reconciliation。R181已闭合固定上游13条browser LRU/idle selector与manager-owned residency状态机，但Server/Desktop尚未接`EngineProcess`/Supervisor，两个`COMPUTER_*`配置与CPU/RSS/pids/disk真实预算仍缺；因此完整computer runtime budget仍todo，不得以selector或tool budget冒充Computer已接入；
 - Agent durable activate 后、读取 context/provider 前写 `agent.invoked`；真实 body read gap 到点时先停止 session，再写 `agent.stream_stalled`，最后 failed terminal；absolute deadline 到点时先停止 child，再写新增 `agent.run_deadline_exceeded`，最后走 `Cancelling → Cancelled`。三类 audit 只带权威 run/actor 与 allowlisted stable code，任一 audit 写失败都进入 reconciliation，不继续 sampling/提交普通终态；
+- Batch105/R180把同一run cancellation继续向串行RMCP effect传播：Agent host持有private/non-serde
+  sender，gateway按Rust铸造的ToolCallId在共享process-local registry登记receiver；Server/Desktop Local
+  与production tool control plane都从同一Application assembly取得该registry。取消在任何网络前已存在时
+  socket=0。client Auto lifecycle首选`server/discover`/2026-07-28：fresh `tools/list`与已开始
+  `tools/call`通过关闭各自exact HTTP/SSE response stream取消，网络上`notifications/cancelled` POST=0；
+  server拒绝discover后才回落2025-11-25 initialize/session并由RMCP发送带exact requestId与stable reason的
+  旧版notification。固定rmcp 3.1.4在首个SSE event前的worker stall由SafeDialer仅对modern tool request
+  drop exact future规避；协商/lifecycle/session cleanup不可被该路径取消。有界等待child stop后才写deadline
+  audit/terminal；call一旦进入transport边界，无论signal确认与否都只能落Unknown/reconciliation，无法确认
+  使用`mcp_cancel_signal_unknown`。该纵向只关闭Rust run→RMCP protocol cancel；computer/file/shell
+  process-tree cancel与完整RMCP官方conformance仍todo。（§28.1 R179–R180）
 - 上下文压缩保留 system/standing role、未完成 tool pair、最近对话和 provenance；压缩摘要带 source range。
 
 ### 7.5 Remote AG-UI
@@ -640,6 +700,16 @@ SHA-256 合成仅用于 trace/correlation 的确定 id，不把它当授权或�
 `openbot-agui` 是 `openbot-agent` 内的边界模块，不把 community Rust SDK 类型暴露进 domain。协议 ID 使用 string newtype。
 
 必须支持固定 AG-UI schema中的 lifecycle、text、tool call/result、state snapshot/delta、messages snapshot、activity、step、reasoning、raw/custom、interrupt/resume 和错误；每个 run 恰好一个 terminal event。R166 固定 error 边界：远端 `RUN_ERROR.message/code` 在 decoder 后不得进入 provider-neutral event、journal、audit、错误响应或 GUI，只映射本地 `provider_generation_failed`；malformed/unknown/sequence-invalid event 只映射 `provider_invalid_response`。两者都必须先有权威 run start，最终只提交一个 failed terminal；远端 prose 不得作为本地 stable code。
+
+R167 固定 reasoning 保留期：只有当前 active run 可为 expected-sequence replay 暂存可见 reasoning delta；任一 completed/failed/cancelled/reconciliation_required terminal 必须在同一 PostgreSQL 事务、对外提交 terminal 前把该 run 的全部 reasoning payload 收敛为固定 `{channel:"reasoning",delta:"",retained:false}`，不删除 event、不改变 run/thread sequence、cursor 或 terminal 事实。native0027 对升级前已经终态的四类 run 施加同一幂等回填，active run 与 text payload 不得改变。`REASONING_ENCRYPTED_VALUE.encryptedValue` 在 decoder 边界直接丢弃，不能进入 provider-neutral event。该裁决只证明数据库当前可见值的逻辑清除；WAL、备份、只读副本与灾备介质的物理保留/擦除仍由 G8 retention/runbook 闭合，不得把本条冒充物理删除证明。
+
+R169 固定其余开放投影边界：state snapshot/delta、messages snapshot、activity snapshot/delta、step start/finish 与 raw/custom 只能成为私有字段、non-serde 的 `ProviderRemoteProjection`。`family` 与 `source=remote_ag_ui` 由本地封闭枚举/常量铸造，所有 remote-controlled key/type/value 必须位于显式 `untrusted*` 字段，不能表达 actor、scope、grant、decision 或本地 tool outcome；单投影≤1MiB，单session≤4096项/8MiB，NUL/checked overflow fail-closed且Debug不带正文。state/activity delta先在decoder clone上原子应用RFC6902，再投影完整结果；messages永不替换PostgreSQL权威transcript。投影按同一run/thread sequence写`checkpoint`，只在active run可重放，terminal同事务收敛为固定无内容marker；UI只验证并隔离该wrapper、推进cursor，不把内容并入transcript或authority。tool-result仍需带权威offered tool/callback的独立production证据，interrupt/resume仍需durable human lifecycle，二者不得借本条关闭。
+
+R170 固定 `TOOL_CALL_RESULT` 的非执行语义：只有已按call-id完成、name确实存在于当前RunAgentInput offered tools的call可以产生一次result projection；unknown/unoffered/duplicate result必须在projection与任何local effect前fail-closed。remote result只能使用R169的active-only untrusted checkpoint，不能转换为`ProviderEvent::ToolCallCompleted`、不能写本地assistant/tool message、`tool_calls`/attempt/capability/outcome或“执行成功”audit，也不能作为callback已经发生的证明。若remote没有发result，offered call仍按既有唯一§8.1管线由Rust host执行。production正向必须从PostgreSQL component catalogue/context真实提供tool schema，经SafeDialer/SSE收完整START/ARGS/END/RESULT，并同时证明active projection存在、terminal清除和local effect=0；只有decoder/unit不能关闭T-EVT-0003。
+
+R171 固定interrupt/resume wire前置：`RUN_FINISHED.outcome.type=interrupt`只归一化0.0.57已知字段`id/reason/message/toolCallId/responseSchema/expiresAt/metadata`，unknown authority字段丢弃；batch必须1..=256、ID唯一且整体≤1MiB。下一次调用使用新protocol run id、`parentRunId`指向产生interrupt的protocol run，并携`resume[]`；每项只含interruptId、closed resolved/cancelled与可选≤64KiB payload，batch ID唯一且≤1MiB。local durable run id与protocol invocation id分离，resume只能在parent精确匹配当前route后更新protocol id；typed owner均私有字段/non-serde，Debug不含message/payload。当前Batch97只完成decoder→ProviderEvent与encoder/route contract，runtime仍把Interrupted fail-closed为provider_generation_failed；在native persistence、fresh actor resolve/audit、AwaitingHuman lease/cancel/deadline、跨副本wake、真实第二次SafeDialer request及UI完成前，T-EVT-0010继续todo。
+
+R172 固定interrupt/resume durable纵向：native0028专表以Rust铸造canonical UUIDv7 request handle承载actor/deployment/tenant/thread/run/Bot/AuthGeneration/fencing绑定，remote interrupt id只在local run+protocol invocation内配对；descriptor只允许R171七个known fields且明确untrusted。remote `expiresAt`不作authority，本地DB clock固定30分钟TTL；batch最多256项、单answer payload≤64KiB，run总provider invocation仍以initial+8 continuations封顶，故显式关闭run deadline也不能制造无界human loop。request与`agent.remote_interrupt_requested`、answer与resolved/cancelled audit、DB-clock expiry与expired audit分别同serializable事务；exact replay零重复audit。runtime进入`AwaitingHuman`时仍续lease并响应cancel/deadline，answer commit后fresh reload actor/config/credential/assertion；local run/thread/Bot与原endpoint必须逐字不变，endpoint漂移在第二次provider effect前拒绝。第二次调用使用新protocol run id+exact parent/resume。Server GET/PUT `/api/me/remote-interrupts`、Desktop custom protocol与conversation UI共用同一typed ApplicationService；remote reason/message在GUI只作escaped untrusted text，response schema保留为untrusted DTO且不执行，answer只收closed resolved/cancelled。任一run terminal在同一事务把descriptor/response payload/resume id收敛为retired无内容行。真实PG17.11+SafeDialer两次request证明完整纵向，T-EVT-0010转done；这使AG-UI十一事件族机器台账全done，但三家recorded/live trace、acting Approval/computer等G4余项仍红，且UI定向/WASM/bundle不冒充G6 golden。
 
 安全链路：
 
@@ -677,6 +747,11 @@ OpenAI 官方把开源 Codex 描述为可嵌入产品的 agent harness，并把 
 | Grok MCP | generation/liveness/ingest limits 的测试案例 | 较旧 protocol pin 和直接作为本项目 runtime |
 
 不复制 Codex/Grok 的完整 session loop、产品 DTO、账号、终端 UI 或消费者 OAuth。Grok Build 中来自 Codex/OpenCode 的工具必须追溯原始来源，不能重复记作 xAI 独立来源。
+
+Batch116/R192把T-FIX-0010补成固定SDK0.0.57官方schema corpus：发布来源commit54f13419…的六个官方
+文件完整保留，原package manifest仅改为资料文件名；33个EventType与fixture及Rust三向相等，39行按三个
+独立lifecycle回放。它不替换§1.2的e42bdbed…仓库oracle、不冒充vendor recorded/live或PG/UI/transport；
+Sigstore签名未验证，G8归属文字确认与T-FIX-0011/0012继续保留。
 
 ## 8. Tool、Policy、Approval 与 Audit
 
@@ -830,6 +905,25 @@ catalog_generation
 
 OAuth callback 按发行物固定分离：Server 使用管理员登记的 HTTPS public callback；Desktop Local 使用单独的 installed-app OAuth client、system browser、PKCE 和仅监听 `127.0.0.1` 随机端口的短期 loopback callback；Desktop Remote 使用 Server callback。三个模式不复用 client secret 或 redirect URI，也不从 incoming Host header 推导 callback。
 
+Batch102 将 custom private MCP 的同一 canonical numeric CIDR authority 从 `tools/list`/`tools/call`
+继续贯穿 registration discovery、connect PRM/AS discovery、code exchange、runtime refresh rotation、
+immediate revoke 与 pending reconciliation；OAuth state v3绑定exact CIDR，begin/callback/rotation分别锁定
+current user/server/client/transport/CIDR后再落库，post-token漂移不释放access token。Google Drive固定
+public adapter只接受空override。该实现不替代Desktop Local installed-app flow，也不解决admin删除server
+后的vendor compensation/runbook（§28.1 R176）。
+
+Batch103 闭合 admin 删除后的本地优先 vendor compensation：删除事务把 versioned resource、transport、
+exact CIDR 与 retained OAuth client credential ID 写入既有 credential metadata，不复制任何 secret；只有
+endpoint/transport/CIDR、credential kind/provider、Vault 解封与 client closed-shape 全部有效时才进入
+automatic pending，否则立即 `operator_required`。事务先撤销 actor/deployment credential、删除全部
+server-prefix grant 与 server/join/tool，并为原 active actor 写 `vendor_revoked=false` hash-chain audit。
+reconciler 对 `mcp_server_removed` tombstone 只使用被冻结上下文和 exact revoked client，绝不回落到后来
+同 ID server；vendor failure 保持 pending，删除后本地材料损坏只 claim 一次便转人工，成功则写
+`vendor_revoked=true` 并从 user token 擦除网络上下文。最后一条 user token 完成或零 user token 时，
+OAuth client 转 `operator_required`，由 runbook 指导删除 vendor registration；bearer 同样要求 vendor
+侧人工轮换。当前仍没有 typed operator-attestation/最终 secret retirement，归 G8，不把 runbook 冒充
+该发行闭环。（§28.1 R177）
+
 ### 9.5 Google Drive REST 不是 MCP
 
 当前 OpenBot 的 Google Drive 走 GA REST adapter，而不是 gated MCP endpoint。Rust 版保留封闭 `VendorTransport`：
@@ -857,6 +951,29 @@ pub trait VendorTransport {
 - [当前上游提出的 skill 两阶段 tool retrieval](https://github.com/CopilotKit/openbot/issues/119) 尚未实现，Rust parity 不宣传已有；
 - 首版继续只把已 grant 的 tool 暴露给模型，并限制 catalog/schema/context 大小；
 - 未来 tool retrieval 另立产品变更，不在本次重写中暗中加入。
+
+Batch100 已把上述首版后端落实为 Server/Desktop 共用的 typed skill save/delete、grant/revoke 与
+for-Agent discovery：personal 同时要求 skill owner 与 active Bot owner，deployment/MCP 由 current
+admin 管理；MCP grant 绑定 current catalog/schema/effect/transport/credential identity，projection
+按 tenant/actor visibility 收窄并在 Repeatable Read 内完成。Batch101 又按固定上游“无仓内调用者”
+与旧 browser loop 已迁 server-owned runtime 的证据，退役无法携 run/call/sequence/fencing/budget
+authority 的 legacy `/api/plugins/call`；真实能力继续只走 AgentToolGateway 的 typed run 管线。两批都
+不改变“两阶段 retrieval 尚未实现”的结论，也不代表 Plugins/Skills GUI 或 G4/G6 整关完成
+（§28.1 R174–R175）。
+
+Batch117（R193）补齐 Plugins 的 Server Web 管理子面：index/detail/tool 三路由复用既有 typed API，
+支持目录、自定义 HTTPS/CIDR、OAuth client、个人连接、刷新/移除和逐 Agent grant。Rust 从 transport
+与 credential kind 投影封闭认证三态，GUI 不从 hasCredential 猜测；App owner 串行写入，离页不假装取消，
+失败/unknown 只读回而不重放，字段与焦点按当前页面恢复。真实 PG/loopback 43 项、UI187、Contracts105、
+Server233及 release 浏览器中英/失败/unknown/离页/键盘通过。三条 T-ROUTE 仍todo：缺 production PG/session
+到 GUI 的整体权限旅程、Desktop 部分 transport/真实宿主与 Local OAuth，详情 Bearer 凭据创建/编辑面仍缺。
+正式 golden/AX、Skills UI、完整 AppSidebar 与 G6 不勾，详见 Batch117。
+
+Batch118（R194）继续补Desktop的`GET /api/plugins/connections`与`POST /api/plugins/servers`，
+前者用host window绑定actor，后者用宿主fresh grant和Application admin gate；closed catalogue key DTO
+与Server共享，query/body不能携带actor或endpoint authority。Desktop tauri-host112、Contracts105、
+Server233与定向3条均通过；Windows x64仅cross-check。两项API revalidation不关闭真实Wry/GUI journey、
+Local installed-app OAuth或G6。Plugins三route继续todo；本批不冒充新PG/vendor/bundle/golden证据。
 
 ## 10. ComputerSecurityScope 与多 Bot/多用户隔离
 
@@ -933,6 +1050,25 @@ Desktop shell 只有平台 sandbox fidelity 为 `Enforced` 时才可启用高风
 5. 所有 iframe、script、image、font、XHR/fetch、worker、service worker 和 popup 都经过同一出口；
 6. Desktop 做同样的应用级代理与 URL policy，但文档明确它不是 kernel-level tenant boundary。
 
+R201先收紧macOS main outbound：只允许当前runtime的control.sock/frame.sock精确literal，不再允许全部UDS
+或localhost端口；真实两pipe正向、三个错误端点负向与两role Engine兼容通过。此规则只针对main，approved
+helper解除父profile继承后的网络/执行边界仍需独立验证，不冒充所有引擎只能通过gateway。未来gateway端口须
+按实际scope绑定增加精确规则；当前main无TCP allow、Engine仍epoch4内部页，production代理/导航仍未闭合。
+
+
+Batch122/R198先落Rust gateway库（`openbot_infra::net::scope_gateway`）：每实例独立loopback端口与256-bit
+proxy凭据，immutable exact/wildcard host+deny-first+port规则，只有通过认证/形状/host后才调用
+SafeDialer private ProxyHop执行fresh DNS/IP与peer绑定；HTTP/CONNECT/WS转发及撤销join有本机证据。
+默认新增上界=32连接、header32KiB/64字段、header/DNS/connect/upgrade10秒、idle30秒、lifetime30分钟，
+HTTP request8MiB/response64MiB、tunnel双向1GiB、实例8MiB/s与1MiB burst、copy16KiB，调用方只能收紧。
+HTTP每请求一条连接，不自动pool/retry/redirect；已发送前缀后失败不能推断远端未执行。
+
+该库尚无production ComputerManager完整scope/generation绑定、tenant policy加载、Engine proxy bootstrap、
+Server namespace路由或kernel边界。CONNECT仅验证authority/DNS/IP/port；不检查加密内层SNI/HTTP authority/path，
+这类细粒度策略仍需额外约束和实测。不得把本机library的成功当作上述六条整体达成；Engine仍是epoch4
+黑洞代理/内部诊断页。IPv6按typed URL host避免错误DNS路径的修复同批回归，详见Batch122。
+
+
 ### 10.6 EngineScope 与 ExecutionRealm（R118 / R120，2026-08-28）
 
 ```text
@@ -951,6 +1087,7 @@ ExecutionRealm
 - role 由 Rust 在 boot handshake 里铸造（§11.2），不从 renderer、argv 自由字符串或页面 URL 得出；
 - `ExecutionRealm` 两者之间**没有隐式 fallback**（G5C）：Desktop Local 没有 `ScopedContainer`，不引入 Docker Desktop 或任何本地容器 / VM（§2.3 条 13）；Server 没有 `HostLocal`；Desktop Remote 的 shell/file 是 Server 的 `ScopedContainer`；
 - 组件 engine 的 `ComputerId` / `ComputerGeneration` 与 browser computer 同一套铸造与失效规则（§17.2 条 6）；render session 就是它的 `TabId`；
+- browser residency key同样必须是完整`ComputerSecurityScope` digest + `ComputerId` + generation，不能退化为Bot ID。R181的`BrowserRuntimeManager`只持opaque driver handle；同scope cold start合并，activity lease期间不可被cap/idle/generation/stop逐出，全部slot在用时effect前稳定busy。该manager尚未被Server/Desktop production assembly消费，不替代`EngineProcess`/Supervisor资源与真实进程证据；
 - Grok Bot 的 "local" / "box" 双执行域（`grok-bot/source/host/box/*`、`electron-main/box/*`）只映射到本节的两域，其远程云 box 与本地 Docker box 都不引入。
 
 ## 11. Browser Engine 与 OpenBot/CrabCode 复用
@@ -987,7 +1124,28 @@ pub enum RenderSessionOperation {
 
 `Start` 的四段内容由 Rust 从 published 列与已校验的 args 一次性注入（`window.__args` 语义与上游逐字相同，§3.3）；engine 不得读取任何文件、URL 或第二来源。
 
+Engine启动环境（R199新增收紧，覆盖R126/R127的四变量黑名单）：Unix在spawn前清空全部继承，只写
+HOME/PATH/TEMP/TMP/TMPDIR，home/cwd=authority profile、temp=authority temp、PATH=/usr/bin:/bin；
+Linux runsc只追加既有固定DISPLAY=:99。Windows不枚举父环境，唯一unsafe边界只读GetSystemWindowsDirectoryW，
+构造固定APPDATA/HOME/LOCALAPPDATA/PATH/SystemRoot/TEMP/TMP/USERPROFILE/WINDIR九键UTF-16 block。
+禁把provider/DB凭据、loader/proxy/key-log变量或父PATH带给Engine；接口不接受任意env map。
+macOS两role的main/renderer canary从四处true实修为四处false，不改变host本身HOME；Windows/runsc真机仍待验。
+
+macOS main直接文件读取（R200新增收紧）：SBPL明确deny file-read*，再允许authority bundle/profile/temp/runtime、
+具名OS资源和精确ancestor metadata；禁止对 / 或 /System/Data 全子树放行。macOS26.5.2的dyld/libignition
+需literal /目录句柄作openat锚点，只有该字面目录开放，不能扩大为subpath。自建kernel探针在read/list/link正向
+下证明五种跨scope数据/枚举/link路径被拒绝，真实两role输入/帧/退出兼容。此证据只关闭direct-read子项，
+不替代helper exec、Mach broker、FD继承、UDS/localhost、Windows/runsc或完整G5E验证。
+
+此项不替代文件读取、UDS/localhost、helper exec或compromised main边界，完整G5E继续未通过。
+
 boot handshake（R119，三平台统一）：Rust 先创建 pipe endpoint（macOS/Linux 为随机路径、`0600` 的 UDS；Windows 为随机名、仅当前用户 SID 可访问的 Named Pipe），再 spawn engine，并向其 stdin 恰写入一行 ≤ 4 KiB 的 boot capability（pipe 名、`EngineRole`、protocol version、release epoch、一次性 128-bit token），随后关闭 stdin；engine 连接 pipe 后发送 `hello{token}`，Rust 校验 token **与 peer credential**（UDS：`SO_PEERCRED` / `getpeereid`；Named Pipe：`GetNamedPipeClientProcessId` 等于 spawn 得到的 PID 且进程创建时间一致），二者任一不符即 kill 并推进 `ComputerGeneration`。engine 二进制、shim ASAR 与协议 hash 的 digest 由 Rust 在 spawn **之前**校验（§16.2），engine 不自报。
+
+Batch109把不兼容input扩展显式升级为protocol/release epoch **2/2**：descriptor commands固定
+`start/input/stop/shutdown`，input八种ordinary kind与`input_applied` ACK均closed；动态/自由CDP仍不存在。
+fresh、non-Clone/non-serde `AuthorizedHumanInput`在Rust重验scope/generation/active tab及执行时expiry后才
+写pipe。ACK与独立binary frame读取解耦；当前macOS双role用captureScreenshot逐input产效果证据，但正式
+`Page.startScreencast`/ScreenHub仍todo，R126的v1/1只作历史基线、不得再当当前wire。
 
 ### 11.3 Browser 安全配置
 
@@ -1072,6 +1230,25 @@ Chromium Page.startScreencast
 
 CDP `startScreencast` 当前只选择 JPEG（生产）与 PNG（诊断），不把 WebP 写成已支持格式。ACK 在帧成功进入 size-1 latest buffer 后发送；慢消费者只能丢旧帧，不能形成无界队列。component role 的帧走完全相同的路径（computer_id = 组件 engine 的 ComputerId，tab_id = render session），不设第二条帧路径（R118）。
 
+Batch110已在macOS双真实role落正式`Page.startScreencast`/stop/FrameAck：descriptor钉JPEG70、1280×800、
+every1、max-in-flight1与send-last；Rust完整验帧并publish进size-one latest buffer后才ACK。400ms慢消费者
+多次实得received=ack且drop>0，T-BROP-0030–0032/T-FIX-0025 done。viewer ticket/WS、多viewer、fps/
+latency、fallback与production assembly仍todo，不能称完整ScreenHub/G7。
+
+Batch111再把唯一`EngineScreenSource`接入Rust `ScreenHub`：launch-time `ScreenAudience`与stream key绑定
+tenant/actor/auth generation和完整scope/computer/generation/tab；Hub在engine ingress之外再保留一份共享
+latest，多个viewer拿同一`Arc`且各自sequence gap证明旧帧coalesce。128-bit CSPRNG ticket只存SHA-256、
+30秒、一次消费并精确绑定Server origin或Desktop origin/window/binding generation；auth generation推进可关闭
+旧stream/viewer。T-FIX-0051 done。Server/Desktop真实WS、production失效hook、连接限额/fps/p95/最后viewer
+停流/fallback/assembly与跨平台仍todo，所以T-BROP-0027和完整G7不变。
+
+Batch113接通Server半边：same-origin `POST /api/screen/sessions`只收computer/generation/tab，Origin由Rust
+extractor在body前验证并经唯一ApplicationService向同一ScreenHub发票；`GET /api/screen`拒query，要求base+
+ticket恰两项且101只选择base。current/latest以`OBSCRN01` binary输出，client data与generation撤权1008。
+真实macOS Browser Engine frame经UDS→Hub→Application→Axum TCP WS到客户端，T-API-0175/0176与
+T-FIX-0053 done。production manager尚未attach source，PG cookie/TLS、Desktop loopback、input、bandwidth/
+idle/2秒停流仍todo，T-BROP-0027不变。
+
 ### 12.3 Frame contract
 
 ```rust
@@ -1093,6 +1270,11 @@ pub struct FrameHeader {
 }
 ```
 
+当前protocol v3 binary layout用`OBFRAME2`/76-byte fixed header承载上述字段，并额外携CDP
+screencast session ID供Rust-after-publish ACK；deviceScale不在官方ScreencastFrameMetadata中，只由固定
+`window.devicePixelRatio` probe补入。timestamp/pageScale/device size/scroll来自CDP event，全部在payload
+暴露前做finite/range/scope/generation/sequence校验。
+
 帧头设置 magic/version/header length/payload length；Rust 在分配前校验最大尺寸。任何 computer/tab/generation 不匹配的帧直接丢弃并记 metric，不进入其他 viewer。
 
 ### 12.4 Viewer ticket
@@ -1100,6 +1282,29 @@ pub struct FrameHeader {
 Desktop Leptos 先用 Tauri typed command 申请 `ScreenSession`。Rust 返回 loopback 地址和 128-bit、30 秒有效、一次性 ticket；WebSocket 通过 `Sec-WebSocket-Protocol` 携带 ticket，不放 URL/query/log。服务端同时校验精确 Tauri origin、window label、actor、computer、tab、generation 和 auth generation。
 
 Server 使用同源 `wss` 与 session cookie/CSRF-style origin check；不能把 computer token交给浏览器。每个 viewer 有连接数、帧大小、带宽和 idle limit。
+
+Batch111已实现不依赖transport的ticket authority核心：base protocol与秘密ticket protocol分离，ticket不进
+URL/query/Debug；pending map只有SHA-256 digest。viewer binary为`OBSCRN01`/68-byte header + JPEG，不携
+scope/computer/tab/ticket/CDP session。当前`verified_server`/`verified_desktop`构造器要求可信host先完成
+origin/window验证；真实Axum/Tauri upgrade尚未接，不能由构造器名称反推production handshake已完成。
+
+Batch113现在只实现Server upgrade：跨边界ticket String的Debug脱敏且Drop zeroize；POST no-store，WS拒
+URL/query ticket、在101前单次消费并base-only响应。生产Server main共用同一Hub/port，但没有production
+Engine source；Desktop仍显式No-port。这里的“Server transport done”不等于整段Desktop/Server链路完成。
+
+Batch114/R189补Server逐连接budget：图片8MiB/s、一次burst最多8,388,676 bytes（8MiB+68-byte header）；
+control burst20/10条每秒；10秒Ping、30秒idle只由当前challenge的单次匹配Pong续期，持续帧不续期；
+frame/Ping/Pong写上限1秒，close100ms，write buffer最大一张binary+1KiB。默认值由Rust host持有，renderer
+不可提供。真实macOS Engine以这些默认值跑heartbeat/idle通过；短时TCP故障测试覆盖budget/permit释放，
+不外推kernel buffer saturation。Batch113文档/fixture的16MiB literal已按实际8MiB代码纠正。T-FIX-0054
+只关闭Server transport预算；production source/auth hook、Desktop、last-viewer→Engine的2秒停流及性能仍todo。
+
+Batch115/R190补需求驱动capture生命周期：protocol/epoch4的closed screencast enabled命令只停/恢复采集，
+保留window/document/scroll/sequence；Rust ScreenEngineOwner持唯一process，pending ticket不算viewer，
+最后viewer离开即pause，source/auth-generation失效retire。输入队列只持非权威ticket，在当前ControlService锁
+内重验后才dispatch，旧epoch拒绝；旧source/owner的清理绑定registration，不能删除同key替代源。macOS双role
+及真实Server WS idle→Engine pause已验证<2秒及counter稳定，T-FIX-0055 done；production ComputerManager/
+source与auth hook、Desktop、fps/paint/fallback、Windows/runsc仍todo，T-BROP-0027与G7仍不勾。
 
 ### 12.5 Input
 
@@ -1118,6 +1323,25 @@ GUI input
 lease transfer、release、expiry、navigation 或 computer restart 都递增 epoch。旧 input 即使在 socket buffer 中也会被拒绝。接管期间 Agent acting 立即返回确定性 refusal，不排队。
 
 paste 使用 `Input.insertText`，不读取系统 clipboard；secret 使用独立 typed command，值不经过普通 key event、frame log 或 transcript。
+
+Batch108固定pure CDP parameter plan与上游键语义：`VIRTUAL_KEY_CODES`是**17项**（包含空格→32），
+其它单UTF-16单元取uppercase结果的首unit，未知多单元键返回0并继续计划；不得把后者擅自收窄成
+`UnknownKey`拒绝。该plan只把closed `BrowserInput`映射到mouse/wheel/key/insertText参数，普通路径
+构造性拒绝`SecretInsert`；尚未接authenticated engine或产生live CDP effect，故T-BROP-0037–0044、
+P2/G5A/G7仍todo。
+
+Batch109已把七种ordinary BrowserInput经protocol v2接入两个真实macOS Seatbelt Electron role：
+mouse hover/active、key text/raw Backspace、unknown F1=0、insertText与wheel均有后续frame可观察效果；
+cross-scope、expiry exact边界与ordinary SecretInsert均在pipe前拒绝且frame0。T-BROP-0037–0043据此done，
+T-BROP-0044独立secret effect与Page.startScreencast/ScreenHub仍todo；P1未绿，不能称P2进入或G5/G7完成。
+
+Batch112固定viewer坐标单位与组合journey：官方CDP和DevTools前端共同证明mouse/wheel使用main-frame
+viewport CSS坐标，`pageScaleFactor`只在DOM hit-test把viewport换成document后再加scroll；DPR在DIP↔physical
+换算中恰消一次。Rust `ScreenCoordinateMap`按`contain`推导实际image rect，拒letterbox、坏aspect、非finite、
+过小/大decoded与越界canvas，并携来源frame sequence。macOS双真实role用映射结果命中button、执行
+down→move→up、以`Input.insertText`输入完成IME文本、缩放wheel后scrollY增加；T-FIX-0052 done。非1 DPR/
+pageScale/nonzero-scroll pointer仍只有pure vector，Leptos/WS/stale-frame/production/resize-navigation/tab/
+Windows/runsc仍todo，不关闭G7或新增parity T-ID。
 
 ### 12.6 性能目标与降级
 
@@ -1703,7 +1927,11 @@ native thread final cutover 是明确的 writer switch。之后不回到 Intelli
 
 ### 23.2 新项目发行许可
 
-本次实施默认是内部、闭源、all-rights-reserved 的第一方新代码；MIT/Apache 等第三方代码按各自条款分区随包。该默认值避免在权利人尚未书面决定时擅自把 CrabCode 专有资产开放。若未来开源，必须另立书面发布决议并重新做 whole-tree license audit，不在本次重写中自动发生。
+R191之前的默认许可为内部、闭源、all-rights-reserved；根LICENSE/Cargo/SPDX目前仍反映该实际状态。
+2026-09-04用户已明确本项目面向社区开源共建，授权开始开源范围、复用与发布准备。实施时须形成书面发布
+决议并完成拟公开文件的whole-tree license audit，再同批更新LICENSE/Cargo/SPDX/NOTICE/README。
+第一方可授权代码的具体开源许可与第三方各自许可分区处理；本地复制自有模块的授权不自动把整个源项目
+或其中第三方材料公开。原项目源码、参考树、身份/签名材料与服务凭据不得不经审查混入开源发行物。
 
 ### 23.3 服务许可不等于源码许可
 
@@ -1795,9 +2023,10 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - 供应链、NOTICE、brand、runbook 全通过；
 - engine bundle：`cargo xtask engine verify` 绿（sha256 / fuses / ASAR integrity / rebrand / release epoch），Electron `autoUpdater` 禁用，零 npm（R117）；Linux Desktop tier-2 不进入签名 / 更新判据（R122）。
 
-任何闸门失败都只能修复后重跑，不能以“后续补齐”进入下一发布阶段。
+上述G0–G8是v4完整发行闸门，失败只能修复后重跑，不能以“后续补齐”宣称完整发行通过。
+R191新增的受控Alpha按§24.2单独准入，不视为G0–G8通过或§25完成。
 
-### 24.1 实施状态勾选（更新至 2026-09-03；进度证据以机器台账为准）
+### 24.1 实施状态勾选（更新至 2026-09-05；进度证据以机器台账为准）
 
 - [ ] **G0**：Phase 0 证据产物已落；仍缺 §1.1 两份输入文档原件，故整关不勾。2026-08-28 R116 后 `grok-bot/` LFS 指针 = 0、可完整检出。
   - [x] **P0-code / Batch52**：`grok-inventory --check` 对钉死 tree 的 2,110 文件逐字同步；本平台 Electron 官方 zip 与 `engine-pins.toml` / 上游 SHASUMS 副本交叉一致并实跑 `v43.3.0`；overlay、shim 规则、6 条 Engine T-ID 与 poisoned epoch 全部落地。五个 xtask 退出子命令及 `openbot-computer` 9/0/0 在 macOS arm64 本轮实跑绿；这只勾 P0-code，不替代缺失的两份输入原件，也不勾 G0 整关。
@@ -1847,7 +2076,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     跨副本消费。`Cancelling`保持foreground，只有child-stopped后才有唯一`Cancelled`；无local child时
     terminal+cancel+原dispatch outbox同事务收口，exact replay不重复行；
   - [x] Rust Intelligence importer：signed+encrypted neutral bundle、独立 target mapping/claim、逐 thread 原子 cursor/resume、DB 重算 ordered checksum、observable memory provenance 与 staged tool→run FK finalize；最终 runtime 零 Intelligence 调用；
-  - [x] 50ms/8KiB accumulator 已接真实 Rust OpenAI Responses/Chat producer；normalized text/reasoning 以 expected sequence 写 `DurableTextRun`/journal，terminal 只物化 text；
+  - [x] 50ms/8KiB accumulator 已接真实 Rust OpenAI Responses/Chat producer；normalized text/reasoning 以 expected sequence 写 `DurableTextRun`/journal，terminal 只物化 text；R167 后 active run 的 reasoning 可重放，但任一 terminal 在同一事务收敛为无内容 marker，native0027 回填既有四类终态且不改 schema/event identity/sequence；
   - [x] built-in `remember` backend：explicit prompt→provider call→唯一 tool pipeline→`origin=remember_tool` preference/fact+DB provenance→durable tool pair→第二次 sampling；无后台抽取；
   - [x] Memory GUI与全局写入控制：native 0022把tenant/actor runtime control独立于memory记录持久化；
     缺行默认enabled。disabled在同一事务拒绝GUI remember、correct与built-in `remember` tool，
@@ -1859,6 +2088,19 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - [ ] **G4**：整关未通过；以下 Rust built-in Agent 子面已有本机机械证据：
   - [x] pure reducer + bounded dispatch consumer；reserve→durable ack→activate、activation 起算 absolute deadline/lease heartbeat、cancel 等 children stopped；
   - [x] OpenAI-compatible Responses + Chat adapter：safe dialer、SSE UTF-8/multiline、skeleton/延迟字段、partial JSON、交错 tool calls、未知扩展、真实 read-gap stall；
+  - [x] Batch104 OpenAI官方recorded trace：固定`openai-dotnet@19d0a3cb…`的RecordedTest source
+    record/blob/SHA与MIT许可，36段ResponseBody逐字节提取为9,070-byte SSE；production
+    OpenAiProvider→SafeDialer→HTTP/SSE对整块/非规则/逐字节chunk输出同一function-call/usage/唯一terminal，
+    provenance/NOTICE/SPDX/secret guard同批闭合。只勾三家中的OpenAI **1/3** 与T-FIX-0046；该trace
+    不含text/reasoning；本批当时Anthropic/Google未齐，当前以R197新增证据为准，T-FIX-0013/live继续todo；
+  - [x] Batch121/R197 Anthropic官方recorded/captured trace：Go cassette与PHP shared raw HTTP两份
+    source/commit/blob/bytes/SHA/MIT主控独立核验，提取3489/1415 bytes均cmp相等。production
+    AnthropicProvider→SafeDialer→真实loopback chunked SSE 3/0/0，whole/irregular/bytewise逐事件等价，
+    text/tool/thinking/usage与唯一terminal成立；原文错误canary不回显，negative mutation与原录制分开。
+    新T-FIX-0056、NOTICE/SPDX同步；与R178 OpenAI合计2/3，不是live/PG/UI或完整provider corpus；
+  - [ ] Google官方原始SSE仍缺：Batch121验收调查候选7dcba21，22项source身份与recorder流程复核。
+    所审Google/test-server与SDK recordings只有parsed bodySegments等不可逆资产，不重包为假SSE。
+    这不宣称穷尽所有官方来源；新合格原始recording到达后继续production replay，G4保持未完成；
   - [x] Anthropic Messages adapter：system/messages/tools 分域、thinking/text/partial tool JSON/usage、固定 version + header-only key、未知事件隔离；
   - [x] Google streamGenerateContent adapter：systemInstruction/content/function call+result/usage、header-only key、无 vendor response id 时确定性 trace id；
   - [x] package `model.yaml` model/credential ref、每 run PostgreSQL active credential 精确选择、stored-first/env fallback/corrupt-no-fallback、standing prompt/provenance 与 Server production assembly；
@@ -1890,25 +2132,71 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     budget等待期cancel零effect→Cancelled，任一parallel child已启动则abort+drain后reconciliation；成功结果仍按
     provider output index durable。真实PG17.11 production gateway/ApplicationService双component峰值2且DB/provider
     顺序一致，Agent PG全套`9/0/0`。这关闭并发tool子项；computer runtime budget仍todo；
+  - [x] Batch106 browser runtime residency owner子项：固定上游13条LRU/idle selector逐项转done；
+    `BrowserRuntimeManager`以完整ComputerSecurityScope digest+ComputerId+generation持有opaque driver handle，
+    同scope并发cold start一次，cap/idle只实际close无activity lease的实例，全slot active时effect前
+    `computer_runtime_busy`，launch失败恢复victim，stale/collision/generation/stop/shutdown均fail-closed。
+    fixture明确production EngineProcess/Supervisor assembly与CPU/RSS/pids/disk=false；故完整computer runtime
+    budget与Computer装配仍todo，不因本子项勾选；
   - [x] Batch92 AG-UI error production vertical：`RUN_ERROR`远端message/code在decoder边界压成
     `provider_generation_failed`，malformed message/unknown event压成`provider_invalid_response`；本地
     ProviderEvent/journal/audit/GUI均无远端正文槽。真实SafeDialer/SSE+PG17.11同一remote Agent连续跑
     success/error/malformed三run，terminal逐项正确，messages/run_events/audit canary=0；Agent=`47/0/0`、
-    PG Agent=`9/0/0`、UI closed notice=`1/0/0`。只关闭T-EVT-0011，其余AG-UI族继续todo；
+    PG Agent=`9/0/0`、UI closed notice=`1/0/0`。只关闭T-EVT-0011，其余AG-UI族继续todo；R168已纠正
+    初次登记时把该证据错挂T-EVT-0003的台账身份，done总数不变，tool-call-result恢复todo；
+  - [x] Batch93 AG-UI reasoning retention：固定decoder只把可见reasoning delta送入provider-neutral event，
+    `REASONING_ENCRYPTED_VALUE`正文在边界丢弃。active run按expected sequence保留可重放delta；任一terminal
+    经统一事务把reasoning收敛为固定无内容marker，terminal replay不复活。native0027对四种历史终态做
+    同一回填，active/text/事件identity/sequence/time不变。真实remote SafeDialer/SSE→Agent→PG终态后
+    visible/encrypted canary均为0、marker恰1；只关闭T-EVT-0008，不把WAL/backup物理擦除或其它AG-UI族标完成；
+  - [x] Batch95 AG-UI bounded untrusted projections：state/messages/activity/step/raw-custom经closed
+    `ProviderRemoteProjection`按run/thread sequence写active-only checkpoint；local family/source不可由remote覆盖，
+    全部remote字段显式untrusted，单event/session双预算。state/activity投影patch后完整值，messages不覆盖权威
+    transcript；terminal同事务清内容marker。真实SafeDialer/SSE→Agent→PG在terminal前观察到9条精确顺序，
+    terminal后marker=9/canary=0；只关闭T-EVT-0004/0005/0006/0007/0009，tool-result与interrupt仍todo；
+  - [x] Batch96 AG-UI tool-result production projection：production component catalogue/context真实向
+    remote RunAgentInput提供showQuote schema；SSE完整START/ARGS/END/RESULT只生成一次offered-call绑定的
+    untrusted projection，completed run中本地tool message与tool_calls均为0，terminal后正文canary=0。
+    unoffered/duplicate在projection前拒绝；只关闭T-EVT-0003，interrupt/resume仍todo；
+  - [x] Batch97 AG-UI interrupt/resume typed contract前置：known-field-only interrupt batch、unique/bounded
+    resume entries、local/protocol run identity分离、parentRunId+resume[] encoder及unknown authority丢弃已落；
+    runtime仍显式fail-closed，native/resolve/audit/AwaitingHuman/第二次真实request/UI未落，故T-EVT-0010不勾；
+  - [x] Batch98 AG-UI interrupt/resume durable纵向：native0028、actor-scoped list/resolve、四类hash-chain
+    audit、AwaitingHuman lease/cancel/deadline、fresh context与endpoint lineage、第二次SafeDialer request、
+    Server/Desktop/GUI及terminal scrub同批闭合；T-EVT-0010与AG-UI十一事件族均done，但G4整关仍不勾；
   - [x] 真实 tool host loop：complete batch 按 stable index 串行、跨 sampling 8-step、三家 assistant/tool pair、durable checkpoint/context reload、Rust call identity；首个 production executor `remember` 经 CEL/decision/attempt/capability/outcome/audit，generation race fail-closed；
   - [x] run/user cancellation 的统一host入口：PostgreSQL control outbox跨副本到lease owner，built-in Agent
     watch token沿context/provider/tool child传播；真实PG证明active child先drop、再写唯一Cancelled terminal。
-    RMCP/computer/file/shell各协议级notification/process-tree仍独立todo；
+    computer/file/shell各协议级notification/process-tree仍独立todo；
+  - [x] Batch105/R180 RMCP run protocol cancel：private/non-serde sender→Rust-minted ToolCallId→共享
+    process-local registry→同一ApplicationService/tool pipeline；pre-cancel socket0。Auto lifecycle首选
+    `server/discover`/2026-07-28，fresh `tools/list`与started `tools/call`均关闭exact response stream且
+    cancel notification POST=0；拒discover后才回落2025-11-25并发送exact requestId/reason的旧版
+    `notifications/cancelled`。固定rmcp 3.1.4首event前stall由SafeDialer仅对modern tool request drop exact
+    future规避。call transport boundary后始终`reconciliation_required/unknown`，signal失败使用
+    `mcp_cancel_signal_unknown`；Server/Desktop共用assembly registry，5秒合作收口后才audit/terminal。
+    PG+official RMCP=`11/0/0`，T-FIX-0047 done；T-FIX-0018完整conformance与computer/file/shell cancel保持todo；
   - [x] 固定 `@ag-ui/core@0.0.57` 的 33 个 event literal、RunAgentInput、stateful lifecycle/text/tool/state/messages/activity/step/reasoning/raw/custom/interrupt/error decoder 与原子 RFC 6902；开放 payload 只保留为 bounded untrusted data；
   - [x] package-backed `remote_ag_ui` lifecycle/text 生产竖切：权威 route→唯一 SafeDialer POST/SSE→decoder→durable semantic chunk/assistant/terminal；RunAgentInput 以 DB clock 铸 10 分钟 assertion，并从 current grant 投影同一 whole tool set；
   - [x] per-Agent callback token issue/rotate/revoke：`obot_agt_`+32-byte CSPRNG、DB hash-only、fresh Origin、owner/admin/fresh generation、mutation+audit 同事务；callback 同验 token/assertion/Bot/actor/run/lease/current tool-set，并经同一 PostgreSQL sequence + ApplicationService 执行真实 RMCP outcome；共享 `AGENT_TOOL_TOKEN` 构造性不存在；
   - [x] native 0017：PostgreSQL durable per-run tool sequence、catalog generation/schema/effect/availability、grant state 与 endpoint+vendor+provenance fingerprint；missing/changed 同事务 suspended_missing+audit，重新出现不自动启用；
-  - [x] pinned RMCP 3.1.4 / MCP 2026-07-28 client：SafeDialer-only Streamable HTTP、per-operation initialize/list/call/close、1000/4KiB/256KiB/20k limits、progress-aware timeout cancellation、live schema binding 与 commit-unknown reconciliation；
+  - [x] pinned RMCP 3.1.4 / MCP 2026-07-28 client：SafeDialer-only Streamable HTTP、per-operation modern discover或legacy initialize/list/call/close、1000/4KiB/256KiB/20k limits、progress-aware timeout cancellation、live schema binding 与 commit-unknown reconciliation；
   - [x] server-side-tools 五条 production 竖切：无 grant 零工具、vendor 原 schema、official RMCP HTTP 真调用、Bot audit、CEL refusal marker；另有 definite failure、secret content block、acting approval refusal 与 two-replica sequence 证据；
   - [x] native 0018 + credential identity：OAuth client 登记/轮换推进 server credential generation，旧 grant 固定旧代际并在 refresh 转 suspended_missing，永不把权限静默搬到新 client；
   - [x] Server/Desktop Remote MCP OAuth：401 PRM→exact issuer/S256 discovery、RFC8707 resource、HMAC+AEAD single-use state、PKCE/code callback、v2 refresh pointer/rotation、actor catalog/runtime、401 单次 refresh/retry 与 typed HTTP 四面；
   - [x] local-first disconnect：本地 tombstone/join delete/audit 先 commit；RFC7009 失败进入 `revocation_pending`，SKIP LOCKED 周期 reconciliation 成功后才记 vendor 已撤权；
   - [x] native 0019 + Google Drive GA REST：closed transport identity、compile-time single-vendor catalogue、4 条 read-only static tools、asker per-user Google OAuth、SafeDialer REST、vendor link/provenance、Agent 401 单次 refresh/retry、local-first disconnect/revoke reconciliation；正文不入库且不建本地 ACL/index；
+  - [x] Batch99 MCP admin backend/private-egress纵向：native0029只允许custom server保存最多32项/2048字节的canonical numeric CIDR；同一集合绑定v2 transport fingerprint、真实`tools/list` refresh与每次`tools/call` SafeDialer。typed `GET /api/plugins`、custom add、delete、通用refresh同时进入Server/Desktop同一ApplicationService；配置/credential rotation/hash-chain audit原子，CIDR或credential变化使旧grant suspended且不自动复活。真实PG17.11 SCRAM+TLS RMCP证明默认loopback拒绝、显式CIDR后6 tools、旧credential退役与delete本地闭包；只关闭T-API-0080/0082/0084/0085与T-FIX-0045，不冒充skills/grants/for-agent/UI或vendor-side revoke runbook；
+  - [x] Batch100 MCP skills/grants/for-Agent backend纵向：closed personal/deployment skill与MCP/skill grant contract在Server/Desktop走同一typed ApplicationService；global与MCP在Application+current DB role双层admin gate，personal必须skill owner+active Bot owner。mutation锁current actor generation/Agent/skill/catalog并与closed hash-chain audit同事务；MCP grant绑定catalog/schema/effect/transport/credential current identity，for-Agent在Repeatable Read单事务投影。普通用户管理页只显示本tenant own/public Agent grants，不枚举private/cross-tenant id；stale tool或soft-deleted Agent的grant仍可由同tenant admin清理。PG17.11 SCRAM证明三类binding漂移、越权/未知/tenant负向、幂等revoke、audit rollback与15行连续hash-chain；只关闭T-API-0089–0093，不冒充legacy call或Plugins/Skills UI；
+  - [x] Batch101 legacy browser MCP call退役：固定上游明确`POST /api/plugins/call`无仓内调用者，旧`useFrontendTool` browser loop已迁server-owned granted tools；其ref/args/agentId wire无法证明Rust强制run/call/sequence/fencing/budget authority，故不挂兼容handler，Server/Desktop authenticated valid POST均unmatched 404且Application effect=0。能力保留在AgentToolGateway→typed InvokeTool；本轮PG17.11+TLS RMCP重跑no-grant/schema/CEL/content refusal/decision+attempt/capability/vendor/outcome/audit全纵向。T-API-0094改`替代/remove/done`，不冒充Plugins/Skills UI或G4完成；
+  - [x] Batch102 custom private MCP user-OAuth egress lifecycle：共享canonical parser后，同一server CIDR用于admin registration、PRM/AS、code、runtime refresh、immediate revoke与pending retry；state v3绑定CIDR，begin/callback/rotation用current user/server/client/transport/CIDR锁与CAS阻断pre/post-token漂移。空CIDR负向网络/credential/audit为0，127/32正向全通；pending在CIDR撤销时不发网络，恢复后才重试。PG OAuth/credential/RMCP=`2+12+6/0/0`；不冒充Desktop OAuth或admin-delete vendor runbook；
+  - [x] Batch103 MCP admin-delete vendor compensation/runbook：删除事务冻结versioned resource/transport/
+    exact CIDR/retained client ID且不复制secret，先撤本地token/join/全部server-prefix grant并写active actor
+    local-disconnect与configuration hash-chain audit。reconciler只用旧上下文，same-ID replacement不能劫持；
+    vendor失败保持pending，删除前/后本地材料损坏显式转`operator_required`且停止无限重试；成功后擦
+    user-token网络上下文，最后一条完成或零用户时client转人工vendor registration删除，bearer同样有
+    明确runbook。PG OAuth/RMCP=`2+6/0/0`，Infra/Server/Desktop=`327+222+131/0/3 ignored`；无新T-ID，
+    不冒充Desktop OAuth、protocol cancel、typed operator-attestation/最终secret retirement或完整G4/G8；
   - [x] native 0020 + durable approval backend：完整 binding（含 AuthGeneration）、pending-only 脱敏摘要、actor-only typed GET/decision、fresh Origin、grant/deny/expire/cancel hash-chain audit、跨 replica wait、once-per-run exact reuse；真实 acting MCP grant 后才写 approval-linked decision/attempt 并调用 vendor，deny 零 attempt/action；
   - [x] approval critical realtime：actor-scoped same-origin read-only `openbot.tool-approvals.v1` 只发count-only失效hint；PG每轮重验AuthGeneration/role/revoke并整页重读，跨replica poll、撤权terminal、Desktop Critical、WASM连接/重连前GET+30秒fallback+checked epoch与稳定Page owner均有PG/loopback/浏览器证据；不把hint冒充durable cursor状态；
   - [x] approval真实PG浏览器竖切：testkit-only host在受保护的loopback/prefixed专用库施加正式baseline/native并接production coordinator/waiter；release WASM展示PG pending，click后granted、summary清除、requested/granted audit与waiter全部精确，hard reload不复活；fixed auth不冒充session-cookie矩阵；
@@ -1948,10 +2236,53 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
   - [x] create-time routing provider：production main复用package model/每请求PostgreSQL credential/Vault/
     SafeDialer并固定OpenAI Chat Completions；模型只建议权威roster内ID，缺credential/transport/坏JSON/
     低confidence均由Application成功fallback，tool output拒绝，消息与模型理由不进hash-chain audit；
-  - [ ] provider gate 要求的三家 recorded vendor trace 仍为 **0/3**，本批未使用 live vendor credential；human approval 的 Leptos/Axum可点击竖切、critical realtime、真实PG与production session resolver浏览器均已落，但真实OIDC/SAML登录、完整 thread/cancel/computer 集成仍未闭合；run-wide normalized token、operator-attested cost upper bound与用户费用cap/API/UI已落，仍缺并发tool与computer runtime的完整budget；Desktop Local installed-app client/system browser/random loopback callback、RMCP/computer/file/shell各自的协议级cancel notification/process-tree、MCP 专用 private egress与 admin custom/通用 refresh/grant/effect 完整 UI、Agent Desktop正式capability/真实Wry journey、interrupt/resume 与其余事件 durable/UI projection、browser/file/shell executor 尚未闭合。Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
+  - [ ] provider gate 要求的三家 recorded vendor trace 当前为 **1/3**：OpenAI官方RecordedTest response-body trace已由Batch104闭合，Anthropic与Google仍缺；本批未使用 live vendor credential。human approval 的 Leptos/Axum可点击竖切、critical realtime、真实PG与production session resolver浏览器均已落，但真实OIDC/SAML登录、完整 thread/cancel/computer 集成仍未闭合；run-wide normalized token、operator-attested cost upper bound、用户费用cap/API/UI与并发tool runtime budget已落，仍缺computer runtime budget；Desktop Local installed-app client/system browser/random loopback callback、computer/file/shell各自的协议级cancel notification/process-tree、RMCP完整官方conformance、Plugins/Skills完整UI、G8 typed operator-attestation/最终secret retirement，Agent Desktop正式capability/真实Wry journey、browser/file/shell executor尚未闭合。AG-UI十一event family、单家trace、RMCP run cancel与admin-delete compensation/runbook都不能替代这些G4/G8余项；Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
+  - [x] Batch125/R201 macOS main精确pipe outbound：旧3类错误端点真实可达，改为两literal后3负向拒绝、
+    control/frame正向和真实两role兼容保持。F0060仅记录main，不覆盖helper/Mach/签名/production或G5E整关。
+
+  - [x] Batch124/R200 macOS main直接读取：旧规则sibling/symlink/DataVolume三路径实测可读，scope与具名OS
+    读取白名单后五负向全拒绝，同时自身read/list/link正向成立。native policy1/0/0与真实两role1/0/0通过；
+    F0059只记录direct-read与兼容性，helper exec/Mach/FD/network边界和完整G5E/Alpha仍不勾。
+
+  - [x] Batch123/R199 Engine父环境泄漏子项：真实macOS Browser/Component main/renderer四个canary
+    修复前全true、修复后全false，父进程正向成立且原两role完整输入/帧/退出旅程通过。Unix封闭五键，
+    Windows OS目录来源+九键UTF-16 block；portable4、Computer67+fixture5与cross-check/Clippy通过。
+    Windows/runsc真实运行、filesystem/helper exec compromise与G5/G7/Alpha整关仍未闭合。
+
+  - [x] Batch122/R198 Rust出口网关库子项：macOS真实HTTP/CONNECT/WS/TLS、认证前DNS0、policy/CIDR/IPv6、
+    实际body/tunnel预算、共享rate、idle/lifetime与cancel/Drop共15/0/0；SafeDialer14、provider32与recorded4回归。
+    T-FIX-0057记录明确未装配边界；Linux仅check，Windows server-runtime卡ring缺MSVC C头文件，不能写通过。
+    ComputerManager/Engine/kernel/TLS内层策略仍缺，G5/G7及Alpha整关不勾。
+
   - [x] P0-code 规则与台账地基：engine fetch/verify、shim 静态 allowlist、boot/role/confinement/render/conformance T-ID、HumanLeaseEpoch checked + generation-recoverable poison 已绿。
   - [x] Batch53 macOS P1 子证据：clean-room shim 404 LOC；Rust-only ASAR/fuses/rebrand/integrity/signature/release manifest；digest-before-spawn、4 KiB stdin token、双 UDS peer PID + live child、hello/ready/command/shutdown deadline与独立 binary frame；main executable 精确继承 SBPL profile，仅四个 Electron Helper + crashpad 五个 literal 可 `with no-sandbox` 后由 Chromium renderer sandbox 接管。Browser/Component 两 role 真 Electron 各自 start→1280×800 JPEG→stop→shutdown，renderer `ProcessMetric.sandboxed=true` + creationTime，主/全部后代 TCP LISTEN 0，全部 PID/profile lock 清理 0。
+  - [x] Batch106固定上游browser residency选择与Rust manager owner子证据：13条selector、完整scope/代次、
+    cold-start合并、active lease保护、LRU/idle actual close、rollback与shutdown共`43/0/2 ignored`；未接production
+    EngineProcess/Supervisor、两个COMPUTER配置或CPU/RSS/pids/disk，不勾G5A–G5F。
+  - [x] Batch108固定`BrowserInput→CdpInputPlan`纯映射前置：17项键码逐项相等、unknown multi-unit=0、
+    mouse/wheel/key/insertText与SecretInsert隔离共11条，Computer=`54/0/2 ignored`；fixture明确
+    engine wire/live CDP/ScreenHub=false，T-BROP-0037–0044继续todo，且P1红时不冒充已进入P2。
+  - [x] Batch109 protocol-v2 macOS实际input子证据：protocol/epoch2、fresh receipt、literal CDP闭集与
+    ACK/frame双通道；Browser/Component两真实role以hover/active/text/Backspace/F1/insert/scroll证明
+    T-BROP-0037–0043，cross-scope/expiry/ordinary-secret frame0。Computer lib=`56/0/0`、真实=
+    `2/0/0`；T-BROP-0044、Page.startScreencast/ScreenHub、production assembly及Windows/runsc runtime仍todo。
+  - [x] Batch110 protocol-v3正式screencast子证据：Page start/stop/ACK、完整metadata header、Rust
+    size-one latest buffer与ACK-after-publish在双真实role通过；慢消费者received=ack且drop>0，stop exact
+    replay、无listener/orphan。T-BROP-0030–0032/T-FIX-0025 done；viewer/production/Windows/runsc仍todo。
+  - [x] Batch111 Engine-backed ScreenHub/ticket核心子证据：Engine session只交出一个source，Rust Hub双viewer
+    共享latest分配并各自统计coalesced sequence gap；128-bit/30秒/hash-only/single-use ticket绑定actor、
+    auth generation、完整stream与Server/Desktop origin/window，generation推进关闭双viewer。真实macOS
+    Browser/Component role均通过；T-FIX-0051 done。Server/Desktop WS、production hook、连接限额/停流、
+    fps/p95/fallback/assembly与跨平台仍todo，不把T-BROP-0027或G5/G7整关勾选。
+  - [x] Batch112 viewer coordinate/组合input子证据：按官方CDP+DevTools公式把contain canvas映为viewport
+    CSS与document hit-test坐标，DPR恰消、pageScale只用于document、scroll不进入wheel；黑边/坏aspect/
+    非finite/越界fail-closed。macOS双role实际完成映射命中、down→move→up、IME完成文本insertText与wheel
+    scroll。T-FIX-0052 done；非1 DPR/pageScale硬件、Leptos/WS/stale-frame/production/resize/tab/跨平台仍todo。
+  - [x] Batch113 Server ScreenSession/WS子证据：typed ApplicationService发放actor/generation/origin-bound
+    ticket；POST同源/body前置/no-store，GET无query、exact双protocol、base-only response、single-use、binary
+    latest、client data/generation撤权1008。真实macOS Engine→Axum TCP WS通过。T-API-0175/0176与
+    T-FIX-0053 done；production manager source、PG cookie/TLS、Desktop/input/限流/停流/跨平台仍todo。
   - [ ] **P1 整阶段仍未通过**：Batch54 已落 Windows 可执行探针代码（当前用户+Restricted-Code/low-label 双 Named Pipe、PID+100ns creation FILETIME、suspended `DISABLE_MAX_PRIVILEGE|LUA_TOKEN|WRITE_RESTRICTED` medium-integrity token、Job 32 processes/4 GiB/kill-on-close、profile/temp ACL、renderer Job membership、PE `Integrity/ElectronAsar` exact resource）并在 macOS 对 `x86_64-pc-windows-msvc` check/Clippy；但 Windows 真机 bundle、两个 role、ACL negative、renderer sandbox/no-listener/no-orphan **均未运行**。Batch55 又落 Ubuntu 24.04 x86_64 runsc OCI harness与容器内真实双 role probe：完整 release tarball sha、sidecar release ALWAYS + usage STRICT、network/host-UDS/FIFO none、gVisor marker、只读root/bind、零capability；R129补齐Electron Linux必需的容器内Xvfb（fixed :99/1280×800×24、`-nolisten tcp`、版本+binary hash候选），renderer要求main `Seccomp!=2`负对照、renderer `Seccomp:2` + `NoNewPrivs:1`、PID+network或user namespace layer-1、frame/listener/orphan/lock全绿后才打印pin candidate。但本机macOS只能做Linux target check/Clippy，**没有运行runsc/Xvfb、没有版本pin**；R63禁止未授权派发Actions，不能伪造两平台结论。P2/P3/P4未进入，G5A–G5F仍不勾。
 - [ ] **G6**：整关未通过；以下 Web GUI 地基已有本机机械证据：
   - [x] 第一真源钉版 Leptos 0.8.19/router 0.8.13/meta 0.8.6/i18n 0.6.2；Tailwind 4.3.3、Trunk 0.21.14、Binaryen 132、wasm-bindgen 0.2.127 全部 exact hash/version，真实 offline/locked Trunk bundle A/B 字节一致；
@@ -1968,6 +2299,11 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     CallbackTokenPanel/NewAgent。当前UI=`91/61/152`；Google Drive brand、AppSidebar总项+其余28业务/
     runtime/golden保持todo；
   - [x] `design-gallery` compile feature 承载 `/_design` 状态/键盘/AX 样本；production feature 关闭且 bundle gate 直接要求 WASM `_design` byte=0。真实 Chromium 已验证十条基础原语的 Enter/Space、Field ARIA、focus-within、Textarea 十行 cap、separator/skeleton AX 与 DOM 五类零缺陷；截图只作目视 QA，不冒充 golden；
+  - [x] Batch107已闭合Golden比较器与可执行PNG闸门：RGBA阈值/比例/8×8/mask core 18条，
+    manifest/PNG/diff gate 7条；由`fixtures/ui/seed.json`机械导出exact 245-path inventory，伪PNG、错名、
+    symlink、错误viewport、未review mask与超尺寸/内存均fail-closed。`image 0.25.10`只在testkit xtask的
+    PNG-only optional图，四个新增lock包均零build.rs；formal verify因容器digest/CJK版本TBD按预期红。
+    这只关闭T-FIX-0003的gate evidence，不勾245张baseline、CDP/xcap capture、AX/键盘/reduced-motion或G6；
   - [x] Message/Bubble compound、platform-aware Kbd、SHA-256 deterministic Avatar、5s generation-safe polite Toast、400ms hover/focus/Escape Tooltip 已过 Rust/WASM/Chromium/AX；Avatar remote image、Item/Tooltip external link 构造性拒绝，Toast 仍不冒充所有 accepted:false 业务 use case 已接线；
   - [x] Dialog/Sheet 共享唯一 modal kernel：explicit ARIA、首焦点、Tab双向环、Escape/close/backdrop、return focus、body scroll lock 与 path-sibling inert/aria-hidden；Sheet top/right/bottom/left 四值不复制安全规则；
   - [x] Menu compound 以 closed `data-state` 映射 open/disabled，根/一层子菜单实现 APG ↑↓/Home/End/Enter/Space/Escape/→←、500ms 多字符 typeahead、disabled skip、exactly-once activation、outside dismiss；Tab/ShiftTab 离开菜单且焦点不落 body；
@@ -2062,10 +2398,28 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
     1440/1024/900双列与600单列均overflow0、duplicate/alerts/console0；其余settings route仍todo；
   - [ ] reviewed 外部产品名/bundle id/deep-link 后的 `tauri.conf.json`/binary、真实 window lifecycle/multi-window integration、macOS arm64/Windows x64 原生发行构建，以及AppSidebar总项+其余32业务组件/9 route、1 brand icon、6runtime替代、110 Web + 两平台各54 golden、完整axe/键盘E2E尚未闭合；
   - [ ] Tauri target-aware bans/sources 已绿；macOS/Windows 各仍有 5 个 MPL-2.0、5 个 runtime UNIC unmaintained（无 patched 版）；Batch81 macOS-only Keychain两包使Cargo Vet为macOS **272** / Windows **269** unvetted（Batch16为270/269），config/exemption仍0改，故供应链与G6整关均不勾。
-- [ ] **G7**：本地 `ControlService` 的 HumanLease actor/auth/computer/tab/generation/epoch fencing 与 poisoned exhaustion 已有 9/0/0 单测；ScreenHub/viewer ticket、真 engine input、fps/latency/backpressure、coordinates/drag/IME 与跨 scope 矩阵仍未实施完成，故整关不勾。
+- [ ] **G7**：HumanLease fencing、普通真engine input、Batch110正式screencast/ACK/engine latest-buffer、
+  Batch111 ScreenHub/multi-viewer/ticket核心、Batch112 coordinate pure+macOS drag/IME及Batch113 Server ticket/
+  binary WS已落；仍缺production manager→Engine source、真实PG cookie/TLS、Desktop loopback、auth失效hook、
+  viewer input、fps/latency/fallback、Leptos非1 scale硬件/stale-frame/resize/
+  navigation/tab/跨scope矩阵，故整关不勾。Batch114仅补Server bandwidth/control-rate/heartbeat/idle/write预算，真实macOS Engine默认计时已验证，不代表2秒Engine停流。Batch115随后已闭合已注册source的需求驱动pause/resume与真实Server WS停流；完整产品仍缺上述production装配和性能/平台证据。
 - [ ] **G8**：生产规模迁移演练、签名发布、第二次外审、brand/runbook 与全台账 100% 未完成。
 
-当前总台账（`cargo xtask parity-check` 复算）：parity **824/1704 done（880 todo）**，fixtures **20/42 done（22 todo）**；v4 overlay carry/revalidate/split/superseded = **1293/403/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+当前总台账（`cargo xtask parity-check` 复算）：parity **873/1712 done（839 todo）**，fixtures **35/55 done（20 todo）**；v4 overlay carry/revalidate/split/superseded = **1273/431/2/6**。勾选只表示整项判据已经通过；局部代码存在但整关未闭合时不得勾整关。
+
+### 24.2 受控Alpha准入（R191新增，尚未通过）
+
+仅适用于本人/少量受邀者的独立本地实例，按实际通过的平台逐腿开放；不适用于公开注册、多租户SaaS、
+跨用户共享桌面执行端或承诺v4全能力的正式发行。首版同时覆盖工作台、Agent工具、浏览器和原生电脑闭环。
+
+必须实际通过：A0支持范围/来源许可；A1干净环境启动与真实readiness；A2真provider/PG/GUI工具审批取消；
+A3指定浏览器target与接管/Stop；A4本产品身份的原生权限、动作receipt、结果变化及输入互斥/取消；
+A5数据/secret/像素出网与远端不可扩权；A6新数据backup/restore/checksum与升级失败恢复；
+A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R191研究方案§8。
+
+这些A项均未在本次规划中自动勾选。P0/P1、跨scope泄漏、audit-before-action违规和不可恢复数据错误零容忍；
+未具备的能力不能在Alpha支持矩阵中启用。A项不替代G8的production-scale迁移、完整签名或外审证据。
+原G0–G8及parity/fixtures全部待办保留，总目标只有§25完整满足时才可complete。
 
 ## 25. Definition of Done
 
@@ -2403,6 +2757,65 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 | R164 | §7.2、§7.4 / §13.2 / §19.3 / §24 G4（2026-09-03 Batch90：审计复核与 Agent 并发排队取消） | Batch89 后的外部审计指出两个可复现回归：其一，run 已 reserve/activate、但仍等待 `BuiltInAgentRuntime` semaphore 时，`revoke` 返回 `ChildSignalled`，旧 activation 只 `cleanup` 后退出，未提交 durable terminal；RunRelay 因而等待 child 自行收口。其二，新增 `GetRunCostBudget` / `ReplaceRunCostBudget` 后，`transport_parity.rs` 的无 wildcard `AppCommand` 穷举未同步，真实编译报 `E0004`。同一报告把多用户 isolation readiness 503、Computer 未装配、CEL 六差异、单链 advisory lock与协议栈secret副本混称为新回归，但前两项是§24明确门禁/todo，CEL差异有operator-confirmation preflight，audit生产坐标已在同一事务锁内用`clock_timestamp()`铸造，`SecretBytes`也从未承诺擦除类型边界外副本。 | semaphore 前两条cancel入口统一进入新`cancel_before_execution`：从权威lease构造`Queued`状态与`DurableTextRun`，复用`cancel_and_commit`走`Queued→Cancelling→CommittingResults`写`RunTerminal::Cancelled`，随后释放per-run tool sequence并按exact lease清reservation；不在RunRelay侧乐观造终态。新增`max_concurrency=1`回归以首run占permit、撤销第二个已激活run。transport穷举显式把两个预算命令归到已有专项证据，不加通配。其它审计项按第一真源分类，不删除fail-closed probe、不改CEL裁决、不拆hash chain、不伪造通用堆zeroize。 | implementation=`d97f232bdd497057a028203c63e7394ff9667833`。新Agent回归修前`0/1/0`超时、修后`1/0/0`，完整Agent=`39/0/0`；transport修前`E0004`、修后=`8/0/0`；Agent+testkit与Desktop各自all-target/all-feature Clippy `-D warnings`、fmt绿。CEL corpus=`6/0/0`，SafeDialer total-deadline定向=`1/0/0`。parity仍`823/881/1704`、fixtures=`20/22/42`、overlay=`1293/403/2/6`、0违反；native/schema/API/T-ID/Cargo/Grok/npm/workflow均不变。未跑strict recount（无上游目录）、`cargo xtask ci`或Actions。完整并发tool/computer runtime budget仍todo；详见Batch90与审计复核文档。 |
 | R165 | §7.4 / §8.2 / §13.2 / §24 G4（2026-09-03 Batch91：并发 tool runtime budget） | `ToolMetadata.parallel_safe/resource_locks` 已存在但 built-in host 无消费者，一次 sampling 的完整 batch 无条件串行；另一方面直接把全部call spawn会信任模型/MCP自报并行性、让相同resource并发、把每run并发乘成process无上限。parallel child若取消时一律写Cancelled，又会把已发送但commit unknown的effect伪装成未发生。动态MCP metadata在prepare与execute间还可能漂移，不能凭一次旧读取放行。 | 新增host-only、non-serde `AgentToolScheduling`，default serial；显式allowlist只有11个build-owned ordinary compiled component，human/remember/MCP/Drive/sandbox/unknown均serial，实际invoke仍fresh AuthContext→typed ApplicationService。lock keys canonical sort/dedup，>32保守serial；stable output-index batch形成disjoint waves，跨run keyed semaphore互斥。`BuiltInAgentConfig.max_tool_concurrency`为process-wide独立cap，默认8、只收1..=256。等待permit取消时零effect走Cancelled；parallel任一child开始后cancel/deadline先abort+drain全child再reconciliation；human detached waiter持permit至durable retirement。全部成功结果按原index逐条写exchange后才resample。 | implementation=`f71087fc0aad923a0c94a55578fcb529930587a7`。Contracts=`101/0/0`、Agent=`46/0/0`、testkit=`17/0/9 ignored`；真实PG17.11 `agent_runtime_postgres=9/0/0`，新增production gateway→ApplicationService双component纵向实得并发峰值2、provider/DB tool顺序quote→notice。五crate all-target/all-feature Clippy `-D warnings`、Contracts WASM、fmt、parity均绿；parity=`823/881/1704`、fixtures=`20/22/42`、overlay=`1293/403/2/6`、0违反。native/schema/API/T-ID/Cargo/Grok/npm/workflow不变；strict/CI/Actions未跑。Computer runtime budget仍todo，不关闭完整budget/G4；详见Batch91文档。 |
 | R166 | §2.4 / §7.5 / §15.3 / §24 G4（2026-09-03 Batch92：AG-UI error production vertical） | Decoder虽支持`RUN_ERROR`并拒malformed message，但T-EVT-0011仍无production durable证据；若把远端message/code直接变成本地错误或日志，会让vendor prose/secret穿进DB、audit与GUI。上游issue #44证明malformed `message.content`能崩 transcript；只测decoder不证明RunRelay/PostgreSQL/UI终态不会复制原值。 | `RemoteAguiSession`在decoder边界把合法RUN_ERROR压成无载荷`ProviderFailure::GenerationFailed`，malformed/unknown/sequence-invalid压成`InvalidResponse`；pending先清空，二者都只产生一个本地failed event。Agent host再提交stable `provider_generation_failed`/`provider_invalid_response` terminal；UI继续只收无载荷TerminalNotice。远端message/code不进provider-neutral event、journal/audit/response/GUI。既有SafeDialer真实read-gap stall路径保持独立。 | implementation=`1f684126e38c5ed81ca954e59c2d65c4af4128e7`。Agent=`47/0/0`、UI closed notice=`1/0/0`、testkit=`17/0/9 ignored`；真实PG17.11+SafeDialer/SSE同一remote Agent依次success/RUN_ERROR/malformed，终态completed/provider_generation_failed/provider_invalid_response，三run invoked=3，messages+run_events+audit_events canary=0；完整Agent PG=`9/0/0`。Agent/Testkit Clippy、fmt、parity绿；T-EVT-0011 done后parity=`824/880/1704`、events=`36/52/88`、fixtures=`20/22/42`、overlay=`1293/403/2/6`、0违反。native/schema/API/deps/Cargo/Grok/npm/workflow不变；strict/CI/Actions未跑，其余AG-UI族仍todo；详见Batch92文档。 |
+| R167 | §7.5 / §14.3 / §16.5 / §17.2 / §24 G3、G4、G8（2026-09-03 Batch93：AG-UI reasoning terminal retention） | R69起visible reasoning虽不物化assistant transcript，却与text一样永久留在`run_events.payload`；UI忽略它不等于DB已清除。T-EVT-0008又明确要求单独裁决保留期，不能随transcript默认永久保存。只在decoder丢`REASONING_ENCRYPTED_VALUE`仍会留下visible summary；直接DELETE event会制造sequence/cursor洞，终态后异步清理又会暴露terminal已提交但reasoning仍可读的窗口。历史终态数据若不回填，也不能诚实关闭保留期缺口。 | active run为crash/replay保留reasoning semantic chunk；统一`finish_run_in_transaction`先聚合text、再在同一事务把该run全部reasoning payload替换为固定无内容marker，然后才写terminal并提交。事件行、run/thread sequence、cursor与terminal均不删不改；四种正常/失败/取消/reconciliation终态共用该入口，exact terminal replay不会恢复内容。native0027是native框架唯一具名DML隐私例外，只匹配四种已终态run并施加相同marker；机械guard禁止DDL/DELETE/其它DML。active/text不改，schema0027与0026逐字节相同。该逻辑清除不冒充WAL/backup/replica物理擦除。 | implementation=`d39e6a4bf2c18414bdd6803cb1ca0d321a9c3d48`。PG17.11 native0027 regeneration开/关各`1/0/0`，四终态历史reasoning marker=4、active原值/text/identity/sequence/time不变、ledger=15；run runtime=`5/0/0`，其中active可重放→terminal marker与exact replay闭合。真实remote SafeDialer/SSE→Agent→PG=`1/0/0`：visible summary及encrypted canary在messages/run_events/audit=0、marker=1、text/completed保持。Infra lib=`324/0/0`、Agent=`47/0/0`、testkit=`17/0/9 ignored`、UI reasoning隐藏=`1/0/0`；四crateall-target/all-feature Clippy、fmt、parity与Grok inventory绿。schema仍`46/455/326/253/92`、SHA=`ad5375da9abc5d03f1fa9587f5efda3e76e2cb89edf470e3bc4650a58670ba2c`。T-EVT-0008与T-FIX-0043 done后parity=`825/879/1704`、events=`37/51/88`、fixtures=`21/22/43`、overlay=`1293/403/2/6`、0违反；recount=`71/0/89 skipped`。Cargo825、API/env/UI视觉/npm/workflow/Grok tree不变；strict未跑、按R63未跑CI/Actions，其余AG-UI族与G8物理retention仍todo；详见Batch93文档。 |
+| R168 | §7.5 / §19.3 / §24 G4（2026-09-03 Batch94：AG-UI error parity identity correction） | Batch92的实现、真PG证据、v4 R166、CLAUDE与批次文档都明确关闭`T-EVT-0011 agui-error`，但其docs commit在`parity/events.yaml`错把相邻`T-EVT-0003 agui-tool-call-result`从todo改done并挂上整段error证据，真正的0011仍todo。`parity-check`只能证明done数量和字段形态，无法从自然语言判断证据是否属于该T-ID，所以事件done总数36看似正确却身份错误；Batch93再加reasoning后仍为37，掩盖了错位。 | 机器台账必须按稳定T-ID而非总数自洽：把error证据完整移动到T-EVT-0011并置done；T-EVT-0003恢复todo且移除不相干done_evidence。代码、schema、fixture、overlay和所有总计均不改变。为防止历史被静默改写，R166与Batch92文档保留原实现结论并显式链接本纠正。tool-call-result只有在remote result投影与§8.1本地执行边界具备独立production证据后才能重新done。 | correction=`2050fab0369bbc1537f94347eb1f74b75ffb5820`。`git show a46438f -- parity/events.yaml`逐行复现原错位；修后定点解析得到T-EVT-0003=`todo/no done_evidence`、T-EVT-0011=`done/error evidence`。`cargo xtask parity-check`仍为parity=`825/879/1704`、events=`37/51/88`、fixtures=`21/22/43`、overlay=`1293/403/2/6`且0违反；本轮不以计数不变掩盖身份修复。无代码/API/schema/Cargo/npm/Grok/workflow变化；strict/CI/Actions未跑，其余AG-UI族仍todo；详见Batch94文档。 |
+
+| R169 | §2.4 / §7.5 / §13.2 / §15.3 / §16.5 / §17.2 / §24 G3、G4、G6（2026-09-03 Batch95：AG-UI bounded untrusted projections） | R72 decoder已验证state/messages/activity/step/raw/custom，但`RemoteAguiSession`把这些事件全部静默丢弃；因此真实remote run只有text/reasoning入journal，断线无法replay开放投影，T-EVT-0004/0005/0006/0007/0009都无production evidence。直接把任意JSON放进ProviderEvent会让remote伪造actor/grant并制造无界内存/DB；把每个checkpoint当tool exchange又会让conversation active-text lateral从错误位置截断。长期保留raw/custom还会重犯§16.5的provider stream保留问题。 | 新增私有字段、non-serde `ProviderRemoteProjection`与closed八family；本地固定`source=remote_ag_ui`/`untrusted=true`，remote key/type/value只能落`untrusted*`，构造器迭代拒NUL、单event≤1MiB，session另限4096项/8MiB并checked累加，Debug只显kind/bytes。state/activity delta在decoder clone上原子应用后投影完整值；messages保持untrusted snapshot，绝不替换messages表；step/raw/custom保持精确事件顺序。`DurableTextRun`在projection前flush text、共享expected sequence，PG以`checkpoint/kind=remote_agui_projection` exact append；conversation只把`tool_exchange` checkpoint作为active text分段。terminal同事务把projection内容收敛为带source的固定marker。UI仅接受exact wrapper/marker，合法值只推进cursor且不进transcript/authority，伪`untrusted=false`拒绝。tool-result虽已有同一projection unit边界，但无带权威offered callback的真PG正向，T-EVT-0003保持todo；interrupt同理。 | implementation=`20331887e7260c5be3749b6bb955dda7931bb6f8`。Application=`161/0/0`、Agent=`50/0/0`、Infra lib=`324/0/0`、UI=`181/0/0`、testkit=`17/0/9 ignored`；PG17.11 run-runtime+conversation=`5+1/0/0`，完整Agent production矩阵=`9/0/0`。remote纵向在RUN_FINISHED前实得family顺序`step_started,state,state,messages,activity,activity,raw,custom,step_finished`、source/untrusted=9、state phase=done/activity done=true/canary=1；terminal后projection marker=9、reasoning marker=1、全部canary=0、assistant text/completed不变。七crateall-target/all-feature Clippy、fmt、UI WASM绿；钉版tools verify、i18n=`799`、design=`104 Rust/74 icons`、CSS=`365`、bundle=`1874461/115524/740216/1/0`，同源二次build八文件SHA完全相同。T-EVT五条done后parity=`830/874/1704`、events=`42/46/88`、fixtures=`21/22/43`、overlay=`1293/403/2/6`、0违反；recount=`71/0/89 skipped`。native0027/schema/API/env/Cargo825/npm/Grok/workflow不变；strict/CI/Actions未跑，T-EVT-0003/0010与G4/G6整关仍todo；详见Batch95文档。 |
+
+| R170 | §7.5 / §8.1 / §15.3 / §16.5 / §24 G4（2026-09-03 Batch96：AG-UI tool-result production projection） | R168纠正后T-EVT-0003恢复todo；R169虽建立tool_result projection类型和unit正向，却刻意没有用fake context冒充production。缺的证据是：tool必须由production catalogue/context真实出现在RunAgentInput；远端START/ARGS/END/RESULT须穿SafeDialer/SSE和真实Agent/PG；结果只能作为display projection，不能让“remote说执行过”变成本地§8.1 effect事实。若complete逻辑先因remote result跳过offered-name复核，unoffered call还会绕过fail-closed。 | `RemoteAguiSession`在接收result时先查已completed call且name属于当前offered set，再拒duplicate，之后才构造R169 untrusted tool_result；complete阶段也先复核offered再决定remote-result投影或Rust本地执行。production测试用`PostgresComponentAdministration::sync_catalogue`与`PostgresAgentContextSource::with_components`向remote RunAgentInput真实提供showQuote schema/openbotDeploymentTools，SSE发START/ARGS/END/RESULT。RUN_FINISHED前PG精确看到family=tool_result、call/message binding与canary；terminal后同一projection marker清内容。`NoAgentToolInvoker`仍能completed，且messages role=tool + public.tool_calls总数0，证明没有本地effect。unit另证unoffered result在projection前只产provider_invalid_response。 | evidence=`f7988cabf4fcb11a6296aaf020f0d7c855c17494`。真实PG17.11+SafeDialer/SSE定向=`1/0/0`，active projections由9→10且新增tool_result恰1，terminal marker=10、reasoning marker=1、全部remote canary=0、local tool effects=0、package provider call=0；success/error/malformed三run及invoked=3保持。testkit默认=`17/0/9 ignored`，all-target/all-feature Clippy与fmt绿。T-EVT-0003 done后parity=`831/873/1704`、events=`43/45/88`、fixtures=`21/22/43`、overlay=`1293/403/2/6`、0违反；recount=`71/0/89 skipped`。无production代码/schema/native/API/env/Cargo/npm/Grok/workflow/UI bundle变化；strict/CI/Actions未跑，AG-UI interrupt/resume仍todo，不关闭完整G4；详见Batch96文档。 |
+
+| R171 | §2.4 / §7.2、§7.5 / §13.1–§13.3 / §15.3 / §24 G4、G6（2026-09-04 Batch97：AG-UI interrupt/resume typed contract） | R170后AG-UI只剩interrupt/resume；decoder把interrupts保留为`Vec<Value>`，remote adapter直接降`provider_generation_failed`，encoder无`parentRunId/resume[]`。若在没有精确0.0.57类型的情况下猜字段，会造私有协议；若复用同一protocol run id恢复，会破坏每次AG-UI invocation一个run的lineage；若把remote metadata/authority原样跨层，又会让开放JSON进入权限面。另一方面，只把ProviderEvent改成Interrupted而runtime仍失败，不足以关闭T-EVT-0010。 | 按官方core类型固定Interrupt七个已知字段与ResumeEntry三字段；`AguiInterrupt`先丢unknown，application `ProviderRemoteInterrupt/Batch`再独立校非空/NUL/object、1..=256/unique/1MiB，全部private/non-serde/Debug正文隐藏。Resume status只收resolved/cancelled，单payload≤64KiB、batch≤256/unique/1MiB。`RemoteAguiRoute`分local durable run id与protocol run id，可选resume用Box避免常态ProviderRoute膨胀；parent必须等于当前protocol id，新id不得相同。encoder仅在parent+resume同时存在且lineage逐项相等时输出标准`parentRunId`与`resume[]`，旧请求字节shape不变。remote outcome现在成为typed `ProviderEvent::Interrupted`；runtime在durable coordinator落地前保留旧fail-closed，不伪造resume。 | implementation=`c90aba9fc0dfcdf5c370ed8ec1fee5ed26814a74`。Application=`163/0/0`、Agent=`53/0/0`；测试覆盖known-field/unknown authority drop、duplicate/empty/NUL/oversize、resolved+cancelled exact wire、wrong parent、local id不漂移、new protocol id decoder与Debug canary0。首轮Clippy因RemoteAguiRoute使ProviderRoute达272B触发large_enum_variant；只Box optional resume后，Application/Agent/Infra all-target/all-feature Clippy `-D warnings`绿，fmt绿。无T-ID变化，parity仍`831/873/1704`、events=`43/45/88`、fixtures=`21/22/43`、overlay=`1293/403/2/6`。无schema/native/API/UI/deps/Cargo/npm/Grok/workflow变化；strict/CI/Actions未跑。T-EVT-0010与完整AG-UI/G4仍todo，详见Batch97文档。 |
+
+| R172 | §7.2、§7.5 / §8.4、§8.6 / §13.1–§13.3 / §14.3 / §15.1–§15.3 / §17.2 / §24 G4、G6（2026-09-04 Batch98：AG-UI interrupt/resume durable production vertical） | R171只固定wire：runtime仍把Interrupted终止为provider_generation_failed，没有durable pending/resolve、fresh actor/audit、lease wait、第二次request或UI。若复用component human表会混淆surface tool result与remote run continuation；若直接把remote interrupt id当URL authority会让外部字节控制本地对象；若信remote expiresAt会被永久悬挂；若context reload后endpoint已换仍发送answer，会把人的payload泄给新端点；若不限制continuation，在deadline显式关闭时remote可制造无界row/request loop；若terminal只结束run不擦descriptor/answer，remote正文会永久留库。 | native0028建独立`remote_agent_interrupts`：server UUIDv7 handle，scope/AuthGeneration/protocol/ordinal与七字段descriptor，closed state/response/resume、30分钟DB TTL、具名约束/索引；typed Row对descriptor/response Debug脱敏。`PostgresRemoteInterruptCoordinator`在serializable事务复核running run、current lease/fencing/role/revoke/membership；request/resolve/cancel/expire分别append closed hash-chain audit，payload为空，answer audit commit后waiter才返回。runtime用`AwaitingHuman`续lease并听cancel/deadline，fresh context只接受同local run/thread/Bot与原endpoint，凭据/assertion可刷新；initial+8 continuation封顶。GET/PUT `/api/me/remote-interrupts`与Desktop走同ApplicationService，path只收canonical UUIDv7；GUI把reason/message作escaped untrusted text，schema只保留为不执行的untrusted DTO，并提交bounded JSON或cancel。terminal事务统一retire并清descriptor/response/resume。 | implementation=`9164ac03775e0618712fcdd5648939679a9c04e5`。native0028 schema=`47表/477列/342 NOT NULL/268约束/97索引`，fixture 5600行 SHA=`7c6c2351a113423357705e67412679fede1dcdde59cfe19dc77ef8cd2e6d4a2f`，regen开/关各`1/0/0`、ledger16。真PG coordinator actor/cancel/expiry=`1/0/0`，共享assembly=`1/0/0`，run-runtime=`5/0/0`，Agent PG完整=`10/0/0`；两次SafeDialer request精确验证new runId/parentRunId/resume，terminal四表canary0。Agent=`55/0/0`、UI=`182/0/0`、Server/Desktop定向各1；九crate all-target/all-feature Clippy、fmt、WASM、tools/design/CSS/i18n806、deterministic offline bundle绿，bundle=`1897481/115524/740216/1/0`。T-EVT-0010与新增四audit、T-API-0173/0174、T-FIX-0044 done；parity=`838/872/1710`、events=`48/44/92`、fixtures=`22/22/44`、overlay=`1299/403/2/6`、0违反；recount=`71/0/89 skipped`。Grok Git tree/npm/Cargo/workflow不变，strict/CI/Actions未跑；AG-UI十一事件族已全done但完整G4/G6仍红，详见Batch98文档。 |
+
+| R173 | §5.1–§5.2 / §6.2、§6.4 / §8.6 / §9.1–§9.4 / §13.2–§13.3 / §14.3 / §15.3 / §24 G4、G6（2026-09-04 Batch99：MCP admin backend/private egress） | R172后RMCP/OAuth/Drive与call-time grant已有production路径，但固定上游`GET /api/plugins`、custom add、delete、通用refresh仍todo；production refresh只接受Drive，custom server即使能落baseline表也无法管理。直接沿用上游hostname静态拒绝会让合法内网MCP永远不可用；反向用hostname/private布尔放行会绕开每跳DNS rebinding防线。若CIDR只用于add-time probe，refresh与call仍会走默认策略；若不进入transport fingerprint，管理员改出口范围后旧grant继续生效。删除server若只靠FK还会留下active credential与无FK的plugin grant。 | native0029只追加nullable`mcp_servers.egress_allow_cidrs text[]`；NULL/空为public-only，只有custom可携，DB限32项/2048字节/no NULL，Rust再做exact canonical CIDR、host-bits、排序去重。`SafeDialer`以保留resolver/TLS的policy clone把该集合用于catalog refresh和每次bound call；transport fingerprint升v2并包含集合，锁前/锁后复算。typed admin page只投影credential boolean与stable local error；custom只收lower-kebab id/bounded title/HTTPS no-userinfo-query-fragment URL、可选server-bound deployment bearer与CIDR。配置、credential generation/旧credential本地退役、hash-chain audit同事务，随后真实refresh；delete同事务本地revoked deployment+actor credentials、删exact grants/server并audit。Server/Desktop都只framing同一ApplicationService。 | implementation=`5070283b5f61c4780405de3f614435363042e138`。schema0029=`47/478/342/269/97`，fixture5612行/162098字节 SHA=`c661463f04f2bd38c308191697b6f84625fb091c8089e1fc7b1e42a453e7e4dc`，regen开/关各`1/0/0`、ledger17；SCRAM schema baseline=`13/0/0`。真实TLS RMCP+PG先证空CIDR拒loopback，再显式127/32得6 tools；CIDR+credential变化使旧grant suspended=1/旧credential revoked，delete后server/tool/grant=0且两代credential revoked=2、四条config audit均有row_hash。MCP/OAuth/Agent callback真库回归=`3+2+2/0/0`。Contracts/Application/Infra/Server/Desktop=`103/164/326/220/131`且Desktop3 ignored，transport parity8；六crate+testkit Clippy、Contracts/UI WASM、SafeDialer/RMCP/MCP/assembly/Tauri guards、tools/shim/Grok、fmt/parity均绿。parity=`842/868/1710`、API=`88/86/174`、fixtures=`23/22/45`、overlay=`1299/403/2/6`、0违反；fixed upstream strict recount=`160/0/0`。Cargo/npm/Grok/workflow不变，未跑CI/Actions。skills/grants/for-agent/legacy-call、四个Plugins/Skills UI route、custom private user-OAuth、admin delete后vendor revoke runbook与完整G4/G6仍todo；详见Batch99文档。 |
+
+| R174 | §5.2 / §6.2 / §8.6 / §9.1、§9.3、§9.6 / §13.2–§13.3 / §15.3 / §17.2 / §24 G4、G6（2026-09-04 Batch100：MCP skills/grants/for-Agent backend） | R173后固定上游skills save/delete、grant/revoke、for-Agent五条API仍todo。若照译裸`plugin_grants(kind,ref,agent)`，native0017之后runtime缺catalog/schema/effect/transport/credential binding；若管理页把全部`grantedTo`回给普通用户，会枚举private与cross-tenant Bot；若current actor只做无锁EXISTS，撤权可在检查后抢跑；READ COMMITTED多语句会拼接不同时间点。旧实现还会让普通用户对unknown skill得到delete oracle、让tool消失后admin无法清stale grant，并由派生Debug打印完整skill instruction。 | skill请求只收closed slug/title/summary/instructions/global，personal owner来自AuthContext且existing owner保持；per-slug advisory+row lock，save/audit/visible response与delete/grant cleanup/audit分别同事务。global与MCP有Application+current DB role双门；current user row `FOR SHARE`固定授权线性化点，Agent authoritative tenant/owner/visibility/deleted复用domain policy。MCP enable原子绑定五项current identity+active state，revoke不依赖tool仍current；skill user必须同时拥有skill与active Bot，admin可治理同tenant stale/soft-delete。for-Agent与admin page用Repeatable Read；`grantedTo`只投影本tenant actor-visible active Agent。audit新增closed`change` fact，skill content Debug只留长度/计数。 | implementation=`62d26501233b843ab9b34092b8c16b8a71d0f68c`。PG17.11 SCRAM一条纵向覆盖owner/global/unknown、private/cross-tenant、MCP六列、catalog/credential/transport三次漂移、stale+soft-delete revoke、15条hash-chain与audit-failure rollback=`1/0/0`。Contracts/Domain/Application/Infra/Server/Desktop=`104/372/165/326/221/131`且Desktop3 ignored，transport parity8；八crate Clippy、Contracts/UI WASM、SafeDialer/RMCP/OAuth/Application/Tauri/UI/WebSocket guards、tools/shim/Grok、fmt/parity绿。WebSocket guard历史单caller假设同步修成threads/channels/approvals三文件白名单及各自cap/origin/read-only检查。API=`93/81/174`、parity=`847/863/1710`、fixtures=`23/22/45`、overlay=`1299/403/2/6`、0违反；strict=`160/0/0`。native/schema/Cargo/npm/Grok/workflow不变，未跑CI/Actions。legacy call、四UI route、Desktop OAuth、private user-OAuth、vendor revoke runbook与完整G4/G6仍todo；详见Batch100文档。 |
+
+| R175 | §2.4 / §5.2 / §7.2 / §8.1、§8.6 / §9.1、§9.6 / §15.2–§15.3 / §17.2 / §24 G4（2026-09-04 Batch101：legacy MCP browser call退役） | R174后API台账只剩`POST /api/plugins/call`。固定上游route自己声明仓内无人调用，`plugins/tools.ts`说明旧browser `useFrontendTool` loop已迁server-owned runtime；但台账仍写parity/preserve。其wire只有ref/args/agentId，Rust若照译就没有run/thread、call id/sequence、lease/fencing、AuthGeneration、budget与durable attempt authority；猜“当前run”会跨并发run，另造ad-hoc call会绕过§8.1。挂一个恒410 handler也保留了以后误填旁路的入口，且无真实caller需要兼容。 | T-API-0094改为`替代/remove/done`：Server/Axum与Desktop custom protocol都不挂该路径，authenticated合法POST统一落unmatched 404且MCP admin port调用0。工具能力不删：AgentToolGateway由verified lease与PostgreSQL sequence铸call identity，只发typed InvokeTool，继续经过metadata/schema、authoritative scope、CEL/content、approval、decision+attempt transaction、single-use capability、vendor effect、outcome/commit-state与hash-chain audit；remote callback另需Agent token+signed run assertion，不是legacy user-session route重命名。20k scalar normalization仍在executor。 | implementation=`00b3ae92e46e0ff332d59df68183c5d0a2d73623`。Server plugin=`7/0/0`、Desktop定向=`1/0/0`；Agent call identity/sequence=`2/0/0`、Application顺序/两类failure=`3/0/0`。本轮PG17.11 host-SCRAM+TLS RMCP真实重跑no-grant/vendor schema/CEL/content refusal/decision+attempt/capability/success+isError outcome/audit=`1/0/0`。Server/Desktop all-target/all-feature Clippy、fmt、parity绿；API=`94/80/174`且label parity/替代/新增=`138/8/28`，总parity=`848/862/1710`、fixtures=`23/22/45`、overlay=`1299/403/2/6`、0违反；strict=`160/0/0`。production handler/schema/UI/deps/Cargo/npm/Grok/workflow不变，未跑CI/Actions。四UI route、Desktop OAuth、private user-OAuth、vendor revoke runbook、protocol cancel与完整G4/G6仍todo；详见Batch101文档。 |
+
+| R176 | §2.4 / §6.4 / §8.6 / §9.1–§9.4 / §13.2–§13.3 / §15.3 / §17.2 / §24 G4（2026-09-04 Batch102：custom private MCP user-OAuth egress lifecycle） | R173只把server CIDR用于catalog/call；generic OAuth的admin registration discovery、connect PRM/AS、code exchange、runtime refresh、disconnect revoke与pending retry仍用global public-only dialer，导致tools可达内网但用户永远无法OAuth。反向给global dialer加private allowlist会让一个server的authority扩到全部connector/redirect。OAuth state v2不含CIDR，配置变化后callback会按新权限重新解释旧state；runtime token返回后的rotation CAS又只锁user credential，不复核server/client/transport/CIDR。disconnect还会在local tombstone后使用此前捕获的旧allowlist。 | 新增单一`mcp_egress` canonical reader供catalog/connections/credential共用。`McpOAuthClient::with_egress_allowlist`保留resolver/TLS、替换每operation policy；registration/begin/code/revoke四处及runtime exchanger都消费current server allowlist，每redirect重解析。state升v3并sealed绑定exact CIDR；begin与persist用`users+mcp_servers FOR SHARE`，callback pre-token逐字比较。selection envelope加入transport/CIDR；post-token rotation先`FOR SHARE` current server+deployment client并复核endpoint/transport/CIDR/pointer，再CAS refresh/audit，Conflict不释放access。disconnect local commit后重新load current material；pending每轮同样current。Drive只收fixed transport+empty override。 | implementation=`3745c4f6f10395d7ced7c214f5f74e97ca49a36b`。PG17.11 host-SCRAM+loopback OAuth/RMCP：OAuth=`2/0/0`，空CIDR registration/runtime refresh网络与写入0、127/32全生命周期正向、127/32→127/8 state drift code-call0、pending CIDR撤销网络0后恢复成功；credential=`12/0/0`，新增post-token drift使Conflict/ciphertext不变/rotation audit0；RMCP=`6/0/0`。Infra=`327/0/0`；Infra/Server/Desktop Clippy、fmt、SafeDialer/RMCP/Application/OAuth guards绿。T-API-0083/0087/0088/0157 evidence重验证，parity=`848/862/1710`、API=`94/80/174`、fixtures=`23/22/45`、overlay=`1299/403/2/6`、0违反，strict=`160/0/0`。native/schema/UI/deps/Cargo/npm/Grok/workflow不变，未跑CI/Actions。Desktop Local OAuth、admin-delete vendor compensation、protocol cancel与完整G4/G6仍todo；详见Batch102文档。 |
+
+| R177 | §2.4 / §6.4 / §8.6 / §9.2–§9.4 / §15.3 / §17.2 / §24 G4、G8（2026-09-04 Batch103：MCP admin-delete vendor compensation/runbook） | R173在同一事务撤本地credential/grant/server，却删除了pending reconciler后续所需的resource/client/CIDR authority；若继续按server id reload会永久pending，若同ID server后来重建又可能把旧refresh token发给新resource/client。只存endpoint而不锁transport/CIDR/client会扩大旧authority；client密文或closed shape损坏仍标pending会无限重试。最后一个user token完成或一开始零user token时，client也会永远停在retained；bearer与vendor-side OAuth registration没有明确人工处置。旧grant删除只join current tools还会遗漏stale/orphan ref。 | 删除事务冻结versioned non-secret resource/transport/exact CIDR/client credential ID；只在URL/transport/CIDR、kind/provider、未撤client、Vault解封与closed client parse全部有效时让user token进入pending，否则立即operator_required。active actor local-disconnect vendor=false、credential tombstone、全部`split_part(ref,'/',1)=server` grant、server与configuration audit同事务。reconciler按reason强制走retained context+exact revoked client，永不读同ID replacement；vendor失败回pending，retained本地材料永久损坏则一次claim后operator_required+audit，成功写vendor=true并擦user-token network context。最后一条完成或零user时OAuth client转operator_required；bearer同样保留本地revoked并由runbook指导vendor轮换。错绑到其它kind/provider的credential不被误撤。 | implementation=`caea34d88504cbbd567a79a8c8fb2e99c06fe872`。PG17.11 host-SCRAM+loopback OAuth=`2/0/0`，覆盖失败→retry、same-ID replacement、success context scrub、零user、删除前/后client损坏、二次sweep0、错绑credential不变与audit；TLS RMCP=`6/0/0`并证bearer operator状态。Infra/Server/Desktop=`327/222/131 passed`且Desktop3 ignored；三crate all-target/all-feature Clippy、fmt、SafeDialer/RMCP/Application/Tauri/WebSocket/MCP guards绿。T-API-0084 evidence重验证，无新T-ID；parity/API仍`848/862/1710`与`94/80/174`，fixtures=`23/22/45`、overlay=`1299/403/2/6`、native/schema/Cargo/npm/Grok/workflow不变。fixed-upstream strict=`160/0/0`，tools/shim/Grok guards绿；未跑CI/Actions。Desktop Local OAuth、四个Plugins/Skills UI route、protocol cancel与G8 typed operator-attestation/最终secret retirement仍todo；详见Batch103文档与runbook。 |
+
+| R178 | §7.3 / §16.3 / §23 / §24 G0、G4（2026-09-04 Batch104：OpenAI官方recorded trace） | 三家adapter只有本地合成/loopback协议测试，provider gate仍0/3；外部候选带来一份OpenAI官方公开RecordedTest，但其分支基线停在R172，source record提取、commit time/blob/hash、MIT许可、NOTICE/SPDX、terminal SSE空行与secret边界没有由主控独立闭合。真实done事件又不带`name`，旧decoder要求必有name而会拒绝官方流；直接放宽则可能接受工具改名、索引漂移或全程无name。不同worktree共用Cargo target还会复用不兼容rmeta制造假编译结果。 | 只择取候选单commit到R177。固定`openai/openai-dotnet@19d0a3cb…`，从13,211-byte source record的`Entries[0].ResponseBody`36段逐字节拼出9,070-byte SSE并独立`cmp`；一对一provenance、SPDX/NOTICE、MIT版权与offline guard钉source/blob/SHA、fixture SHA、header allowlist和消毒布尔。production OpenAiProvider经SafeDialer/HTTP/SSE对整块、非规则、逐字节分块回放相同normalized结果；`.sse`只豁免协议要求的blank-at-EOF。done缺失/null name仅在added已有非空name时接受，双name与可选index必须匹配，改名/漂移/全程无name负向锁死。跨worktree禁止共享Cargo target。 | candidate=`cb6e2d69b5ea70d4a046d31aea00c3b2bdd02e77`，hardening=`5becad90ee71fd6b84f1bbc6f47d1e24fdb3a1dc`。source record=`13211 B`/blob `3272bc4116a32b4472d21f68b41ce23ce363c02c`/SHA-256 `ff7fadb3…`，fixture=`9070 B`/SHA-256 `fe38a7a0…`且逐字节相等。OpenAI unit=`7/0/0`、recorded production replay=`1/0/0`、Infra lib=`328/0/0`且完整crate命令exit0；Infra all-target/all-feature Clippy、fmt/diff、recorded guard、SPDX 56 unique packages/65 relationships绿。新增T-FIX-0046；parity仍`848/862/1710`，fixtures=`24/22/46`，overlay=`1299/403/2/6`，0违反；fixed-upstream strict=`160/0/0`。无PG/schema/native/API/UI/env/dependency/Cargo/npm/Grok/workflow变化，未跑CI/Actions。只关闭OpenAI **1/3**；Anthropic/Google、live credential、T-FIX-0013与完整G4仍todo，详见Batch104文档。 |
+
+| R179 | §7.4 / §8.1 / §9.1–§9.2 / §13.2 / §17.2 / §21.3 / §24 G4（2026-09-04 Batch105：RMCP run protocol cancel） | durable run cancel已能跨副本到Agent child，但串行tool只靠drop future；RMCP虽然使用`send_cancellable_request`等待response，run user/deadline没有进入其RequestHandle，故不发送`notifications/cancelled`。若收到cancel就直接写Cancelled，会把已发出的非幂等call冒充未执行；若只spawn异步cleanup又会在通知/child停止前写terminal。取消authority若塞进serde ToolInvocation又会给transport/model自报槽。Batch104另使SPDX package从55变56，而RMCP/SAML guard仍钉55，首次复跑真实判红。 | 新增private/non-serde first-reason-wins channel与process-local registry；只有Agent host持sender，gateway按Rust-minted ToolCallId RAII登记receiver，external DTO不能插入authority。共享application assembly把同一registry交给Server/Desktop gateway与tool control。serial tool在child中运行；user/deadline/lease/shutdown先signal，最多5秒续租等待，再terminal。RMCP fresh list改cancellable handle+15秒总deadline；list/call active时都发送exact requestId与stable reason的cancel notification。pre-network cancel socket0；post-send call无论通知成功都Unknown/reconciliation，delivery失败独立code。SPDX guards同时钉OpenAI exact ID/commit/MIT、总数56与ID唯一，不只改数字。 | implementation=`9b03cca38b0841bce46acc6ed1132b2633064cdd`。fixture=`806 B`/SHA-256 `23bcd6d0…`；Application/Agent/Infra/Server/Desktop=`166/57/328/222/131 passed`且Desktop3 ignored，RMCP no-PG=`6/0/3 ignored`、PG17.11 SCRAM+official RMCP完整=`9/0/0`、shared assembly PG=`1/0/0`、transport parity=`8/0/0`。真实server对list deadline/call user cancel分别收到`run_deadline_exceeded`/`run_cancelled`且requestId非空，handler先停；call attempt=`reconciliation_required/unknown/mcp_cancelled_after_call`、failed/success audit=`1/0`、registry残留0。五crate locked Clippy、fmt/diff、RMCP/SafeDialer/MCP OAuth/Application/Tauri/SAML guards绿。新增T-FIX-0047；parity仍`848/862/1710`，fixtures=`25/22/47`，0违反。无schema/native/product API/UI/env/dependency/Cargo/npm/Grok/workflow变化，未跑CI/Actions。只关闭product run→RMCP cancel；**本行关于2026-07-28发送cancel notification的wire断言已被R180推翻，禁止作为当前实现依据**；T-FIX-0018完整官方conformance、computer/file/shell cancel与完整G4仍todo，详见Batch105文档。 |
+
+| R180 | §7.4 / §8.1 / §9.1–§9.2 / §13.2 / §17.2 / §21.3 / §24 G4（2026-09-04 Batch105收尾：RMCP 2026-07-28取消纠偏） | 复核MCP官方2026-07-28 Streamable HTTP规范发现：客户端不得经该transport发送JSON-RPC notification，取消in-flight请求必须关闭该请求的SSE response stream；`notifications/cancelled`只适用于旧生命周期/相应transport。R179测试使用`ClientInfo::serve`，实际走legacy initialize，server `get_info()`声明2026不能证明wire协商了现代协议。进一步实证固定`rmcp 3.1.4`上游#1193：modern POST在首个SSE event前阻塞transport worker，公开RequestHandle cancel无法及时处理。若直接升级lockfile会越过delta audit；若modern继续发notification则违反规范；若只等5秒abort又不能证明remote handler先停。 | 保留R179的private cancellation authority、5秒合作收口与Unknown/reconciliation语义；client lifecycle改为Auto，首选`server/discover`/2026-07-28，明确只回落2025-11-25 initialize。唯一SafeDialer adapter只在实际request header为2026-07-28且method为`tools/list|tools/call`时让HTTP future同时等待run signal；首event前命中即drop精确request future，首event后由RMCP内部request-stream token关闭，modern网络上cancel notification恒0。legacy仍由RMCP发送携exact requestId/reason的`notifications/cancelled`。negotiation、lifecycle notification、session cleanup不可被该路径取消。transport-aware signal失败统一改名`mcp_cancel_signal_unknown`；pre-network/list仍NotCommitted，call transport boundary后始终Unknown。 | correction=`3a694658a34ef3b9cbeba60fc32907eba8b50a2b`。fixture v2=`1111 B`/SHA-256 `ec9644f4…`固定pre-network、modern list、modern call、legacy call四态。真实protocol记录`mcp-method`、header与server context version：modern list/call均在首event前1秒内停handler且notification POST=0；legacy拒discover后回落2025-11-25并收到唯一exact-id notification。RMCP no-PG=`8/0/3 ignored`，PG17.11 SCRAM+official RMCP=`11/0/0`；Infra/Agent=`328/57 passed`，两crate locked Clippy、fmt/diff、RMCP/SafeDialer/MCP OAuth/Application/Tauri/SAML guards绿。T-FIX-0047保持done但evidence被本行替换；parity/fixtures/overlay仍`848/862/1710`、`25/22/47`、`1299/403/2/6`，0违反。无schema/native/API/UI/env/dependency/Cargo/npm/Grok/workflow变化，未跑CI/Actions。完整T-FIX-0018官方conformance仍todo，详见修订后的Batch105文档。 |
+
+| R181 | §7.4 / §10.1、§10.6 / §11.1–§11.3 / §17.2–§17.3 / §18 / §24 G4、G5（2026-09-04 Batch106：browser runtime residency budget） | R165只关闭process-wide tool semaphore；Computer仍无runtime owner。固定上游`profiles.ts`已用`COMPUTER_MAX_BROWSERS=8`、30分钟idle sweep与`browser-eviction.ts`稳定LRU防止一Bot一Chromium无限驻留，13条测试全在中央台账todo。只移植pure selector仍可被production忽略；按Bot ID建map又会违反§10.1完整scope；cap直接关闭正在执行的browser会把effect中途切断；先移除LRU再launch若launch失败会无故损失可用实例；并发cold start若各自launch会压同一profile。 | 先逐项实现13条pure selector：cap仅在`len>max`时按stable used-at取`len-max`，idle边界`<=cutoff`，timeout≤0只关闭pure sweep。再新增generic `BrowserRuntimeManager<D>`持有opaque driver handles；instance绑定完整`ComputerSecurityScope` digest+ComputerId+generation。同scope cold start经全局lifecycle gate合并；现有lease操作仍并发。cap/idle/generation/explicit stop只选leases=0；全slot active时effect前稳定`computer_runtime_busy`。选中victim先保留所有权，launch失败原样恢复；launch成功才consume victim并调用driver close。stale generation/scope identity冲突拒绝，touch counter checked，shutdown先关new lease再有界重复收口。driver错误只作source，Display/Debug不含其prose。 | selector=`2385493d5e2c6472b4470e39d167e60f272c4f6f`，manager=`b92c401a540281460c98542a8f29583343746578`。固定上游三文件blob/bytes/SHA写入Batch106；fixture=`1579 B`/SHA-256 `1dc49180…`且closed evidence boundary明确production assembly与CPU/RSS/pids/disk仍false。selector=`15/0/0`、manager=`10/0/0`、Computer=`43/0/2 ignored`，locked Clippy/fmt/diff绿。13条T-TEST转done、新增T-FIX-0048；parity=`861/849/1710`、tests=`470/577/1047`、fixtures=`26/22/48`、overlay=`1286/416/2/6`、0违反/警告。无schema/native/API/route/UI/env/dependency/Cargo/npm/Grok/workflow变化，strict/CI/Actions未跑。由于Server/Desktop尚未接manager→EngineProcess/Supervisor，两个COMPUTER_*配置、CPU/RSS/pids/disk及真实process evidence仍todo，故不称完整Computer runtime budget、ComputerManager、G4/G5/P1/P2完成；详见Batch106文档。 |
+
+| R182 | §16.3 / §19.3 / §24 G0、G6、G8 / §25 与GUI第一真源§10（2026-09-04 Batch107：Golden PNG gate） | GUI §10.4已固定逐通道16/255、0.1%与8×8判据，但此前只有纸面manifest；外部候选也仅比较已解码RGBA。若没有exact页面身份，245张任意1×1 PNG也能凑数；若不限制decoder/路径/mask，压缩炸弹、symlink或未评审遮罩会绕过gate；`check-manifest`结构绿又可能被误写为正式golden绿。旧manifest还保留96KiB CSS预算、crate为空/Windows host等过期阻塞。 | 只择取候选pure comparator单commit；新增`cargo xtask golden check-manifest|compare|verify`。manifest v2从seed route+golden_param机械导出137 Web+54 macOS+54 Windows exact path，文件名viewport必须等于PNG尺寸；只接受≤16MiB PNG、≤4096维、≤64MiB allocation，无symlink。mask必须在reviewed page/selector allowlist，diff只写ignored目录。formal verify先要求固定容器sha256/CJK包版本、baseline/actual集合相等；`ready=false`时只允许结构检查，绝不放行正式verify。`image 0.25.10`关闭默认feature、只启PNG且仅testkit xtask optional edge，锁四包license/build.rs/checksum。 | comparator=`79d849f0db7a4b822a56ec4369e638b229345c8a`，gate=`a69b3efcf41edd1c7dd0e089885fbd6143fa02a7`。core/gate/all-features=`18+7+137/0/10 ignored`，xtask全套=`102/0/0`，Clippy、UI dependency与六target deny guard绿；1024×1024真实PNG自比`0/1048576`差异。formal verify因TBD provenance按预期exit1。T-FIX-0003 evidence重验证，无新增fixture；parity=`861/849/1710`、tests=`470/577/1047`、fixtures=`26/22/48`、overlay=`1283/419/2/6`、0违反/警告；recount=`71/0/89 skipped`，strict未配置上游而未跑。Cargo.lock四个developer-only新增包、总829；cargo-vet仍373 unvetted且未加exemption。无schema/native/API/route/UI/bundle/npm/Grok/workflow变化，未跑CI/Actions。245张baseline、固定Linux/CJK、CDP/xcap、AX/键盘/reduced-motion与G6/G8仍todo；详见Batch107文档。 |
+
+| R183 | §11.2 / §12.5–§12.6 / §19.1 P2 / §24 G5、G7（2026-09-04 Batch108：BrowserInput→CDP pure plan） | 外部候选的closed plan与secret隔离方向正确，但把固定上游17项`VIRTUAL_KEY_CODES`写成16项并删掉显式空格，且把上游对未知多UTF-16单元键返回0的行为收窄为`UnknownKey`。其10条测试把两项偏差固化成期望；测试绿不能替代fixed-source fidelity。P1仍红时也不能把pure mapping冒充已进入P2或live CDP。 | 从R182以`cherry-pick --no-commit`导入，先修正再一次提交：同时保留Batch106 eviction module；键表逐项17条含空格，single-unit按uppercase首UTF-16 unit，unknown multi-unit=0。closed plan只表达mouseMoved/Pressed/Released、mouseWheel、keyDown/rawKeyDown/keyUp与insertText；native/windows code相等；key/code/text Debug脱敏。SecretInsert普通plan稳定拒绝。新增source-identity fixture，明确engine wire/live effect/ScreenHub=false；T-BROP-0037–0044保持todo。 | candidate=`1ca08993f725310e97c16c9bb77cdd14f1f61a4e`，corrected implementation=`b9e464013072b4d190e204aebc0f8afd861ba223`。上游`screencast.ts`=`6906 B`/blob `9bc27c11…`/SHA-256 `be79bde5…`；fixture=`1315 B`/SHA-256 `e6cf14b9…`。mapping=`11/0/0`，Computer=`54/0/2 ignored`，all-target/all-feature Clippy与fmt/diff绿。新增T-FIX-0049；parity/browser仍`861/849/1710`与`7/43/50`，fixtures=`27/22/49`、overlay=`1283/419/2/6`、0违反/警告；recount=`71/0/89 skipped`，strict未配置上游而未跑。无schema/native/API/route/UI/bundle/dependency/Cargo/env/npm/Grok/workflow变化，未跑CI/Actions。authenticated engine/live effect、坐标/ScreenHub、T-BROP八条、P1/P2/G5/G7仍todo；详见Batch108文档。 |
+
+| R184 | §10.3 / §11.1–§11.3 / §12.2、§12.5–§12.6 / §19.1 P1、P2 / §24 G5、G7（2026-09-04 Batch109：engine protocol-v2 live input） | Batch108只有pure plan，engine descriptor仍v1且commands仅start/stop/shutdown；shim启动截图后detach debugger。若在v1偷加input会制造同version不兼容wire；若把HumanLease字段传给shim会下放authority；若input API直接返回capture frame又会把过渡证据耦合成最终Screen设计。候选键语义虽已修正，仍没有页面observable effect、跨scope/expiry pipe前拒绝或literal CDP method棘轮。 | 不兼容扩展显式升级protocol/release epoch2；descriptor/generated hash/bundle manifest/runtime handshake同值。Rust only receipt由ControlService fresh铸造且不可Clone/serde，EngineProcess消费后再核computer/generation/active-tab/execution-time expiry；wire无actor/lease/secret/free method。input八kind映射shim exact-key payload与三条literal Input CDP；ACK只回operation/tab/kind，frame独立`next_frame`。cross-scope/expired/ordinary-secret在operation/pipe前拒绝。shim保持debugger至stop并统一detach；静态checker拒动态或额外CDP。macOS两个真实role在固定surface逐项观察hover/active/text/Backspace/F1=0/insert/scroll。 | implementation=`71e7feb7005100accf190e16b4bb3f4c79209149`。protocol hash=`ef213bb4…`，shim=`483/600 LOC`；官方archive=`122102881 B`/`ee939d…`，v2 ASAR=`22819 B`/header `cb289d04…`/fuses `000011001`，bundle/verify绿。Contracts=`104/0/0`，Computer lib/default=`56+1/0/2 ignored`，真实conformance=`3/0/0`（role2），xtask=`103/0/0`；native/Windows Clippy与Windows check绿。新增T-FIX-0050，T-BROP-0037–0043 done；parity=`868/842/1710`、browser=`14/36/50`、fixtures=`28/22/50`、overlay=`1276/426/2/6`、0违反/警告；recount=`71/0/89 skipped`且strict未跑。无schema/native/API/route/UI/Web bundle/dependency/Cargo/env变化，未跑CI/Actions。T-BROP-0044、正式screencast/ScreenHub、production assembly、Windows/runsc runtime与P1/P2/G5/G7仍todo；详见Batch109文档。 |
+
+| R185 | §11.2–§11.3 / §12.1–§12.6 / §19.1 P2 / §24 G5、G7（2026-09-04 Batch110：formal screencast/backpressure） | R184的input效果仍靠per-input captureScreenshot，未实现第一真源钉死的Page.start/stop/FrameAck。若shim收到即ACK，慢viewer会在Rust边界前失去backpressure authority；若ACK等待UI消费，慢viewer会卡Chrome；若frame header只留宽高又无法完成§12.3坐标/时间语义。CDP metadata不含deviceScale，不能伪称逐字段已齐。 | 显式升protocol/epoch3与OBFRAME2/76-byte header；descriptor单源钉screencast参数。shim只把CDP frame写authenticated binary pipe，不自行ACK；Rust在分配前验长度并验timestamp/device size+fixed-probe scale/page scale/scroll/CDP session/scope/generation/sequence/JPEG，随后在Mutex保护的size-one watch buffer publish/计算drop，才fire-and-forget exact frame_ack。background ingress持续消费，慢UI只跳旧值。stop先停CDP、撤listener、排frame/ACK、核received=ack，再detach；同tab重放冻结receipt。 | implementation=`c5f22f424efec517f851c3b495d3de215be1e957`。protocol hash=`16cc1f4d…`，shim=`596/600 LOC`；v3 ASAR=`29806 B`/header `02972340…`/fuses `000011001`，bundle/verify绿。Contracts=`104/0/0`，Computer lib/default=`58+2/0/2 ignored`，真实conformance=`4/0/0`（role2），xtask=`103/0/0`；native/Windows Clippy绿。多次slow-consumer实得received=ack 49..52、drop37..40。T-BROP-0030–0032与T-FIX-0025 done；parity=`871/839/1710`、browser=`17/33/50`、fixtures=`29/21/50`、overlay=`1273/429/2/6`、0违反/警告；recount=`71/0/89 skipped`且strict未跑。无schema/native/API/route/UI/Web bundle/dependency/Cargo/env变化，未跑CI/Actions。viewer ticket/WS、多viewer/fps/latency/fallback/production assembly、Windows/runsc及P1/P2/G5/G7仍todo；详见Batch110文档。 |
+
+| R186 | §10.1 / §11.1–§11.3 / §12.2–§12.4、§12.6 / §19.1 P2 / §24 G5、G7（2026-09-04 Batch111：ScreenHub/viewer ticket核心） | R185只有EngineIngress单consumer latest；直接把其receiver交transport会绕过actor/auth-generation authority，按连接复制frame queue会随viewer和帧率放大内存，保存raw ticket或把ticket放URL/response会泄漏。viewer取帧若不反馈共享ingress消费序列，还会把已被Hub消费的帧误计为drop。另一方面，P1仍红且Server/Desktop transport未装配，不能为关闭一条台账而伪造WS。 | `EngineLaunchConfig`强制Rust-minted `ScreenAudience`；component actor和两role tenant在任何effect前核同。active EngineProcess只交出一次带完整scope/computer/generation/tab key与共享ingress state的`EngineScreenSource`。`ScreenHub`持每stream一份watch latest与显式1..256 viewer cap，active+pending共同计数；viewer共享同一Arc并按sequence gap计coalescing。ticket由OS CSPRNG生成16 bytes、发行侧zeroize，Hub只存SHA-256；30秒、一次消费，绑定tenant/actor/auth generation/stream及Server origin或Desktop origin/window/binding generation。viewer wire另造`OBSCRN01`/68-byte header并排除scope/computer/tab/ticket/CDP session；generation invalidation关闭旧viewer/source。真实WS、host验证、生产hook与性能/停流仍保持false。 | implementation=`ddf49ee5b2b09b940528614330a228ab68077c0a`。fixture=`2368 B`/SHA-256 `8559fec9…`；Computer all-features lib/fixture=`60+3/0/2 ignored`，真实macOS conformance=`5/0/0`（role2）：Browser/Component各双viewer同sequence且Arc同分配、两者skip>0、wrong actor/binding/replay与generation close通过；最终Browser/Component received=ack为68/69、engine slow drop均37。native/Windows Clippy、Linux target check、protocol/shim/bundle/verify、Grok/package/workflow guards绿。新增T-FIX-0051；parity/browser仍`871/839/1710`与`17/33/50`，fixtures=`30/21/51`、overlay=`1273/429/2/6`、0违反/警告；recount=`71/0/89 skipped`且strict未跑。无schema/native/API/route/UI/Web bundle/dependency/Cargo/env变化，未跑CI/Actions。T-BROP-0027、Server/Desktop WS、production auth hook、frame/bandwidth/idle cap、fps/p95/2秒停流/fallback/assembly、Windows/runsc及P1/P2/G5/G7仍todo；详见Batch111文档。 |
+
+| R187 | §12.3、§12.5–§12.6 / §21.5 / §24 G5、G7（2026-09-04 Batch112：viewer coordinate与input组合journey） | R186的viewer frame有DIP/DPR/pageScale/scroll但没有可执行coordinate mapper；直接按canvas比例发坐标会误点letterbox，DPR或pageScale重复相乘会在高密度/zoom下偏移。首版实现把pageScale除进CDP input坐标，macOS恰为1未暴露，synthetic测试甚至把错误答案固化；仅凭协议字段名不足以裁决公式。既有input测试又只有down/up与普通Unicode insert，未覆盖§12.6要求的down→move→up及明确IME完成文本journey。 | 继续核ChromeDevTools官方前端：`InputModel`只以screenZoom转换mouse/wheel，`ScreencastView`仅在DOM hit-test做`viewport/pageScale+scroll`。据此新增`ScreenCoordinateMap`：canvas位置/尺寸有界，decoded每轴16..16384且aspect最多一像素取整；`contain`推导image rect，letterbox与right/bottom exclusive拒绝。DIP×DPR再除DPR得到viewport CSS；document才除pageScale并加scroll，wheel不加两者。输出携exact frame sequence供未来transport重验。真实conformance用mapper驱动现有closed input，增加pressed→moved→released与`日本語🔐` insertText，不增加IME/Drag variant。生产接线和硬件scale继续false。 | implementation=`49da4d9c8da7db25ae631c332de5fdc517dba8a1`。官方DevTools commit=`036dd84b…`，InputModel/ScreencastView blob/bytes=`cfa97617…/3982`、`978df09a…/38774`。fixture=`2707 B`/SHA-256 `8a03fd68…`；coordinate=`4/0/0`，Computer lib/fixture=`64+4/0/2 ignored`，真实macOS conformance=`6/0/0`（role2），两role最终received=ack69/drop37，mapped button/drag/IME/wheel均绿。首轮pure因把合法origin0当非正实得1/3；修后4/0又由官方源推翻pageScale错误期望，最终全量重跑。native/Windows Clippy、Linux check、protocol/shim/bundle/verify、Grok/package/workflow绿。新增T-FIX-0052；parity/browser/overlay仍`871/839/1710`、`17/33/50`、`1273/429/2/6`，fixtures=`31/21/52`，0违反/警告；recount=`71/0/89 skipped`且strict未跑。无schema/native/API/route/UI/Web bundle/dependency/Cargo/env变化，未跑CI/Actions。Leptos/WS/stale-frame/production、非1 scale硬件、resize/navigation/tab、Windows/runsc及P1/P2/G5/G7仍todo；详见Batch112文档。 |
+
+| R188 | §5.2 / §12.2–§12.4、§12.6 / §13.4 / §24 G5、G7（2026-09-04 Batch113：Server ScreenSession/binary WS） | R187之后ticket与frame核心仍无真实transport；若Axum直接铸票会绕过唯一ApplicationService，若ticket进URL或被101回显会进入access log/header，若在upgrade后才鉴权会先建立泄漏通道。直接把ScreenHub塞进Server又可能与发票port不是同一实例；只用synthetic frame也不能证明Engine binary真能跨WS。完整path-stream还包含input/限流/停流/Desktop/production source，不能为关一条台账一并冒充。 | contracts新增只含computer/generation/tab的target、host binding与Debug脱敏/Drop-zeroize ticket；Application新增ScreenSession port并由Computer实现按AuthContext找唯一可见stream。Server新增保留exact verified Origin的extractor；POST body前同源、no-store且binding不来自JSON。WS拒任何query，requested protocol恰base+ticket，在101前消费，response只选base；current/latest binary、1KiB inbound、client data1008、revoked1008，frame上限从Computer单源。Server main构造共享Hub/port与8-viewer默认；Desktop显式No-port。真实ignored测试启动Electron Browser role并跨UDS/Hub/Application/Axum TCP到binary client。 | implementation=`5a7444e1db068d504157260da66ba9696f513dc6`。fixture=`1970 B`/SHA-256 `6e7365a0…`；Contracts/Application/Computer/Server/Desktop=`105/166/65/226/131`（Computer2、Desktop3 ignored），Server screen=`4/0/0`、真实Engine→WSS=`1/0/0`、transport parity=`8/0/0`。workspace locked check、八crate Clippy、Contracts WASM、Computer Windows Clippy/Linux check、WebSocket/Tauri/UI/六target guards及engine verify绿。新增T-API-0175/0176与T-FIX-0053；API=`96/80/176`，parity=`873/839/1712`、fixtures=`32/21/53`、overlay=`1275/429/2/6`，0违反/警告；recount=`71/0/89 skipped`且strict未跑。Cargo package829，只增内部依赖边；无schema/native/UI/shim/npm/Grok/workflow变化，未跑CI/Actions。T-BROP-0027、production manager source、PG cookie/TLS、Desktop/input/限流/停流/跨平台及P1/P2/G5/G7仍todo；详见Batch113文档。 |
+
+| R189 | §12.4、§12.6 / §24 G7 / §25（2026-09-04 Batch114：Server Screen transport budget与实际范围复盘） | R188只有active+pending cap和单帧上限，socket写入无deadline、出帧不证明客户端存活、控制帧和带宽未限。旧文与fixture又把8MiB单源上限误写为16MiB，未有对应常量断言。用户要求先按实际状态重排全范围，再继续实施及外部候选验收。 | 新增host-only整数纳秒byte bucket：8MiB/s、burst=8,388,676；control burst20/10条每秒。10秒Ping与30秒idle仅由当前8-byte challenge的单次matching Pong续期；frame/Ping/Pong写1秒、close100ms、write buffer0/最大一帧+1KiB，首帧发送后释放引用。保持ExactOrigin/ticket/query/base-only/closed failure，超限断线释放permit。纠正旧fixture的字节上限并加单源断言；全范围工作单固定actual R188、全部todo、依赖与外部阻塞；三个外部任务书只预留不冒充执行。 | Server233/0/0（Screen11）；真实macOS Engine默认heartbeat/idle1/0/0，49.92秒；all-target/all-feature Clippy、fmt、WebSocket guard、engine bundle/verify与Grok inventory绿。T-FIX-0054=1301B/SHA256 `2e7a844f…`，修正T-FIX-0053=1969B/`7f9f021c…`。parity仍873/839/1712，fixtures33/21/54，overlay1273/431/2/6，0违反；恢复固定上游后strict160/0/0。中间bind权限、dev-only依赖及fixture错误均修复后重跑。没有kernel send-buffer saturation、PG cookie/TLS、production source/auth hook、Desktop、2秒Engine停流、fps/paint/跨平台证据，T-BROP-0027与完整G7仍红。无Cargo/schema/UI/shim/npm/Grok/workflow变化，未跑CI/Actions；详见Batch114。 |
+
+| R190 | §11.2–§11.3 / §12.4–§12.6 / §24 G7（2026-09-04 Batch115：Screen需求生命周期） | R189关闭socket预算，但last-viewer断开还不触发Engine停流；直接复用stop_session会销毁document。排队前铸input receipt无法保证实际执行时epoch仍有效；旧source/owner只按key清理也会误删同key替代registration。 | protocol/epoch4新增closed screencast enabled与state ACK；pause排frame/ACK且保留window/document，resume继续sequence。ScreenHub以active viewer需求通知唯一ScreenEngineOwner，pending ticket不计；source/owner cleanup比较registration；detach不等旧viewer drop。队列16、操作750ms、shutdown1500ms；只排非权威ticket，执行时持当前ControlService锁重验并写pipe，wire超时后退役不复用。 | Computer lib67/0/0、fixture5/0/0；三条真实host case通过（含双role需求旅程），paused received=ack=4且250ms不增、scroll400/renderer保留、stale epoch拒绝；Server233/0/0、真实WS idle→pause1/0/0（48.21秒），Contracts105、xtask103；Clippy/Windows Clippy/Linux check、fmt、bundle/verify绿。shim595/600，ASAR30069/header d795c804…；T-FIX-0055=1411B/SHA256 2a510ef6…，fixtures34/21/55，parity仍873/839/1712。production ComputerManager/auth hook、Desktop、fps/paint/fallback、Windows/runsc仍缺，不关闭G7或P1/P2。无deps/schema/UI/npm/Grok/workflow变化，未跑CI/Actions或远端写入。详见Batch115。 |
+
+| R191 | §0.5 / §3 / §11.4 / §19 / §23.2 / §24–§25（2026-09-04：用户裁决开源共建与受控Alpha） | 仅沿全部v4待办推进会延后首个可用版本；用户明确要尽早可用后续升级、社区按v4共建并由维护者审PR，首版工作台/Agent工具/浏览器/原生电脑三类均必需。自有项目旧checkout不代表最新已合并Windows实现，复制与开源许可也不是同一件事。 | 新增独立受控Alpha方向与三条真实用户故事，平台分腿实际准入；保留全部v4 G0–G8/DoD和todo分母，不称Alpha通过=v4完成。按固定已合并提交复制最小Rust模块评估，不改源仓；明确最新已有macOS/Windows实现，移植后各自重验。开源先做范围/授权/whole-tree审计及许可证同步，社区任务固定基线/允许路径/T-ID/证据，维护者独立复算后合入；R63、固定Grok树、安全不变量不放宽。 | 用户本轮明确选择受控试用、三类能力均必需、开源共建、只复制不改源仓。只读Git与合并PR核实纠正旧平台判断；副本独立编译后坐标5/风险30/序列化14/图像15通过，Windows x64 check通过；均不是本产品runtime/签名证据。当前LICENSE仍专有，未发布或上传复制源码，未派发Actions、未合并PR。研究方案记录候选A0–A7、复用与社区流程；后续逐条实现，v4总目标保持active。 |
+
+| R192 | §7.5 / §21.2 / §23.1 / §24 G4（2026-09-04 Batch116：AG-UI官方事件fixture主控验收） | 十一事件族production已落但T-FIX-0010仍缺正式schema corpus。外部候选虽5项测试绿，却新增第二份package.json，测试只比fixture/Rust而未读官方枚举，报告byte/scenario漂移且从作者字段推定版权人/SLSA验签。 | 只将单候选dd7febe7…的允许文件导入主控分支并修正；官方package原字节改名为惰性package-manifest.json，加入official/fixture/Rust三向集合、exact库存/regular-file/bytes/hash验证；去宿主路径、按实物重写交付报告。SDK0.0.57发布schema54f13419…单独登记，不替换v4仓库oracle e42bdbed…；官方MIT原文保留，不发明版权人，Registry/SLSA payload与签名验证分开。 | 官方六文件Git tree/blob/bytes/SHA逐项独立复核，Registry元数据及attestation payload source commit吻合，Sigstore验签仍false。fixture39行/33type/3scenario=4426B/SHA256 6c13dad3…；公共AguiDecoder/encoder回放5/0/0、Agent57/0/0，Clippy/fmt/shim595/600与单manifest绿。T-FIX-0010 done后fixtures35/20/55，parity仍873/839/1712、overlay1273/431/2/6；SPDX独立schema source后57项。仅协议corpus，不是vendor录制或PG/UI/网络证明；T-FIX-0011/0012、G4/G6/G8与归属文字确认仍未完成。无production/Cargo/native/UI/Grok/workflow或远端写入。详见Batch116。 |
+| R193 | §9 / §24 G6（2026-09-04 Batch117：Plugins Server Web 管理子面） | 后端已有 MCP admin/private-egress/grants，但三条管理页面尚未实现；hasCredential 无法区分部署 Bearer、个人 OAuth 和匿名配置。 | 共用 AdminShell/typed API 实现 index/detail/tool、custom HTTPS/CIDR、OAuth client/本人连接、刷新/移除与 per-Agent grant。Rust 新增 authentication 闭合投影；App owner 串行写入，失败/202 unknown 只读回，无自动重放；补校验、局部错误与跨 route/模态焦点规则。 | PG/loopback 31+11+1、UI187、Contracts105、Server233全部实绿；Clippy含WASM、release中英浏览器验证和设计/i18n869/预算绿。wasm gzip2007787B/CSS116942B/字体740216B/外链脚本1/inline0；strict160/0/0。三route仍todo，保留完整Bearer产品面、production PG/session→GUI权限旅程、Desktop transport/Local OAuth/真实宿主、golden/AX/Skills与G6；parity873/839/1712、fixtures35/20/55不变。无schema/Cargo/Engine/Grok/Actions或远端写入。 |
+| R194 | §9 / §24 G6（2026-09-04 Batch118：Desktop Plugins基础framing） | Batch117的共同GUI仍因Desktop没有connections读路由而加载失败，curated启用也没有对应custom-protocol handler。 | 补GET connections与POST servers，只派发既有typed command；closed McpCuratedServerSelection与Server共享，window actor/fresh/admin先于副作用，query拒绝、16KiB body与清零规则明确。 | Desktop tauri-host112/0/0（Plugins3条）、Contracts105/Server233通过；Server沙箱13条socket PermissionDenied后允许loopback宿主重跑全绿。Clippy与Windows x64 cross-check绿，后者不算真机。strict160/0/0，T-API-0081/0086 revalidate后overlay1271/433/2/6；parity873/839/1712、fixtures35/20/55不变。真实Wry/GUI/Local OAuth、三Plugins route与G6仍todo，无新PG/vendor/golden或远端操作。 |
+| R195 | §6.4 / §24 G2/G6（2026-09-04 Batch119：三类GUI密钥所有权修复） | 真源禁止secret进入Leptos state，但Plugins OAuth、OIDC与Agent Authorization仍用RwSignal<String>；Agent响应式校验还反复克隆认证请求。旧局部浏览器绿只证明遮挡/不回显。 | 删除普通Input的Password变体，统一DOM-owned SecretInput，响应式状态仅校验事实/代次；提交/取消/切换/卸载清理，失败不回填。三个DTO接受零化分配所有权，Serde字段在后续形态错误时也能清理；敏感JSON不经过Value，Rust JSON与DTO交给浏览器后在await前释放。 | Contracts108/UI188/Server233/Desktop112、Clippy含WASM、release浏览器三表单均通过。失败后不重填无请求、重填一次成功；OIDC切换后register0、失败重试不增；Agent probe失效、取消后hasAuth=false、显式保存/空编辑hasAuth=true，公开响应/页面canary0。i18n870、wasm gzip2025831B/CSS116942B，strict160/0/0；模块export触发24原语revalidation后overlay1247/457/2/6，parity873/839/1712、fixtures35/20/55不变。包仍829，仅UI依赖边；无新PG/vendor/真实Wry/Windows/golden或全关证明。 |
+| R196 | §2.4 / §6.4 / §9.4 / §24 G2/G6（2026-09-04 Batch120：凭据管理完整工作链） | Vault/consumer已有底层，但四个admin凭据API与正式页面仍缺；直接照译upstream rotate会留下孤儿，通用metadata与内部revocation混用还会污染清理权威。 | 保留manual三kind与managed六kind库存区别；shared command/PG/Vault组装，fresh admin+Origin before-body、current DB actor锁与role/gen重验。新DEK/v2回读、MCP指针/代次/grant失效、old退役和audit同事务；OAuth冻结原client上下文并经既有reconciler清理。metadata namespace隔离，100行keyset、配置model引用提示与SecretInput GUI闭环。本地失败不激活替代值；外部pending/operator独立且不冒充vendor撤销。 | PG4+OAuth3+RMCP11、Server235/Desktop113、Contracts109/Domain372/Application166/UI188均通过；Windows只cross-check。真实PG/session GUI得2条v2全retired，create/rotate/revoke audit各1、actor/payload正确/canary0；100+3分页，降权NotFound且row/dialog0，中英/键盘/焦点/overflow/console通过。i18n904，wasm gzip2074750B/CSS116942B/字体740216B；13条原有条目闭合后parity886/826/1712、overlay1234/470/2/6，fixtures35/20/55不变。真实vendor、KMS/外审、Wry/Windows/runsc/golden与G2/G6/G8/Alpha整关仍未通过；磁盘满只清本仓incremental缓存，未改源码/证据冻结面。 |
+| R197 | §7.3 / §21.2 / §23 / §24 G4（2026-09-04 Batch121：provider外部交付独立验收） | R196仅OpenAI官方recorded 1/3，A/B预留仍写未启动；用户交付Anthropic候选与Google调查，候选日志不能替代主控复算，parsed JSON不能冒充原始SSE。 | 从R196逐commit择取A/B，独立验证官方来源/许可/字节；Anthropic两份原body进入production回放并登记T-FIX-0056、NOTICE/SPDX，现2/3。Google所审录制转换不可逆，只接受来源不足调查，不创建fake fixture或关闭其任务。E–K按R196预留分离范围，I/K明确离线；原Browser gateway在制稿完整保存后继续，不改源仓。 | A原7903e61→442b6fe，B原7dcba21→2d15051；32份官方材料重抓，Anthropic source/body identity与commit time/MIT相符，Google22项文件身份与关键转换复核。主控production recorded3/0/0、provider units32/0/0、Infra Clippy/fmt/3-trace guard绿；strict160/0/0、Grok2110/shim595/600/唯一manifest绿。fixtures36/20/56，parity886/826/1712、overlay1234/470/2/6不变。无live/PG/UI/Windows/runsc/全供应链新证据，不派发Actions、不合并PR，完整G4/Alpha/v4仍未完成；详见Batch121。 |
+| R198 | §10.5 / §24 G5/G7（2026-09-04 Batch122：Rust出口网关基座） | Engine仍黑洞网络，缺受控HTTP/CONNECT/WS转发；在制稿有HTTP占位、撤销订阅竞态与未join的driver风险。仅URL检查不足，数值IPv6又被旧host_str括号误送DNS。 | 新增unique loopback/token owner、deny-first host/port、私有ProxyHop与有界streaming/upgrade、共享rate和cancel/join；原出网路径唯一性不变，IPv6与TLS identity使用typed host。预算是新增，不冒充upstream；透明CONNECT只验证authority/IP，不冒充内层TLS策略。fixture把production scope/policy/Engine/namespace/kernel/G5/G7均保持false。 | 15项真实loopback测试全过；IPv6先失败后成功/DNS0，原safe_http14/provider32/官方recorded4回归；Clippy/fmt与出网guard通过。guard修复既有Screen test-only漏登，未增加production客户端；Linux target check0，Windows在ring缺assert.h失败、未伪记通过。strict160/0/0、Grok2110/shim595/600/唯一manifest绿，Cargo829/lock不变。fixtures37/20/57，parity886/826/1712、overlay1234/470/2/6不变。Engine仍epoch4内部页，完整目标继续；详见Batch122。 |
+| R199 | §11.2 / §11.3 / §17.2 / §24 G5（2026-09-05 Batch123：Engine父环境隔离） | R126/R127只过滤四项Electron/Node变量，Unix默认继承、Windows枚举父环境；provider/DB凭据与其它loader/key-log变量仍可能进入引擎。真实两role探针证实main/renderer四处canary为true。 | Unixenv_clear后固定五键和scope cwd，Linux只加固定DISPLAY；Windows从只读OS目录API构造九键有界UTF-16 block，删除父环境枚举并同步唯一unsafe边界许可。角色测试用隔离父进程注入synthetic canary，实际PS观测只输出固定布尔事实，完成cleanup后判定，不读取生产凭据或打印原始环境。 | 修复前4 true，修复后4 false，真实两role完整conformance由1个父测试复算；Computer67/fixture5、Windows portable4、两crate Clippy与Windows/Linux check绿。T-FIX-0058，fixtures38/20/58；其余parity/overlay不变，strict160/0/0、Grok/shim/六target bans-sources通过。Windows/runtime、runsc、macOS读取/localhost/UDS/helper-exec仍未通过，不能把HOME变量当文件隔离。磁盘满只回收本仓3.1GiB incremental后原命令重跑；不改E远程R196基线、不上传或合并，详见Batch123。 |
+| R200 | §10.1 / §10.3 / §11.3 / §24 G5（2026-09-05 Batch124：macOS main直接读取） | R199关闭env继承后，SBPL仍allow-default而只约束write；实际kernel探针证明邻接文件、symlink、DataVolume别名可读，不能开放真实网页后再补。 | deny file-read*，仅scope/bundle/具名OS资源和ancestor metadata允许；避免 /System 覆盖Data卷。根据本机dyld事实只加literal /目录openat锚点，拒NUL注入。明确native cat/ls/ln探针与真实Engine兼容性分开；不宣称完成任意main compromise防线。 | 修复前3可读，后5负向全拒绝，scope内read/list/link及无sandbox hardlink正向成立；native1/0/0、真实两role父测试1/0/0，完整input/frame/env/stop/cleanup保持。Computer67+fixture5、Clippy、Windows/Linux check通过；跨平台仅编译。fixture1790 bytes/SHA 3f2e5ef4…，F0059后39/20/59；parity/overlay不变，strict160/0/0、Grok/shim通过。固定Chromium150.0.7871.212三source与本机dyld哈希已记录；helper exec/Mach/FD/UDS/kernel/production余项继续，详见Batch124。 |
+| R201 | §10.5 / §11.2 / §24 G5（2026-09-05 Batch125：macOS main精确pipe出口） | R200读取已收紧，但main仍可连接任意UDS/localhost；实际Rust子进程probe确认runtime额外socket、邻接scope socket和其它loopback端口均可达。 | 删两项通配，仅放当前runtime control/frame两literal；保持peer/token检查。native probe每个拒绝端点都有同client/endpoint unconfined正向，真实Engine兼容另跑。guard仅登记末尾cfg(test)一个数字TCP调用；不扩production出网面。 | native1/0/0：3错误端点由true变false、两正确pipe可连；真实两role父测试1/0/0，完整input/frame/env/cleanup保持。Computer/Clippy和Windows/Linux check绿；F0060后40/20/60，parity/overlay不变；strict160/0/0、Grok/shim/唯一出网guard通过。helper实查adhoc/flags0x2，with-no-sandbox执行/loader/网络仍未验证，不能由main规则推全Engine隔离；epoch4、gateway/native平台/production继续，详见Batch125。 |
 
 ### 28.2 复核通过、原样保留的断言
 

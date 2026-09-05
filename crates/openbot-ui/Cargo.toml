@@ -39,6 +39,8 @@ leptos_router.workspace = true
 leptos_meta.workspace = true
 leptos_i18n.workspace = true
 sha2.workspace = true
+serde.workspace = true
+zeroize.workspace = true
 uuid = { workspace = true, features = ["js"] }
 
 # G6 has started. Remaining transcript-only pins (pulldown-cmark/syntect) land with the first

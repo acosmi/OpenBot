@@ -14,6 +14,7 @@
 //! api-threads-get         target: "openbot-server::http::threads::status (GET /api/threads/{thread_id})"
 //! thread-events-sse-get   target: "openbot-server::http::threads::events (GET /api/threads/{thread_id}/events)"
 //! thread-events-ws-get    target: "openbot-server::http::threads::websocket (GET /api/threads/{thread_id}/ws)"
+//! screen-session/ws       target: "openbot-server::http::screen (POST /api/screen/sessions + GET /api/screen)"
 //! memory-list/remember/correct/delete/forbid/recall —— R66 新增 explicit memory API
 //! components list/catalogue —— R103 compiled component治理读面与exact additive build sync
 //! sandboxed draft/published/save/publish/delete —— R112 sandboxed source原子治理
@@ -55,10 +56,12 @@ pub mod health;
 pub mod memories;
 pub mod metrics;
 pub mod plugins;
+pub mod remote_interrupts;
 pub mod routing;
 pub mod run_cost_budget;
 pub mod sandbox_runner;
 pub mod sandboxed;
+pub mod screen;
 pub mod session;
 pub mod static_app;
 pub mod threads;
@@ -75,6 +78,7 @@ use axum::response::Response;
 use axum::routing::{delete, get, post};
 use openbot_agent::RemoteAgentToolInvoker;
 use openbot_application::{ApplicationService, McpOAuthCallback, RemoteCallbackAuthenticator};
+use openbot_computer::screen::ScreenHub;
 use openbot_domain::identity::session::TrustedOrigins;
 use openbot_infra::auth::oidc::{OidcLoginCoordinator, PreAuthSurface};
 use openbot_infra::auth::sso::DynamicSsoService;
@@ -114,6 +118,7 @@ struct StateInner {
     remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
     mcp_oauth_callback: Option<Arc<dyn McpOAuthCallback>>,
     static_app: Option<StaticApp>,
+    screen_hub: Option<ScreenHub>,
 }
 
 impl ServerState {
@@ -206,6 +211,12 @@ impl ServerState {
         self.inner.static_app.as_ref()
     }
 
+    /// ScreenHub used by the binary data plane; absence makes screen routes fail closed.
+    #[must_use]
+    pub fn screen_hub(&self) -> Option<&ScreenHub> {
+        self.inner.screen_hub.as_ref()
+    }
+
     /// 敏感写 guard；未注入时 fail-closed 503，不给 handler 任何“暂时跳过”路径。
     pub async fn authorize_sensitive_write(
         &self,
@@ -275,6 +286,7 @@ pub struct ServerBuilder {
     remote_callback_tools: Option<Arc<dyn RemoteAgentToolInvoker>>,
     mcp_oauth_callback: Option<Arc<dyn McpOAuthCallback>>,
     static_app: Option<StaticApp>,
+    screen_hub: Option<ScreenHub>,
 }
 
 impl ServerBuilder {
@@ -297,6 +309,7 @@ impl ServerBuilder {
             remote_callback_tools: None,
             mcp_oauth_callback: None,
             static_app: None,
+            screen_hub: None,
         }
     }
 
@@ -402,6 +415,13 @@ impl ServerBuilder {
         self
     }
 
+    /// Attach the exact ScreenHub shared with the ApplicationService ticket port.
+    #[must_use]
+    pub fn with_screen_hub(mut self, screen_hub: ScreenHub) -> Self {
+        self.screen_hub = Some(screen_hub);
+        self
+    }
+
     /// 收口成 [`ServerState`]。
     #[must_use]
     pub fn build(self) -> ServerState {
@@ -422,6 +442,7 @@ impl ServerBuilder {
                 remote_callback_tools: self.remote_callback_tools,
                 mcp_oauth_callback: self.mcp_oauth_callback,
                 static_app: self.static_app,
+                screen_hub: self.screen_hub,
             }),
         }
     }
@@ -578,7 +599,16 @@ pub fn router(state: ServerState) -> Router {
             post(approvals::decision_post),
         )
         .route("/api/plugins/connections", get(plugins::connections_get))
+        .route("/api/plugins", get(plugins::list_get))
         .route("/api/plugins/servers", post(plugins::servers_post))
+        .route(
+            "/api/plugins/servers/custom",
+            post(plugins::servers_custom_post),
+        )
+        .route(
+            "/api/plugins/servers/{server_id}",
+            delete(plugins::servers_delete),
+        )
         .route(
             "/api/plugins/connections/{server_id}",
             delete(plugins::connections_delete),
@@ -595,6 +625,13 @@ pub fn router(state: ServerState) -> Router {
             "/api/plugins/servers/{server_id}/refresh",
             post(plugins::servers_refresh_post),
         )
+        .route("/api/plugins/skills", post(plugins::skills_post))
+        .route("/api/plugins/skills/{slug}", delete(plugins::skills_delete))
+        .route(
+            "/api/plugins/grants",
+            post(plugins::grants_post).delete(plugins::grants_delete),
+        )
+        .route("/api/plugins/for/{agent_id}", get(plugins::for_agent_get))
         .route(
             "/api/plugins/oauth/callback",
             get(plugins::oauth_callback_get),
@@ -641,6 +678,13 @@ pub fn router(state: ServerState) -> Router {
             "/api/me/run-cost-budget",
             get(run_cost_budget::get).put(run_cost_budget::put),
         )
+        .route("/api/me/remote-interrupts", get(remote_interrupts::get))
+        .route("/api/screen/sessions", post(screen::issue_session))
+        .route("/api/screen", get(screen::websocket))
+        .route(
+            "/api/me/remote-interrupts/{request_id}",
+            axum::routing::put(remote_interrupts::put),
+        )
         .route("/api/admin/status", get(admin::status))
         .route("/api/admin/identity-providers", get(auth_sso::list))
         .route(
@@ -648,6 +692,18 @@ pub fn router(state: ServerState) -> Router {
             delete(auth_sso::remove_admin),
         )
         .route("/api/admin/people", get(admin::people_list))
+        .route(
+            "/api/admin/credentials",
+            get(admin::credentials_list).post(admin::credentials_create),
+        )
+        .route(
+            "/api/admin/credentials/{credential_id}/rotate",
+            post(admin::credentials_rotate),
+        )
+        .route(
+            "/api/admin/credentials/{credential_id}/revoke",
+            post(admin::credentials_revoke),
+        )
         .route("/api/agent-tools/call", post(agent_tools::call))
         .route(
             "/api/agents/{agent_id}/callback-token",

@@ -39,6 +39,7 @@ for forbidden in \
   'rustls feature "aws_lc_rs"' \
   'rustls feature "prefer-post-quantum"' \
   'hyper feature "http2"' \
+  'hyper feature "tracing"' \
   'hyper-util feature "client-proxy"' \
   'hyper-util feature "client-proxy-system"'; do
   if grep -qxF "$forbidden" <<< "$feature_tree"; then
@@ -50,20 +51,30 @@ grep -qF 'openidconnect = { version = "4.0.1", default-features = false }' Cargo
   || fail 'openidconnect 必须继续关闭自带 reqwest/rustls'
 
 network_callers=$(rg -l 'TcpStream::connect|lookup_host\(|TlsConnector|http1::handshake|reqwest::|hyper::client|tokio_rustls' crates/*/src --glob '*.rs' | sort)
-expected_callers=$'crates/openbot-desktop/src/postgres_sidecar.rs\ncrates/openbot-infra/src/net/safe_http.rs\ncrates/openbot-server/src/http/approvals.rs\ncrates/openbot-server/src/http/channels.rs\ncrates/openbot-server/src/http/threads.rs'
+expected_callers=$'crates/openbot-computer/src/engine/process.rs\ncrates/openbot-desktop/src/postgres_sidecar.rs\ncrates/openbot-infra/src/net/safe_http.rs\ncrates/openbot-server/src/http/approvals.rs\ncrates/openbot-server/src/http/channels.rs\ncrates/openbot-server/src/http/screen.rs\ncrates/openbot-server/src/http/threads.rs'
 [[ "$network_callers" == "$expected_callers" ]] \
   || fail "socket/DNS/TLS/HTTP client 调用面不再唯一：[$network_callers]"
 
-# R67/R130/R146/R156 的四个真 socket harness各有且只有一个test-only loopback client。
-# 逐文件锁唯一cfg与唯一caller，并要求caller严格位于cfg之后；不能因允许测试而放行production第二client。
+# The per-scope proxy owns only its loopback listener and authenticated framing. Its sole outgoing
+# capability is the private ProxyHop returned by SafeDialer; DNS/connect/HTTP handshakes stay above.
+proxy_hop_callers=$(rg -l 'connect_proxy_hop\(|\.into_tunnel\(' crates/*/src --glob '*.rs' | sort)
+expected_proxy_hop_callers=$'crates/openbot-infra/src/net/safe_http.rs\ncrates/openbot-infra/src/net/scope_gateway.rs'
+[[ "$proxy_hop_callers" == "$expected_proxy_hop_callers" ]] \
+  || fail "scope proxy hop escaped its two owning modules: [$proxy_hop_callers]"
+
+# R67/R130/R146/R156/R188及macOS engine policy的六个socket harness各恰一个test-only client。
+# 逐文件锁唯一cfg(test) tests模块与唯一caller，并要求caller严格位于该模块标记之后；
+# Screen另有test-only fixture常量，不能把它的cfg误当作测试模块起点。实际六个tests模块均在文件末尾。
 test_only_network_files=(
+  crates/openbot-computer/src/engine/process.rs
   crates/openbot-desktop/src/postgres_sidecar.rs
   crates/openbot-server/src/http/approvals.rs
   crates/openbot-server/src/http/channels.rs
+  crates/openbot-server/src/http/screen.rs
   crates/openbot-server/src/http/threads.rs
 )
 for file in "${test_only_network_files[@]}"; do
-  test_module_line=$(rg -n '^#\[cfg\(test\)\]$' "$file" | cut -d: -f1)
+  test_module_line=$(awk 'previous == "#[cfg(test)]" && $0 == "mod tests {" { print NR - 1 } { previous = $0 }' "$file")
   client_line=$(rg -n 'TcpStream::connect|lookup_host\(|TlsConnector|http1::handshake|reqwest::|hyper::client|tokio_rustls' "$file" | cut -d: -f1)
   [[ "$test_module_line" =~ ^[0-9]+$ && "$client_line" =~ ^[0-9]+$ ]] \
     || fail "test-only loopback client 数量漂移：file=$file cfg=[$test_module_line] callers=[$client_line]"

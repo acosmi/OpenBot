@@ -748,6 +748,7 @@ pub(crate) async fn prepare_desktop_local_runtime(
         ui_preferences: Arc::new(DesktopUiPreferenceStore::new(
             app_data_root.as_path().join(DESKTOP_UI_PREFERENCES_FILE),
         )),
+        screen_sessions: Arc::new(openbot_application::NoScreenSessionAdministration),
         remote_agent_probe: remote_agent_probe.clone(),
         managed_slot_available: false,
         channel_routing_provider,
@@ -771,7 +772,9 @@ pub(crate) async fn prepare_desktop_local_runtime(
         tenant: auth.tenant().clone(),
         package: package.clone(),
         application: Arc::clone(&assembly.application),
+        tool_cancellations: Arc::clone(&assembly.tool_cancellations),
         runtime: Arc::clone(&assembly.run_runtime),
+        remote_interrupts: assembly.remote_interrupts.clone(),
         credential_vault: agent_credential_vault,
         audit_key: agent_audit_key,
         remote_assertions: agent_remote_assertions,

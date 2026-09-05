@@ -13,6 +13,8 @@ The Windows implementation may call only these Win32 mechanisms:
 - token: `OpenProcessToken`, `CreateRestrictedToken`, `SetTokenInformation`, `IsTokenRestricted`;
 - process identity/lifecycle: `CreateProcessAsUserW`, `GetProcessTimes`, `OpenProcess`, wait/exit,
   terminate/resume, and `CloseHandle`;
+- environment: read-only `GetSystemWindowsDirectoryW` to construct an Engine-only Unicode block;
+  no inheritance or enumeration of the parent's environment;
 - confinement: Job Object create/configure/terminate, low-integrity directory ACL/label;
 - IPC: one-instance, local-only, overlapped Named Pipe plus `GetNamedPipeClientProcessId`;
 - packaging: transactional PE resource update and read-only resource verification;
@@ -39,6 +41,11 @@ Invariants:
 11. The OS-returned credential blob is copied once, overwritten byte-for-byte with volatile zeroes,
     then released with `CredFree`. The public owner redacts `Debug`, zeroizes on drop, and can only
     transfer its unique allocation explicitly into Desktop `SecretBytes`.
+12. The Engine environment has exactly nine fixed keys. HOME/USERPROFILE/AppData point into the
+    scoped profile, TEMP/TMP into its temp directory, and PATH/SystemRoot/WINDIR derive only from
+    the actual OS Windows directory. No provider/DB credential, loader injection variable,
+    SSLKEYLOGFILE, inherited PATH, or drive-current-directory entry is copied. This does not change
+    Windows Known Folder APIs or claim additional filesystem/network sandbox enforcement.
 
 The boundary is `Degraded`, not `Enforced`: proxy arguments and a write-restricted token do not
 constitute a Windows network or executable-path allowlist and do not resist another malicious

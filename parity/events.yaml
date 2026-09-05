@@ -14,7 +14,7 @@
 #       identity_provider.registered / knowledge.searched）在 server/src 无任何发出点。
 #       owner 判据（机械）：发出点是进程启动顶层代码或传输层看门狗（无 use case）=> openbot-infra，
 #       其余 => openbot-application（铸造）；落库一律 openbot-infra，见 §8.6 的 DB role 分离。
-#   (c) 新增语义事件 20 条，label=新增，upstream=-。
+#   (c) 新增语义事件 24 条，label=新增，upstream=-。
 #
 # target 统一写事件名的 Rust 符号落点；audit 的名字是契约层封闭枚举（§5.1 openbot-contracts
 # 的职责原文 = "native/wasm-safe ID、DTO、event、error、schema"），owner 写的是谁负责铸造它。
@@ -43,17 +43,17 @@ recount:
   - command: |-
       grep -c '^  - id: ' parity/events.yaml
     cwd: repo
-    expect: 88
-  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，20 新增）
+    expect: 92
+  # 本 ledger 的 label 分布（11 AG-UI + 57 audit = 68 parity，24 新增）
   - command: |-
       printf 'parity=%s 新增=%s 替代=%s\n' "$(grep -c "^    label: 'parity'$" parity/events.yaml)" "$(grep -c "^    label: '新增'$" parity/events.yaml)" "$(grep -c "^    label: '替代'$" parity/events.yaml)"
     cwd: repo
-    expect: 'parity=68 新增=20 替代=0'
-  # owner 分布（openbot-agent 11；openbot-infra 3；其余 openbot-application 74 = audit 54 + 新增 20）
+    expect: 'parity=68 新增=24 替代=0'
+  # owner 分布（openbot-agent 11；openbot-infra 3；其余 openbot-application 78 = audit 54 + 新增 24）
   - command: |-
       grep -oE "^    owner: 'openbot-[a-z]+'" parity/events.yaml | tr -d "'" | sort | uniq -c | awk '{print $3"="$1}' | paste -sd' ' -
     cwd: repo
-    expect: 'openbot-agent=11 openbot-application=74 openbot-infra=3'
+    expect: 'openbot-agent=11 openbot-application=78 openbot-infra=3'
   # 新增 absolute deadline audit 在固定上游零命中；同形命令对既有 stall audit 命中 5 个文件。
   - command: |-
       printf 'deadline=%s stalled=%s\n' "$(git grep -l 'agent.run_deadline_exceeded' | wc -l | tr -d ' ')" "$(git grep -l 'agent.stream_stalled' | wc -l | tr -d ' ')"
@@ -104,7 +104,7 @@ entries:
     test_id: 'T-EVT-0003'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
     status: 'done'
-    done_evidence: 'Pinned decoder把RUN_ERROR远端message/code在AG-UI边界压成ProviderGenerationFailed，malformed MESSAGES_SNAPSHOT/content与未知/损坏事件压成ProviderInvalidResponse；两者只穿本地stable terminal，远端正文不进ProviderEvent/日志/audit/GUI。Agent unit=47/0/0含两类正向；UI closed TerminalNotice定向=1/0/0。真实PG17.11+SafeDialer/SSE同一remote Agent连续跑success/RUN_ERROR/malformed三run，终态completed/provider_generation_failed/provider_invalid_response，messages+run_events+audit_events中REMOTE_ERROR_SECRET_CANARY=0；完整Agent PG=9/0/0。既有SafeDialer真实read-gap stall→agent.stream_stalled证据保持。'
+    done_evidence: 'Pinned decoder对START/ARGS/END与CHUNK做call-id配对、partial JSON object收口，并要求TOOL_CALL_RESULT只引用已ended call；duplicate/unknown/malformed fail-closed。production `PostgresComponentAdministration::sync_catalogue` + `PostgresAgentContextSource::with_components`向remote RunAgentInput真实提供showQuote；SafeDialer/SSE发完整call/result后，active PG按sequence得到tool_result projection，untrustedKey/type精确绑定call/message且正文canary正向=1。completed前adapter还复核tool name确实offered并拒duplicate result；remote result不会变成`ProviderEvent::ToolCallCompleted`。terminal后projection正文清除、canary=0，messages role=tool与public.tool_calls合计0，证明它只是untrusted显示投影、没有伪造§8.1本地effect。'
     evidence: 'rg -n --no-heading -g ''!bun.lock'' ''TOOL_CALL_START|TOOL_CALL_ARGS|TOOL_CALL_END|TOOL_CALL_RESULT'' . => agent-bot/src/index.ts::runAgent 命中前三个；TOOL_CALL_RESULT 唯一命中点是 agent-langgraph/src/index.ts'
     notes: 'TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END / TOOL_CALL_RESULT。TOOL_CALL_RESULT 在上游只有 agent-langgraph/src/index.ts 一处发出（agent-bot 不发）。tool 结果回注 Rust 侧必须走 §8.1 唯一管线，事件本身只是投影。'
   - id: 'agui-state-snapshot-delta'
@@ -114,7 +114,8 @@ entries:
     owner: 'openbot-agent'
     test_id: 'T-EVT-0004'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'Pinned 0.0.57 decoder以完整snapshot替换state、对六种RFC6902操作逐步在clone上应用并每步重验1MiB界限，任一失败原子不提交；production adapter只输出应用后的完整state `ProviderRemoteProjection`，固定source=remote_ag_ui/untrusted=true，无actor/grant槽。真实SafeDialer/SSE→Agent→PG在RUN_FINISHED前观察到state两条按序checkpoint且最终phase=done，terminal同事务收敛为无内容marker；conversation active text不被projection checkpoint截断。UI只接受closed untrusted wrapper且不把值并入transcript/authority。'
     evidence: 'rg -c --no-heading -g ''!bun.lock'' ''STATE_SNAPSHOT'' . | awk -F: ''{s+=$NF} END{print s+0}'' => 0；正向对照同命令 RUN_STARTED => 17；STATE_DELTA 同为 0'
     notes: 'STATE_SNAPSHOT / STATE_DELTA。上游源码**零使用**（正向对照见 evidence），parity 对象是 package.json 钉死的 @ag-ui/core 0.0.57 固定 schema，v3 §7.5 明确要求必须支持。STATE_DELTA 是 JSON Patch，@ag-ui/client 0.0.57 依赖 fast-json-patch（bun.lock 可查），Rust 侧需等价 patch 语义。'
   - id: 'agui-messages-snapshot'
@@ -124,7 +125,8 @@ entries:
     owner: 'openbot-agent'
     test_id: 'T-EVT-0005'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'Decoder对整份messages数组、role/content/tool/activity结构与4096项/1MiB边界先校验；Batch92 malformed object content已在production压成provider_invalid_response且GUI不崩。合法snapshot只成为source=remote_ag_ui/untrusted=true的remote projection，绝不替换PostgreSQL权威messages或assistant transcript。真实SafeDialer/SSE→Agent→PG在active run观察到唯一messages checkpoint，terminal清为marker；UI quarantine不显示其中伪user/assistant文本。'
     evidence: 'rg -c --no-heading -g ''!bun.lock'' ''MESSAGES_SNAPSHOT'' . | awk -F: ''{s+=$NF} END{print s+0}'' => 0；正向对照同命令 RUN_STARTED => 17'
     notes: 'MESSAGES_SNAPSHOT。上游源码零使用；最接近的既有物是 REST 拉历史 app/src/lib/copilot/thread-messages.ts（不是 AG-UI 事件）。v3 §2.4 issue #44：malformed message.content 会让 transcript 崩溃，Rust 侧对整份 snapshot 做结构验证后才投影。'
   - id: 'agui-activity'
@@ -134,7 +136,8 @@ entries:
     owner: 'openbot-agent'
     test_id: 'T-EVT-0006'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'Pinned decoder按messageId+activityType配对snapshot/delta，delta复用原子RFC6902并只输出patch后完整activity state；production projection固定source/untrusted wrapper。真实SafeDialer/SSE→Agent→PG在active run按序得activity两条且最终done=true，未与CHANNEL_ACTIVITY_TOPIC混同；terminal内容清除但事件/sequence/cursor保留。UI closed quarantine只推进cursor，不触发authority或transcript变化。'
     evidence: 'rg -c --no-heading -g ''!bun.lock'' ''ACTIVITY_SNAPSHOT'' . | awk -F: ''{s+=$NF} END{print s+0}'' => 0；正向对照同命令 RUN_STARTED => 17；ACTIVITY_DELTA 同为 0'
     notes: 'ACTIVITY 族。上游源码零使用；同名概念 CHANNEL_ACTIVITY_TOPIC （server/src/channels/routes.ts::createChannelStore 里的 pg_notify 主题）是 channel 侧的另一套机制，**不是** AG-UI activity 事件，不要混同。'
   - id: 'agui-step'
@@ -144,7 +147,8 @@ entries:
     owner: 'openbot-agent'
     test_id: 'T-EVT-0007'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'Decoder要求STEP_STARTED/STEP_FINISHED按同名open set精确配对，重复start、未知finish或terminal前未闭合均fail-closed。production把start/finish变为两个closed-family、source=remote_ag_ui/untrusted=true checkpoint。真实SafeDialer/SSE→Agent→PG在active run首尾观察到step_started/step_finished且顺序包围其它projection，terminal后只留无内容marker；UI quarantine不把remote step name当command或权限。'
     evidence: 'rg -c --no-heading -g ''!bun.lock'' ''STEP_STARTED'' . | awk -F: ''{s+=$NF} END{print s+0}'' => 0；正向对照同命令 RUN_STARTED => 17；STEP_FINISHED 同为 0'
     notes: 'STEP_STARTED / STEP_FINISHED。上游源码零使用；v3 §7.5 要求支持。'
   - id: 'agui-reasoning'
@@ -154,8 +158,9 @@ entries:
     owner: 'openbot-agent'
     test_id: 'T-EVT-0008'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
-    status: 'todo'
+    status: 'done'
     evidence: 'rg -c --no-heading -g ''!bun.lock'' ''REASONING_START'' . | awk -F: ''{s+=$NF} END{print s+0}'' => 0；正向对照同命令 RUN_STARTED => 17；THINKING_START 同为 0'
+    done_evidence: '固定@ag-ui/core 0.0.57的reasoning start/message/content/end与encrypted-value decoder经production remote Agent→唯一SafeDialer/SSE→provider-neutral visible reasoning；encryptedValue构造性不进入ProviderEvent。PG17.11证明active run reasoning可按sequence重放，任一terminal在同一事务把其payload收敛为固定{channel:reasoning,delta:"",retained:false}且terminal exact replay不复活；native0027又对completed/failed/cancelled/reconciliation_required四种历史终态做同一具名回填，active/text/事件identity/sequence/time不变。真实remote run终态后visible summary与encrypted canary在messages/run_events/audit均为0，marker恰1；UI live projection忽略reasoning且terminal权威reload。这里只声明数据库可见逻辑清除；WAL/backup物理保留仍属G8。'
     notes: 'reasoning 族。上游源码零使用；v3 §7.5 要求支持。v3 §17.2 / §16.5 禁止长期持久化原始 provider stream，reasoning 内容的保留期必须单独裁决，不随 transcript 默认永久保存。'
   - id: 'agui-raw-custom'
     upstream: 'app/package.json'
@@ -164,7 +169,8 @@ entries:
     owner: 'openbot-agent'
     test_id: 'T-EVT-0009'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'RAW/CUSTOM只经私有字段`ProviderRemoteProjection`进入host：local closed family与source不可由remote覆盖，remote字段全部在untrustedKey/untrustedType/untrustedValue下，单event≤1MiB、单session≤4096项/8MiB，NUL/overflow fail-closed且Debug不含正文。真实SafeDialer/SSE→Agent→PG active run各得一条，带伪permission的canary只能作为untrusted value；terminal同事务清除后messages/run_events/audit联合命中0。UI拒untrusted=false/未知shape，合法projection只推进cursor且不进transcript/authority。'
     evidence: 'rg -c --no-heading -g ''!bun.lock'' ''CUSTOM_EVENT'' . | awk -F: ''{s+=$NF} END{print s+0}'' => 0；正向对照同命令 RUN_STARTED => 17；''\bRAW\b'' 的 1 处命中是 server/src/plugins/catalogue.ts 的英文注释词，非事件名'
     notes: 'RAW / CUSTOM。上游源码零使用（RAW 的唯一 grep 命中是注释里的英文单词，已人工排除）。v3 §7.5 要求支持；这两族是任意 payload 的逃生口，按 §8.4 必须标记来源与"不可信内容"，其中的授权指令一律无效。'
   - id: 'agui-interrupt-resume'
@@ -174,7 +180,8 @@ entries:
     owner: 'openbot-agent'
     test_id: 'T-EVT-0010'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'Batch98：固定0.0.57 interrupt known fields经typed ProviderEvent进入专用native0028；runtime转AwaitingHuman并持续lease/deadline/cancel，actor用server-minted UUIDv7 handle经同一ApplicationService resolve且answer与hash-chain audit同事务。真实PG17.11+SafeDialer第一次RUN_FINISHED interrupt后pending可见，resolved提交后第二次HTTP请求使用新runId、parentRunId=首个protocol run与exact resume[]，最终completed；terminal同事务把descriptor/response payload清空，remote message/metadata/answer canary联合命中0。Server/Desktop/UI typed framing/WASM均有定向证据。'
     evidence: 'rg -c --no-heading -g ''!bun.lock'' ''RUN_INTERRUPTED'' . | awk -F: ''{s+=$NF} END{print s+0}'' => 0；正向对照同命令 RUN_STARTED => 17；对 ''interrupt|resume'' 的全仓 grep 命中全部是 TurnWatchdog.resume / 英文散文，非 AG-UI 事件'
     notes: 'interrupt / resume 族。上游源码零使用。server/src/channels/turn-watchdog.ts::TurnWatchdog 的 pause/resume 是看门狗自己的计时器控制，**不是** AG-UI interrupt 事件。v3 §7.5 要求支持。'
   - id: 'agui-error'
@@ -184,7 +191,8 @@ entries:
     owner: 'openbot-agent'
     test_id: 'T-EVT-0011'
     migration_rule: 'preserve: AG-UI 0.0.57 线格式与事件名不改'
-    status: 'todo'
+    status: 'done'
+    done_evidence: 'Pinned decoder把RUN_ERROR远端message/code在AG-UI边界压成ProviderGenerationFailed，malformed MESSAGES_SNAPSHOT/content与未知/损坏事件压成ProviderInvalidResponse；两者只穿本地stable terminal，远端正文不进ProviderEvent/日志/audit/GUI。Agent unit=47/0/0含两类正向；UI closed TerminalNotice定向=1/0/0。真实PG17.11+SafeDialer/SSE同一remote Agent连续跑success/RUN_ERROR/malformed三run，终态completed/provider_generation_failed/provider_invalid_response，messages+run_events+audit_events中REMOTE_ERROR_SECRET_CANARY=0；完整Agent PG=9/0/0。既有SafeDialer真实read-gap stall→agent.stream_stalled证据保持。'
     evidence: 'rg -n --no-heading ''RUN_ERROR'' server/src app/src => server/src/channels/stall-guard.ts 合成一条 RUN_ERROR 终结流；app/src/lib/copilot/stopped-turn.ts 消费它'
     notes: '错误族（RUN_ERROR + 损坏/未知事件处理）。上游 stall-guard 在 stall 时向流里写一条 RUN_ERROR 再关流，这是既有行为。v3 §2.4 两处修正必须落在本条：issue #44 malformed message.content 会让 transcript 崩溃 ⇒ 未知/损坏事件隔离成可展示错误、UI 不崩溃；§7.5 stall watchdog 量的是 remote body 真实 read 间隔，不得把下游消费者背压误判成 Agent 沉默。'
   - id: 'audit-agent-invoked'
@@ -676,31 +684,34 @@ entries:
   - id: 'audit-credential-created'
     upstream: 'server/src/credentials.ts::createCredential'
     label: 'parity'
-    target: 'openbot-contracts::audit::AuditEventType::CredentialCreated'
+    target: "openbot_domain::audit::event::AuditEventType::CREDENTIAL_CREATED"
     owner: 'openbot-application'
     test_id: 'T-EVT-0050'
     migration_rule: 'preserve: 事件名字符串原样保留'
-    status: 'todo'
+    status: done
+    done_evidence: "Batch120：Application管理员usecase经PostgresCredentialAdministration在同一业务事务追加typed hash-chain audit；真实GUI PG三类各一条，actor精确fixture-actor，payload只有kind/provider/keyId及rotate前驱/revoke vendor=false，无canary。审计失败同事务回滚；重复revoke不重复记event。"
     evidence: 'rg -n --no-heading -g ''!*.test.ts'' ''"credential.created"'' server/src'
     notes: '铸造在 openbot-application、落库在 openbot-infra（§8.6 业务 DB role 对 audit 只有 INSERT/SELECT）；owner 取实际所有者。'
   - id: 'audit-credential-revoked'
     upstream: 'server/src/credentials.ts::revokeCredential'
     label: 'parity'
-    target: 'openbot-contracts::audit::AuditEventType::CredentialRevoked'
+    target: "openbot_domain::audit::event::AuditEventType::CREDENTIAL_REVOKED"
     owner: 'openbot-application'
     test_id: 'T-EVT-0051'
     migration_rule: 'preserve: 事件名字符串原样保留'
-    status: 'todo'
+    status: done
+    done_evidence: "Batch120：Application管理员usecase经PostgresCredentialAdministration在同一业务事务追加typed hash-chain audit；真实GUI PG三类各一条，actor精确fixture-actor，payload只有kind/provider/keyId及rotate前驱/revoke vendor=false，无canary。审计失败同事务回滚；重复revoke不重复记event。"
     evidence: 'rg -n --no-heading -g ''!*.test.ts'' ''"credential.revoked"'' server/src'
     notes: 'v3 §2.4 issue #53：上游 rotate 先写新值再 revoke 旧值，失败留 orphan。Rust 版单事务切 active pointer，外部 revoke 独立进 reconciliation。 铸造在 openbot-application、落库在 openbot-infra（§8.6 业务 DB role 对 audit 只有 INSERT/SELECT）；owner 取实际所有者。'
   - id: 'audit-credential-rotated'
     upstream: 'server/src/credentials.ts::rotateCredential'
     label: 'parity'
-    target: 'openbot-contracts::audit::AuditEventType::CredentialRotated'
+    target: "openbot_domain::audit::event::AuditEventType::CREDENTIAL_ROTATED"
     owner: 'openbot-application'
     test_id: 'T-EVT-0052'
     migration_rule: 'preserve: 事件名字符串原样保留'
-    status: 'todo'
+    status: done
+    done_evidence: "Batch120：Application管理员usecase经PostgresCredentialAdministration在同一业务事务追加typed hash-chain audit；真实GUI PG三类各一条，actor精确fixture-actor，payload只有kind/provider/keyId及rotate前驱/revoke vendor=false，无canary。审计失败同事务回滚；重复revoke不重复记event。"
     evidence: 'rg -n --no-heading -g ''!*.test.ts'' ''"credential.rotated"'' server/src'
     notes: '同 credential.revoked：§2.4 issue #53 的单事务修正落在这一对上。 铸造在 openbot-application、落库在 openbot-infra（§8.6 业务 DB role 对 audit 只有 INSERT/SELECT）；owner 取实际所有者。'
   - id: 'audit-identity-provider-registered'
@@ -991,3 +1002,48 @@ entries:
     done_evidence: 'Batch89 Agent在provider effect前对unpriced/currency mismatch、在durable cost upper bound记账后对cap exceeded分别写同一agent.run_cost_budget_refused hash-chain audit，payload只含对应stable error_code。Agent 38/0/0逐条断言invoked→budget audit顺序；Infra audit_shape对三码均只产生1个allowlisted fact且零content/prompt。audit失败转journal_commit_unknown，不冒充已审计拒绝。'
     evidence: '固定上游git grep agent.run_cost_budget_refused=0；v4 §17.3逐字要求provider cost quota拒绝有stable code和audit'
     notes: '一个closed event type配三个closed error code：run_cost_budget_unpriced、run_cost_budget_currency_mismatch、run_cost_budget_exceeded；不记录币种、金额、rate、provider/model或用户输入。'
+
+  - id: 'agent-remote-interrupt-requested'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::AGENT_REMOTE_INTERRUPT_REQUESTED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0089'
+    migration_rule: 'n/a: remote interrupt在等待人之前必须成为durable actor-scoped事实'
+    status: 'done'
+    done_evidence: 'Batch98真实PG17.11：native0028 batch rows与agent.remote_interrupt_requested hash-chain audit同serializable事务；exact remote batch replay零重复audit，audit payload为空且不含message/schema/metadata。'
+    evidence: '固定上游git grep agent.remote_interrupt_=0；v4 §7.5/§8.6要求remote HITL有durable真源与审计'
+    notes: 'target只记权威local run id；remote interrupt id与正文不进audit。'
+  - id: 'agent-remote-interrupt-resolved'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::AGENT_REMOTE_INTERRUPT_RESOLVED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0090'
+    migration_rule: 'n/a: actor answer必须在第二次provider effect之前durable audited'
+    status: 'done'
+    done_evidence: 'Batch98真实PG17.11：fresh actor/generation/membership/run/lease复核后，resolved state、bounded payload与空payload hash-chain audit同事务commit；第二次SafeDialer请求只在commit返回后发生，exact replay无第二audit。'
+    evidence: '固定上游无Rust actor-scoped durable resume面；v4 §17.2 audit-before-action'
+    notes: 'audit不含answer payload；payload只暂存在专表并于run terminal同事务清除。'
+  - id: 'agent-remote-interrupt-cancelled'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::AGENT_REMOTE_INTERRUPT_CANCELLED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0091'
+    migration_rule: 'n/a: actor显式decline是closed resume status而非自由文本'
+    status: 'done'
+    done_evidence: 'Batch98 coordinator真PG矩阵以第二个batch item提交cancelled，无payload且同事务写agent.remote_interrupt_cancelled；waiter按原position生成cancelled resume entry，未伪造成run cancellation或tool denial。'
+    evidence: 'AG-UI 0.0.57 ResumeEntry status包含cancelled；固定上游产品无durable Rust audit'
+    notes: 'cancelled answer与scope失效/run terminal retirement分离；只有人显式选择才写本事件。'
+  - id: 'agent-remote-interrupt-expired'
+    upstream: '-'
+    label: '新增'
+    target: 'openbot-domain::audit::event::AuditEventType::AGENT_REMOTE_INTERRUPT_EXPIRED'
+    owner: 'openbot-application'
+    test_id: 'T-EVT-0092'
+    migration_rule: 'n/a: 不信remote expiresAt，以DB clock与本地30分钟上限结束等待'
+    status: 'done'
+    done_evidence: 'Batch98 coordinator用数据库clock对pending row执行inclusive expiry CAS，写closed cancelled resume status且response payload/resolved_by为空，并在同事务追加agent.remote_interrupt_expired；runtime自身absolute deadline可更早取消整run。'
+    evidence: 'AG-UI字段expiresAt只作untrusted presentation；v4 §7.2所有等待必须受本地deadline约束'
+    notes: 'remote expiresAt不参与authority；本地TTL与run deadline共同防永久悬挂。'

@@ -3,19 +3,21 @@
 use leptos::prelude::*;
 use openbot_contracts::agent::{
     AgentAuthInput, AgentConnectionFailure, AgentConnectionTestRequest, AgentMutationRequest,
-    AgentProfile, AgentVisibility, MAX_AGENT_NAME_BYTES, MAX_AGENT_ROLE_DESCRIPTION_BYTES,
-    MAX_AGENT_TITLE_BYTES,
+    AgentProfile, AgentVisibility, MAX_AGENT_AUTH_BYTES, MAX_AGENT_NAME_BYTES,
+    MAX_AGENT_ROLE_DESCRIPTION_BYTES, MAX_AGENT_TITLE_BYTES,
 };
 
 #[cfg(target_arch = "wasm32")]
 use crate::api::{create_agent, test_agent_connection, update_agent};
 use crate::i18n::{t, t_string, use_i18n};
 use crate::primitives::{
-    Button, ButtonSize, ButtonVariant, Field, Input, InputType, Select, SelectContent, SelectItem,
-    SelectTrigger, Textarea,
+    Button, ButtonSize, ButtonVariant, Field, Input, InputType, SecretInput, SecretInputController,
+    SecretInputPolicy, SecretInputStatus, Select, SelectContent, SelectItem, SelectTrigger,
+    Textarea,
 };
 
-/// Create or edit one coworker. Password state is always cleared on submit/cancel.
+/// Create or edit one coworker. Password bytes stay in the DOM until an explicit request and are
+/// cleared on submit/cancel; reactive state contains only validation metadata.
 #[component]
 pub fn AgentEditor(
     /// `None` creates; `Some` edits this authoritative profile.
@@ -49,7 +51,7 @@ pub fn AgentEditor(
             .and_then(|profile| profile.endpoint.clone())
             .unwrap_or_default(),
     );
-    let auth = RwSignal::new(String::new());
+    let auth = SecretInputController::new(MAX_AGENT_AUTH_BYTES, SecretInputPolicy::Authorization);
     let visibility = RwSignal::new(Some(
         match profile
             .as_ref()
@@ -71,40 +73,47 @@ pub fn AgentEditor(
 
     Effect::new(move |_| {
         endpoint.track();
-        auth.track();
+        auth.revision().track();
         connection.set(None);
         connection_pending.set(false);
         let _ = advance_connection_generation(connection_generation);
     });
     on_cleanup(move || {
-        auth.set(String::new());
+        auth.clear();
         let _ = advance_connection_generation(connection_generation);
     });
 
     let build = move || {
+        let secret = auth.copy_for_request();
         build_agent_request(
             &name.get_untracked(),
             &title.get_untracked(),
             &role.get_untracked(),
             visibility.get_untracked().as_deref(),
             &endpoint.get_untracked(),
-            &auth.get_untracked(),
+            &secret,
         )
     };
 
     let save = UnsyncCallback::new(move |_| {
+        if pending.get_untracked() {
+            return;
+        }
         attempted.set(true);
         save_error.set(false);
         let Ok(request) = build() else {
             return;
         };
         pending.set(true);
-        auth.set(String::new());
+        auth.clear();
+        connection.set(None);
+        connection_pending.set(false);
+        let _ = advance_connection_generation(connection_generation);
         #[cfg(target_arch = "wasm32")]
         leptos::task::spawn_local_scoped_with_cancellation(async move {
             let outcome = match agent_id.get_value() {
-                Some(agent_id) => update_agent(agent_id.as_str(), &request).await,
-                None => create_agent(&request).await,
+                Some(agent_id) => update_agent(agent_id.as_str(), request).await,
+                None => create_agent(request).await,
             };
             pending.set(false);
             match outcome {
@@ -135,7 +144,7 @@ pub fn AgentEditor(
             )));
             return;
         }
-        let auth_raw = auth.get_untracked();
+        let auth_raw = auth.copy_for_request();
         let auth_value = openbot_contracts::text::trim_ecmascript(&auth_raw);
         let request = AgentConnectionTestRequest {
             endpoint: endpoint_value.to_owned(),
@@ -156,7 +165,7 @@ pub fn AgentEditor(
         connection_pending.set(true);
         #[cfg(target_arch = "wasm32")]
         leptos::task::spawn_local_scoped_with_cancellation(async move {
-            let outcome = test_agent_connection(&request).await;
+            let outcome = test_agent_connection(request).await;
             if connection_generation.get_untracked() != generation {
                 return;
             }
@@ -183,7 +192,7 @@ pub fn AgentEditor(
     };
 
     let cancel = move |_| {
-        auth.set(String::new());
+        auth.clear();
         connection.set(None);
         let _ = advance_connection_generation(connection_generation);
         on_cancel.run(());
@@ -201,8 +210,15 @@ pub fn AgentEditor(
                 || value.len() > MAX_AGENT_ROLE_DESCRIPTION_BYTES
                 || value.as_bytes().contains(&0))
     });
-    let form_invalid =
-        agent_form_invalid_signal(attempted, name, title, role, visibility, endpoint, auth);
+    let form_invalid = agent_form_invalid_signal(
+        attempted,
+        name,
+        title,
+        role,
+        visibility,
+        endpoint,
+        auth.status(),
+    );
     #[cfg(not(target_arch = "wasm32"))]
     let _ = (agent_id, on_saved);
 
@@ -298,16 +314,16 @@ pub fn AgentEditor(
                 <Field
                     control_id="agent-auth"
                     label=move || t_string!(i18n, agents.auth_label).to_owned()
-                    description=move || if editing {
-                        t_string!(i18n, agents.auth_edit_help).to_owned()
-                    } else {
-                        t_string!(i18n, agents.auth_help).to_owned()
+                    description=move || {
+                        let mode_help = if editing { t_string!(i18n, agents.auth_edit_help) }
+                            else { t_string!(i18n, agents.auth_help) };
+                        format!("{} {}", mode_help, t_string!(i18n, common.secret_entry_help))
                     }
+                    invalid=Signal::derive(move || attempted.get() && auth.status().get() == SecretInputStatus::Invalid)
                     disabled=pending
                 >
-                    <Input
-                        value=auth
-                        input_type=InputType::Password
+                    <SecretInput
+                        controller=auth
                         placeholder="Bearer …"
                     />
                 </Field>
@@ -466,7 +482,7 @@ fn agent_form_invalid_signal(
     role: RwSignal<String>,
     visibility: RwSignal<Option<String>>,
     endpoint: RwSignal<String>,
-    auth: RwSignal<String>,
+    auth: ReadSignal<SecretInputStatus>,
 ) -> Signal<bool> {
     Signal::derive(move || {
         attempted.get()
@@ -475,17 +491,20 @@ fn agent_form_invalid_signal(
                     role.with(|role| {
                         visibility.with(|visibility| {
                             endpoint.with(|endpoint| {
-                                auth.with(|auth| {
-                                    build_agent_request(
+                                let auth_state = auth.get();
+                                auth_state == SecretInputStatus::Invalid
+                                    || (auth_state == SecretInputStatus::Valid
+                                        && openbot_contracts::text::trim_ecmascript(endpoint)
+                                            .is_empty())
+                                    || build_agent_request(
                                         name,
                                         title,
                                         role,
                                         visibility.as_deref(),
                                         endpoint,
-                                        auth,
+                                        "",
                                     )
                                     .is_err()
-                                })
                             })
                         })
                     })
@@ -518,9 +537,16 @@ mod tests {
             let role = RwSignal::new(String::new());
             let visibility = RwSignal::new(Some("private".to_owned()));
             let endpoint = RwSignal::new(String::new());
-            let auth = RwSignal::new(String::new());
-            let invalid =
-                agent_form_invalid_signal(attempted, name, title, role, visibility, endpoint, auth);
+            let auth = RwSignal::new(SecretInputStatus::Empty);
+            let invalid = agent_form_invalid_signal(
+                attempted,
+                name,
+                title,
+                role,
+                visibility,
+                endpoint,
+                auth.read_only(),
+            );
 
             assert!(!invalid.get());
             attempted.set(true);
@@ -530,7 +556,7 @@ mod tests {
             role.set("Role".to_owned());
             assert!(!invalid.get());
 
-            auth.set("Bearer test-only".to_owned());
+            auth.set(SecretInputStatus::Valid);
             assert!(invalid.get());
             endpoint.set("https://agent.example/ag-ui".to_owned());
             assert!(!invalid.get());

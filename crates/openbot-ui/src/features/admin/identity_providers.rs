@@ -16,7 +16,8 @@ use crate::i18n::{t, t_string, use_i18n};
 use crate::icons::Icon;
 use crate::primitives::{
     Button, ButtonSize, ButtonVariant, Dialog, DialogBody, DialogContent, DialogFooter, Field,
-    IconSize, IconView, Input, InputType, Textarea,
+    IconSize, IconView, Input, InputType, SecretInput, SecretInputController, SecretInputPolicy,
+    SecretInputStatus, Textarea,
 };
 
 #[derive(Clone, Copy)]
@@ -28,7 +29,7 @@ struct DraftSignals {
     entry_point: RwSignal<String>,
     metadata: RwSignal<String>,
     client_id: RwSignal<String>,
-    client_secret: RwSignal<String>,
+    client_secret: SecretInputController,
 }
 
 struct RegistrationDraft {
@@ -39,7 +40,7 @@ struct RegistrationDraft {
     entry_point: String,
     metadata: String,
     client_id: String,
-    client_secret: String,
+    client_secret: zeroize::Zeroizing<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +64,10 @@ impl DraftSignals {
             entry_point: RwSignal::new(String::new()),
             metadata: RwSignal::new(String::new()),
             client_id: RwSignal::new(String::new()),
-            client_secret: RwSignal::new(String::new()),
+            client_secret: SecretInputController::new(
+                MAX_IDENTITY_PROVIDER_CLIENT_SECRET_BYTES,
+                SecretInputPolicy::OpaqueToken,
+            ),
         }
     }
 
@@ -76,7 +80,7 @@ impl DraftSignals {
             entry_point: self.entry_point.get_untracked(),
             metadata: self.metadata.get_untracked(),
             client_id: self.client_id.get_untracked(),
-            client_secret: self.client_secret.get_untracked(),
+            client_secret: self.client_secret.take(),
         }
     }
 
@@ -88,7 +92,7 @@ impl DraftSignals {
         self.entry_point.set(String::new());
         self.metadata.set(String::new());
         self.client_id.set(String::new());
-        self.client_secret.set(String::new());
+        self.client_secret.clear();
     }
 }
 
@@ -126,8 +130,15 @@ pub fn AdminIdentityProvidersPage() -> impl IntoView {
     });
     let retry = move |_| request_providers(providers, loading, load_error, page_owner);
     let register = move |_| {
+        if registration_pending.get_untracked() {
+            return;
+        }
         submit_attempted.set(true);
         registration_error.set(false);
+        draft.client_secret.validate();
+        if !draft_valid(draft) {
+            return;
+        }
         let Ok(request) = build_registration_request(draft.snapshot()) else {
             return;
         };
@@ -263,6 +274,7 @@ pub fn AdminIdentityProvidersPage() -> impl IntoView {
                             selected=Signal::derive(move || draft.protocol.get() == SsoProtocol::Saml)
                             disabled=registration_pending
                             on_activate=move |_| {
+                                draft.client_secret.clear();
                                 draft.protocol.set(SsoProtocol::Saml);
                                 submit_attempted.set(false);
                                 registration_error.set(false);
@@ -274,6 +286,7 @@ pub fn AdminIdentityProvidersPage() -> impl IntoView {
                             selected=Signal::derive(move || draft.protocol.get() == SsoProtocol::Oidc)
                             disabled=registration_pending
                             on_activate=move |_| {
+                                draft.client_secret.clear();
                                 draft.protocol.set(SsoProtocol::Oidc);
                                 submit_attempted.set(false);
                                 registration_error.set(false);
@@ -377,6 +390,7 @@ pub fn AdminIdentityProvidersPage() -> impl IntoView {
                             <Field
                                 control_id="identity-provider-client-secret"
                                 label=move || t_string!(i18n, admin.identity_providers_client_secret).to_owned()
+                                description=move || t_string!(i18n, common.secret_entry_help).to_owned()
                                 error=move || t_string!(i18n, admin.identity_providers_client_secret_error).to_owned()
                                 invalid=Signal::derive(move || {
                                     submit_attempted.get()
@@ -384,7 +398,7 @@ pub fn AdminIdentityProvidersPage() -> impl IntoView {
                                 })
                                 disabled=registration_pending
                             >
-                                <Input value=draft.client_secret input_type=InputType::Password />
+                                <SecretInput controller=draft.client_secret />
                             </Field>
                         </Show>
                     </div>
@@ -609,7 +623,7 @@ fn build_registration_request(
             ) {
                 return Err(DraftField::ClientSecret);
             }
-            Ok(RegisterIdentityProviderRequest::oidc(
+            Ok(RegisterIdentityProviderRequest::oidc_with_zeroizing_secret(
                 draft.provider_id,
                 draft.domain,
                 draft.issuer,
@@ -634,10 +648,7 @@ fn field_valid(field: DraftField, draft: DraftSignals) -> bool {
             &draft.client_id.get(),
             MAX_IDENTITY_PROVIDER_CLIENT_ID_BYTES,
         ),
-        DraftField::ClientSecret => valid_bounded_text(
-            &draft.client_secret.get(),
-            MAX_IDENTITY_PROVIDER_CLIENT_SECRET_BYTES,
-        ),
+        DraftField::ClientSecret => draft.client_secret.status().get() == SecretInputStatus::Valid,
     }
 }
 
@@ -728,7 +739,7 @@ mod tests {
             entry_point: "https://idp.acme.example/sso".to_owned(),
             metadata: "<EntityDescriptor/>".to_owned(),
             client_id: String::new(),
-            client_secret: String::new(),
+            client_secret: zeroize::Zeroizing::new(String::new()),
         }
     }
 
@@ -742,7 +753,7 @@ mod tests {
         oidc.protocol = SsoProtocol::Oidc;
         oidc.issuer = "https://idp.acme.example/oauth2/default".to_owned();
         oidc.client_id = "client-id".to_owned();
-        oidc.client_secret = "secret".to_owned();
+        oidc.client_secret = zeroize::Zeroizing::new("secret".to_owned());
         let oidc = serde_json::to_value(build_registration_request(oidc).unwrap()).unwrap();
         assert!(oidc.get("oidcConfig").is_some());
         assert!(oidc.get("samlConfig").is_none());
@@ -780,7 +791,7 @@ mod tests {
         draft.protocol = SsoProtocol::Oidc;
         draft.issuer = "https://user:secret@idp.acme.example?tenant=other".to_owned();
         draft.client_id = "client".to_owned();
-        draft.client_secret = "secret".to_owned();
+        draft.client_secret = zeroize::Zeroizing::new("secret".to_owned());
         assert_eq!(
             build_registration_request(draft).err(),
             Some(DraftField::Issuer)

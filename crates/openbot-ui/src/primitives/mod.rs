@@ -20,6 +20,7 @@ mod menu;
 mod message;
 mod message_scroller;
 mod modal;
+mod secret_input;
 mod select;
 mod separator;
 mod sheet;
@@ -61,6 +62,7 @@ pub use message_scroller::{
     MessageScrollerViewport, use_message_scroller,
 };
 pub use modal::SheetSide;
+pub use secret_input::{SecretInput, SecretInputController, SecretInputPolicy, SecretInputStatus};
 pub use select::{
     Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger,
 };

@@ -285,6 +285,45 @@ impl FromRequestParts<ServerState> for OriginAuthenticated {
     }
 }
 
+/// Same-origin authenticated request retaining the exact verified Origin for ticket binding.
+pub struct OriginBoundAuthenticated {
+    auth: AuthContext,
+    origin: String,
+}
+
+impl OriginBoundAuthenticated {
+    /// Split the authority context and exact verified Origin.
+    #[must_use]
+    pub fn into_parts(self) -> (AuthContext, String) {
+        (self.auth, self.origin)
+    }
+}
+
+impl FromRequestParts<ServerState> for OriginBoundAuthenticated {
+    type Rejection = HttpError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &ServerState,
+    ) -> Result<Self, Self::Rejection> {
+        let resolved = state.auth_resolver().resolve_with_assurance(parts).await?;
+        let origin = parts
+            .headers
+            .get(http::header::ORIGIN)
+            .and_then(|value| value.to_str().ok())
+            .ok_or(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::OriginMissing,
+            })?
+            .to_owned();
+        state
+            .authorize_authenticated_origin(&resolved, Some(origin.as_str()))
+            .await?;
+        let auth = resolved.into_context();
+        Span::current().record(ACTOR_ID_FIELD, tracing::field::display(auth.actor()));
+        Ok(Self { auth, origin })
+    }
+}
+
 /// 敏感 admin 写的 session/origin 配置；未注入时 ServerState 会 fail-closed。
 #[derive(Clone, Debug)]
 pub struct SensitiveWriteSecurity {

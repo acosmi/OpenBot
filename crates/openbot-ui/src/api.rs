@@ -6,6 +6,28 @@
 #[path = "desktop_transport.rs"]
 pub(crate) mod desktop_transport;
 
+#[path = "plugins_api.rs"]
+pub(crate) mod plugins;
+
+#[path = "credentials_api.rs"]
+pub(crate) mod credentials;
+
+/// Serialize a sensitive request without a serde_json::Value copy. The temporary Rust JSON buffer
+/// is zeroized before awaiting the browser request; JS/network buffers remain browser-owned.
+#[cfg(target_arch = "wasm32")]
+fn secret_json<T: serde::Serialize>(
+    builder: gloo_net::http::RequestBuilder,
+    value: &T,
+) -> Result<gloo_net::http::Request, ApiError> {
+    let body = zeroize::Zeroizing::new(
+        serde_json::to_string(value).map_err(|_| ApiError::InvalidResponse)?,
+    );
+    builder
+        .header("Content-Type", "application/json")
+        .body(body.as_str())
+        .map_err(|_| ApiError::InvalidResponse)
+}
+
 use openbot_contracts::agent::{
     AgentConnectionTestRequest, AgentConnectionVerdict, AgentMutationRequest, AgentProfile,
     CallbackTokenIssued,
@@ -80,6 +102,10 @@ use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
 use openbot_contracts::policy::ActionPolicyDocument;
 #[cfg(any(target_arch = "wasm32", test))]
 use openbot_contracts::policy::ActionPolicyResponse;
+use openbot_contracts::remote_interrupt::{
+    PendingRemoteInterrupts, RemoteInterruptAnswer, RemoteInterruptResolved,
+    is_remote_interrupt_request_id,
+};
 #[cfg(target_arch = "wasm32")]
 use openbot_contracts::sandboxed::SandboxedComponentDeleted;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -785,6 +811,75 @@ pub async fn answer_component_human_decision(
     }
 }
 
+/// Load current-actor pending remote AG-UI interrupts without browser cache.
+pub async fn list_pending_remote_interrupts() -> Result<PendingRemoteInterrupts, ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::get("/api/me/remote-interrupts")
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let pending = response
+            .json::<PendingRemoteInterrupts>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        validate_pending_remote_interrupts(&pending)?;
+        Ok(pending)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(ApiError::Unavailable)
+    }
+}
+
+/// Commit one closed answer to a server-minted remote interrupt handle.
+pub async fn answer_remote_interrupt(
+    request_id: &str,
+    answer: &RemoteInterruptAnswer,
+) -> Result<RemoteInterruptResolved, ApiError> {
+    let path = remote_interrupt_answer_path(request_id)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+
+        let response = Request::put(&path)
+            .cache(RequestCache::NoStore)
+            .credentials(RequestCredentials::SameOrigin)
+            .redirect(RequestRedirect::Error)
+            .json(answer)
+            .map_err(|_| ApiError::InvalidResponse)?
+            .send()
+            .await
+            .map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(status_error(response.status()));
+        }
+        let resolved = response
+            .json::<RemoteInterruptResolved>()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if resolved.request_id != request_id || resolved.status != answer.status {
+            return Err(ApiError::InvalidResponse);
+        }
+        Ok(resolved)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, answer);
+        Err(ApiError::Unavailable)
+    }
+}
+
 /// Load reviewed user-OAuth servers and the current actor's connection rows.
 pub async fn load_mcp_connections() -> Result<McpConnections, ApiError> {
     #[cfg(target_arch = "wasm32")]
@@ -1293,14 +1388,14 @@ pub async fn load_agent(agent_id: &str) -> Result<AgentProfile, ApiError> {
 }
 
 /// Create one caller-owned Agent; response is the authoritative profile.
-pub async fn create_agent(request: &AgentMutationRequest) -> Result<AgentProfile, ApiError> {
+pub async fn create_agent(request: AgentMutationRequest) -> Result<AgentProfile, ApiError> {
     agent_profile_mutation("/api/agents", "POST", request).await
 }
 
 /// Update one manageable Agent; response is the authoritative profile.
 pub async fn update_agent(
     agent_id: &str,
-    request: &AgentMutationRequest,
+    request: AgentMutationRequest,
 ) -> Result<AgentProfile, ApiError> {
     let path = agent_detail_path(agent_id)?;
     agent_profile_mutation(&path, "PATCH", request).await
@@ -1384,21 +1479,19 @@ pub async fn revoke_agent_callback_token(agent_id: &str) -> Result<(), ApiError>
 
 /// Perform one uncached real remote AG-UI connection probe.
 pub async fn test_agent_connection(
-    request: &AgentConnectionTestRequest,
+    request: AgentConnectionTestRequest,
 ) -> Result<AgentConnectionVerdict, ApiError> {
     #[cfg(target_arch = "wasm32")]
     {
         use gloo_net::http::Request;
         use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
-        let response = Request::post("/api/agents/test-connection")
+        let builder = Request::post("/api/agents/test-connection")
             .cache(RequestCache::NoStore)
             .credentials(RequestCredentials::SameOrigin)
-            .redirect(RequestRedirect::Error)
-            .json(request)
-            .map_err(|_| ApiError::InvalidResponse)?
-            .send()
-            .await
-            .map_err(|_| ApiError::Network)?;
+            .redirect(RequestRedirect::Error);
+        let outgoing = secret_json(builder, &request)?;
+        drop(request);
+        let response = outgoing.send().await.map_err(|_| ApiError::Network)?;
         if response.status() != 200 {
             return Err(status_error(response.status()));
         }
@@ -1424,7 +1517,7 @@ pub async fn test_agent_connection(
 async fn agent_profile_mutation(
     path: &str,
     method: &'static str,
-    request: &AgentMutationRequest,
+    request: AgentMutationRequest,
 ) -> Result<AgentProfile, ApiError> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -1435,15 +1528,13 @@ async fn agent_profile_mutation(
             "PATCH" => Request::patch(path),
             _ => return Err(ApiError::InvalidResponse),
         };
-        let response = builder
+        let builder = builder
             .cache(RequestCache::NoStore)
             .credentials(RequestCredentials::SameOrigin)
-            .redirect(RequestRedirect::Error)
-            .json(request)
-            .map_err(|_| ApiError::InvalidResponse)?
-            .send()
-            .await
-            .map_err(|_| ApiError::Network)?;
+            .redirect(RequestRedirect::Error);
+        let outgoing = secret_json(builder, &request)?;
+        drop(request);
+        let response = outgoing.send().await.map_err(|_| ApiError::Network)?;
         agent_profile_response(response).await
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -2023,15 +2114,18 @@ pub async fn register_identity_provider(
         use gloo_net::http::Request;
         use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
 
-        let response = Request::post("/api/auth/sso/register")
+        let builder = Request::post("/api/auth/sso/register")
             .cache(RequestCache::NoStore)
             .credentials(RequestCredentials::SameOrigin)
-            .redirect(RequestRedirect::Error)
-            .json(&request)
-            .map_err(|_| ApiError::InvalidResponse)?
-            .send()
-            .await
-            .map_err(|_| ApiError::Network)?;
+            .redirect(RequestRedirect::Error);
+        let expected = (
+            request.provider_id().to_owned(),
+            request.issuer().to_owned(),
+            request.protocol(),
+        );
+        let outgoing = secret_json(builder, &request)?;
+        drop(request);
+        let response = outgoing.send().await.map_err(|_| ApiError::Network)?;
         if !response.ok() {
             return Err(status_error(response.status()));
         }
@@ -2040,10 +2134,10 @@ pub async fn register_identity_provider(
             .await
             .map_err(|_| ApiError::InvalidResponse)?;
         validate_identity_provider(&provider)?;
-        if provider.provider_id != request.provider_id()
-            || provider.issuer != request.issuer()
+        if provider.provider_id != expected.0
+            || provider.issuer != expected.1
             || provider.domain != expected_domain
-            || provider.protocol != request.protocol()
+            || provider.protocol != expected.2
         {
             return Err(ApiError::InvalidResponse);
         }
@@ -3066,6 +3160,48 @@ fn component_human_decision_answer_path(decision_id: &str) -> Result<String, Api
     ))
 }
 
+fn remote_interrupt_answer_path(request_id: &str) -> Result<String, ApiError> {
+    if !is_remote_interrupt_request_id(request_id) {
+        return Err(ApiError::InvalidResponse);
+    }
+    Ok(format!(
+        "/api/me/remote-interrupts/{}",
+        encode_url_component(request_id)
+    ))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn validate_pending_remote_interrupts(pending: &PendingRemoteInterrupts) -> Result<(), ApiError> {
+    if pending.interrupts.len() > 100 {
+        return Err(ApiError::InvalidResponse);
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for interrupt in &pending.interrupts {
+        if !is_remote_interrupt_request_id(&interrupt.request_id) {
+            return Err(ApiError::InvalidResponse);
+        }
+        validate_opaque_identifier(&interrupt.run_id, 1024)?;
+        validate_opaque_identifier(&interrupt.agent_id, 1024)?;
+        if !ids.insert(interrupt.request_id.as_str())
+            || interrupt.untrusted_reason.is_empty()
+            || interrupt.untrusted_reason.len() > 256
+            || interrupt.untrusted_reason.chars().any(char::is_control)
+            || interrupt
+                .untrusted_message
+                .as_ref()
+                .is_some_and(|value| value.len() > 64 * 1024 || value.as_bytes().contains(&0))
+            || interrupt
+                .untrusted_response_schema
+                .as_ref()
+                .is_some_and(|value| !value.is_object())
+            || interrupt.expires_at_ms <= interrupt.requested_at_ms
+        {
+            return Err(ApiError::InvalidResponse);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(any(target_arch = "wasm32", test))]
 fn people_page_path(search: &str, cursor: Option<&str>) -> Result<String, ApiError> {
     validate_people_text(search, 2048, true)?;
@@ -3625,6 +3761,48 @@ mod tests {
                 ApiError::InvalidResponse
             );
         }
+    }
+
+    #[test]
+    fn remote_interrupt_path_and_projection_are_closed_bounded_and_untrusted() {
+        assert_eq!(
+            remote_interrupt_answer_path("018f6f8a-5f4b-7c2d-8a31-111111111111").unwrap(),
+            "/api/me/remote-interrupts/018f6f8a-5f4b-7c2d-8a31-111111111111"
+        );
+        assert!(remote_interrupt_answer_path("").is_err());
+        let interrupt = openbot_contracts::remote_interrupt::PendingRemoteInterrupt {
+            request_id: "018f6f8a-5f4b-7c2d-8a31-111111111111".to_owned(),
+            run_id: "run-1".to_owned(),
+            agent_id: "bot-1".to_owned(),
+            untrusted_reason: "confirmation".to_owned(),
+            untrusted_message: Some("Remote prompt".to_owned()),
+            untrusted_response_schema: Some(serde_json::json!({"type":"object"})),
+            requested_at_ms: 1,
+            expires_at_ms: 2,
+        };
+        assert!(
+            validate_pending_remote_interrupts(&PendingRemoteInterrupts {
+                interrupts: vec![interrupt.clone()],
+            })
+            .is_ok()
+        );
+        let mut duplicate = interrupt.clone();
+        duplicate.untrusted_reason = "other".to_owned();
+        assert_eq!(
+            validate_pending_remote_interrupts(&PendingRemoteInterrupts {
+                interrupts: vec![interrupt.clone(), duplicate],
+            })
+            .unwrap_err(),
+            ApiError::InvalidResponse
+        );
+        let mut bad_time = interrupt;
+        bad_time.expires_at_ms = bad_time.requested_at_ms;
+        assert!(
+            validate_pending_remote_interrupts(&PendingRemoteInterrupts {
+                interrupts: vec![bad_time],
+            })
+            .is_err()
+        );
     }
 
     #[test]

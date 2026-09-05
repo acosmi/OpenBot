@@ -10,14 +10,16 @@ mod protocol;
 mod scope;
 
 pub use frame::{EngineFrame, EngineFrameError, EngineFrameReader, ImageFormat};
+#[cfg(any(unix, windows))]
+pub use process::EngineScreenSource;
 #[cfg(target_os = "linux")]
 pub use process::RunscAttestation;
 pub use process::{
     EngineBundle, EngineBundleDigest, EngineLaunchConfig, EngineProcess, EngineProcessError,
-    EngineSandboxFidelity, StartedSession,
+    EngineSandboxFidelity, ScreenIngressStats, ScreenStopReceipt, ScreenStreamKey, StartedSession,
 };
 pub use protocol::{EngineOperationId, EngineProtocolError};
 pub use scope::{
     ComponentRenderScope, ComputerSecurityScope, DesktopWindowSessionId, EngineRole,
-    EngineRoleKind, ScopeError, WorkspaceScope,
+    EngineRoleKind, ScopeError, ScreenAudience, WorkspaceScope,
 };

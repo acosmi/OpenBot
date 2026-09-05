@@ -7,6 +7,7 @@ use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
 #[cfg(unix)]
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -17,12 +18,15 @@ use openbot_contracts::ids::{ComputerGeneration, ComputerId, TabId};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
+use crate::browser::{BrowserInput, CdpInputPlan, CdpInputPlanError};
+use crate::control::AuthorizedHumanInput;
+
 use super::frame::{EngineFrame, EngineFrameError, EngineFrameReader, read_frame_hello};
 use super::protocol::{
-    BootCapability, BootToken, EngineCommandWire, EngineEventWire, EngineOperationId,
-    EngineProtocolError, encode_command,
+    BootCapability, BootToken, EngineCommandWire, EngineEventWire, EngineInputKindWire,
+    EngineOperationId, EngineProtocolError, encode_command,
 };
-use super::scope::EngineRole;
+use super::scope::{EngineRole, ScreenAudience};
 
 #[cfg(windows)]
 use openbot_windows_sandbox::{
@@ -36,6 +40,10 @@ use tokio::net::UnixListener;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 #[cfg(unix)]
 use tokio::process::{Child, Command};
+#[cfg(any(unix, windows))]
+use tokio::sync::{Mutex, watch};
+#[cfg(any(unix, windows))]
+use tokio::task::JoinHandle;
 
 #[cfg(unix)]
 type EngineChild = Child;
@@ -251,6 +259,7 @@ pub enum EngineSandboxFidelity {
 pub struct EngineLaunchConfig {
     bundle: EngineBundle,
     role: EngineRole,
+    screen_audience: ScreenAudience,
     computer_id: ComputerId,
     generation: ComputerGeneration,
     profile_dir: PathBuf,
@@ -265,6 +274,7 @@ impl EngineLaunchConfig {
     pub fn new(
         bundle: EngineBundle,
         role: EngineRole,
+        screen_audience: ScreenAudience,
         computer_id: ComputerId,
         generation: ComputerGeneration,
         profile_dir: impl Into<PathBuf>,
@@ -273,6 +283,7 @@ impl EngineLaunchConfig {
         Self {
             bundle,
             role,
+            screen_audience,
             computer_id,
             generation,
             profile_dir: profile_dir.into(),
@@ -306,6 +317,366 @@ pub struct StartedSession {
     pub origin: String,
 }
 
+/// Counters for the Rust-owned size-one latest-frame ingress.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScreenIngressStats {
+    received_frames: u64,
+    dropped_before_consume: u64,
+    acknowledged_frames: u64,
+}
+
+impl ScreenIngressStats {
+    #[must_use]
+    pub const fn received_frames(self) -> u64 {
+        self.received_frames
+    }
+
+    #[must_use]
+    pub const fn dropped_before_consume(self) -> u64 {
+        self.dropped_before_consume
+    }
+
+    #[must_use]
+    pub const fn acknowledged_frames(self) -> u64 {
+        self.acknowledged_frames
+    }
+}
+
+/// Verified Page.stopScreencast result joined to local ingress counters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScreenStopReceipt {
+    stats: ScreenIngressStats,
+    replayed: bool,
+}
+
+/// Complete immutable identity of one engine screen stream.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ScreenStreamKey {
+    scope_digest: [u8; 32],
+    computer_id: ComputerId,
+    generation: ComputerGeneration,
+    tab_id: TabId,
+}
+
+impl ScreenStreamKey {
+    #[cfg(any(test, feature = "testkit"))]
+    pub(crate) fn for_test(
+        scope_digest: [u8; 32],
+        computer_id: ComputerId,
+        generation: ComputerGeneration,
+        tab_id: TabId,
+    ) -> Self {
+        Self {
+            scope_digest,
+            computer_id,
+            generation,
+            tab_id,
+        }
+    }
+
+    /// Opaque full security-scope digest.
+    #[must_use]
+    pub const fn scope_digest(&self) -> &[u8; 32] {
+        &self.scope_digest
+    }
+
+    /// Computer identity.
+    #[must_use]
+    pub fn computer_id(&self) -> &ComputerId {
+        &self.computer_id
+    }
+
+    /// Computer generation.
+    #[must_use]
+    pub const fn generation(&self) -> ComputerGeneration {
+        self.generation
+    }
+
+    /// Active tab identity.
+    #[must_use]
+    pub fn tab_id(&self) -> &TabId {
+        &self.tab_id
+    }
+}
+
+/// Single attachable source for a [`crate::screen::ScreenHub`].
+#[cfg(any(unix, windows))]
+pub struct EngineScreenSource {
+    key: ScreenStreamKey,
+    audience: ScreenAudience,
+    receiver: watch::Receiver<Option<Arc<EngineFrame>>>,
+    state: Arc<Mutex<ScreenIngressState>>,
+}
+
+#[cfg(any(unix, windows))]
+impl EngineScreenSource {
+    /// Exact stream identity exposed to the Rust ScreenHub owner, never to a renderer.
+    #[must_use]
+    pub fn stream_key(&self) -> &ScreenStreamKey {
+        &self.key
+    }
+
+    #[cfg(any(test, feature = "testkit"))]
+    pub(crate) fn for_test(
+        key: ScreenStreamKey,
+        audience: ScreenAudience,
+        receiver: watch::Receiver<Option<Arc<EngineFrame>>>,
+    ) -> Self {
+        Self {
+            key,
+            audience,
+            receiver,
+            state: Arc::new(Mutex::new(ScreenIngressState::default())),
+        }
+    }
+
+    /// Stream key.
+    pub(crate) fn key(&self) -> &ScreenStreamKey {
+        self.stream_key()
+    }
+
+    /// Host-authorized audience.
+    pub(crate) fn audience(&self) -> &ScreenAudience {
+        &self.audience
+    }
+
+    /// Current latest frame, marking it observed for this source.
+    pub(crate) async fn latest(&mut self) -> Result<Arc<EngineFrame>, EngineProcessError> {
+        let frame = self
+            .receiver
+            .borrow_and_update()
+            .as_ref()
+            .cloned()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?;
+        let mut state = self.state.lock().await;
+        if state.failed {
+            return Err(EngineProcessError::ScreenIngressClosed);
+        }
+        state.consumed_sequence = state.consumed_sequence.max(frame.sequence());
+        Ok(frame)
+    }
+
+    /// Wait for the next latest frame.
+    pub(crate) async fn next(&mut self) -> Result<Arc<EngineFrame>, EngineProcessError> {
+        self.receiver
+            .changed()
+            .await
+            .map_err(|_| EngineProcessError::ScreenIngressClosed)?;
+        self.latest().await
+    }
+}
+
+impl ScreenStopReceipt {
+    #[must_use]
+    pub const fn stats(self) -> ScreenIngressStats {
+        self.stats
+    }
+
+    #[must_use]
+    pub const fn replayed(self) -> bool {
+        self.replayed
+    }
+}
+
+#[cfg(any(unix, windows))]
+#[derive(Default)]
+struct ScreenIngressState {
+    consumed_sequence: u64,
+    published_sequence: u64,
+    stats: ScreenIngressStats,
+    failed: bool,
+}
+
+#[cfg(any(unix, windows))]
+struct ScreenIngress {
+    receiver: watch::Receiver<Option<Arc<EngineFrame>>>,
+    state: Arc<Mutex<ScreenIngressState>>,
+    shutdown: watch::Sender<bool>,
+    task: JoinHandle<()>,
+}
+
+#[cfg(any(unix, windows))]
+impl ScreenIngress {
+    async fn start(
+        frame_reader: BufReader<EnginePipeReadHalf>,
+        decoder: EngineFrameReader,
+        control_writer: Arc<Mutex<EnginePipeWriteHalf>>,
+        computer_id: ComputerId,
+        generation: ComputerGeneration,
+        tab_id: TabId,
+        first_frame: &EngineFrame,
+    ) -> Result<Self, EngineProcessError> {
+        let (sender, mut receiver) = watch::channel(Some(Arc::new(first_frame.clone())));
+        receiver.borrow_and_update();
+        let state = Arc::new(Mutex::new(ScreenIngressState {
+            consumed_sequence: first_frame.sequence(),
+            published_sequence: first_frame.sequence(),
+            stats: ScreenIngressStats {
+                received_frames: 1,
+                dropped_before_consume: 0,
+                acknowledged_frames: 0,
+            },
+            failed: false,
+        }));
+        write_frame_ack(
+            &control_writer,
+            &computer_id,
+            generation,
+            &tab_id,
+            first_frame,
+        )
+        .await?;
+        state.lock().await.stats.acknowledged_frames = 1;
+
+        let (shutdown, shutdown_receiver) = watch::channel(false);
+        let task_state = Arc::clone(&state);
+        let task = tokio::spawn(run_screen_ingress(
+            frame_reader,
+            decoder,
+            control_writer,
+            computer_id,
+            generation,
+            tab_id,
+            sender,
+            task_state,
+            shutdown_receiver,
+        ));
+        Ok(Self {
+            receiver,
+            state,
+            shutdown,
+            task,
+        })
+    }
+
+    async fn next_frame(&mut self) -> Result<EngineFrame, EngineProcessError> {
+        self.receiver
+            .changed()
+            .await
+            .map_err(|_| EngineProcessError::ScreenIngressClosed)?;
+        let mut state = self.state.lock().await;
+        if state.failed {
+            return Err(EngineProcessError::ScreenIngressClosed);
+        }
+        let frame = self
+            .receiver
+            .borrow_and_update()
+            .as_ref()
+            .cloned()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?;
+        state.consumed_sequence = state.consumed_sequence.max(frame.sequence());
+        Ok((*frame).clone())
+    }
+
+    async fn stats(&self) -> Result<ScreenIngressStats, EngineProcessError> {
+        let state = self.state.lock().await;
+        if state.failed {
+            Err(EngineProcessError::ScreenIngressClosed)
+        } else {
+            Ok(state.stats)
+        }
+    }
+
+    async fn stop(self) -> Result<ScreenIngressStats, EngineProcessError> {
+        self.shutdown.send_replace(true);
+        if self.task.await.is_err() {
+            return Err(EngineProcessError::ScreenIngressClosed);
+        }
+        let state = self.state.lock().await;
+        if state.failed {
+            Err(EngineProcessError::ScreenIngressClosed)
+        } else {
+            Ok(state.stats)
+        }
+    }
+}
+
+#[cfg(any(unix, windows))]
+#[allow(clippy::too_many_arguments)]
+async fn run_screen_ingress(
+    mut frame_reader: BufReader<EnginePipeReadHalf>,
+    mut decoder: EngineFrameReader,
+    control_writer: Arc<Mutex<EnginePipeWriteHalf>>,
+    computer_id: ComputerId,
+    generation: ComputerGeneration,
+    tab_id: TabId,
+    sender: watch::Sender<Option<Arc<EngineFrame>>>,
+    state: Arc<Mutex<ScreenIngressState>>,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    loop {
+        let frame = tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+                continue;
+            }
+            frame = decoder.read(&mut frame_reader) => match frame {
+                Ok(frame) => frame,
+                Err(_) => {
+                    state.lock().await.failed = true;
+                    break;
+                }
+            }
+        };
+        let sequence = frame.sequence();
+        {
+            let mut locked = state.lock().await;
+            let Some(received) = locked.stats.received_frames.checked_add(1) else {
+                locked.failed = true;
+                break;
+            };
+            locked.stats.received_frames = received;
+            if locked.published_sequence > locked.consumed_sequence {
+                let Some(dropped) = locked.stats.dropped_before_consume.checked_add(1) else {
+                    locked.failed = true;
+                    break;
+                };
+                locked.stats.dropped_before_consume = dropped;
+            }
+            locked.published_sequence = sequence;
+            sender.send_replace(Some(Arc::new(frame.clone())));
+        }
+        if write_frame_ack(&control_writer, &computer_id, generation, &tab_id, &frame)
+            .await
+            .is_err()
+        {
+            state.lock().await.failed = true;
+            break;
+        }
+        let mut locked = state.lock().await;
+        let Some(acknowledged) = locked.stats.acknowledged_frames.checked_add(1) else {
+            locked.failed = true;
+            break;
+        };
+        locked.stats.acknowledged_frames = acknowledged;
+    }
+}
+
+#[cfg(any(unix, windows))]
+async fn write_frame_ack(
+    writer: &Arc<Mutex<EnginePipeWriteHalf>>,
+    computer_id: &ComputerId,
+    generation: ComputerGeneration,
+    tab_id: &TabId,
+    frame: &EngineFrame,
+) -> Result<(), EngineProcessError> {
+    let command = EngineCommandWire::frame_ack(
+        computer_id,
+        generation,
+        tab_id,
+        frame.sequence(),
+        frame.screencast_session_id(),
+    );
+    writer
+        .lock()
+        .await
+        .write_all(&encode_command(&command)?)
+        .await
+        .map_err(Into::into)
+}
+
 #[cfg(any(unix, windows))]
 /// Live engine process. Drop kills the child; normal shutdown additionally proves bounded cleanup.
 pub struct EngineProcess {
@@ -313,14 +684,21 @@ pub struct EngineProcess {
     child_pid: u32,
     main_creation_time: f64,
     control_reader: BufReader<EnginePipeReadHalf>,
-    control_writer: EnginePipeWriteHalf,
-    frame_reader: BufReader<EnginePipeReadHalf>,
+    control_writer: Arc<Mutex<EnginePipeWriteHalf>>,
+    frame_reader: Option<BufReader<EnginePipeReadHalf>>,
     _frame_writer: EnginePipeWriteHalf,
     role: EngineRole,
+    screen_audience: ScreenAudience,
     computer_id: ComputerId,
     generation: ComputerGeneration,
     _runtime: RuntimeDirectory,
     operation_sequence: AtomicU64,
+    active_tab: Option<TabId>,
+    session_started: bool,
+    screen: Option<ScreenIngress>,
+    screen_source_issued: bool,
+    screen_casting: bool,
+    last_stop: Option<(TabId, ScreenStopReceipt)>,
     fidelity: EngineSandboxFidelity,
 }
 
@@ -351,6 +729,14 @@ impl EngineProcess {
         config: EngineLaunchConfig,
         boundary: EngineLaunchBoundary,
     ) -> Result<Self, EngineProcessError> {
+        if config.screen_audience.tenant_id() != config.role.tenant_id()
+            || config
+                .role
+                .component_actor_id()
+                .is_some_and(|actor| actor != config.screen_audience.actor_id())
+        {
+            return Err(EngineProcessError::ScreenAudience);
+        }
         fs::create_dir_all(&config.profile_dir).map_err(EngineProcessError::Io)?;
         fs::create_dir_all(&config.temp_dir).map_err(EngineProcessError::Io)?;
         let profile_dir = config
@@ -444,14 +830,21 @@ impl EngineProcess {
             child_pid,
             main_creation_time,
             control_reader,
-            control_writer,
-            frame_reader,
+            control_writer: Arc::new(Mutex::new(control_writer)),
+            frame_reader: Some(frame_reader),
             _frame_writer: frame_writer,
             role: config.role,
+            screen_audience: config.screen_audience,
             computer_id: config.computer_id,
             generation: config.generation,
             _runtime: runtime,
             operation_sequence: AtomicU64::new(0),
+            active_tab: None,
+            session_started: false,
+            screen: None,
+            screen_source_issued: false,
+            screen_casting: false,
+            last_stop: None,
             fidelity,
         })
     }
@@ -479,10 +872,15 @@ impl EngineProcess {
         &mut self,
         tab_id: TabId,
     ) -> Result<StartedSession, EngineProcessError> {
+        if self.session_started {
+            return Err(EngineProcessError::SessionAlreadyStarted);
+        }
         let operation = self.next_operation()?;
         let command =
             EngineCommandWire::start(&operation, &self.computer_id, self.generation, &tab_id);
         self.control_writer
+            .lock()
+            .await
             .write_all(&encode_command(&command)?)
             .await?;
         let mut decoder = EngineFrameReader::new(
@@ -491,39 +889,15 @@ impl EngineProcess {
             self.generation,
             tab_id.clone(),
         );
-        let (event, frame) = tokio::time::timeout(COMMAND_TIMEOUT, async {
-            let event = read_event(&mut self.control_reader);
-            let frame = decoder.read(&mut self.frame_reader);
-            tokio::pin!(event);
-            tokio::pin!(frame);
-            tokio::select! {
-                event = &mut event => {
-                    let event = event?;
-                    if let EngineEventWire::Error { operation_id, code } = &event {
-                        return Err(reported_for(&operation, operation_id.clone(), code.clone()));
-                    }
-                    let frame = frame.await?;
-                    Ok((event, frame))
-                }
-                frame = &mut frame => {
-                    let frame = match frame {
-                        Ok(frame) => frame,
-                        Err(frame_error) => {
-                            if let Ok(Ok(EngineEventWire::Error { operation_id, code })) =
-                                tokio::time::timeout(Duration::from_secs(1), &mut event).await
-                            {
-                                return Err(reported_for(&operation, operation_id, code));
-                            }
-                            return Err(frame_error.into());
-                        }
-                    };
-                    let event = event.await?;
-                    Ok((event, frame))
-                }
-            }
-        })
-        .await
-        .map_err(|_| EngineProcessError::CommandTimeout)??;
+        let (event, frame) = read_operation_frame(
+            &mut self.control_reader,
+            self.frame_reader
+                .as_mut()
+                .ok_or(EngineProcessError::ScreenIngressClosed)?,
+            &mut decoder,
+            &operation,
+        )
+        .await?;
         match event {
             EngineEventWire::Started {
                 operation_id,
@@ -541,6 +915,24 @@ impl EngineProcess {
                 && !node_exposed
                 && internal_origin_matches(self.role.kind(), &origin) =>
             {
+                let frame_reader = self
+                    .frame_reader
+                    .take()
+                    .ok_or(EngineProcessError::ScreenIngressClosed)?;
+                let screen = ScreenIngress::start(
+                    frame_reader,
+                    decoder,
+                    Arc::clone(&self.control_writer),
+                    self.computer_id.clone(),
+                    self.generation,
+                    tab_id.clone(),
+                    &frame,
+                )
+                .await?;
+                self.active_tab = Some(tab_id);
+                self.session_started = true;
+                self.screen = Some(screen);
+                self.screen_casting = true;
                 Ok(StartedSession {
                     frame,
                     renderer_pid,
@@ -553,20 +945,247 @@ impl EngineProcess {
         }
     }
 
-    /// Stop one exact tab and require an operation-bound acknowledgement.
-    pub async fn stop_session(&mut self, tab_id: &TabId) -> Result<(), EngineProcessError> {
+    /// Apply one freshly authorized ordinary input through protocol-v4 and require an exact
+    /// operation-bound acknowledgement. Frames remain on the independent [`Self::next_frame`]
+    /// channel. `SecretInsert` is rejected before any control-pipe write.
+    pub async fn apply_human_input(
+        &mut self,
+        authorization: AuthorizedHumanInput,
+        input: &BrowserInput,
+        now: time::OffsetDateTime,
+    ) -> Result<(), EngineProcessError> {
+        if authorization.computer_id() != &self.computer_id
+            || authorization.computer_generation() != self.generation
+            || self.active_tab.as_ref() != Some(authorization.tab_id())
+            || now >= authorization.expires_at()
+        {
+            return Err(EngineProcessError::InputAuthority);
+        }
+        let plan = CdpInputPlan::try_from(input).map_err(EngineProcessError::InputPlan)?;
+        let expected_kind = EngineInputKindWire::from_plan(&plan);
         let operation = self.next_operation()?;
-        let command =
-            EngineCommandWire::stop(&operation, &self.computer_id, self.generation, tab_id);
+        let command = EngineCommandWire::input(
+            &operation,
+            &self.computer_id,
+            self.generation,
+            authorization.tab_id(),
+            &plan,
+        );
+        let bytes = encode_command(&command)?;
+        self.control_writer.lock().await.write_all(&bytes).await?;
+        let event = tokio::time::timeout(COMMAND_TIMEOUT, read_event(&mut self.control_reader))
+            .await
+            .map_err(|_| EngineProcessError::CommandTimeout)??;
+        match event {
+            EngineEventWire::InputApplied {
+                operation_id,
+                tab_id,
+                input_kind,
+            } if operation_id == operation.as_str()
+                && tab_id == authorization.tab_id().as_str()
+                && input_kind == expected_kind =>
+            {
+                Ok(())
+            }
+            EngineEventWire::Error { operation_id, code } => {
+                Err(reported_for(&operation, operation_id, code))
+            }
+            _ => Err(EngineProcessError::InputAppliedIdentity),
+        }
+    }
+
+    /// Read the next independently framed image for the active session. Input acknowledgements and
+    /// Screen delivery intentionally remain separate channels so Page.startScreencast can replace
+    /// the current conformance capture without changing the authority API.
+    pub async fn next_frame(&mut self) -> Result<EngineFrame, EngineProcessError> {
+        self.screen
+            .as_mut()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?
+            .next_frame()
+            .await
+    }
+
+    /// Current exact size-one ingress counters.
+    pub async fn screen_stats(&self) -> Result<ScreenIngressStats, EngineProcessError> {
+        self.screen
+            .as_ref()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?
+            .stats()
+            .await
+    }
+
+    /// Pause/resume only capture for this exact live tab. The renderer, document, input state,
+    /// ingress decoder and monotonically increasing frame sequence all survive a pause.
+    pub async fn set_screencast(
+        &mut self,
+        tab_id: &TabId,
+        enabled: bool,
+    ) -> Result<(), EngineProcessError> {
+        if self.active_tab.as_ref() != Some(tab_id) {
+            return Err(EngineProcessError::ScreencastIdentity);
+        }
+        let replay = self.screen_casting == enabled;
+        let operation = self.next_operation()?;
+        let command = EngineCommandWire::screencast(
+            &operation,
+            &self.computer_id,
+            self.generation,
+            tab_id,
+            enabled,
+        );
         self.control_writer
+            .lock()
+            .await
             .write_all(&encode_command(&command)?)
             .await?;
         let event = tokio::time::timeout(COMMAND_TIMEOUT, read_event(&mut self.control_reader))
             .await
             .map_err(|_| EngineProcessError::CommandTimeout)??;
         match event {
-            EngineEventWire::Stopped { operation_id } if operation_id == operation.as_str() => {
+            EngineEventWire::ScreencastState {
+                operation_id,
+                tab_id: echoed_tab,
+                enabled: echoed_enabled,
+                received_frames,
+                acknowledged_frames,
+                replayed,
+            } if operation_id == operation.as_str()
+                && echoed_tab == tab_id.as_str()
+                && echoed_enabled == enabled
+                && replayed == replay =>
+            {
+                let received = parse_counter(&received_frames)?;
+                let acknowledged = parse_counter(&acknowledged_frames)?;
+                if acknowledged > received {
+                    return Err(EngineProcessError::ScreencastIdentity);
+                }
+                if !enabled {
+                    let local = self.screen_stats().await?;
+                    if received != acknowledged
+                        || received != local.received_frames
+                        || acknowledged != local.acknowledged_frames
+                    {
+                        return Err(EngineProcessError::ScreencastIdentity);
+                    }
+                }
+                self.screen_casting = enabled;
                 Ok(())
+            }
+            EngineEventWire::Error { operation_id, code } => {
+                Err(reported_for(&operation, operation_id, code))
+            }
+            _ => Err(EngineProcessError::ScreencastIdentity),
+        }
+    }
+
+    /// Take the sole attachable ScreenHub source for this active engine session.
+    pub fn take_screen_source(&mut self) -> Result<EngineScreenSource, EngineProcessError> {
+        if self.screen_source_issued {
+            return Err(EngineProcessError::ScreenSourceAlreadyIssued);
+        }
+        let tab_id = self
+            .active_tab
+            .clone()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?;
+        let receiver = self
+            .screen
+            .as_ref()
+            .ok_or(EngineProcessError::ScreenIngressClosed)?
+            .receiver
+            .clone();
+        self.screen_source_issued = true;
+        Ok(EngineScreenSource {
+            key: ScreenStreamKey {
+                scope_digest: self.role.scope_digest(),
+                computer_id: self.computer_id.clone(),
+                generation: self.generation,
+                tab_id,
+            },
+            audience: self.screen_audience.clone(),
+            receiver,
+            state: Arc::clone(
+                &self
+                    .screen
+                    .as_ref()
+                    .ok_or(EngineProcessError::ScreenIngressClosed)?
+                    .state,
+            ),
+        })
+    }
+
+    /// Stop one exact tab and require an operation-bound acknowledgement plus joined frame stats.
+    /// Repeating the exact stop is idempotent and returns the frozen receipt with `replayed=true`.
+    pub async fn stop_session(
+        &mut self,
+        tab_id: &TabId,
+    ) -> Result<ScreenStopReceipt, EngineProcessError> {
+        let replay = self.active_tab.is_none()
+            && self
+                .last_stop
+                .as_ref()
+                .is_some_and(|(stopped, _)| stopped == tab_id);
+        if !replay && self.active_tab.as_ref() != Some(tab_id) {
+            return Err(EngineProcessError::StoppedIdentity);
+        }
+        let operation = self.next_operation()?;
+        let command =
+            EngineCommandWire::stop(&operation, &self.computer_id, self.generation, tab_id);
+        self.control_writer
+            .lock()
+            .await
+            .write_all(&encode_command(&command)?)
+            .await?;
+        let event = tokio::time::timeout(COMMAND_TIMEOUT, read_event(&mut self.control_reader))
+            .await
+            .map_err(|_| EngineProcessError::CommandTimeout)??;
+        match event {
+            EngineEventWire::Stopped {
+                operation_id,
+                tab_id: echoed_tab,
+                received_frames,
+                acknowledged_frames,
+                replayed,
+            } if operation_id == operation.as_str() && echoed_tab == tab_id.as_str() => {
+                let remote_received = parse_counter(&received_frames)?;
+                let remote_acknowledged = parse_counter(&acknowledged_frames)?;
+                if remote_received != remote_acknowledged || replayed != replay {
+                    return Err(EngineProcessError::StoppedIdentity);
+                }
+                if replay {
+                    let stored = self
+                        .last_stop
+                        .as_ref()
+                        .map(|(_, receipt)| *receipt)
+                        .ok_or(EngineProcessError::StoppedIdentity)?;
+                    if stored.stats.received_frames != remote_received
+                        || stored.stats.acknowledged_frames != remote_acknowledged
+                    {
+                        return Err(EngineProcessError::StoppedIdentity);
+                    }
+                    return Ok(ScreenStopReceipt {
+                        stats: stored.stats,
+                        replayed: true,
+                    });
+                }
+                let local = self
+                    .screen
+                    .take()
+                    .ok_or(EngineProcessError::ScreenIngressClosed)?
+                    .stop()
+                    .await?;
+                if local.received_frames != remote_received
+                    || local.acknowledged_frames != remote_acknowledged
+                {
+                    return Err(EngineProcessError::StoppedIdentity);
+                }
+                self.active_tab = None;
+                self.screen_casting = false;
+                let receipt = ScreenStopReceipt {
+                    stats: local,
+                    replayed: false,
+                };
+                self.last_stop = Some((tab_id.clone(), receipt));
+                Ok(receipt)
             }
             EngineEventWire::Error { operation_id, code } => {
                 Err(reported_for(&operation, operation_id, code))
@@ -577,8 +1196,13 @@ impl EngineProcess {
 
     /// Graceful bounded shutdown. Timeout kills the process and returns a hard failure.
     pub async fn shutdown(mut self) -> Result<(), EngineProcessError> {
+        if let Some(tab_id) = self.active_tab.clone() {
+            let _ = self.stop_session(&tab_id).await?;
+        }
         let operation = self.next_operation()?;
         self.control_writer
+            .lock()
+            .await
             .write_all(&encode_command(&EngineCommandWire::shutdown(&operation))?)
             .await?;
         let event = tokio::time::timeout(COMMAND_TIMEOUT, read_event(&mut self.control_reader))
@@ -615,6 +1239,48 @@ impl EngineProcess {
             .map_err(|_| EngineProcessError::OperationExhausted)?;
         EngineOperationId::new(format!("op-{}", previous + 1)).map_err(Into::into)
     }
+}
+
+#[cfg(any(unix, windows))]
+async fn read_operation_frame(
+    control_reader: &mut BufReader<EnginePipeReadHalf>,
+    frame_reader: &mut BufReader<EnginePipeReadHalf>,
+    decoder: &mut EngineFrameReader,
+    operation: &EngineOperationId,
+) -> Result<(EngineEventWire, EngineFrame), EngineProcessError> {
+    tokio::time::timeout(COMMAND_TIMEOUT, async {
+        let event = read_event(control_reader);
+        let frame = decoder.read(frame_reader);
+        tokio::pin!(event);
+        tokio::pin!(frame);
+        tokio::select! {
+            event = &mut event => {
+                let event = event?;
+                if let EngineEventWire::Error { operation_id, code } = &event {
+                    return Err(reported_for(operation, operation_id.clone(), code.clone()));
+                }
+                let frame = frame.await?;
+                Ok((event, frame))
+            }
+            frame = &mut frame => {
+                let frame = match frame {
+                    Ok(frame) => frame,
+                    Err(frame_error) => {
+                        if let Ok(Ok(EngineEventWire::Error { operation_id, code })) =
+                            tokio::time::timeout(Duration::from_secs(1), &mut event).await
+                        {
+                            return Err(reported_for(operation, operation_id, code));
+                        }
+                        return Err(frame_error.into());
+                    }
+                };
+                let event = event.await?;
+                Ok((event, frame))
+            }
+        }
+    })
+    .await
+    .map_err(|_| EngineProcessError::CommandTimeout)?
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -949,11 +1615,16 @@ fn launch_command(
 fn append_engine_args(command: &mut Command, profile_dir: &Path, temp_dir: &Path) {
     command
         .args(engine_args(profile_dir, temp_dir))
-        .env_remove("ELECTRON_RUN_AS_NODE")
-        .env_remove("NODE_OPTIONS")
-        .env_remove("NODE_EXTRA_CA_CERTS")
-        .env_remove("ELECTRON_ENABLE_LOGGING")
-        .env("TMPDIR", temp_dir);
+        // This changes only the child environment, never the host's HOME or other variables.
+        // A blacklist of Electron switches leaked unrelated provider/DB credentials and loader
+        // settings. Build this leaf process's complete environment from authority-owned paths.
+        .env_clear()
+        .env("HOME", profile_dir)
+        .env("TMPDIR", temp_dir)
+        .env("TEMP", temp_dir)
+        .env("TMP", temp_dir)
+        .env("PATH", "/usr/bin:/bin")
+        .current_dir(profile_dir);
 }
 
 fn engine_args(profile_dir: &Path, temp_dir: &Path) -> Vec<OsString> {
@@ -1006,25 +1677,94 @@ fn sandbox_profile(
         let value = path
             .to_str()
             .ok_or(EngineProcessError::SandboxUnavailable)?;
-        if value.contains(['"', '\\', '\n', '\r']) {
+        if value.contains(['"', '\\', '\n', '\r', '\0']) {
             return Err(EngineProcessError::SandboxUnavailable);
         }
+    }
+    // Allow only scoped content and narrowly named OS resources. In particular, /System as a
+    // whole includes /System/Volumes/Data and must never be a read-data allowlist entry.
+    let os_roots = [
+        "/System/Library",
+        "/System/Cryptexes",
+        "/System/Volumes/Preboot/Cryptexes/OS",
+        "/System/Volumes/Preboot/Cryptexes/Incoming/OS",
+        "/System/Volumes/Preboot/Cryptexes/App/System",
+        "/usr/lib",
+        "/usr/share",
+        "/Library/Apple/System/Library",
+        "/Library/Fonts",
+        "/Library/ColorSync/Profiles",
+        "/private/var/db/timezone",
+    ];
+    let content_roots = [bundle, profile, temp, runtime];
+    // Current dyld/libignition opens the root directory as an openat anchor. A literal root
+    // permits that directory handle only; it is deliberately not a subpath grant.
+    let os_files = [
+        "/",
+        "/usr/bin/sandbox-exec",
+        "/dev/null",
+        "/dev/random",
+        "/dev/urandom",
+        "/private/etc/passwd",
+        "/private/etc/hosts",
+        "/private/etc/resolv.conf",
+    ];
+    let mut metadata = std::collections::BTreeSet::new();
+    for path in content_roots
+        .iter()
+        .copied()
+        .chain(os_roots.iter().map(Path::new))
+        .chain(os_files.iter().map(Path::new))
+        .chain(std::iter::once(executable))
+    {
+        for ancestor in path.ancestors() {
+            metadata.insert(ancestor.to_path_buf());
+        }
+    }
+    let mut reads = String::from("(deny file-read*)\n");
+    for path in metadata {
+        reads.push_str(&format!(
+            "(allow file-read-metadata (literal \"{}\"))\n",
+            path.display()
+        ));
+    }
+    for path in content_roots
+        .iter()
+        .copied()
+        .chain(os_roots.iter().map(Path::new))
+    {
+        reads.push_str(&format!(
+            "(allow file-read* (subpath \"{}\"))\n",
+            path.display()
+        ));
+    }
+    for path in os_files
+        .iter()
+        .map(Path::new)
+        .chain(std::iter::once(executable))
+    {
+        reads.push_str(&format!(
+            "(allow file-read* (literal \"{}\"))\n",
+            path.display()
+        ));
     }
     Ok(format!(
         "(version 1)\n\
          (allow default)\n\
+         {reads}\
          (deny file-write*)\n\
          (allow file-write* (subpath \"{}\") (subpath \"{}\") (subpath \"{}\") (literal \"/dev/null\"))\n\
          (deny network-inbound)\n\
          (deny network-outbound)\n\
-         (allow network-outbound (remote unix-socket))\n\
-         (allow network-outbound (remote ip \"localhost:*\"))\n\
+         (allow network-outbound (literal \"{}\") (literal \"{}\"))\n\
          (deny process-exec*)\n\
          (allow process-exec* (literal \"{}\"))\n\
          (allow process-exec* (with no-sandbox) (literal \"{}\") (literal \"{}\") (literal \"{}\") (literal \"{}\") (literal \"{}\"))\n",
         profile.display(),
         temp.display(),
         runtime.display(),
+        runtime.join("control.sock").display(),
+        runtime.join("frame.sock").display(),
         executable.display(),
         helpers[0].display(),
         helpers[1].display(),
@@ -1128,6 +1868,19 @@ fn reported_for(
     }
 }
 
+fn parse_counter(value: &str) -> Result<u64, EngineProcessError> {
+    if value.is_empty()
+        || value.len() > 20
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return Err(EngineProcessError::StoppedIdentity);
+    }
+    value
+        .parse::<u64>()
+        .map_err(|_| EngineProcessError::StoppedIdentity)
+}
+
 fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, EngineProcessError> {
     let path = Path::new(relative);
     if path.is_absolute()
@@ -1180,6 +1933,9 @@ fn hex_nibble(value: u8) -> Result<u8, EngineProcessError> {
 /// Stable lifecycle/bundle failures.
 #[derive(Debug, thiserror::Error)]
 pub enum EngineProcessError {
+    /// Capture state acknowledgement did not bind to the current tab/operation and exact counters.
+    #[error("engine_screencast_identity")]
+    ScreencastIdentity,
     /// Filesystem/socket/process operation failed.
     #[error("engine_io")]
     Io(#[from] std::io::Error),
@@ -1189,6 +1945,9 @@ pub enum EngineProcessError {
     /// Binary frame was malformed, stale, or unauthenticated.
     #[error("engine_frame")]
     Frame(#[from] EngineFrameError),
+    /// Pure BrowserInput→CDP plan rejected a non-ordinary input before any pipe write.
+    #[error("engine_input_plan")]
+    InputPlan(#[source] CdpInputPlanError),
     /// Signed manifest digest or a named file digest did not match.
     #[error("engine_bundle_digest")]
     BundleDigest,
@@ -1240,6 +1999,24 @@ pub enum EngineProcessError {
     /// Started event did not echo the exact operation/tab or exposed Node.
     #[error("engine_started_identity")]
     StartedIdentity,
+    /// This P1 engine process already consumed its single session lifecycle.
+    #[error("engine_session_already_started")]
+    SessionAlreadyStarted,
+    /// Fresh HumanLease receipt did not match this process/generation/active tab.
+    #[error("engine_input_authority")]
+    InputAuthority,
+    /// Host-provided screen audience did not match the Rust-owned engine role scope.
+    #[error("engine_screen_audience")]
+    ScreenAudience,
+    /// Input acknowledgement did not echo the exact operation/tab/kind.
+    #[error("engine_input_applied_identity")]
+    InputAppliedIdentity,
+    /// The authenticated frame ingress stopped or failed before the caller consumed a frame.
+    #[error("engine_screen_ingress_closed")]
+    ScreenIngressClosed,
+    /// A second ScreenHub tried to attach to the same engine stream.
+    #[error("engine_screen_source_already_issued")]
+    ScreenSourceAlreadyIssued,
     /// Stop acknowledgement did not match the operation.
     #[error("engine_stopped_identity")]
     StoppedIdentity,
@@ -1311,8 +2088,8 @@ mod tests {
             "(deny file-write*)",
             "(deny network-inbound)",
             "(deny network-outbound)",
-            "(remote unix-socket)",
-            "(remote ip \"localhost:*\")",
+            "(literal \"/private/tmp/runtime/control.sock\")",
+            "(literal \"/private/tmp/runtime/frame.sock\")",
             "(deny process-exec*)",
             "(with no-sandbox)",
             "(literal \"/Applications/AcosmiEngine.app/Contents/MacOS/AcosmiEngine\")",
@@ -1322,6 +2099,8 @@ mod tests {
             assert!(profile.contains(required), "missing `{required}`");
         }
         assert_eq!(profile.matches("(with no-sandbox)").count(), 1);
+        assert!(!profile.contains("(remote unix-socket)"));
+        assert!(!profile.contains("localhost:*"));
         assert!(
             super::sandbox_profile(
                 std::path::Path::new("/Applications/bad\"name.app/Contents/MacOS/AcosmiEngine"),
@@ -1332,5 +2111,313 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires macOS sandbox-exec; tests only owned synthetic files through the production policy generator"]
+    fn macos_main_read_policy_blocks_sibling_symlink_and_data_volume_alias() {
+        use std::os::unix::fs::symlink;
+        use std::path::{Path, PathBuf};
+        use std::process::Command;
+
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/computer/macos-engine-main-read-v1.json"
+        ))
+        .expect("read-boundary fixture");
+        assert_eq!(fixture["schema"], "openbot-macos-engine-main-read-v1");
+        assert!(
+            fixture["remaining"]
+                .as_object()
+                .expect("unfinished boundaries")
+                .values()
+                .all(|value| value == false)
+        );
+
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root =
+            std::env::temp_dir().join(format!("openbot-macos-read-policy-{}", std::process::id()));
+        assert!(
+            !root.exists(),
+            "test directory must not overwrite prior evidence"
+        );
+        fs::create_dir(&root).expect("owned test root");
+        let root = root.canonicalize().expect("canonical root");
+        let _cleanup = Cleanup(root.clone());
+        let bundle = root.join("bundle");
+        let profile = root.join("profile");
+        let temp = root.join("temp");
+        let runtime = root.join("runtime");
+        let sibling = root.join("profile-other");
+        for path in [&bundle, &profile, &temp, &runtime, &sibling] {
+            fs::create_dir(path).expect("owned directory");
+        }
+        let inside = profile.join("inside.txt");
+        let outside = sibling.join("canary.txt");
+        fs::write(&inside, b"owned-readable-fixture").expect("inside fixture");
+        fs::write(&outside, b"outside-synthetic-canary").expect("outside fixture");
+        let link = profile.join("link-to-outside");
+        symlink(&outside, &link).expect("owned test symlink");
+        // This is a native policy probe, not an Electron substitute: only the approved main
+        // executable is /bin/cat. Scope/bundle/OS rules come from the production generator.
+        let rules =
+            super::sandbox_profile(Path::new("/bin/cat"), &bundle, &profile, &temp, &runtime)
+                .expect("production policy");
+        let inspect = |path: &Path| {
+            let child = Command::new("/usr/bin/sandbox-exec")
+                .args(["-p", &rules, "/bin/cat"])
+                .arg(path)
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .current_dir(&profile)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("native policy probe");
+            println!("main-read-policy owned_probe_pid={}", child.id());
+            child.wait_with_output().expect("wait native policy probe")
+        };
+        let allowed = inspect(&inside);
+        assert!(
+            allowed.status.success(),
+            "owned-file positive control failed ({:?}): {}",
+            allowed.status,
+            String::from_utf8_lossy(&allowed.stderr[..allowed.stderr.len().min(2048)])
+        );
+        assert!(allowed.stdout == b"owned-readable-fixture");
+        let mut failures = 0;
+        for (name, path) in [("sibling", outside.clone()), ("symlink", link)] {
+            let result = inspect(&path);
+            let leaked = result.status.success() || !result.stdout.is_empty();
+            println!("main-read-policy case={name} outside_readable={leaked}");
+            failures += usize::from(leaked);
+        }
+        let alias = Path::new("/System/Volumes/Data")
+            .join(outside.strip_prefix("/").expect("absolute fixture"));
+        if alias.exists() {
+            let result = inspect(&alias);
+            let leaked = result.status.success() || !result.stdout.is_empty();
+            println!("main-read-policy case=data-volume-alias outside_readable={leaked}");
+            failures += usize::from(leaked);
+        } else {
+            println!("main-read-policy case=data-volume-alias unavailable=true");
+        }
+        let list_rules =
+            super::sandbox_profile(Path::new("/bin/ls"), &bundle, &profile, &temp, &runtime)
+                .expect("list policy");
+        let own_listing = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &list_rules, "/bin/ls"])
+            .arg(&profile)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&profile)
+            .output()
+            .expect("own directory positive control");
+        assert!(own_listing.status.success());
+        assert!(
+            own_listing
+                .stdout
+                .windows(b"inside.txt".len())
+                .any(|bytes| bytes == b"inside.txt")
+        );
+        let listed = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &list_rules, "/bin/ls"])
+            .arg(&sibling)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&profile)
+            .output()
+            .expect("directory read probe");
+        let enumerated = listed.status.success() || !listed.stdout.is_empty();
+        println!("main-read-policy case=sibling-listing outside_readable={enumerated}");
+        failures += usize::from(enumerated);
+
+        let hardlink = profile.join("hardlink-to-outside");
+        fs::hard_link(&outside, &hardlink).expect("filesystem hardlink positive control");
+        fs::remove_file(&hardlink).expect("reset hardlink control");
+        let link_rules =
+            super::sandbox_profile(Path::new("/bin/ln"), &bundle, &profile, &temp, &runtime)
+                .expect("link policy");
+        let own_hardlink = profile.join("hardlink-to-inside");
+        let own_linked = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &link_rules, "/bin/ln"])
+            .arg(&inside)
+            .arg(&own_hardlink)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&profile)
+            .output()
+            .expect("own hardlink positive control");
+        assert!(own_linked.status.success());
+        assert!(fs::read(&own_hardlink).expect("own linked data") == b"owned-readable-fixture");
+        let linked = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &link_rules, "/bin/ln"])
+            .arg(&outside)
+            .arg(&hardlink)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&profile)
+            .output()
+            .expect("hardlink creation probe");
+        let linked_outside = linked.status.success() || hardlink.exists();
+        println!("main-read-policy case=hardlink-creation outside_linkable={linked_outside}");
+        failures += usize::from(linked_outside);
+        assert_eq!(
+            failures, 0,
+            "outside reads must be denied without returning any canary bytes"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires native macOS sandbox-exec and task-owned sockets; not an Engine/helper compromise claim"]
+    fn macos_main_network_policy_only_connects_its_two_owned_pipes() {
+        use std::net::TcpListener;
+        use std::os::unix::net::UnixListener;
+        use std::path::{Path, PathBuf};
+        use std::process::Command;
+
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/computer/macos-engine-main-network-v1.json"
+        ))
+        .expect("main network fixture");
+        assert_eq!(fixture["schema"], "openbot-macos-engine-main-network-v1");
+        assert!(
+            fixture["allowed_tcp_ports"]
+                .as_array()
+                .expect("TCP ports")
+                .is_empty()
+        );
+        assert!(
+            fixture["remaining"]
+                .as_object()
+                .expect("unfinished boundaries")
+                .values()
+                .all(|v| v == false)
+        );
+
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = Path::new("/private/tmp").join(format!("ob-net-{}", std::process::id()));
+        assert!(!root.exists());
+        fs::create_dir(&root).expect("own root");
+        let root = root.canonicalize().expect("canonical root");
+        let _cleanup = Cleanup(root.clone());
+        let bundle = root.join("bundle");
+        let profile = root.join("profile");
+        let temp = root.join("temp");
+        let runtime = root.join("runtime");
+        let sibling = root.join("sibling");
+        for path in [&bundle, &profile, &temp, &runtime, &sibling] {
+            fs::create_dir(path).expect("own directory");
+        }
+        let control = runtime.join("control.sock");
+        let frame = runtime.join("frame.sock");
+        let other = runtime.join("other.sock");
+        let foreign = sibling.join("control.sock");
+        let control_listener = UnixListener::bind(&control).expect("own control");
+        let frame_listener = UnixListener::bind(&frame).expect("own frame");
+        let other_listener = UnixListener::bind(&other).expect("wrong owned-directory socket");
+        let foreign_listener = UnixListener::bind(&foreign).expect("foreign socket");
+        for listener in [
+            &control_listener,
+            &frame_listener,
+            &other_listener,
+            &foreign_listener,
+        ] {
+            listener.set_nonblocking(true).expect("bounded accept");
+        }
+        let tcp = TcpListener::bind("127.0.0.1:0").expect("own TCP target");
+        tcp.set_nonblocking(true).expect("bounded TCP accept");
+        let executable = std::env::current_exe().expect("probe test executable");
+        let rules = super::sandbox_profile(&executable, &bundle, &profile, &temp, &runtime)
+            .expect("production network rules");
+        let invoke = |kind: &str, address: &str, confined: bool| {
+            let mut command = if confined {
+                let mut c = Command::new("/usr/bin/sandbox-exec");
+                c.args(["-p", &rules]).arg(&executable);
+                c
+            } else {
+                Command::new(&executable)
+            };
+            command
+                .args([
+                    "--exact",
+                    "engine::process::tests::macos_network_probe_child",
+                    "--ignored",
+                    "--test-threads=1",
+                ])
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("OPENBOT_NATIVE_NETWORK_PROBE_KIND", kind)
+                .env("OPENBOT_NATIVE_NETWORK_PROBE_ADDRESS", address)
+                .current_dir(&profile)
+                .output()
+                .expect("owned Rust socket probe")
+        };
+        for (path, listener) in [(&control, &control_listener), (&frame, &frame_listener)] {
+            let result = invoke("uds", path.to_str().expect("path"), true);
+            assert!(result.status.success(), "owned pipe connection must work");
+            assert!(listener.accept().is_ok());
+        }
+        let mut failures = 0;
+        for (name, path, listener) in [
+            ("extra-runtime-socket", &other, &other_listener),
+            ("sibling-socket", &foreign, &foreign_listener),
+        ] {
+            let address = path.to_str().expect("path");
+            assert!(
+                invoke("uds", address, false).status.success(),
+                "unconfined endpoint positive"
+            );
+            assert!(listener.accept().is_ok());
+            let result = invoke("uds", address, true);
+            let accepted = listener.accept().is_ok();
+            let connected = result.status.success() || accepted;
+            println!("main-network-policy case={name} unintended_connected={connected}");
+            failures += usize::from(connected);
+        }
+        let address = tcp.local_addr().expect("TCP address").to_string();
+        assert!(
+            invoke("tcp", &address, false).status.success(),
+            "unconfined TCP positive"
+        );
+        assert!(tcp.accept().is_ok());
+        let result = invoke("tcp", &address, true);
+        let accepted = tcp.accept().is_ok();
+        let connected = result.status.success() || accepted;
+        println!("main-network-policy case=other-loopback-port unintended_connected={connected}");
+        failures += usize::from(connected);
+        assert_eq!(
+            failures, 0,
+            "network authority must be limited to exact owned pipes"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "subprocess-only child of native network policy conformance"]
+    fn macos_network_probe_child() {
+        let kind = std::env::var("OPENBOT_NATIVE_NETWORK_PROBE_KIND").expect("owned probe kind");
+        let address =
+            std::env::var("OPENBOT_NATIVE_NETWORK_PROBE_ADDRESS").expect("owned probe address");
+        let connected = match kind.as_str() {
+            "uds" => std::os::unix::net::UnixStream::connect(address).is_ok(),
+            "tcp" => std::net::TcpStream::connect_timeout(
+                &address.parse().expect("numeric probe address"),
+                std::time::Duration::from_secs(1),
+            )
+            .is_ok(),
+            _ => false,
+        };
+        assert!(connected, "owned socket probe was refused");
     }
 }

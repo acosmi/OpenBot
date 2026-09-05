@@ -2,6 +2,9 @@
 
 use core::fmt;
 use core::time::Duration;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use openbot_contracts::auth::{AuthContext, AuthGeneration};
@@ -24,6 +27,7 @@ use openbot_domain::tool::pipeline::{
     RefusalReason, Requested, RequestedToolCall, SingleUseCapability, ToolCallTerminal,
     ToolOutcome, ValidationRejection,
 };
+use tokio::sync::watch;
 
 /// Tool port 的封闭失败分类；不携带 vendor/数据库原文。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -76,6 +80,223 @@ pub trait ToolCallSequence: Send + Sync {
 
     /// Release implementation-local state after terminal cleanup; durable implementations no-op.
     fn release(&self, _run: &RunId) {}
+}
+
+/// Stable host reason propagated to an already-authorized tool effect.
+///
+/// This enum is deliberately not serde. A transport, model, renderer, or remote Agent cannot
+/// manufacture cancellation authority; only the Rust run host owns the sender half.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolCancellationReason {
+    /// The authoritative actor requested cancellation through the run control plane.
+    User,
+    /// The Rust-owned absolute run deadline elapsed.
+    Deadline,
+    /// The host could no longer renew the authoritative execution lease.
+    LeaseLost,
+    /// The Rust host disappeared without publishing a more specific reason.
+    HostDropped,
+}
+
+impl ToolCancellationReason {
+    /// Stable protocol-safe reason; never contains user or vendor prose.
+    #[must_use]
+    pub const fn stable_code(self) -> &'static str {
+        match self {
+            Self::User => "run_cancelled",
+            Self::Deadline => "run_deadline_exceeded",
+            Self::LeaseLost => "run_lease_lost",
+            Self::HostDropped => "run_host_dropped",
+        }
+    }
+}
+
+/// Rust-host-only sender for one tool invocation's cancellation signal.
+#[derive(Clone)]
+pub struct ToolCancellationHandle {
+    sender: watch::Sender<Option<ToolCancellationReason>>,
+}
+
+impl ToolCancellationHandle {
+    /// Publish the first cancellation reason exactly once. Later races cannot rewrite it.
+    pub fn cancel(&self, reason: ToolCancellationReason) -> bool {
+        self.sender.send_if_modified(|current| {
+            if current.is_some() {
+                false
+            } else {
+                *current = Some(reason);
+                true
+            }
+        })
+    }
+}
+
+impl fmt::Debug for ToolCancellationHandle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ToolCancellationHandle")
+            .field("requested", &self.sender.borrow().is_some())
+            .finish()
+    }
+}
+
+/// Private receiver made available only to the exact Rust-minted tool call while it executes.
+#[derive(Clone)]
+pub struct ToolExecutionCancellation {
+    receiver: watch::Receiver<Option<ToolCancellationReason>>,
+}
+
+impl ToolExecutionCancellation {
+    /// Return an already-published reason without waiting.
+    #[must_use]
+    pub fn requested(&self) -> Option<ToolCancellationReason> {
+        *self.receiver.borrow()
+    }
+
+    /// Wait for cancellation. Losing the only sender fails closed as `HostDropped`.
+    pub async fn cancelled(&mut self) -> ToolCancellationReason {
+        loop {
+            if let Some(reason) = *self.receiver.borrow_and_update() {
+                return reason;
+            }
+            if self.receiver.changed().await.is_err() {
+                return ToolCancellationReason::HostDropped;
+            }
+        }
+    }
+}
+
+impl fmt::Debug for ToolExecutionCancellation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ToolExecutionCancellation")
+            .field("requested", &self.requested().is_some())
+            .finish()
+    }
+}
+
+/// Create one private host→executor cancellation channel.
+#[must_use]
+pub fn tool_execution_cancellation() -> (ToolCancellationHandle, ToolExecutionCancellation) {
+    let (sender, receiver) = watch::channel(None);
+    (
+        ToolCancellationHandle { sender },
+        ToolExecutionCancellation { receiver },
+    )
+}
+
+struct ToolCancellationRegistryInner {
+    next_registration: AtomicU64,
+    entries: Mutex<HashMap<ToolCallId, (u64, ToolExecutionCancellation)>>,
+}
+
+/// Process-local bridge between the Agent-owned run signal and the exact application tool call.
+///
+/// Lookup is by the Rust-minted [`ToolCallId`]. External callers may serialize the same DTO field,
+/// but cannot insert a receiver into this registry, so the value never grants cancellation
+/// authority. Server and Desktop assembly must share one instance between the Agent gateway and
+/// the production tool control plane.
+#[derive(Clone)]
+pub struct ToolCancellationRegistry {
+    inner: Arc<ToolCancellationRegistryInner>,
+}
+
+impl Default for ToolCancellationRegistry {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(ToolCancellationRegistryInner {
+                next_registration: AtomicU64::new(1),
+                entries: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+}
+
+impl ToolCancellationRegistry {
+    /// Register one receiver for one Rust-minted call. Duplicate IDs and counter exhaustion fail.
+    pub fn register(
+        &self,
+        call_id: ToolCallId,
+        cancellation: ToolExecutionCancellation,
+    ) -> Option<ToolCancellationRegistration> {
+        let registration = self
+            .inner
+            .next_registration
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                current.checked_add(1)
+            })
+            .ok()?;
+        let mut entries = self.inner.entries.lock().ok()?;
+        if entries.contains_key(&call_id) {
+            return None;
+        }
+        entries.insert(call_id.clone(), (registration, cancellation));
+        Some(ToolCancellationRegistration {
+            inner: Arc::downgrade(&self.inner),
+            call_id,
+            registration,
+        })
+    }
+
+    /// Clone the receiver for the exact active call, or return `None` for external/unregistered IDs.
+    #[must_use]
+    pub fn cancellation_for(&self, call_id: &ToolCallId) -> Option<ToolExecutionCancellation> {
+        self.inner
+            .entries
+            .lock()
+            .ok()?
+            .get(call_id)
+            .map(|(_, cancellation)| cancellation.clone())
+    }
+}
+
+impl fmt::Debug for ToolCancellationRegistry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ToolCancellationRegistry")
+            .field(
+                "active",
+                &self
+                    .inner
+                    .entries
+                    .lock()
+                    .map_or(usize::MAX, |entries| entries.len()),
+            )
+            .finish()
+    }
+}
+
+/// RAII registration removed when the local application invocation completes or is dropped.
+pub struct ToolCancellationRegistration {
+    inner: Weak<ToolCancellationRegistryInner>,
+    call_id: ToolCallId,
+    registration: u64,
+}
+
+impl Drop for ToolCancellationRegistration {
+    fn drop(&mut self) {
+        let Some(inner) = self.inner.upgrade() else {
+            return;
+        };
+        let Ok(mut entries) = inner.entries.lock() else {
+            return;
+        };
+        if entries
+            .get(&self.call_id)
+            .is_some_and(|(registration, _)| *registration == self.registration)
+        {
+            entries.remove(&self.call_id);
+        }
+    }
+}
+
+impl fmt::Debug for ToolCancellationRegistration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ToolCancellationRegistration")
+            .field("call_id", &self.call_id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ToolPortError {
@@ -375,6 +596,7 @@ fn common_audit_facts(
 
 /// 真正交给 executor 的调用；字段私有，唯一构造点在本模块的管线末端。
 pub struct AuthorizedToolCall {
+    call_id: ToolCallId,
     metadata: ToolMetadata,
     arguments: ToolArguments,
     tenant: TenantId,
@@ -389,6 +611,7 @@ pub struct AuthorizedToolCall {
 impl fmt::Debug for AuthorizedToolCall {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AuthorizedToolCall")
+            .field("call_id", &self.call_id)
             .field("tool", &self.metadata.name)
             .field("actor", self.actor.actor())
             .field("bot", self.actor.bot())
@@ -408,6 +631,7 @@ impl AuthorizedToolCall {
         let redeemed = self.capability.redeem();
         (
             ExecutableToolCall {
+                call_id: self.call_id,
                 metadata: self.metadata,
                 arguments: self.arguments,
                 tenant: self.tenant,
@@ -424,6 +648,7 @@ impl AuthorizedToolCall {
 
 /// 已兑券、只能由 executor 按值消费的具体调用。
 pub struct ExecutableToolCall {
+    call_id: ToolCallId,
     metadata: ToolMetadata,
     arguments: ToolArguments,
     tenant: TenantId,
@@ -435,6 +660,12 @@ pub struct ExecutableToolCall {
 }
 
 impl ExecutableToolCall {
+    /// Rust-minted call identity used only to join process-local execution controls.
+    #[must_use]
+    pub const fn call_id(&self) -> &ToolCallId {
+        &self.call_id
+    }
+
     /// metadata。
     #[must_use]
     pub const fn metadata(&self) -> &ToolMetadata {
@@ -887,6 +1118,7 @@ async fn execute_after_approval<C: ToolControlPlane, J: ToolJournal>(
 
     let report = control
         .execute(AuthorizedToolCall {
+            call_id: decision.call_id.clone(),
             metadata: decision.metadata.clone(),
             arguments,
             tenant: scope.tenant,
@@ -1456,5 +1688,39 @@ mod tests {
             "approval.invalid.document_generation_changed"
         );
         assert_eq!(error_code, "approval_invalid");
+    }
+
+    #[tokio::test]
+    async fn tool_cancellation_registry_is_exact_first_reason_wins_and_raii_scoped() {
+        let registry = ToolCancellationRegistry::default();
+        let call_id = ToolCallId::new("call-cancel");
+        let (handle, cancellation) = tool_execution_cancellation();
+        let registration = registry
+            .register(call_id.clone(), cancellation)
+            .expect("first exact registration");
+        let (_, duplicate) = tool_execution_cancellation();
+        assert!(registry.register(call_id.clone(), duplicate).is_none());
+
+        let mut observed = registry
+            .cancellation_for(&call_id)
+            .expect("registered cancellation");
+        assert_eq!(observed.requested(), None);
+        assert!(handle.cancel(ToolCancellationReason::Deadline));
+        assert!(!handle.cancel(ToolCancellationReason::User));
+        assert_eq!(observed.cancelled().await, ToolCancellationReason::Deadline);
+        assert_eq!(
+            ToolCancellationReason::Deadline.stable_code(),
+            "run_deadline_exceeded"
+        );
+
+        drop(registration);
+        assert!(registry.cancellation_for(&call_id).is_none());
+
+        let (orphaned, mut orphan_receiver) = tool_execution_cancellation();
+        drop(orphaned);
+        assert_eq!(
+            orphan_receiver.cancelled().await,
+            ToolCancellationReason::HostDropped
+        );
     }
 }

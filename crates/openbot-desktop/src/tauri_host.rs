@@ -24,13 +24,21 @@ use openbot_contracts::components::{
     ComponentDraftRequest, ComponentFunctionCallRequest, ComponentFunctionGrantRequest,
     ComponentGovernanceMutation, ComponentHumanDecisionAnswer, ComponentPublicationRequest,
 };
+use openbot_contracts::credential_admin::{
+    CredentialPageRequest, CredentialRevocationReceipt, CredentialWrite,
+};
 use openbot_contracts::desktop::{
     DESKTOP_STRUCTURED_CLOSE_COMMAND, DESKTOP_STRUCTURED_OPEN_COMMAND,
     DesktopStructuredSubscriptionCloseRequest, DesktopStructuredSubscriptionOpened,
 };
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
+use openbot_contracts::mcp::{
+    McpCuratedServerSelection, McpCustomServerRegistration, PluginGrantKind, PluginGrantMutation,
+    PluginSkillMutation,
+};
 use openbot_contracts::people::CurrentUserResponse;
+use openbot_contracts::remote_interrupt::{RemoteInterruptAnswer, RemoteInterruptResolved};
 use openbot_contracts::sandboxed::SaveSandboxedComponentRequest;
 use openbot_contracts::tool::ToolApprovalDecision;
 use openbot_contracts::ui::{UiLocale, UiPreferences, UiTheme, UpdateUiPreferences};
@@ -50,6 +58,7 @@ const INDEX_MAX_BYTES: u64 = 1024 * 1024;
 const ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const API_BODY_MAX_BYTES: usize = 4096;
 const AGENT_BODY_MAX_BYTES: usize = 64 * 1024;
+const REMOTE_INTERRUPT_BODY_MAX_BYTES: usize = 64 * 1024 + 1024;
 // Server's single request-body cap and the public message cap are both 1 MiB. Using the contracts
 // constant keeps Desktop from accepting a larger renderer-materialized body than Axum.
 const CHANNEL_THREAD_BODY_MAX_BYTES: usize = MAX_THREAD_MESSAGE_BYTES;
@@ -57,6 +66,8 @@ const COMPONENT_CATALOGUE_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_DECISION_BODY_MAX_BYTES: usize = 256 * 1024;
 const COMPONENT_GOVERNANCE_BODY_MAX_BYTES: usize = 68 * 1024;
 const SANDBOXED_COMPONENT_BODY_MAX_BYTES: usize = 1024 * 1024;
+const MCP_ADMIN_BODY_MAX_BYTES: usize = 16 * 1024;
+const PLUGIN_SKILL_BODY_MAX_BYTES: usize = 70 * 1024;
 const HTML_ROOT_MARKER: &str = "<html lang=\"en\">";
 const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
                    connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; \
@@ -539,6 +550,56 @@ impl DesktopTauriProtocol {
         if path == "/api/me/run-cost-budget" {
             return self.run_cost_budget(request, authority).await;
         }
+        if path == "/api/me/remote-interrupts" {
+            return self.remote_interrupts(request, authority).await;
+        }
+        if path == "/api/plugins" {
+            return self.plugins(request, authority).await;
+        }
+        if path == "/api/admin/credentials" || path.starts_with("/api/admin/credentials/") {
+            return self.credential_administration(request, authority).await;
+        }
+        if path == "/api/plugins/connections" {
+            return self.plugin_connections(request, authority).await;
+        }
+        if path == "/api/plugins/servers" {
+            return self.curated_mcp_server(request, authority).await;
+        }
+        if path == "/api/plugins/skills" {
+            return self.plugin_skills(request, authority).await;
+        }
+        if let Some(raw_slug) = path.strip_prefix("/api/plugins/skills/") {
+            return self.remove_plugin_skill(request, authority, raw_slug).await;
+        }
+        if path == "/api/plugins/grants" {
+            return self.plugin_grants(request, authority).await;
+        }
+        if let Some(raw_agent_id) = path.strip_prefix("/api/plugins/for/") {
+            return self
+                .plugins_for_agent(request, authority, raw_agent_id)
+                .await;
+        }
+        if path == "/api/plugins/servers/custom" {
+            return self.custom_mcp_server(request, authority).await;
+        }
+        if let Some(server_id) = path
+            .strip_prefix("/api/plugins/servers/")
+            .and_then(|rest| rest.strip_suffix("/refresh"))
+        {
+            return self
+                .configured_mcp_server(request, authority, server_id, true)
+                .await;
+        }
+        if let Some(server_id) = path.strip_prefix("/api/plugins/servers/") {
+            return self
+                .configured_mcp_server(request, authority, server_id, false)
+                .await;
+        }
+        if let Some(request_id) = path.strip_prefix("/api/me/remote-interrupts/") {
+            return self
+                .resolve_remote_interrupt(request, authority, request_id)
+                .await;
+        }
         if path == "/api/channels" {
             return self.channels(request, authority).await;
         }
@@ -727,6 +788,479 @@ impl DesktopTauriProtocol {
         };
         match self.transport.execute(authority.auth, command).await {
             Ok(AppReply::RunCostBudget(preference)) => json_response(&preference),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn credential_administration(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if !authority
+            .auth
+            .has_role(openbot_contracts::auth::Role::Admin)
+        {
+            request.body_mut().fill(0);
+            return error_response(AppError::ForbiddenRole {
+                required: openbot_contracts::auth::Role::Admin,
+            });
+        }
+        let path = request.uri().path().to_owned();
+        let listing = path == "/api/admin/credentials" && request.method() == Method::GET;
+        if !listing && !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let command = if listing {
+            if !request.body().is_empty() {
+                request.body_mut().fill(0);
+                return error_response(AppError::MalformedPayload { field: "body" });
+            }
+            let cursor = match request.uri().query() {
+                None | Some("") => None,
+                Some(query)
+                    if query.len() <= 1536
+                        && !query.contains('&')
+                        && query.starts_with("cursor=") =>
+                {
+                    let Some(cursor) = percent_decode_query_component(&query[7..]) else {
+                        return error_response(AppError::MalformedPayload { field: "cursor" });
+                    };
+                    Some(cursor)
+                }
+                _ => return error_response(AppError::MalformedPayload { field: "query" }),
+            };
+            AppCommand::ListCredentials(CredentialPageRequest { cursor })
+        } else {
+            if request.method() != Method::POST {
+                request.body_mut().fill(0);
+                return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+            }
+            if request.uri().query().is_some() {
+                request.body_mut().fill(0);
+                return error_response(AppError::MalformedPayload { field: "query" });
+            }
+            if request.body().len() > 512 * 1024 {
+                request.body_mut().fill(0);
+                return payload_too_large();
+            }
+            let route = path.strip_prefix("/api/admin/credentials/");
+            if let Some(raw_id) = route.and_then(|route| route.strip_suffix("/revoke")) {
+                if !request.body().is_empty() {
+                    request.body_mut().fill(0);
+                    return error_response(AppError::MalformedPayload { field: "body" });
+                }
+                let Some(credential_id) = percent_decode_segment(raw_id) else {
+                    return error_response(AppError::MalformedPayload {
+                        field: "credential_id",
+                    });
+                };
+                AppCommand::RevokeCredential { credential_id }
+            } else {
+                let parsed = serde_json::from_slice::<CredentialWrite>(request.body());
+                request.body_mut().fill(0);
+                let input = match parsed {
+                    Ok(input) => input,
+                    Err(_) => return error_response(AppError::MalformedPayload { field: "body" }),
+                };
+                if path == "/api/admin/credentials" {
+                    AppCommand::CreateCredential(input)
+                } else if let Some(raw_id) = route.and_then(|route| route.strip_suffix("/rotate")) {
+                    let Some(credential_id) = percent_decode_segment(raw_id) else {
+                        return error_response(AppError::MalformedPayload {
+                            field: "credential_id",
+                        });
+                    };
+                    AppCommand::RotateCredential {
+                        credential_id,
+                        input,
+                    }
+                } else {
+                    return error_response(AppError::NotVisible);
+                }
+            }
+        };
+        let created = matches!(command, AppCommand::CreateCredential(_));
+        let revoking = matches!(command, AppCommand::RevokeCredential { .. });
+        match self.transport.execute(authority.auth, command).await {
+            Ok(AppReply::Credentials(page)) if listing => json_response(&page),
+            Ok(AppReply::CredentialWritten(receipt)) if !listing && !revoking => {
+                let mut response = json_response(&receipt);
+                if created {
+                    *response.status_mut() = StatusCode::CREATED;
+                }
+                response
+            }
+            Ok(AppReply::CredentialRevoked(credential)) if revoking => {
+                json_response(&CredentialRevocationReceipt { credential })
+            }
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugins(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::ListMcpAdminPage)
+            .await
+        {
+            Ok(AppReply::McpAdminPage(page)) => json_response(&page),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugin_connections(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if request.uri().query().is_some() {
+            return error_response(AppError::MalformedPayload { field: "query" });
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::ListMcpConnections)
+            .await
+        {
+            Ok(AppReply::McpConnections(connections)) => json_response(&connections),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn curated_mcp_server(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        if request.body().len() > MCP_ADMIN_BODY_MAX_BYTES {
+            request.body_mut().fill(0);
+            return payload_too_large();
+        }
+        if request.uri().query().is_some() {
+            request.body_mut().fill(0);
+            return error_response(AppError::MalformedPayload { field: "query" });
+        }
+        let selected = serde_json::from_slice::<McpCuratedServerSelection>(request.body());
+        request.body_mut().fill(0);
+        let selected = match selected {
+            Ok(selected) => selected,
+            Err(_) => return error_response(AppError::MalformedPayload { field: "body" }),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::AddCuratedMcpServer { key: selected.key },
+            )
+            .await
+        {
+            Ok(AppReply::McpServerMutation(receipt)) => json_response(&receipt),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn custom_mcp_server(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        if request.body().len() > MCP_ADMIN_BODY_MAX_BYTES {
+            request.body_mut().fill(0);
+            return payload_too_large();
+        }
+        let registration =
+            match serde_json::from_slice::<McpCustomServerRegistration>(request.body()) {
+                Ok(registration) => registration,
+                Err(_) => {
+                    request.body_mut().fill(0);
+                    return error_response(AppError::MalformedPayload { field: "body" });
+                }
+            };
+        request.body_mut().fill(0);
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::AddCustomMcpServer(registration))
+            .await
+        {
+            Ok(AppReply::McpServerMutation(receipt)) => json_response(&receipt),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugin_skills(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        if request.body().len() > PLUGIN_SKILL_BODY_MAX_BYTES {
+            request.body_mut().fill(0);
+            return payload_too_large();
+        }
+        let mutation = match serde_json::from_slice::<PluginSkillMutation>(request.body()) {
+            Ok(mutation) => mutation,
+            Err(_) => {
+                request.body_mut().fill(0);
+                return error_response(AppError::MalformedPayload { field: "body" });
+            }
+        };
+        request.body_mut().fill(0);
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::SavePluginSkill(mutation))
+            .await
+        {
+            Ok(AppReply::PluginSkills(skills)) => json_response(&skills),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn remove_plugin_skill(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_slug: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::DELETE || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let Some(slug) = percent_decode_segment(raw_slug) else {
+            return error_response(AppError::MalformedPayload { field: "slug" });
+        };
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::RemovePluginSkill { slug })
+            .await
+        {
+            Ok(AppReply::PluginMutationAcknowledged(receipt)) => json_response(&receipt),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugin_grants(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let command = match *request.method() {
+            Method::POST if request.body().len() <= MCP_ADMIN_BODY_MAX_BYTES => {
+                let mutation = match serde_json::from_slice::<PluginGrantMutation>(request.body()) {
+                    Ok(mutation) => mutation,
+                    Err(_) => {
+                        request.body_mut().fill(0);
+                        return error_response(AppError::MalformedPayload { field: "body" });
+                    }
+                };
+                request.body_mut().fill(0);
+                AppCommand::GrantPlugin(mutation)
+            }
+            Method::POST => {
+                request.body_mut().fill(0);
+                return payload_too_large();
+            }
+            Method::DELETE if request.body().is_empty() => {
+                let Some(mutation) = plugin_grant_query(request.uri().query()) else {
+                    return error_response(AppError::MalformedPayload { field: "query" });
+                };
+                AppCommand::RevokePlugin(mutation)
+            }
+            _ => {
+                request.body_mut().fill(0);
+                return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+            }
+        };
+        match self.transport.execute(authority.auth, command).await {
+            Ok(AppReply::PluginMutationAcknowledged(receipt)) => json_response(&receipt),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugins_for_agent(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        raw_agent_id: &str,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let Some(agent_id) = percent_decode_segment(raw_agent_id) else {
+            return error_response(AppError::MalformedPayload { field: "agent_id" });
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::ListPluginsForAgent {
+                    agent_id: BotId::new(agent_id),
+                },
+            )
+            .await
+        {
+            Ok(AppReply::GrantedPlugins(plugins)) => json_response(&plugins),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn configured_mcp_server(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        server_id: &str,
+        refresh: bool,
+    ) -> Response<Vec<u8>> {
+        let expected_method = if refresh {
+            Method::POST
+        } else {
+            Method::DELETE
+        };
+        if request.method() != expected_method || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let command = if refresh {
+            AppCommand::RefreshMcpServer {
+                server_id: server_id.to_owned(),
+            }
+        } else {
+            AppCommand::RemoveMcpServer {
+                server_id: server_id.to_owned(),
+            }
+        };
+        match self.transport.execute(authority.auth, command).await {
+            Ok(AppReply::McpServerMutation(receipt)) if refresh => json_response(&receipt),
+            Ok(AppReply::McpServerRemoved(receipt)) if !refresh => json_response(&receipt),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn remote_interrupts(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::ListPendingRemoteInterrupts)
+            .await
+        {
+            Ok(AppReply::PendingRemoteInterrupts(pending)) => json_response(&pending),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn resolve_remote_interrupt(
+        &self,
+        request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+        request_id: &str,
+    ) -> Response<Vec<u8>> {
+        if request_id.is_empty() || request_id.contains('/') {
+            return empty_response(StatusCode::NOT_FOUND);
+        }
+        let answer = match *request.method() {
+            Method::PUT if request.body().len() <= REMOTE_INTERRUPT_BODY_MAX_BYTES => {
+                match serde_json::from_slice::<RemoteInterruptAnswer>(request.body()) {
+                    Ok(answer) => answer,
+                    Err(_) => {
+                        return error_response(AppError::MalformedPayload { field: "body" });
+                    }
+                }
+            }
+            Method::PUT => return payload_too_large(),
+            _ => return empty_response(StatusCode::METHOD_NOT_ALLOWED),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::ResolveRemoteInterrupt {
+                    request_id: request_id.to_owned(),
+                    answer,
+                },
+            )
+            .await
+        {
+            Ok(AppReply::RemoteInterruptResolved(resolved)) => {
+                let resolved: RemoteInterruptResolved = resolved;
+                json_response(&resolved)
+            }
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -2129,6 +2663,38 @@ fn channel_list_query(query: Option<&str>) -> Option<(Option<u32>, Option<String
     Some((limit, cursor))
 }
 
+fn plugin_grant_query(query: Option<&str>) -> Option<PluginGrantMutation> {
+    let query = query?;
+    if query.is_empty() || query.len() > MCP_ADMIN_BODY_MAX_BYTES {
+        return None;
+    }
+    let mut kind = None;
+    let mut reference = None;
+    let mut agent_id = None;
+    for pair in query.split('&') {
+        let (raw_key, raw_value) = pair.split_once('=')?;
+        let key = percent_decode_query_component(raw_key)?;
+        let value = percent_decode_query_component(raw_value)?;
+        match key.as_str() {
+            "kind" if kind.is_none() => {
+                kind = Some(match value.as_str() {
+                    "mcp" => PluginGrantKind::Mcp,
+                    "skill" => PluginGrantKind::Skill,
+                    _ => return None,
+                });
+            }
+            "ref" if reference.is_none() => reference = Some(value),
+            "agentId" if agent_id.is_none() => agent_id = Some(value),
+            _ => return None,
+        }
+    }
+    Some(PluginGrantMutation {
+        kind: kind?,
+        reference: reference?,
+        agent_id: agent_id?,
+    })
+}
+
 fn percent_decode_segment(raw: &str) -> Option<String> {
     if raw.contains('/') {
         return None;
@@ -2197,12 +2763,15 @@ mod tests {
         ChannelAdministration, ChannelAdministrationError, ChannelCreateRequest, ChannelReadScope,
         ChannelReader, ChannelRoutingBackend, ChannelRoutingBackendError, ComponentAdministration,
         ComponentAdministrationError, ComponentFunctionArguments, ComponentFunctionCallPlan,
-        ComponentRuntimeScope, OpenBotApplication, PeopleAdministration, PeoplePageRequest,
-        PeoplePortError, PortError, RoutingAuditRecord, RunCostBudgetAdministration,
-        RunCostBudgetAdministrationError, RunCostCap, SandboxedComponentAdministration,
-        SandboxedComponentAdministrationError, SandboxedComponentDraft, ThreadConversationRequest,
-        ThreadDirectory, ThreadDirectoryError, ToolApprovalAdministration,
-        ToolApprovalAdministrationError, UiPreferenceAdministration,
+        ComponentRuntimeScope, McpConnectionAdministration, McpConnectionError, OpenBotApplication,
+        PeopleAdministration, PeoplePageRequest, PeoplePortError, PortError,
+        ProviderRemoteInterruptBatch, ProviderRemoteResume, ProviderRemoteResumeStatus,
+        RemoteInterruptCoordinator, RemoteInterruptError, RemoteInterruptPending,
+        RemoteInterruptPendingInput, RemoteInterruptResolutionReceipt, RoutingAuditRecord,
+        RunCostBudgetAdministration, RunCostBudgetAdministrationError, RunCostCap,
+        RunExecutionLease, SandboxedComponentAdministration, SandboxedComponentAdministrationError,
+        SandboxedComponentDraft, ThreadConversationRequest, ThreadDirectory, ThreadDirectoryError,
+        ToolApprovalAdministration, ToolApprovalAdministrationError, UiPreferenceAdministration,
         UiPreferenceAdministrationError,
     };
     use openbot_contracts::agent::{
@@ -2226,7 +2795,16 @@ mod tests {
         PendingComponentHumanDecisions, SHOW_QUOTE_COMPONENT_NAME, compiled_component_manifest,
     };
     use openbot_contracts::ids::{ActorId, BotId, DeploymentId, TenantId};
+    use openbot_contracts::mcp::{
+        GrantedPlugins, McpAdminAuthentication, McpAdminCatalogueEntry, McpAdminPage,
+        McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
+        McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation, McpServerRemoved,
+        PluginGrantMutation, PluginMutationAcknowledged, PluginSkillMutation, PluginSkills,
+    };
     use openbot_contracts::people::{CurrentUser, PeoplePage, Person};
+    use openbot_contracts::remote_interrupt::{
+        PendingRemoteInterrupts, RemoteInterruptAnswerStatus, RemoteInterruptResolved,
+    };
     use openbot_contracts::sandboxed::{
         PublishedSandboxedComponent, PublishedSandboxedComponents, SandboxedComponentDeleted,
         SandboxedComponentRecord, SandboxedComponentResponse, SandboxedComponents,
@@ -2930,6 +3508,207 @@ mod tests {
 
     struct FakeRunCostBudgets(Mutex<Option<RunCostCap>>);
 
+    #[derive(Default)]
+    struct FakeMcpConnections {
+        reads: Mutex<Vec<ActorId>>,
+        additions: Mutex<Vec<(ActorId, String)>>,
+    }
+
+    #[async_trait]
+    impl McpConnectionAdministration for FakeMcpConnections {
+        async fn list_connections(
+            &self,
+            auth: &AuthContext,
+        ) -> Result<McpConnections, McpConnectionError> {
+            self.reads.lock().unwrap().push(auth.actor().clone());
+            Ok(McpConnections {
+                available_server_ids: vec![format!("notes-{}", auth.actor().as_str())],
+                connections: Vec::new(),
+                redirect_uri: None,
+            })
+        }
+
+        async fn add_curated_server(
+            &self,
+            auth: &AuthContext,
+            key: &str,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            self.additions
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), key.to_owned()));
+            if key != "google-drive" {
+                return Err(McpConnectionError::NotVisible);
+            }
+            Ok(McpServerMutation {
+                server_id: key.to_owned(),
+                catalog_generation: 1,
+                tool_count: 4,
+                suspended_grants: 0,
+            })
+        }
+
+        async fn list_admin_page(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<McpAdminPage, McpConnectionError> {
+            Ok(McpAdminPage {
+                catalogue: vec![McpAdminCatalogueEntry {
+                    key: "google-drive".to_owned(),
+                    title: "Google Drive".to_owned(),
+                    vendor: "Google".to_owned(),
+                    summary: "Files".to_owned(),
+                    docs_url: "https://developers.google.com/".to_owned(),
+                    auth: McpAdminAuthentication::UserOAuth,
+                    per_instance: false,
+                }],
+                bots_may_call_back: false,
+                servers: Vec::new(),
+                skills: Vec::new(),
+                redirect_uri: None,
+            })
+        }
+
+        async fn begin_oauth(
+            &self,
+            _auth: &AuthContext,
+            _server_id: &str,
+            _return_to: McpOAuthReturnTo,
+        ) -> Result<McpOAuthAuthorization, McpConnectionError> {
+            Err(McpConnectionError::Unavailable)
+        }
+
+        async fn disconnect(
+            &self,
+            _auth: &AuthContext,
+            _server_id: &str,
+        ) -> Result<McpConnectionDisconnected, McpConnectionError> {
+            Err(McpConnectionError::Unavailable)
+        }
+
+        async fn register_oauth_client(
+            &self,
+            _auth: &AuthContext,
+            _server_id: &str,
+            _registration: &McpOAuthClientRegistration,
+        ) -> Result<McpOAuthClientRegistered, McpConnectionError> {
+            Err(McpConnectionError::Unavailable)
+        }
+
+        async fn add_custom_server(
+            &self,
+            _auth: &AuthContext,
+            registration: &McpCustomServerRegistration,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            Ok(McpServerMutation {
+                server_id: registration.id.clone(),
+                catalog_generation: 1,
+                tool_count: 1,
+                suspended_grants: 0,
+            })
+        }
+
+        async fn remove_server(
+            &self,
+            _auth: &AuthContext,
+            _server_id: &str,
+        ) -> Result<McpServerRemoved, McpConnectionError> {
+            Ok(McpServerRemoved::success())
+        }
+
+        async fn refresh_server(
+            &self,
+            _auth: &AuthContext,
+            server_id: &str,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            Ok(McpServerMutation {
+                server_id: server_id.to_owned(),
+                catalog_generation: 2,
+                tool_count: 1,
+                suspended_grants: 0,
+            })
+        }
+
+        async fn save_skill(
+            &self,
+            _auth: &AuthContext,
+            _mutation: &PluginSkillMutation,
+        ) -> Result<PluginSkills, McpConnectionError> {
+            Ok(PluginSkills { skills: Vec::new() })
+        }
+
+        async fn remove_skill(
+            &self,
+            _auth: &AuthContext,
+            _slug: &str,
+        ) -> Result<PluginMutationAcknowledged, McpConnectionError> {
+            Ok(PluginMutationAcknowledged::success())
+        }
+
+        async fn set_grant(
+            &self,
+            _auth: &AuthContext,
+            _mutation: &PluginGrantMutation,
+            _enabled: bool,
+        ) -> Result<PluginMutationAcknowledged, McpConnectionError> {
+            Ok(PluginMutationAcknowledged::success())
+        }
+
+        async fn list_for_agent(
+            &self,
+            _auth: &AuthContext,
+            _agent_id: &BotId,
+        ) -> Result<GrantedPlugins, McpConnectionError> {
+            Ok(GrantedPlugins {
+                tools: Vec::new(),
+                skills: Vec::new(),
+            })
+        }
+    }
+
+    struct FakeRemoteInterrupts;
+
+    #[async_trait]
+    impl RemoteInterruptCoordinator for FakeRemoteInterrupts {
+        async fn list_pending(
+            &self,
+            _auth: &AuthContext,
+        ) -> Result<Vec<RemoteInterruptPending>, RemoteInterruptError> {
+            Ok(vec![RemoteInterruptPending::new(
+                RemoteInterruptPendingInput {
+                    request_id: "018f6f8a-5f4b-7c2d-8a31-111111111111".to_owned(),
+                    run_id: "desktop-run".to_owned(),
+                    bot_id: "desktop-agent-1".to_owned(),
+                    protocol_run_id: "desktop-run".to_owned(),
+                    interrupt_id: "remote-1".to_owned(),
+                    untrusted_payload: json!({
+                        "id":"remote-1","reason":"confirmation","message":"Remote asks"
+                    }),
+                    requested_at: time::OffsetDateTime::UNIX_EPOCH,
+                    expires_at: time::OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(30),
+                },
+            )?])
+        }
+
+        async fn resolve(
+            &self,
+            _auth: &AuthContext,
+            request_id: &str,
+            status: ProviderRemoteResumeStatus,
+            _payload: Option<serde_json::Value>,
+        ) -> Result<RemoteInterruptResolutionReceipt, RemoteInterruptError> {
+            RemoteInterruptResolutionReceipt::new(request_id.to_owned(), status, false)
+        }
+
+        async fn persist_and_wait(
+            &self,
+            _lease: &RunExecutionLease,
+            _batch: &ProviderRemoteInterruptBatch,
+        ) -> Result<ProviderRemoteResume, RemoteInterruptError> {
+            Err(RemoteInterruptError::Unavailable)
+        }
+    }
+
     #[async_trait]
     impl RunCostBudgetAdministration for FakeRunCostBudgets {
         async fn get(
@@ -3237,6 +4016,22 @@ mod tests {
     }
 
     fn protocol() -> (Arc<DesktopTauriProtocol>, PathBuf) {
+        protocol_with_mcp(Arc::new(FakeMcpConnections::default()))
+    }
+
+    fn protocol_with_mcp(
+        mcp: Arc<dyn McpConnectionAdministration>,
+    ) -> (Arc<DesktopTauriProtocol>, PathBuf) {
+        protocol_with_admin_ports(
+            mcp,
+            Arc::new(openbot_application::credential_admin::NoCredentialAdministration),
+        )
+    }
+
+    fn protocol_with_admin_ports(
+        mcp: Arc<dyn McpConnectionAdministration>,
+        credentials: Arc<dyn openbot_application::credential_admin::CredentialAdministration>,
+    ) -> (Arc<DesktopTauriProtocol>, PathBuf) {
         let root = protocol_root();
         let preferences = Arc::new(FakePreferences(Mutex::new(UiPreferences {
             theme: Some(UiTheme::Dark),
@@ -3255,6 +4050,9 @@ mod tests {
                 .with_agent_administration(agents)
                 .with_ui_preferences(preferences)
                 .with_run_cost_budgets(Arc::new(FakeRunCostBudgets(Mutex::new(None))))
+                .with_mcp_connections(mcp)
+                .with_credentials(credentials)
+                .with_remote_interrupts(Arc::new(FakeRemoteInterrupts))
                 .with_component_administration(Arc::new(FakeComponents))
                 .with_sandboxed_component_administration(Arc::new(FakeSandboxed))
                 .with_tool_approvals(Arc::new(FakeApprovals)),
@@ -4428,6 +5226,45 @@ mod tests {
             .await;
         assert_eq!(smuggled.status(), StatusCode::BAD_REQUEST);
 
+        let interrupts = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .uri("/api/me/remote-interrupts")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(interrupts.status(), StatusCode::OK);
+        assert_eq!(interrupts.headers()[CACHE_CONTROL], "no-store");
+        let interrupts =
+            serde_json::from_slice::<PendingRemoteInterrupts>(interrupts.body()).unwrap();
+        assert_eq!(interrupts.interrupts.len(), 1);
+        let resolved = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/me/remote-interrupts/018f6f8a-5f4b-7c2d-8a31-111111111111")
+                    .body(br#"{"status":"resolved","payload":{"approved":true}}"#.to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(resolved.status(), StatusCode::OK);
+        let resolved = serde_json::from_slice::<RemoteInterruptResolved>(resolved.body()).unwrap();
+        assert_eq!(resolved.status, RemoteInterruptAnswerStatus::Resolved);
+        let invalid_cancel = protocol
+            .handle(
+                "main",
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/me/remote-interrupts/018f6f8a-5f4b-7c2d-8a31-111111111111")
+                    .body(br#"{"status":"cancelled","payload":true}"#.to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(invalid_cancel.status(), StatusCode::BAD_REQUEST);
+
         let approvals = protocol
             .handle(
                 "main",
@@ -4650,6 +5487,565 @@ mod tests {
                 decision: ToolApprovalDecision::Grant,
             }
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[derive(Default)]
+    struct CredentialProbe(Mutex<Vec<(ActorId, &'static str)>>);
+
+    #[async_trait]
+    impl openbot_application::credential_admin::CredentialAdministration for CredentialProbe {
+        async fn list(
+            &self,
+            auth: &AuthContext,
+            _: &CredentialPageRequest,
+        ) -> Result<
+            openbot_contracts::credential_admin::CredentialPage,
+            openbot_application::credential_admin::CredentialAdministrationError,
+        > {
+            self.0.lock().unwrap().push((auth.actor().clone(), "list"));
+            Ok(openbot_contracts::credential_admin::CredentialPage {
+                credentials: Vec::new(),
+                next_cursor: None,
+                model_reference: None,
+            })
+        }
+        async fn create(
+            &self,
+            auth: &AuthContext,
+            input: &CredentialWrite,
+        ) -> Result<
+            openbot_contracts::credential_admin::CredentialWritten,
+            openbot_application::credential_admin::CredentialAdministrationError,
+        > {
+            self.0
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), "create"));
+            assert_eq!(input.expose_plaintext(), "desktop-secret-canary");
+            Ok(credential_probe_receipt(input))
+        }
+        async fn rotate(
+            &self,
+            auth: &AuthContext,
+            _: &str,
+            input: &CredentialWrite,
+        ) -> Result<
+            openbot_contracts::credential_admin::CredentialWritten,
+            openbot_application::credential_admin::CredentialAdministrationError,
+        > {
+            self.0
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), "rotate"));
+            Ok(credential_probe_receipt(input))
+        }
+        async fn revoke(
+            &self,
+            auth: &AuthContext,
+            id: &str,
+        ) -> Result<
+            openbot_contracts::credential_admin::CredentialRevoked,
+            openbot_application::credential_admin::CredentialAdministrationError,
+        > {
+            self.0
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), "revoke"));
+            Ok(openbot_contracts::credential_admin::CredentialRevoked {
+                id: id.to_owned(),
+                revoked_at: time::OffsetDateTime::UNIX_EPOCH,
+                external_revocation:
+                    openbot_contracts::credential_admin::CredentialExternalRevocation::Pending,
+            })
+        }
+    }
+    fn credential_probe_receipt(
+        input: &CredentialWrite,
+    ) -> openbot_contracts::credential_admin::CredentialWritten {
+        use openbot_contracts::credential_admin::{
+            CredentialExternalRevocation, CredentialRecordKind, CredentialStatus, CredentialWritten,
+        };
+        CredentialWritten {
+            credential: CredentialStatus {
+                id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                kind: CredentialRecordKind::Model,
+                provider: input.provider().to_owned(),
+                key_id: input.key_id().to_owned(),
+                metadata: input.metadata().clone(),
+                revoked_at: None,
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+                external_revocation: CredentialExternalRevocation::NotRequested,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn credential_framing_enforces_host_admin_freshness_and_keeps_secret_out_of_receipts() {
+        let probe = Arc::new(CredentialProbe::default());
+        let (protocol, root) =
+            protocol_with_admin_ports(Arc::new(FakeMcpConnections::default()), probe.clone());
+        protocol.bind_window("stale", admin_auth(), None).unwrap();
+        protocol
+            .bind_window("user", auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        protocol
+            .bind_window("admin", admin_auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        let request = |path: &str, body: Vec<u8>| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(path)
+                .body(body)
+                .unwrap()
+        };
+        let valid=br#"{"kind":"model","provider":"openai","keyId":"primary","metadata":{},"plaintext":"desktop-secret-canary"}"#.to_vec();
+        for (window,body,expected) in [("absent",valid.clone(),StatusCode::UNAUTHORIZED),("stale",b"bad".to_vec(),StatusCode::UNAUTHORIZED),("user",b"bad".to_vec(),StatusCode::FORBIDDEN),("admin",br#"{"kind":"mcp_user_token","provider":"openai","keyId":"primary","metadata":{},"plaintext":"canary"}"#.to_vec(),StatusCode::BAD_REQUEST)] {
+            assert_eq!(protocol.handle(window,request("/api/admin/credentials",body)).await.status(),expected);
+            assert!(probe.0.lock().unwrap().is_empty());
+        }
+        for (path, expected) in [
+            ("/api/admin/credentials", StatusCode::CREATED),
+            ("/api/admin/credentials/old/rotate", StatusCode::OK),
+        ] {
+            let reply = protocol.handle("admin", request(path, valid.clone())).await;
+            assert_eq!(reply.status(), expected);
+            assert_eq!(reply.headers()[CACHE_CONTROL], "no-store");
+            assert!(!String::from_utf8_lossy(reply.body()).contains("desktop-secret-canary"));
+        }
+        let reply = protocol
+            .handle(
+                "admin",
+                request("/api/admin/credentials/old/revoke", Vec::new()),
+            )
+            .await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<CredentialRevocationReceipt>(reply.body())
+                .unwrap()
+                .credential
+                .id,
+            "old"
+        );
+        let forged = protocol
+            .handle(
+                "admin",
+                Request::builder()
+                    .uri("/api/admin/credentials?actor=other")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(forged.status(), StatusCode::BAD_REQUEST);
+        let list = protocol
+            .handle(
+                "admin",
+                Request::builder()
+                    .uri("/api/admin/credentials")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        assert_eq!(
+            *probe.0.lock().unwrap(),
+            [
+                (ActorId::new("admin"), "create"),
+                (ActorId::new("admin"), "rotate"),
+                (ActorId::new("admin"), "revoke"),
+                (ActorId::new("admin"), "list")
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plugin_connection_reads_are_bound_to_the_host_window_and_reject_query_authority() {
+        let mcp = Arc::new(FakeMcpConnections::default());
+        let (protocol, root) = protocol_with_mcp(mcp.clone());
+        let request = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header("x-openbot-actor", "admin")
+                .body(Vec::new())
+                .unwrap()
+        };
+        let absent = protocol
+            .handle("user", request("/api/plugins/connections"))
+            .await;
+        assert_eq!(absent.status(), StatusCode::UNAUTHORIZED);
+        assert!(mcp.reads.lock().unwrap().is_empty());
+        protocol.bind_window("user", auth(), None).unwrap();
+        let injected = protocol
+            .handle("user", request("/api/plugins/connections?actor=admin"))
+            .await;
+        assert_eq!(injected.status(), StatusCode::BAD_REQUEST);
+        assert!(mcp.reads.lock().unwrap().is_empty());
+        let reply = protocol
+            .handle("user", request("/api/plugins/connections"))
+            .await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        assert_eq!(reply.headers()[CACHE_CONTROL], "no-store");
+        let page: McpConnections = serde_json::from_slice(reply.body()).unwrap();
+        assert_eq!(page.available_server_ids, ["notes-actor"]);
+        assert!(page.redirect_uri.is_none());
+        assert_eq!(*mcp.reads.lock().unwrap(), [ActorId::new("actor")]);
+        protocol.unbind_window("user").unwrap();
+        assert_eq!(
+            protocol
+                .handle("user", request("/api/plugins/connections"))
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(mcp.reads.lock().unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn curated_plugins_share_closed_selection_and_require_fresh_admin_before_effect() {
+        let mcp = Arc::new(FakeMcpConnections::default());
+        let (protocol, root) = protocol_with_mcp(mcp.clone());
+        protocol.bind_window("stale", admin_auth(), None).unwrap();
+        protocol
+            .bind_window("user", auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        protocol
+            .bind_window("admin", admin_auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        let request = |method: Method, uri: &str, body: Vec<u8>| {
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(body)
+                .unwrap()
+        };
+        let valid = br#"{"key":"google-drive"}"#.to_vec();
+        for (window, body, status) in [
+            ("absent", valid.clone(), StatusCode::UNAUTHORIZED),
+            ("stale", b"malformed".to_vec(), StatusCode::UNAUTHORIZED),
+            ("user", valid.clone(), StatusCode::FORBIDDEN),
+            ("admin", b"{}".to_vec(), StatusCode::BAD_REQUEST),
+            (
+                "admin",
+                br#"{"key":"google-drive","url":"https://injected.example.test"}"#.to_vec(),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "admin",
+                br#"{"key":"google-drive","actor":"forged"}"#.to_vec(),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "admin",
+                br#"{"key":"google-drive","key":"other"}"#.to_vec(),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "admin",
+                vec![b'x'; MCP_ADMIN_BODY_MAX_BYTES + 1],
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+        ] {
+            assert_eq!(
+                protocol
+                    .handle(window, request(Method::POST, "/api/plugins/servers", body))
+                    .await
+                    .status(),
+                status
+            );
+            assert!(mcp.additions.lock().unwrap().is_empty());
+        }
+        assert_eq!(
+            protocol
+                .handle(
+                    "admin",
+                    request(Method::GET, "/api/plugins/servers", Vec::new())
+                )
+                .await
+                .status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        assert_eq!(
+            protocol
+                .handle(
+                    "admin",
+                    request(
+                        Method::POST,
+                        "/api/plugins/servers?key=injected",
+                        valid.clone()
+                    )
+                )
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert!(mcp.additions.lock().unwrap().is_empty());
+        let reply = protocol
+            .handle(
+                "admin",
+                request(Method::POST, "/api/plugins/servers", valid),
+            )
+            .await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        assert_eq!(reply.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<McpServerMutation>(reply.body())
+                .unwrap()
+                .server_id,
+            "google-drive"
+        );
+        assert_eq!(
+            *mcp.additions.lock().unwrap(),
+            [(ActorId::new("admin"), "google-drive".to_owned())]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plugin_admin_protocol_uses_typed_commands_and_host_freshness() {
+        let (protocol, root) = protocol();
+        protocol
+            .bind_window("stale-plugins", admin_auth(), None)
+            .unwrap();
+        let page = protocol
+            .handle(
+                "stale-plugins",
+                Request::builder()
+                    .uri("/api/plugins")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(page.status(), StatusCode::OK);
+        assert_eq!(page.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<McpAdminPage>(page.body())
+                .unwrap()
+                .catalogue[0]
+                .key,
+            "google-drive"
+        );
+        let stale = protocol
+            .handle(
+                "stale-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/servers/custom")
+                    .body(
+                        br#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp"}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+
+        protocol
+            .bind_window("fresh-plugins", admin_auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        let malformed = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/servers/custom")
+                    .body(
+                        br#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp","actor":"forged"}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        let added = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/servers/custom")
+                    .body(
+                        br#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp","egressAllowCidrs":["10.0.0.0/8"]}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(added.status(), StatusCode::OK);
+        assert_eq!(added.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<McpServerMutation>(added.body())
+                .unwrap()
+                .server_id,
+            "private-notes"
+        );
+        let refreshed = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/servers/private-notes/refresh")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(refreshed.status(), StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<McpServerMutation>(refreshed.body())
+                .unwrap()
+                .catalog_generation,
+            2
+        );
+        let removed = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/plugins/servers/private-notes")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert!(
+            serde_json::from_slice::<McpServerRemoved>(removed.body())
+                .unwrap()
+                .ok
+        );
+
+        let skill = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/skills")
+                    .body(
+                        br#"{"slug":"review-notes","title":"Review notes","summary":"Review","instructions":"Review the notes.","global":true}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(skill.status(), StatusCode::OK);
+        assert_eq!(skill.headers()[CACHE_CONTROL], "no-store");
+        assert!(
+            serde_json::from_slice::<PluginSkills>(skill.body())
+                .unwrap()
+                .skills
+                .is_empty()
+        );
+        let smuggled_skill = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/skills")
+                    .body(
+                        br#"{"slug":"review-notes","title":"Review notes","summary":"Review","instructions":"Review the notes.","global":true,"actor":"forged"}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(smuggled_skill.status(), StatusCode::BAD_REQUEST);
+
+        let granted = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/grants")
+                    .body(
+                        br#"{"kind":"skill","ref":"review-notes","agentId":"agent-one"}"#.to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(granted.status(), StatusCode::OK);
+        assert!(
+            serde_json::from_slice::<PluginMutationAcknowledged>(granted.body())
+                .unwrap()
+                .ok
+        );
+        let listed = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .uri("/api/plugins/for/agent-one")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(listed.status(), StatusCode::OK);
+        assert!(
+            serde_json::from_slice::<GrantedPlugins>(listed.body())
+                .unwrap()
+                .tools
+                .is_empty()
+        );
+        let revoked = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/plugins/grants?kind=skill&ref=review-notes&agentId=agent-one")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(revoked.status(), StatusCode::OK);
+        let duplicate_query = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(
+                        "/api/plugins/grants?kind=skill&ref=review-notes&ref=forged&agentId=agent-one",
+                    )
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(duplicate_query.status(), StatusCode::BAD_REQUEST);
+        let removed_skill = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/plugins/skills/review%2Dnotes")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(removed_skill.status(), StatusCode::OK);
+
+        let stale_grant = protocol
+            .handle(
+                "stale-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/grants")
+                    .body(
+                        br#"{"kind":"skill","ref":"review-notes","agentId":"agent-one"}"#.to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(stale_grant.status(), StatusCode::UNAUTHORIZED);
+        let removed_legacy_call = protocol
+            .handle(
+                "fresh-plugins",
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/plugins/call")
+                    .body(
+                        br#"{"ref":"notes/search","args":{"query":"private"},"agentId":"agent-one"}"#
+                            .to_vec(),
+                    )
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(removed_legacy_call.status(), StatusCode::NOT_FOUND);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -522,7 +522,7 @@
       "licenseDeclared": "MIT OR Apache-2.0",
       "copyrightText": "NOASSERTION",
       "comment": "仅 testkit：golden 截图比对（GUI §10）。 licenseDeclared 来源：本轮 crates.io API `/api/v1/crates/image/0.25.10` 的 `.version.license` 字段（原样返回 `MIT OR Apache-2.0`）。",
-      "sourceInfo": "无 SHA256：本条只钉版本号，`.crate` 文件的摘要由 Cargo.lock 的 checksum 字段承担（本仓 Cargo.lock 当前尚未引入该依赖，见 provenance 的 status 说明）。",
+      "sourceInfo": "Batch107 已仅以 openbot-testkit/xtask 的 PNG-only optional edge 引入；Cargo.lock checksum = 85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104。不开 xtask 时不进入任何产品图。",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -1124,9 +1124,92 @@
       "copyrightText": "NOASSERTION",
       "comment": "v3 §11.4 复用清单逐行登记。状态 = **权属清理后可用、当前无授权**。\n正确用途：行为 fixture、错误语义。\n禁止做法：进入最终生产控制面。\nlicenseConcluded = NOASSERTION 是硬结论不是占位：在拿到**逐文件书面授权**之前不得复制任何字节。\n复制任一文件的前置条件（v3 §11.4 末段 + §23.1 末段）——该文件必须带 `SOURCE_PROVENANCE`：权利人、原路径、上游路径/commit、原 hash、目标 hash、许可证、修改声明、书面授权编号，八项缺一不可。\n没有书面授权时唯一合法路径是 **clean-room 重写**：只依据行为契约与黑盒可观察结果实现，不看、不引、不改上游源码（v3 §23.3 对 Intelligence 用的是同一条口径）。\n本条**不记录任何内部路径、错误字符串字面量或私有 URL**：本仓 public，粒度上限 = v3 §11.4 已经公开的那一行（CLAUDE.md §8 末条）。",
       "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-openai-dotnet-recorded-trace",
+      "name": "OpenAI .NET Responses recorded test trace",
+      "versionInfo": "19d0a3cb8e0cf0f3137a5c56c3c70a0c3f6c96f5",
+      "downloadLocation": "https://github.com/openai/openai-dotnet/blob/19d0a3cb8e0cf0f3137a5c56c3c70a0c3f6c96f5/tests/SessionRecords/ResponsesToolTests/FunctionToolStreamingWorks.json",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "ff7fadb3baabc1fd1fc482fe9ec28ba93d5a899b961cce73bf19f8d9c1fe20b8"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2024 OpenAI (https://openai.com)",
+      "comment": "v4 §24 G4 OpenAI adapter recorded-trace证据。官方commit时间2026-09-02T18:33:36Z；source record=13,211 bytes、Git blob SHA-1 3272bc4116a32b4472d21f68b41ce23ce363c02c。Entries[0].ResponseBody为36段，逐字节UTF-8拼接后9,070 bytes/SHA-256 fe38a7a044f8de33d441d0c9bf426e1291b1401bb9099ef419f62651b50d2927，与本仓SSE fixture cmp相等。源record已将Authorization、日期、组织/项目/request id等置Sanitized；本仓进一步完全排除RequestHeaders/RequestBody/Variables，只保留response body与content-type/openai-version provenance。该fixture为测试证据、不进入产品网络请求或模型上下文。",
+      "homepage": "https://github.com/openai/openai-dotnet",
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-ag-ui-core-schema-0-0-57",
+      "name": "@ag-ui/core official schema fixture",
+      "versionInfo": "0.0.57",
+      "downloadLocation": "git+https://github.com/ag-ui-protocol/ag-ui.git@54f13419055b4d0f442c71e1efab18b310982ce1",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2025",
+      "sourceInfo": "Selected source files under sdks/typescript/packages/core plus root LICENSE; exact paths/Git blobs/bytes/SHA-256 in fixtures/agui/official-event-family.provenance.json. package.json bytes are preserved as package-manifest.json, never executed.",
+      "comment": "Batch116/R192: public protocol corpus source, not a Node dependency or vendor recording. Independently checked six source blobs against the official fixed tree. This does not replace the v4 original repository oracle e42bdbed…; the fixture targets the separately pinned published SDK version 0.0.57. The upstream copyright line omits the holder name; preserve it verbatim, do not invent one. NOTICE attribution clarification remains a G8 item. Registry/SLSA URLs are provenance references, not a claim of verified Sigstore signatures.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40ag-ui/core@0.0.57"
+        }
+      ],
+      "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-anthropic-go-recorded-trace",
+      "name": "Anthropic Go Messages recorded test trace",
+      "versionInfo": "e9c104e7e5fb80a26ff26e398c0e4e3fe1fe7f33",
+      "downloadLocation": "https://github.com/anthropics/anthropic-sdk-go/blob/e9c104e7e5fb80a26ff26e398c0e4e3fe1fe7f33/toolrunner/testdata/cassettes/tool_runner_streaming_all.yaml",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "a523fe3e4db93da6e1b8f715e151d448bc9cc2231bae603d5357f2f6583140fe"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright 2023 Anthropic, PBC.",
+      "homepage": "https://github.com/anthropics/anthropic-sdk-go",
+      "primaryPackagePurpose": "SOURCE",
+      "comment": "Batch121/R197: official published response-body test asset, independently verified source blob 2085d5a9d2bb3b97992e74206a35fb0c92253ecb / 10980 bytes and deterministic extraction. Local fixture fixtures/provider/anthropic-messages-tool-use-stream.sse: 3489 bytes, SHA-256 9e75e3423449cfda1266e73327f43949fa0318b68a1d17293d4d06fe7ecbd783. Fixed source and extraction have identical response bytes. Production AnthropicProvider/SafeDialer offline loopback replay; no live account or billing proof. Request/identity headers excluded; retained public message/tool identifiers grant no authority. The PHP source README declares captured raw HTTP; this is publisher attribution, not an independently observed capture session. No SDK runtime dependency."
+    },
+    {
+      "SPDXID": "SPDXRef-Package-anthropic-php-recorded-trace",
+      "name": "Anthropic PHP Messages captured test trace",
+      "versionInfo": "93aa419595dceeb7062292e09406b4e2a63b96e1",
+      "downloadLocation": "https://github.com/anthropics/anthropic-sdk-php/blob/93aa419595dceeb7062292e09406b4e2a63b96e1/fixtures/ga/thinking.txt",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "70366a8b43b634eb1bc1e4e1fabbc7c14a8d182cca7561402ff40c07594652ef"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright 2023 Anthropic, PBC.",
+      "homepage": "https://github.com/anthropics/anthropic-sdk-php",
+      "primaryPackagePurpose": "SOURCE",
+      "comment": "Batch121/R197: official published response-body test asset, independently verified source blob b6d1f6575606504542fd59bf55b8ef6cbeaa7731 / 1609 bytes and deterministic extraction. Local fixture fixtures/provider/anthropic-messages-thinking-stream.sse: 1415 bytes, SHA-256 d5cf8f848dd95e809110c93c7531d3689331f52a92f0722211ca5c71bbff23d8. Fixed source and extraction have identical response bytes. Production AnthropicProvider/SafeDialer offline loopback replay; no live account or billing proof. Request/identity headers excluded; retained public message/tool identifiers grant no authority. The PHP source README declares captured raw HTTP; this is publisher attribution, not an independently observed capture session. No SDK runtime dependency."
     }
   ],
   "relationships": [
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-openai-dotnet-recorded-trace",
+      "comment": "仅fixtures/provider中的OpenAI Responses消毒response-body trace；许可证与逐字节来源见NOTICE及同目录provenance。"
+    },
     {
       "spdxElementId": "SPDXRef-Package-openbot-rs",
       "relationshipType": "DEPENDS_ON",
@@ -1462,6 +1545,24 @@
       "relationshipType": "OTHER",
       "relatedSpdxElement": "SPDXRef-Package-crabcode-reuse-ts-agent-mcp",
       "comment": "复用候选；当前无授权，默认走 clean-room 重写。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-ag-ui-core-schema-0-0-57",
+      "comment": "Test-only official AG-UI schema and synthetic protocol corpus; not linked into production."
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-anthropic-go-recorded-trace",
+      "comment": "仅对应fixtures/provider中的公开response body测试夹具；许可与提取规则见NOTICE及一对一provenance，不进入生产provider请求。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-anthropic-php-recorded-trace",
+      "comment": "仅对应fixtures/provider中的公开response body测试夹具；许可与提取规则见NOTICE及一对一provenance，不进入生产provider请求。"
     }
   ]
 }

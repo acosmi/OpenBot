@@ -10,14 +10,32 @@ use openbot_application::{McpOAuthCallbackInput, McpOAuthCallbackOutcome};
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
 use openbot_contracts::mcp::{
-    McpConnectionDisconnected, McpConnections, McpOAuthAuthorization, McpOAuthClientRegistered,
-    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
+    GrantedPlugins, McpAdminPage, McpConnectionDisconnected, McpConnections,
+    McpCuratedServerSelection, McpCustomServerRegistration, McpOAuthAuthorization,
+    McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
+    McpServerRemoved, PluginGrantKind, PluginGrantMutation, PluginMutationAcknowledged,
+    PluginSkillMutation, PluginSkills,
 };
 use serde::Deserialize;
 
 use crate::auth::{Authenticated, OriginAuthenticated, SensitiveAuthenticated};
 use crate::error::HttpError;
 use crate::http::ServerState;
+
+/// `GET /api/plugins`; one typed deployment/actor projection shared with Desktop.
+pub async fn list_get(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+) -> Result<(HeaderMap, Json<McpAdminPage>), HttpError> {
+    match state
+        .application()
+        .execute(auth, AppCommand::ListMcpAdminPage)
+        .await?
+    {
+        AppReply::McpAdminPage(page) => Ok((no_store_headers(), Json(page))),
+        _ => Err(application_contract_error()),
+    }
+}
 
 /// `GET /api/plugins/connections`.
 pub async fn connections_get(
@@ -122,12 +140,8 @@ pub async fn servers_oauth_client_post(
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 /// Closed curated-server request; endpoint/vendor/transport are not caller-controlled.
-pub struct AddCuratedServerBody {
-    key: String,
-}
+pub type AddCuratedServerBody = McpCuratedServerSelection;
 
 /// `POST /api/plugins/servers`; the request selects a reviewed key and can never supply a URL.
 pub async fn servers_post(
@@ -156,6 +170,56 @@ pub async fn servers_post(
     }
 }
 
+/// `POST /api/plugins/servers/custom`; exact CIDRs are explicit admin authority, not hostnames.
+pub async fn servers_custom_post(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    body: Result<Json<McpCustomServerRegistration>, JsonRejection>,
+) -> Result<(HeaderMap, Json<McpServerMutation>), HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    let Json(registration) = body.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "custom MCP server body 解析失败");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(
+            resolved.into_context(),
+            AppCommand::AddCustomMcpServer(registration),
+        )
+        .await?
+    {
+        AppReply::McpServerMutation(receipt) => Ok((no_store_headers(), Json(receipt))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `DELETE /api/plugins/servers/{id}`; grant and credential retirement is one DB transaction.
+pub async fn servers_delete(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+) -> Result<(HeaderMap, Json<McpServerRemoved>), HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    match state
+        .application()
+        .execute(
+            resolved.into_context(),
+            AppCommand::RemoveMcpServer { server_id },
+        )
+        .await?
+    {
+        AppReply::McpServerRemoved(receipt) => Ok((no_store_headers(), Json(receipt))),
+        _ => Err(application_contract_error()),
+    }
+}
+
 /// `POST /api/plugins/servers/{id}/refresh`; Drive is static and needs no personal token.
 pub async fn servers_refresh_post(
     State(state): State<ServerState>,
@@ -175,6 +239,140 @@ pub async fn servers_refresh_post(
         .await?
     {
         AppReply::McpServerMutation(receipt) => Ok(Json(receipt)),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/plugins/skills`; personal skills need origin, deployment skills also need admin.
+pub async fn skills_post(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    body: Result<Json<PluginSkillMutation>, JsonRejection>,
+) -> Result<(HeaderMap, Json<PluginSkills>), HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    let Json(mutation) = body.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "plugin skill body 解析失败");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(
+            resolved.into_context(),
+            AppCommand::SavePluginSkill(mutation),
+        )
+        .await?
+    {
+        AppReply::PluginSkills(skills) => Ok((no_store_headers(), Json(skills))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `DELETE /api/plugins/skills/{slug}`; ownership is resolved behind the typed port.
+pub async fn skills_delete(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+) -> Result<(HeaderMap, Json<PluginMutationAcknowledged>), HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    match state
+        .application()
+        .execute(
+            resolved.into_context(),
+            AppCommand::RemovePluginSkill { slug },
+        )
+        .await?
+    {
+        AppReply::PluginMutationAcknowledged(receipt) => Ok((no_store_headers(), Json(receipt))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `POST /api/plugins/grants`; one fresh guard covers admin MCP and personal skill grants.
+pub async fn grants_post(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    body: Result<Json<PluginGrantMutation>, JsonRejection>,
+) -> Result<(HeaderMap, Json<PluginMutationAcknowledged>), HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    let Json(mutation) = body.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "plugin grant body 解析失败");
+        AppError::MalformedPayload { field: "body" }
+    })?;
+    match state
+        .application()
+        .execute(resolved.into_context(), AppCommand::GrantPlugin(mutation))
+        .await?
+    {
+        AppReply::PluginMutationAcknowledged(receipt) => Ok((no_store_headers(), Json(receipt))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Closed query for `DELETE /api/plugins/grants`.
+pub struct GrantDeleteQuery {
+    kind: PluginGrantKind,
+    #[serde(rename = "ref")]
+    reference: String,
+    agent_id: String,
+}
+
+/// `DELETE /api/plugins/grants`; fresh authorization precedes typed application dispatch.
+pub async fn grants_delete(
+    State(state): State<ServerState>,
+    SensitiveAuthenticated(resolved): SensitiveAuthenticated,
+    headers: HeaderMap,
+    query: Result<Query<GrantDeleteQuery>, QueryRejection>,
+) -> Result<(HeaderMap, Json<PluginMutationAcknowledged>), HttpError> {
+    state
+        .authorize_fresh_origin_write(&resolved, request_origin(&headers))
+        .await?;
+    let Query(query) = query.map_err(|rejection| {
+        tracing::debug!(rejection = %rejection, "plugin grant query 解析失败");
+        AppError::MalformedPayload { field: "query" }
+    })?;
+    let mutation = PluginGrantMutation {
+        kind: query.kind,
+        reference: query.reference,
+        agent_id: query.agent_id,
+    };
+    match state
+        .application()
+        .execute(resolved.into_context(), AppCommand::RevokePlugin(mutation))
+        .await?
+    {
+        AppReply::PluginMutationAcknowledged(receipt) => Ok((no_store_headers(), Json(receipt))),
+        _ => Err(application_contract_error()),
+    }
+}
+
+/// `GET /api/plugins/for/{agent_id}`; visibility and actor credential scope are authoritative.
+pub async fn for_agent_get(
+    State(state): State<ServerState>,
+    Authenticated(auth): Authenticated,
+    Path(agent_id): Path<String>,
+) -> Result<(HeaderMap, Json<GrantedPlugins>), HttpError> {
+    match state
+        .application()
+        .execute(
+            auth,
+            AppCommand::ListPluginsForAgent {
+                agent_id: openbot_contracts::ids::BotId::new(agent_id),
+            },
+        )
+        .await?
+    {
+        AppReply::GrantedPlugins(plugins) => Ok((no_store_headers(), Json(plugins))),
         _ => Err(application_contract_error()),
     }
 }
@@ -300,11 +498,19 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum Call {
         List(ActorId),
+        AdminPage(ActorId),
         Begin(ActorId, String, McpOAuthReturnTo),
         Disconnect(ActorId, String),
         Register(ActorId, String),
         Add(ActorId, String),
+        AddCustom(ActorId, String, Vec<String>),
+        Remove(ActorId, String),
         Refresh(ActorId, String),
+        SaveSkill(ActorId, String, bool),
+        RemoveSkill(ActorId, String),
+        Grant(ActorId, String, String),
+        Revoke(ActorId, String, String),
+        ForAgent(ActorId, String),
     }
 
     #[derive(Clone, Default)]
@@ -332,6 +538,23 @@ mod tests {
                 redirect_uri: Some(
                     "https://api.example.test/api/plugins/oauth/callback".to_owned(),
                 ),
+            })
+        }
+
+        async fn list_admin_page(
+            &self,
+            auth: &AuthContext,
+        ) -> Result<McpAdminPage, McpConnectionError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(Call::AdminPage(auth.actor().clone()));
+            Ok(McpAdminPage {
+                catalogue: Vec::new(),
+                bots_may_call_back: false,
+                servers: Vec::new(),
+                skills: Vec::new(),
+                redirect_uri: None,
             })
         }
 
@@ -396,6 +619,36 @@ mod tests {
             })
         }
 
+        async fn add_custom_server(
+            &self,
+            auth: &AuthContext,
+            registration: &McpCustomServerRegistration,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            self.calls.lock().unwrap().push(Call::AddCustom(
+                auth.actor().clone(),
+                registration.id.clone(),
+                registration.egress_allow_cidrs.clone(),
+            ));
+            Ok(McpServerMutation {
+                server_id: registration.id.clone(),
+                catalog_generation: 1,
+                tool_count: 2,
+                suspended_grants: 0,
+            })
+        }
+
+        async fn remove_server(
+            &self,
+            auth: &AuthContext,
+            server_id: &str,
+        ) -> Result<McpServerRemoved, McpConnectionError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(Call::Remove(auth.actor().clone(), server_id.to_owned()));
+            Ok(McpServerRemoved::success())
+        }
+
         async fn refresh_server(
             &self,
             auth: &AuthContext,
@@ -410,6 +663,68 @@ mod tests {
                 catalog_generation: 2,
                 tool_count: 4,
                 suspended_grants: 0,
+            })
+        }
+
+        async fn save_skill(
+            &self,
+            auth: &AuthContext,
+            mutation: &PluginSkillMutation,
+        ) -> Result<PluginSkills, McpConnectionError> {
+            self.calls.lock().unwrap().push(Call::SaveSkill(
+                auth.actor().clone(),
+                mutation.slug.clone(),
+                mutation.deployment_wide,
+            ));
+            Ok(PluginSkills { skills: Vec::new() })
+        }
+
+        async fn remove_skill(
+            &self,
+            auth: &AuthContext,
+            slug: &str,
+        ) -> Result<PluginMutationAcknowledged, McpConnectionError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(Call::RemoveSkill(auth.actor().clone(), slug.to_owned()));
+            Ok(PluginMutationAcknowledged::success())
+        }
+
+        async fn set_grant(
+            &self,
+            auth: &AuthContext,
+            mutation: &PluginGrantMutation,
+            enabled: bool,
+        ) -> Result<PluginMutationAcknowledged, McpConnectionError> {
+            self.calls.lock().unwrap().push(if enabled {
+                Call::Grant(
+                    auth.actor().clone(),
+                    mutation.reference.clone(),
+                    mutation.agent_id.clone(),
+                )
+            } else {
+                Call::Revoke(
+                    auth.actor().clone(),
+                    mutation.reference.clone(),
+                    mutation.agent_id.clone(),
+                )
+            });
+            Ok(PluginMutationAcknowledged::success())
+        }
+
+        async fn list_for_agent(
+            &self,
+            auth: &AuthContext,
+            agent_id: &openbot_contracts::ids::BotId,
+        ) -> Result<GrantedPlugins, McpConnectionError> {
+            self.calls.lock().unwrap().push(Call::ForAgent(
+                auth.actor().clone(),
+                agent_id.as_str().to_owned(),
+            ));
+            Ok(GrantedPlugins {
+                tools: Vec::new(),
+                skills: Vec::new(),
             })
         }
     }
@@ -605,6 +920,170 @@ mod tests {
                 Call::Disconnect(ActorId::new("actor"), "notes".to_owned())
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn admin_registry_routes_are_typed_no_store_and_guard_before_custom_body_parse() {
+        let connections = FakeConnections::default();
+        let page = send(
+            registration_app(connections.clone()),
+            Method::GET,
+            "/api/plugins",
+            None,
+        )
+        .await;
+        assert_eq!(page.status(), StatusCode::OK);
+        assert_eq!(page.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+
+        let forbidden = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/servers/custom",
+            None,
+            "{",
+        )
+        .await;
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+        let malformed = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/servers/custom",
+            Some("https://app.example.test"),
+            r#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp","host":"forbidden"}"#,
+        )
+        .await;
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        let added = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/servers/custom",
+            Some("https://app.example.test"),
+            r#"{"id":"private-notes","title":"Private notes","url":"https://notes.example/mcp","egressAllowCidrs":["10.0.0.0/8"]}"#,
+        )
+        .await;
+        assert_eq!(added.status(), StatusCode::OK);
+        assert_eq!(added.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+        let removed = send(
+            registration_app(connections.clone()),
+            Method::DELETE,
+            "/api/plugins/servers/private-notes",
+            Some("https://app.example.test"),
+        )
+        .await;
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(removed.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+        assert_eq!(
+            connections.calls.lock().unwrap().as_slice(),
+            [
+                Call::AdminPage(ActorId::new("actor")),
+                Call::AddCustom(
+                    ActorId::new("actor"),
+                    "private-notes".to_owned(),
+                    vec!["10.0.0.0/8".to_owned()]
+                ),
+                Call::Remove(ActorId::new("actor"), "private-notes".to_owned())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_grant_and_for_agent_routes_are_closed_fresh_and_typed() {
+        let connections = FakeConnections::default();
+        let blocked = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/skills",
+            None,
+            "{",
+        )
+        .await;
+        assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+        let malformed = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/skills",
+            Some("https://app.example.test"),
+            r#"{"slug":"standup","title":"Standup","instructions":"Summarize.","owner":"forged"}"#,
+        )
+        .await;
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        let saved = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/skills",
+            Some("https://app.example.test"),
+            r#"{"slug":"standup","title":"Standup","instructions":"Summarize.","global":true}"#,
+        )
+        .await;
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(saved.headers()[CACHE_CONTROL], "no-store");
+        let granted = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/grants",
+            Some("https://app.example.test"),
+            r#"{"kind":"mcp","ref":"notes/search","agentId":"bot-1"}"#,
+        )
+        .await;
+        assert_eq!(granted.status(), StatusCode::OK);
+        let revoked = send(
+            registration_app(connections.clone()),
+            Method::DELETE,
+            "/api/plugins/grants?kind=mcp&ref=notes%2Fsearch&agentId=bot-1",
+            Some("https://app.example.test"),
+        )
+        .await;
+        assert_eq!(revoked.status(), StatusCode::OK);
+        let duplicate_query = send(
+            registration_app(connections.clone()),
+            Method::DELETE,
+            "/api/plugins/grants?kind=mcp&ref=notes%2Fsearch&ref=forged&agentId=bot-1",
+            Some("https://app.example.test"),
+        )
+        .await;
+        assert_eq!(duplicate_query.status(), StatusCode::BAD_REQUEST);
+        let for_agent = send(
+            registration_app(connections.clone()),
+            Method::GET,
+            "/api/plugins/for/bot-1",
+            None,
+        )
+        .await;
+        assert_eq!(for_agent.status(), StatusCode::OK);
+        assert_eq!(for_agent.headers()[CACHE_CONTROL], "no-store");
+        let removed = send(
+            registration_app(connections.clone()),
+            Method::DELETE,
+            "/api/plugins/skills/standup",
+            Some("https://app.example.test"),
+        )
+        .await;
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(
+            connections.calls.lock().unwrap().as_slice(),
+            [
+                Call::SaveSkill(ActorId::new("actor"), "standup".to_owned(), true),
+                Call::Grant(
+                    ActorId::new("actor"),
+                    "notes/search".to_owned(),
+                    "bot-1".to_owned()
+                ),
+                Call::Revoke(
+                    ActorId::new("actor"),
+                    "notes/search".to_owned(),
+                    "bot-1".to_owned()
+                ),
+                Call::ForAgent(ActorId::new("actor"), "bot-1".to_owned()),
+                Call::RemoveSkill(ActorId::new("actor"), "standup".to_owned())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn unused_legacy_browser_tool_call_route_is_intentionally_not_mounted() {
+        let connections = FakeConnections::default();
+        let response = send_body(
+            registration_app(connections.clone()),
+            "/api/plugins/call",
+            Some("https://app.example.test"),
+            r#"{"ref":"notes/search","args":{"query":"private"},"agentId":"bot-1"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(connections.calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

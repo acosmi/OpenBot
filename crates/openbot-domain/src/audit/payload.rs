@@ -327,8 +327,22 @@ pub enum AuditFact {
     NewRole(AuditLabel),
     /// people 访问状态变更后的 revoked 值。
     AccessRevoked(bool),
+    /// Closed configuration mutation, such as `plugin_granted`; never remote or user prose.
+    ConfigurationChange(AuditLabel),
     /// 被退役 credential 的权威 owner 标识；只记 owner id，不记 token/密文。
     CredentialOwner(AuditIdentifier),
+    /// Closed credential storage kind, never caller prose.
+    CredentialKind(AuditLabel),
+    /// Public provider identifier from the validated credential row.
+    CredentialProvider(AuditIdentifier),
+    /// Public configuration reference; never key material.
+    CredentialKeyReference(AuditIdentifier),
+    /// Digest of a valid legacy/configuration reference too long for a plain audit identifier.
+    CredentialKeyReferenceHash(Sha256Digest),
+    /// Byte count paired with the long configuration-reference digest, never secret length.
+    CredentialKeyReferenceBytes(u64),
+    /// Retired predecessor identity in an atomic credential replacement.
+    PreviousCredential(AuditIdentifier),
     /// credential 撤销原因的封闭分类。
     RevocationReason(AuditLabel),
     /// vendor 侧授权是否已经确认撤销；本地退役不能把 `false` 说成 `true`。
@@ -411,7 +425,14 @@ impl AuditFact {
             Self::PreviousRole(_) => "previous_role",
             Self::NewRole(_) => "new_role",
             Self::AccessRevoked(_) => "access_revoked",
+            Self::ConfigurationChange(_) => "change",
             Self::CredentialOwner(_) => "credential_owner",
+            Self::CredentialKind(_) => "kind",
+            Self::CredentialProvider(_) => "provider",
+            Self::CredentialKeyReference(_) => "keyId",
+            Self::CredentialKeyReferenceHash(_) => "key_id_hash",
+            Self::CredentialKeyReferenceBytes(_) => "key_id_bytes",
+            Self::PreviousCredential(_) => "previousCredentialId",
             Self::RevocationReason(_) => "revocation_reason",
             Self::VendorRevoked(_) => "vendor_revoked",
             Self::ComputerGeneration(_) => "computer_generation",
@@ -444,9 +465,13 @@ impl AuditFact {
             | Self::ApprovalId(value)
             | Self::PolicyVersion(value)
             | Self::RefusedByRule(value)
-            | Self::CredentialOwner(value) => Value::String(value.as_str().to_owned()),
+            | Self::CredentialOwner(value)
+            | Self::CredentialProvider(value)
+            | Self::CredentialKeyReference(value)
+            | Self::PreviousCredential(value) => Value::String(value.as_str().to_owned()),
             Self::AgentEndpointOrigin(value) => Value::String(value.as_str().to_owned()),
             Self::EffectClass(label)
+            | Self::CredentialKind(label)
             | Self::ComponentReads(label)
             | Self::ComponentKind(label)
             | Self::TargetKind(label)
@@ -455,13 +480,14 @@ impl AuditFact {
             | Self::CommitState(label)
             | Self::PreviousRole(label)
             | Self::NewRole(label)
+            | Self::ConfigurationChange(label)
             | Self::RevocationReason(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
             | Self::SandboxRequirement(label) => Value::String(label.as_str().to_owned()),
-            Self::CanonicalArgsHash(digest) | Self::SchemaHash(digest) => {
-                Value::String(digest.to_hex())
-            }
+            Self::CanonicalArgsHash(digest)
+            | Self::SchemaHash(digest)
+            | Self::CredentialKeyReferenceHash(digest) => Value::String(digest.to_hex()),
             Self::EffectDowngraded(value)
             | Self::ParallelSafe(value)
             | Self::AccessRevoked(value)
@@ -470,6 +496,7 @@ impl AuditFact {
             | Self::RoutingViaMention(value)
             | Self::OutputTruncated(value) => Value::Bool(*value),
             Self::ComputerGeneration(value)
+            | Self::CredentialKeyReferenceBytes(value)
             | Self::CatalogGeneration(value)
             | Self::DocumentGeneration(value)
             | Self::ComponentRevision(value)
@@ -527,9 +554,13 @@ impl AuditFact {
             | Self::ApprovalId(value)
             | Self::PolicyVersion(value)
             | Self::RefusedByRule(value)
-            | Self::CredentialOwner(value) => writer.str(value.as_str()),
+            | Self::CredentialOwner(value)
+            | Self::CredentialProvider(value)
+            | Self::CredentialKeyReference(value)
+            | Self::PreviousCredential(value) => writer.str(value.as_str()),
             Self::AgentEndpointOrigin(value) => writer.str(value.as_str()),
             Self::EffectClass(label)
+            | Self::CredentialKind(label)
             | Self::ComponentReads(label)
             | Self::ComponentKind(label)
             | Self::TargetKind(label)
@@ -538,11 +569,14 @@ impl AuditFact {
             | Self::CommitState(label)
             | Self::PreviousRole(label)
             | Self::NewRole(label)
+            | Self::ConfigurationChange(label)
             | Self::RevocationReason(label)
             | Self::Idempotency(label)
             | Self::ApprovalClass(label)
             | Self::SandboxRequirement(label) => writer.str(label.as_str()),
-            Self::CanonicalArgsHash(digest) | Self::SchemaHash(digest) => writer.digest(digest),
+            Self::CanonicalArgsHash(digest)
+            | Self::SchemaHash(digest)
+            | Self::CredentialKeyReferenceHash(digest) => writer.digest(digest),
             Self::EffectDowngraded(value)
             | Self::ParallelSafe(value)
             | Self::AccessRevoked(value)
@@ -551,6 +585,7 @@ impl AuditFact {
             | Self::RoutingViaMention(value)
             | Self::OutputTruncated(value) => writer.bool(*value),
             Self::ComputerGeneration(value)
+            | Self::CredentialKeyReferenceBytes(value)
             | Self::CatalogGeneration(value)
             | Self::DocumentGeneration(value)
             | Self::ComponentRevision(value)
@@ -588,6 +623,12 @@ impl AuditFact {
 /// `ledger_has_no_orphan_entries`（台账 → 变体）、
 /// `field_ledger_is_disjoint_from_upstream_sensitive_keys`（台账 → 上游敏感键黑名单）。
 pub const AUDIT_FIELD_LEDGER: &[&str] = &[
+    "kind",
+    "provider",
+    "keyId",
+    "key_id_hash",
+    "key_id_bytes",
+    "previousCredentialId",
     "tool_name",
     "function",
     "reads",
@@ -614,6 +655,7 @@ pub const AUDIT_FIELD_LEDGER: &[&str] = &[
     "previous_role",
     "new_role",
     "access_revoked",
+    "change",
     "credential_owner",
     "revocation_reason",
     "vendor_revoked",
@@ -796,7 +838,14 @@ mod tests {
             AuditFact::PreviousRole(AuditLabel::new("user")),
             AuditFact::NewRole(AuditLabel::new("admin")),
             AuditFact::AccessRevoked(true),
+            AuditFact::ConfigurationChange(AuditLabel::new("plugin_granted")),
             AuditFact::CredentialOwner(identifier("person-1")),
+            AuditFact::CredentialKind(AuditLabel::new("model")),
+            AuditFact::CredentialProvider(identifier("openai")),
+            AuditFact::CredentialKeyReference(identifier("primary")),
+            AuditFact::CredentialKeyReferenceHash(Sha256Digest::of(b"long-reference")),
+            AuditFact::CredentialKeyReferenceBytes(1024),
+            AuditFact::PreviousCredential(identifier("credential-old")),
             AuditFact::RevocationReason(AuditLabel::new("person_removed")),
             AuditFact::VendorRevoked(false),
             AuditFact::ComputerGeneration(3),
