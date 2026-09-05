@@ -1,0 +1,292 @@
+{
+  "schema": "openbot-windows-engine-runtime-audit",
+  "schema_version": 2,
+  "task": "E",
+  "recorded_at": "2026-09-05",
+  "timezone": "America/Los_Angeles",
+  "registered_in_central_manifest": false,
+  "note": "Historical executor report from R196 / epoch 4. Local review runs are recorded separately. No full Windows, P1, Alpha, or release acceptance.",
+  "host": {
+    "os_caption": "Microsoft Windows 11 Home China",
+    "os_version": "10.0.26200",
+    "os_build": "26200",
+    "os_architecture": "64-bit",
+    "processor_architecture": "AMD64",
+    "native_run": true,
+    "wsl_or_wine": false,
+    "rustc": "1.98.0 (88d9e12ae 2026-08-18)",
+    "rustc_host": "x86_64-pc-windows-msvc",
+    "rustc_llvm": "22.1.8",
+    "toolchain_file_pin": "1.98.0",
+    "git": "2.53.0.windows.3"
+  },
+  "baseline": {
+    "branch": "feat/2026-09-04-P1-windows-runtime-audit",
+    "handoff_base": "de8d0ecc7d71e88e41e9b3b6bf7884c9d89c53fd",
+    "code_baseline_r196": "87d84bb85d0056dfa4dcc2b35be4c2a610a55ae3",
+    "grok_tree": "86f5a85f560f721677fa7e587a67ac0ffc036cb5",
+    "handoff_base_to_r196_changed_files": [
+      "docs/2026-09-04-E任务Windows远程交接.md",
+      "docs/2026-09-04-v4外部任务E-Windows真机Engine验收.md",
+      "docs/2026-09-04-v4第二轮外派任务-总则.md"
+    ]
+  },
+  "engine_artifacts": {
+    "platform": "windows-x64",
+    "electron_version": "43.3.0",
+    "release_epoch": 4,
+    "protocol_version": 4,
+    "archive_asset": "electron-v43.3.0-win32-x64.zip",
+    "archive_sha256": "18528bedc6a9b04bdc5efb7b803cbc3cb0e5ea6415d54046e23d464d89a00da9",
+    "archive_sha256_matches_engine_pins": true,
+    "version_probe_stdout": "v43.3.0",
+    "bundle_manifest_sha256": "857f1490b1841b6839fc092742e1eb9730330f2b104534f002975af154041ac6",
+    "executable": "acosmi-engine-fixture.exe",
+    "executable_sha256": "6a205cc474e151893422f36f474b593708f68efd31746fb1b87ccb0d4a7587ee",
+    "app_asar_bytes": 30069,
+    "app_asar_sha256": "3141a5521ea819a21ee4e8b8f93948af6ca2baa11d4f458f05653672c5f5e11f",
+    "asar_header_sha256": "d795c804b80b9ac20f3c40ebc44dc61fe423cbee1e03c1c3ce95c2bfa6f926d1",
+    "asar_header_sha256_matches_macos_record": true,
+    "fuse_wire": "000011001",
+    "fuse_sentinels": 1,
+    "protocol_descriptor_sha256": "a2bd3a3978a650e199294437aba1661c7bb0ed0c8861ade85a09ff9a49a1252c",
+    "shim_files": 3,
+    "shim_non_empty_loc": 595,
+    "shim_loc_ceiling": 600,
+    "package_json_outside_grok_bot": 1
+  },
+  "commands": [
+    {
+      "command": "cargo xtask engine fetch",
+      "exit_code": 0,
+      "result": "downloaded and installed windows-x64; sha256 equals the engine pin; --version=v43.3.0"
+    },
+    {
+      "command": "cargo xtask engine bundle",
+      "exit_code": 0,
+      "result": "first real windows-x64 bundle; PE Integrity/ElectronAsar resource written and read back inside the same run"
+    },
+    {
+      "command": "cargo xtask engine verify",
+      "exit_code": 0,
+      "result": "raw archive + --version + bundle verify including the PE resource round trip"
+    },
+    {
+      "command": "cargo xtask engine protocol --check",
+      "exit_code": 0,
+      "result": "version=4"
+    },
+    {
+      "command": "cargo xtask electron-shim-check",
+      "exit_code": 0,
+      "result": "files=3; non-empty LOC=595/600; protocol hash match"
+    },
+    {
+      "command": "cargo test -p openbot-windows-sandbox --locked -- --nocapture",
+      "exit_code": 0,
+      "passed": 5,
+      "failed": 0,
+      "ignored": 3
+    },
+    {
+      "command": "cargo test -p openbot-windows-sandbox --locked restricted_write_process_writes_profile_but_not_medium_outside -- --ignored --nocapture",
+      "exit_code": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "cargo test -p openbot-windows-sandbox --locked restricted_write_process_cannot_open_the_nul_device -- --ignored --nocapture",
+      "exit_code": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "cargo test -p openbot-computer --locked",
+      "exit_code": 0,
+      "lib": "66/0/0",
+      "engine_conformance": "5/0/3 ignored"
+    },
+    {
+      "command": "cargo test -p openbot-computer --test engine_conformance --locked -- --include-ignored --nocapture --test-threads=1",
+      "exit_code": 101,
+      "passed": 5,
+      "failed": 3,
+      "ignored": 0
+    },
+    {
+      "command": "cargo clippy -p openbot-windows-sandbox -p openbot-computer --all-targets --locked -- -D warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo clippy -p openbot-testkit --features xtask --bin xtask --locked -- -D warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo fmt --all --check",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo xtask parity-check",
+      "exit_code": 0,
+      "result": "0 violations after fetching the read-only origin/main ref; parity 886/826/1712, fixtures 35/20/55, overlay carry=1234 revalidate=470 split=2 superseded=6"
+    },
+    {
+      "command": "cargo xtask recount",
+      "exit_code": 0,
+      "result": "71 passed / 0 mismatched / 89 skipped without OPENBOT_UPSTREAM_DIR"
+    },
+    {
+      "command": "cargo xtask grok-inventory --check",
+      "exit_code": 0,
+      "result": "files=2110; tree unchanged"
+    }
+  ],
+  "conformance_cases": [
+    {
+      "name": "demand_fixture_keeps_protocol_and_production_boundary_explicit",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "engine_input_fixture_locks_protocol_and_unfinished_platform_boundaries",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "screencast_fixture_locks_ack_order_latest_buffer_and_remaining_screen_boundary",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "screen_hub_fixture_locks_ticket_and_production_transport_boundary",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "screen_coordinate_fixture_locks_units_journeys_and_hardware_boundary",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "browser_role_start_frame_stop_has_no_debug_listener_or_orphan",
+      "outcome": "failed",
+      "kind": "real-electron",
+      "error": "launch + peer credential + ready: ConnectTimeout",
+      "reported_cause": "nul-device-denied-under-write-restricted-token"
+    },
+    {
+      "name": "component_role_start_frame_stop_has_no_debug_listener_or_orphan",
+      "outcome": "failed",
+      "kind": "real-electron",
+      "error": "launch + peer credential + ready: ConnectTimeout",
+      "reported_cause": "nul-device-denied-under-write-restricted-token"
+    },
+    {
+      "name": "both_roles_pause_on_last_viewer_and_resume_the_same_document",
+      "outcome": "failed",
+      "kind": "real-electron",
+      "error": "engine: ConnectTimeout",
+      "reported_cause": "nul-device-denied-under-write-restricted-token"
+    }
+  ],
+  "findings": [
+    {
+      "id": "E-1",
+      "severity": "blocker",
+      "layer": "R127 restricted token vs Electron 43",
+      "summary": "The executor reports a fatal NUL check before the shim runs. All three real Engine cases returned ConnectTimeout.",
+      "child_stderr": "[FATAL:electron\\shell\\common\\node_bindings.cc:735] Unable to open nul device needed for initialization,aborting startup. As a workaround, try starting with --no-stdio-init",
+      "mechanism": "Hypothesis consistent with documented WRITE_RESTRICTED semantics and Electron IsNulDeviceEnabled; device ACL and effective token were not independently supplied as reproducible evidence.",
+      "negative_control": "restricted child: `echo x>nul && echo allowed>profile\\allowed.txt` leaves allowed.txt absent",
+      "positive_control": "unrestricted token, same shell and line: exit 0 and the file is created",
+      "not_reproduced_by": "stdio validity - the abort persists when all three std handles are real files rather than NUL handles",
+      "rejected_workaround": "The executor reports ConnectTimeout with --no-stdio-init. Its exact effect on inherited stdin was not measured independently; no production flag change is accepted.",
+      "fixed_in_this_task": false,
+      "escalated": true,
+      "reproduction": "cargo test -p openbot-windows-sandbox --locked restricted_write_process_cannot_open_the_nul_device -- --ignored --nocapture"
+    },
+    {
+      "id": "E-2",
+      "severity": "test-harness",
+      "layer": "openbot-windows-sandbox boundary probe",
+      "summary": "The restricted-token ACL negative control never executed: its argv[0] was built as System32/cmd.exe with a forward slash, which cmd.exe reads as a switch and rejects with `The syntax of the command is incorrect.` before any access check.",
+      "fixed_in_this_task": true
+    },
+    {
+      "id": "E-3",
+      "severity": "test-harness",
+      "layer": "openbot-windows-sandbox boundary probe",
+      "summary": "The same probe passed cmd.exe a command string quoted for CommandLineToArgvW; cmd.exe /S strips only the outer quote pair, so the CRT backslash escape landed inside the redirection target.",
+      "fixed_in_this_task": true
+    },
+    {
+      "id": "E-4",
+      "severity": "test-harness",
+      "layer": "openbot-windows-sandbox boundary probe",
+      "summary": "The probe asserted the profile file contains `allowed\\r\\n` while the command line put a space before `&`, which cmd.exe echoes, so the assertion could not have held even with a valid command line.",
+      "fixed_in_this_task": true
+    },
+    {
+      "id": "E-5",
+      "severity": "procedure",
+      "layer": "handoff",
+      "summary": "The handoff clone command is --single-branch, so neither origin/main nor main resolves and cargo xtask parity-check fails on the v4 overlay diff target rather than on ledger content.",
+      "workaround_used": "git fetch origin main:refs/remotes/origin/main, which adds a read-only remote ref and moves neither HEAD nor the branch",
+      "fixed_in_this_task": false
+    }
+  ],
+  "not_claimed": [
+    "Windows two-role conformance",
+    "renderer OS sandbox state on Windows",
+    "main/renderer creation-time binding at runtime on Windows",
+    "renderer Job membership at runtime on Windows",
+    "process-tree TCP LISTEN=0 on Windows",
+    "post-shutdown process-tree and profile-lock cleanup on Windows",
+    "kernel network or executable-path allowlist",
+    "native Desktop product journey",
+    "signed release or Authenticode",
+    "Windows golden screenshots",
+    "Credential Manager real-machine round trip (its ignored test is outside this task's stated scope and writes to the operator's own credential store)"
+  ],
+  "sandbox_fidelity": "Degraded",
+  "evidence_origin": "external_executor_report_not_independently_replayed_on_windows",
+  "review": {
+    "candidate_commit": "6c4cb00863dd669219deb7c636cdd920079327fc",
+    "integration_base": "ec7a6c425713e10d15e1f81f4325328858945476",
+    "candidate_report_sha256": "ec35a72c479549ec2098ddd9942c9e7030aa51f6d83a2bac1390345813047a74",
+    "candidate_json_sha256": "02336f8f7fa117211cd88fb7167e113e87756716ef85b32e87084ca3eb1d1f0a",
+    "production_windows_code_changed": false,
+    "r199_environment_isolation_preserved": true,
+    "new_paired_probes_rerun_on_windows": false,
+    "windows_engine_conformance_passed": false,
+    "merge_acceptance": false,
+    "status": "awaiting_windows_revalidation_and_engine_startup_repair",
+    "corrections": [
+      "NUL negative probe now requires a pre-marker, nonzero exit, and same-command unrestricted positive control.",
+      "ACL probe now requires unrestricted access to both destinations before testing restricted access.",
+      "Named-pipe test uses the current process as its own client; it does not verify an Engine peer handshake.",
+      "No-breakaway and suspended Job attachment were code observations, not runtime acceptance.",
+      "No raw Windows logs or artifact bytes were supplied in the candidate; recorded hashes alone do not verify those bytes.",
+      "Electron source confirms a NUL read/write check; exact device ACL and no-stdio-init timeout mechanism were not independently verified."
+    ],
+    "local_checks": {
+      "macos_boundary_tests": {
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0
+      },
+      "windows_cross_clippy_boundary_and_computer_all_targets": "passed",
+      "windows_native_rerun": "not_available",
+      "production_prefix_sha256": "9cd298e332804e6cfb76a4aba488bd9df349af2c3cc78eb236e8c5fe3a7e6828",
+      "parity_check": "passed_0_violations",
+      "cargo_fmt_all_check": "passed",
+      "git_diff_check": "passed"
+    }
+  }
+}

@@ -1259,6 +1259,7 @@ fn last_error() -> WindowsSandboxError {
 mod tests {
     use std::ffi::OsString;
     use std::fs;
+    use std::os::windows::process::CommandExt;
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
@@ -1328,6 +1329,7 @@ mod tests {
     #[ignore = "P1 Windows real-machine restricted-token/Job/ACL spike"]
     fn restricted_write_process_writes_profile_but_not_medium_outside() {
         let root = test_root("restricted-process");
+        fs::create_dir(&root).expect("fresh probe root");
         let profile = root.join("profile");
         let temp = root.join("temp");
         let outside = root.join("outside");
@@ -1338,13 +1340,11 @@ mod tests {
 
         let allowed = profile.join("allowed.txt");
         let escaped = outside.join("escaped.txt");
-        let command = format!(
-            "echo allowed>\"{}\" & echo escaped>\"{}\"",
-            allowed.display(),
-            escaped.display()
-        );
-        let system_root = std::env::var_os("SystemRoot").expect("SystemRoot");
-        let executable = PathBuf::from(system_root).join("System32/cmd.exe");
+        // No space may precede `&`: `cmd.exe` lifts the redirection out of the command and echoes
+        // whatever text is left, so `echo allowed>file & …` writes `allowed ` and only an exact
+        // `allowed\r\n` proves the child produced the byte content this probe claims.
+        let command = "echo allowed>profile\\allowed.txt&echo escaped>outside\\escaped.txt";
+        let executable = probe_shell();
         let policy = SpawnPolicy::new(
             &executable,
             vec![
@@ -1360,24 +1360,148 @@ mod tests {
             256 * 1024 * 1024,
         )
         .expect("policy");
-        let mut child = spawn_restricted(&policy).expect("restricted spawn");
-        drop(child.take_stdin());
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let status = loop {
-            if let Some(status) = child.try_wait().expect("wait") {
-                break status;
-            }
-            assert!(Instant::now() < deadline, "restricted child timed out");
-            std::thread::sleep(Duration::from_millis(20));
-        };
+        assert!(run_unrestricted_probe(&policy, command).success());
+        assert_eq!(
+            fs::read(&allowed).expect("control profile write"),
+            b"allowed\r\n"
+        );
+        assert_eq!(
+            fs::read(&escaped).expect("control outside write"),
+            b"escaped\r\n"
+        );
+        fs::remove_file(&allowed).expect("clear control profile marker");
+        fs::remove_file(&escaped).expect("clear control outside marker");
+        let status = run_probe_to_completion(&policy);
         assert!(!status.success(), "outside write unexpectedly succeeded");
         assert_eq!(
             fs::read_to_string(&allowed).expect("allowed write"),
             "allowed\r\n"
         );
-        assert!(!escaped.exists(), "low-integrity child wrote medium object");
-        drop(child);
+        assert!(
+            !escaped.exists(),
+            "write-restricted child wrote outside object"
+        );
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    /// Diagnostic for the reported Windows NUL redirection failure. A missing result alone is not
+    /// evidence: both runs must first write a marker, and an unrestricted control must complete
+    /// the same command. This does not inspect the device ACL or prove Electron stdin behavior.
+    #[test]
+    #[ignore = "P1 Windows minimal repro: WRITE_RESTRICTED denies the nul device Electron needs"]
+    fn restricted_write_process_cannot_open_the_nul_device() {
+        let root = test_root("restricted-nul");
+        fs::create_dir(&root).expect("fresh probe root");
+        let profile = root.join("profile");
+        let temp = root.join("temp");
+        fs::create_dir_all(&profile).expect("profile");
+        fs::create_dir_all(&temp).expect("temp");
+
+        let allowed = profile.join("allowed.txt");
+        let before = profile.join("before.txt");
+        let command =
+            "echo before>profile\\before.txt&echo x>nul&&echo allowed>profile\\allowed.txt";
+        let policy = SpawnPolicy::new(
+            probe_shell(),
+            vec![
+                OsString::from("/D"),
+                OsString::from("/S"),
+                OsString::from("/C"),
+                OsString::from(command),
+            ],
+            &root,
+            &profile,
+            &temp,
+            2,
+            256 * 1024 * 1024,
+        )
+        .expect("policy");
+        assert!(run_unrestricted_probe(&policy, command).success());
+        assert_eq!(fs::read(&before).expect("control started"), b"before\r\n");
+        assert_eq!(
+            fs::read(&allowed).expect("control completed"),
+            b"allowed\r\n"
+        );
+        fs::remove_file(&before).expect("clear control start marker");
+        fs::remove_file(&allowed).expect("clear control result marker");
+        let status = run_probe_to_completion(&policy);
+        assert!(
+            !status.success(),
+            "restricted NUL redirection unexpectedly succeeded"
+        );
+        assert_eq!(
+            fs::read(&before).expect("restricted probe started"),
+            b"before\r\n"
+        );
+        assert!(
+            !allowed.exists(),
+            "the write-restricted child opened the nul device, so the Electron blocker is gone \
+             and this reproduction must be retired together with the R127 token decision"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    /// `cmd.exe` parses its own raw command line, and `encode_command_line` leaves a separator-only
+    /// argv[0] unquoted because `CommandLineToArgvW` consumers such as the Engine executable want
+    /// it that way. A `System32/cmd.exe` built with a forward slash therefore reaches the shell as
+    /// the switch `/cmd.exe`, which rejects the whole line with `The syntax of the command is
+    /// incorrect.` before any access check runs, so every probe below must use native separators.
+    fn probe_shell() -> PathBuf {
+        let system_root = std::env::var_os("SystemRoot").expect("SystemRoot");
+        PathBuf::from(system_root).join("System32").join("cmd.exe")
+    }
+
+    /// Test-only positive control. All shell text is a fixed literal owned by these tests.
+    /// No inherited provider/DB environment, output capture, external command, or unbounded wait.
+    fn run_unrestricted_probe(policy: &SpawnPolicy, command: &str) -> std::process::ExitStatus {
+        let mut child = std::process::Command::new(&policy.executable)
+            .args(["/D", "/S", "/C"])
+            .raw_arg(command)
+            .current_dir(&policy.working_directory)
+            .env_clear()
+            .env(
+                "SystemRoot",
+                policy
+                    .executable
+                    .parent()
+                    .and_then(Path::parent)
+                    .expect("shell OS directory"),
+            )
+            .env("TEMP", &policy.temp_directory)
+            .env("TMP", &policy.temp_directory)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("unrestricted control spawn");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return status,
+                Ok(None) if Instant::now() < deadline => {}
+                result => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("unrestricted control failed to finish: {result:?}");
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// `cmd.exe /S` strips only the outer quote pair and reads the remainder literally, so probe
+    /// command strings stay quote-free and redirect relative to the policy's working directory.
+    fn run_probe_to_completion(policy: &SpawnPolicy) -> std::process::ExitStatus {
+        let mut child = spawn_restricted(policy).expect("restricted spawn");
+        drop(child.take_stdin());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().expect("wait") {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "restricted child timed out");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn test_root(label: &str) -> PathBuf {
