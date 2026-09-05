@@ -15,6 +15,10 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<()> {
     match args {
         [command] if command == "fetch" => fetch(root),
         [command] if command == "verify" => verify(root),
+        [command, flag] if command == "verify" && flag == "--release" => {
+            verify_raw(root)?;
+            crate::engine_bundle::verify_release(root)
+        }
         [command] if command == "protocol" => crate::engine_protocol::generate(root, false),
         [command, flag] if command == "protocol" && flag == "--check" => {
             crate::engine_protocol::generate(root, true)
@@ -39,7 +43,7 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<()> {
             crate::engine_runsc::run(root, Path::new(archive), sha, version, Path::new(rootfs))
         }
         _ => bail!(
-            "usage: cargo xtask engine fetch|verify|protocol [--check]|bundle|runsc-spike --archive PATH --sha256 HEX --version release-YYYYMMDD.N --rootfs PATH"
+            "usage: cargo xtask engine fetch|verify [--release]|protocol [--check]|bundle|runsc-spike --archive PATH --sha256 HEX --version release-YYYYMMDD.N --rootfs PATH"
         ),
     }
 }

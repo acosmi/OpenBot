@@ -44,10 +44,9 @@ fn demand_fixture_keeps_protocol_and_production_boundary_explicit() {
         fixture["protocol"]["version"],
         openbot_contracts::engine::ENGINE_PROTOCOL_VERSION
     );
-    assert_eq!(
-        fixture["protocol"]["releaseEpoch"],
-        openbot_contracts::engine::ENGINE_RELEASE_EPOCH
-    );
+    // This frozen demand fixture was captured with epoch 4. Wire version is unchanged; current
+    // packaging epochs are separately verified by EngineBundle and the new signing fixture.
+    assert_eq!(fixture["protocol"]["releaseEpoch"], 4);
     assert_eq!(fixture["owner"]["pendingTicketsCountAsViewers"], false);
     assert_eq!(fixture["owner"]["queueStoresAuthorityReceipt"], false);
     assert_eq!(fixture["owner"]["lastViewerPausesWithinTwoSeconds"], true);
@@ -288,14 +287,7 @@ async fn both_roles_pause_on_last_viewer_and_resume_the_same_document() {
 
 async fn run_demand_role(role: EngineRole) {
     use openbot_computer::screen::engine_owner::{ScreenEngineOwner, ScreenEngineState};
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("root");
-    let root = workspace.join(format!(
-        "target/engine/bundle/electron-43.3.0/{}",
-        bundle_platform()
-    ));
+    let root = fixture_bundle_root();
     let digest = format!(
         "{:x}",
         Sha256::digest(fs::read(root.join("manifest.json")).expect("manifest"))
@@ -731,15 +723,23 @@ fn parent_environment_present(pid: u32) -> bool {
     inherited
 }
 
-async fn run_role(role: EngineRole) {
+fn fixture_bundle_root() -> PathBuf {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
         .expect("workspace root");
-    let bundle_root = workspace.join(format!(
-        "target/engine/bundle/electron-43.3.0/{}",
-        bundle_platform()
-    ));
+    std::env::var_os("OPENBOT_ENGINE_LOADER_FIXTURE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            workspace.join(format!(
+                "target/engine/bundle/electron-43.3.0/{}",
+                bundle_platform()
+            ))
+        })
+}
+
+async fn run_role(role: EngineRole) {
+    let bundle_root = fixture_bundle_root();
     let manifest = bundle_root.join("manifest.json");
     let digest = format!(
         "{:x}",

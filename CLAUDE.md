@@ -2,7 +2,7 @@
 
 OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这一份**。本仓 **public**。
 
-> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R205，2026-09-05；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
+> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R206，2026-09-05；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
 
 ---
 
@@ -33,6 +33,7 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 - **R203固定显式技能执行**：用户有序选择slug经Rust当前授权同事务解析为独立system快照，原文/原选择/run/event/outbox共同提交；后续编辑/撤销不改历史，精确重试不增写。最多16项为新增预算，技能不增加tool权限；前端交互仍由前端窗口实施。见`docs/2026-09-05-WrokBot-显式技能执行与持久快照-后端验收.md`。
 - **R204固定macOS首发**：用户明确首版先上mac。Windows E2继续修复回传，但仅Windows/Linux未通过项不阻塞macOS首发；影响macOS共享路径的缺陷仍阻断。macOS实际支持范围逐项过A0–A7，CPU架构/系统版本按真机证据声明，全量v4及平台todo保留；见`docs/2026-09-05-WrokBot-macOS首版发布范围与阻断清单.md`。
 - **R205登记记忆数据层复用**：用户明确授权参考/复制适配CrabCode Rust记忆管理层，按固定提交只读评估并逐项登记来源、适配和测试；不改源仓、不重复问同一授权。保持本项目唯一PG/ACL和显式记忆语义；扩展能力独立规格，评估不计已实现。见`docs/2026-09-05-WrokBot-记忆数据层复用评估与台账.md`。
+- **R206固定macOS helper诊断与发行分界**：包epoch5/schema2、操作协议4；main/5helper显式hardened profile、完整hash与固定入口验证，注入拒绝与真实两role9项通过。`engine verify --release`仍拒绝诊断签名，不称安装包已可发行；helper全面执行/网络与production继续，见本批加载器验收报告。
 - 阶段进度：**Phase 0（Evidence Freeze）产物已落地** —— `parity/*.yaml`（9 份；条目数随实施推进增长，真源是各台账自己的 recount，由 `cargo xtask recount` 逐条实跑，**不在本文件钉死**）、`provenance/sources.spdx.json`、`fixtures/**`、`tools/pins.toml`、十个业务/parity 核心 crate 骨架（R127 后另有唯一 Win32 安全边界 crate）、`cargo xtask parity-check`（§19.3）。CI 必须拒绝未归类项与没有证据的 `done`。
   **G0 仍有一项未闭合**：§1.1 要求把两份输入文档原件归档到 `docs/inputs/`，仓内与本机都不存在原件，只有 SHA-256 —— 在补齐之前不得宣称 G0 通过。
 - **G1（Rust Core 与 PostgreSQL）四条判据本轮全部达成**（§24，四条缺一不可）：① 十个业务/parity 核心 crate + R127 唯一 Windows 安全边界 crate 的 locked build 绿（业务入口与 parity owner 仍只有原十个）；② 同一个 `Arc<dyn ApplicationService>` 经 Axum 与 in-process 两条 transport 结果一致（当前 `cargo test -p openbot-testkit --test transport_parity` = 8 passed，Batch30新增channel detail与port scope逐字段对拍）；③ 28 表 / 13 migration 映射对走完 13 条 migration 的真参照库逐字段相等，read checksum 168/168 行逐字节相同；④ tracing span + 关联字段 + 脱敏 + Prometheus metrics 从首个 vertical slice 生效。

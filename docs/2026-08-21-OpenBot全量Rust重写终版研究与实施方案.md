@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R205，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R206，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1083,7 +1083,7 @@ Desktop shell 只有平台 sandbox fidelity 为 `Enforced` 时才可启用高风
 R201先收紧macOS main outbound：只允许当前runtime的control.sock/frame.sock精确literal，不再允许全部UDS
 或localhost端口；真实两pipe正向、三个错误端点负向与两role Engine兼容通过。此规则只针对main，approved
 helper解除父profile继承后的网络/执行边界仍需独立验证，不冒充所有引擎只能通过gateway。未来gateway端口须
-按实际scope绑定增加精确规则；当前main无TCP allow、Engine仍epoch4内部页，production代理/导航仍未闭合。
+按实际scope绑定增加精确规则；当前main无TCP allow、Engine经R206变为包epoch5，仍只运行内部页，production代理/导航未闭合。
 
 
 Batch122/R198先落Rust gateway库（`openbot_infra::net::scope_gateway`）：每实例独立loopback端口与256-bit
@@ -1095,7 +1095,7 @@ HTTP每请求一条连接，不自动pool/retry/redirect；已发送前缀后失
 
 该库尚无production ComputerManager完整scope/generation绑定、tenant policy加载、Engine proxy bootstrap、
 Server namespace路由或kernel边界。CONNECT仅验证authority/DNS/IP/port；不检查加密内层SNI/HTTP authority/path，
-这类细粒度策略仍需额外约束和实测。不得把本机library的成功当作上述六条整体达成；Engine仍是epoch4
+这类细粒度策略仍需额外约束和实测。不得把本机library的成功当作上述六条整体达成；Engine经R206变为包epoch5，仍是
 黑洞代理/内部诊断页。IPv6按typed URL host避免错误DNS路径的修复同批回归，详见Batch122。
 
 
@@ -1178,6 +1178,14 @@ fresh、non-Clone/non-serde `AuthorizedHumanInput`在Rust重验scope/generation/
 `Page.startScreencast`/ScreenHub仍todo，R126的v1/1只作历史基线、不得再当当前wire。
 
 ### 11.3 Browser 安全配置
+
+R206（2026-09-05）补macOS诊断包的helper-loader边界：protocol保持4、release epoch升5，
+manifest schema2绑定signing_profile及5个helper的hash。runtime与打包CLI均要求固定主入口/fuse/ASAR
+布局和完整文件集合；缺失helper记录、入口替换、额外路径或字节篡改拒绝。显式hardened ad-hoc
+profile只保留JIT及诊断library-validation例外；禁用DYLD等继承例外，真实注入负向和两role兼容已测。
+`engine verify`只代表诊断包；`engine verify --release`明确拒绝当前profile，生产签名/产品身份/完整
+helper执行与网络边界未关闭。详见`docs/2026-09-05-G5-macOS-Helper加载器与发布边界-后端验收.md`。
+
 
 - 全部不可信 renderer（remote page 与 component render session）：`nodeIntegration=false`、`contextIsolation=true`、`sandbox=true`、`webSecurity=true`、`webviewTag=false`、无 preload、production 无 devtools；shim 在 `app.ready` 之前调用全局 sandbox（`app.enableSandbox()`），`--no-sandbox` / `sandbox:false` / `webviewTag:true` 在任何配置禁止（R119；参考源 `grok-bot/source/electron-main/main.ts` 三者俱全，见 §11.5，不得照搬）；
 - Browser/Component 正向测试必须证明 renderer 进程**实际** sandboxed（macOS：helper 进程 `sandbox_check` 为真；Windows：renderer token 为 AppContainer / 低完整性；Linux：`/proc/<pid>/status` `Seccomp: 2` 且 `NoNewPrivs: 1`），而不是只检查配置文本；
@@ -1610,7 +1618,8 @@ cargo deny
 cargo audit / RustSec
 cargo vet
 OSV scan（Electron shim/packaged assets）
-cargo xtask engine verify（engine-pins sha256 / --version / fuses / ASAR integrity / release epoch）
+cargo xtask engine verify（诊断包：engine-pins sha256 / --version / fuses / ASAR / helper inventory）
+cargo xtask engine verify --release（正式发行身份/签名；R206当前诊断profile必须拒绝）
 cargo xtask postgres verify-source（PGDG 17.11 source size / sha256 / tar root / COPYRIGHT / runtime常量join；R154）
 bash tools/check-postgres-key-store-dependencies.sh（Keychain/Credential Manager exact版本/checksum/build.rs/target/唯一consumer；R155）
 cargo xtask electron-shim-check（文件 allowlist / LOC ≤ 600 / API allowlist / forbidden import / 协议 hash）
@@ -2059,7 +2068,7 @@ MIT/Apache 不授予商标权。对外产品名称、bundle ID、domain、deep-l
 - Phase 0 AST 级 test inventory mapping 100%；
 - 第二次外部安全审计无 P0/P1；
 - 供应链、NOTICE、brand、runbook 全通过；
-- engine bundle：`cargo xtask engine verify` 绿（sha256 / fuses / ASAR integrity / rebrand / release epoch），Electron `autoUpdater` 禁用，零 npm（R117）；Linux Desktop tier-2 不进入签名 / 更新判据（R122）。
+- engine bundle：正式发行必须`cargo xtask engine verify --release`绿；普通`engine verify`仅诊断包校验，不满足发行判据（sha256 / fuses / ASAR / helper inventory / rebrand / release epoch；R206当前release仍红），Electron `autoUpdater` 禁用，零 npm（R117）；Linux Desktop tier-2 不进入签名 / 更新判据（R122）。
 
 上述G0–G8是v4完整发行闸门，失败只能修复后重跑，不能以“后续补齐”宣称完整发行通过。
 R191新增的受控Alpha按§24.2单独准入，不视为G0–G8通过或§25完成。
@@ -2863,6 +2872,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R203 | §9.6（2026-09-05：显式技能调用） | Skills管理/授权已落，BeginThreadRun仅接受message，指令未入runtime | 自动全量grant或拼接用户文字均不符固定上游chip→system语义，renderer任意system正文不可信 | 可选有序slug经Rust当前授权与同事务快照；保留用户原文、历史选择与精确重试，新增16项预算，不增加tool capability | PG17.11/SCRAM9通过含并发撤销锁等待；Contracts110/Application166/Server242/Desktop134与Clippy通过，Desktop3项真实宿主测试忽略；非live/非完整GUI/G4/G6，详见本批报告 |
 | R204 | §0.5 / §24.2（2026-09-05：macOS首版发布裁决） | Alpha原按平台实际通过逐腿开放，近期估算混含Windows首版 | 用户明确首版先上mac并要求修正文档 | 首发平台固定macOS，Windows E2保留到后续版独立验收，不作为mac首发前置；mac实际启用范围仍逐项过A0–A7，全量v4与全部平台todo保留 | 用户本次明确裁决；同步首发范围、策略、进度、工作单与前端窗口，不新增通过标记或发布日期承诺 |
 | R205 | §11.4 / §4.3（2026-09-05：Rust记忆数据层复用） | 复用清单未包含用户再次强调的记忆数据管理层 | 用户明确允许参考/复用且要求更新台账；模块存在不能替代真实调用与适配验收 | 增加固定来源的记忆检索/排序/去重/来源/进度候选，优先首版可靠性，保持PG及本项目ACL；扩展自动写入等独立规格；会话授权已登记，不改源仓 | 固定提交只读调用核验与逐文件hash登记；当前为评估快照，尚无产品源码复制或测试通过声明，详见复用台账 |
+| R206 | §10.5 / §11.3 / §16.2–16.3 / §24 G5/G8（2026-09-05：macOS helper-loader） | 主进程scope约束不能覆盖释放父profile后的helper；旧继承签名允许loader注入，manifest漏helperhash | 旧测试记录可写scope外marker；晚加测试未编译且CLI/runtime文件集合不一致 | hardened诊断profile、完整helperhash与固定入口，包epoch5/schema2、wire4；修复探针编译/CLI集合，release单独拒绝诊断包 | 当前注入负向1、bundle篡改1、真实两role9通过；Computer67/5ignore、打包5与Clippy/protocol绿；真实release检查exit1且原因明确，不关闭G5E/Alpha，详见本批报告 |
 
 
 ### 28.2 复核通过、原样保留的断言

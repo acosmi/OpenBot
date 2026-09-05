@@ -10,8 +10,8 @@ pub const ENGINE_PROTOCOL_DESCRIPTOR: &str = include_str!("../engine-protocol-v4
 /// Current typed framing version.
 pub const ENGINE_PROTOCOL_VERSION: u16 = 4;
 
-/// First release epoch carrying the dual-role Electron engine.
-pub const ENGINE_RELEASE_EPOCH: u64 = 4;
+/// Current accepted packaging epoch for the dual-role Electron engine.
+pub const ENGINE_RELEASE_EPOCH: u64 = 5;
 
 /// Boot capability is exactly one bounded line on stdin.
 pub const MAX_ENGINE_BOOT_BYTES: usize = 4 * 1024;

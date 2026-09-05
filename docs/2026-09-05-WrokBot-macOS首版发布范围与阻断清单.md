@@ -31,7 +31,7 @@ macOS首版的独立准入。Windows/Linux发现的共享代码缺陷若实际�
 | 浏览器与Screen生产接线 | Engine、ScreenHub、控制/票据与出口网关已有分项证据 | 唯一ComputerManager→Engine→网关→Screen贯通；明确target、当前授权、接管/Stop与错误恢复 |
 | 原生电脑控制 | 来源评估与底层移植证据不等于本产品真实动作 | 本产品OS权限提示、输入互斥、动作receipt、实际结果变化、取消与越权负向通过 |
 | 真实AI工具故事 | 对话持久化/Vault/模拟provider、技能授权快照已测 | 首版启用的真实provider完成工具、审批/拒绝、取消/预算与恢复；模拟器不替代live |
-| 发布安全与身份 | macOS helper-loader加固仍有独立在制差量 | 拟交付Engine/宿主身份、权限、来源与实际隔离通过；不把诊断签名例外当生产证据 |
+| 发布安全与身份 | macOS helper-loader经R206定向验收，当前仍是不可发行的诊断签名profile | 拟交付Engine/宿主身份、权限、来源与实际隔离通过；不把诊断签名例外当生产证据 |
 | 数据恢复与升级 | 原有PG/迁移能力不等于首版恢复演练 | 新数据backup→restore→checksum及升级失败恢复实跑 |
 | GUI完整核心旅程 | 独立前端窗口实施中，后端提供稳定契约 | macOS实际三条故事、失败状态、中英文、键盘/焦点及必要可访问性验收 |
 
