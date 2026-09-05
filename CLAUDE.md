@@ -2,7 +2,7 @@
 
 OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这一份**。本仓 **public**。
 
-> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R193，2026-09-04；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
+> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R194，2026-09-04；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
 
 ---
 
@@ -21,6 +21,7 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 - **R191固定开源共建与受控Alpha方向**：首版工作台、AI工具、浏览器/原生电脑三类均需真实闭环；自有项目只允许固定提交复制处理、不改源仓，macOS/Windows均有已合并实现但移植后分别真验。开源先审范围/来源/许可，根LICENSE仍待实际切换；Alpha不等于v4 G0–G8/DoD全闭合。优先级见开源共建研究方案。
 - **R192固定AG-UI官方fixture与全关分界**：T-FIX-0010经官方SDK0.0.57源文件blob/bytes/SHA、33类型三向集合与39行/三scenario回放闭合；外部候选的多package.json、报告漂移和归属/验签表述已修正。fixture5/Agent57绿，fixtures现35/20/55；不是vendor recorded或PG/UI/网络证明，G4/G6/G8仍红。
 - **R193固定Plugins管理页面与完整GUI的分界**：三条Server Web路由、Rust认证三态、custom/OAuth/grant与串行写入/unknown读回已落；PG43、UI187、Contracts105、Server233及中英release浏览器绿。production PG/session→GUI整体权限、Bearer完整产品面、Desktop transport/Local OAuth/宿主、Skills与golden/AX仍缺，三route和G6不勾。见Batch117。
+- **R194补齐Desktop Plugins基础framing**：connections读取与curated启用改走既有typed command，host actor/fresh/admin、closed共享DTO/查询拒绝与body限额已测；Desktop112、Contracts105、Server233绿。Windows只cross-check，真实Wry/GUI/Local OAuth与三route/G6仍todo；overlay现1271/433/2/6，parity与fixtures不变。
 - 阶段进度：**Phase 0（Evidence Freeze）产物已落地** —— `parity/*.yaml`（9 份；条目数随实施推进增长，真源是各台账自己的 recount，由 `cargo xtask recount` 逐条实跑，**不在本文件钉死**）、`provenance/sources.spdx.json`、`fixtures/**`、`tools/pins.toml`、十个业务/parity 核心 crate 骨架（R127 后另有唯一 Win32 安全边界 crate）、`cargo xtask parity-check`（§19.3）。CI 必须拒绝未归类项与没有证据的 `done`。
   **G0 仍有一项未闭合**：§1.1 要求把两份输入文档原件归档到 `docs/inputs/`，仓内与本机都不存在原件，只有 SHA-256 —— 在补齐之前不得宣称 G0 通过。
 - **G1（Rust Core 与 PostgreSQL）四条判据本轮全部达成**（§24，四条缺一不可）：① 十个业务/parity 核心 crate + R127 唯一 Windows 安全边界 crate 的 locked build 绿（业务入口与 parity owner 仍只有原十个）；② 同一个 `Arc<dyn ApplicationService>` 经 Axum 与 in-process 两条 transport 结果一致（当前 `cargo test -p openbot-testkit --test transport_parity` = 8 passed，Batch30新增channel detail与port scope逐字段对拍）；③ 28 表 / 13 migration 映射对走完 13 条 migration 的真参照库逐字段相等，read checksum 168/168 行逐字节相同；④ tracing span + 关联字段 + 脱敏 + Prometheus metrics 从首个 vertical slice 生效。

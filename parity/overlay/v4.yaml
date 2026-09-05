@@ -5,6 +5,12 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  - id: T-API-0081
+    disposition: revalidate
+    notes: "Batch118 shares the closed catalogue selection DTO and verifies Desktop fresh-admin/size/unknown-field boundaries before port effects; Server lib 233 and Desktop tauri-host lib 112 rerun."
+  - id: T-API-0086
+    disposition: revalidate
+    notes: "Batch118 adds Desktop connection reads with host-window actor binding, no-store and query rejection; unbound/revoked windows reach no port. Deterministic adapter evidence only, not native-window or OAuth proof."
   - id: T-API-0175
     disposition: revalidate
     notes: "Batch114 reruns the exact Origin-before-body ticket path, active+pending capacity and socket-close permit release."

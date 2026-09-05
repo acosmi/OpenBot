@@ -31,7 +31,8 @@ use openbot_contracts::desktop::{
 use openbot_contracts::error::{AppError, SensitiveWriteReason};
 use openbot_contracts::ids::{BotId, ChannelId, RunId, ThreadId};
 use openbot_contracts::mcp::{
-    McpCustomServerRegistration, PluginGrantKind, PluginGrantMutation, PluginSkillMutation,
+    McpCuratedServerSelection, McpCustomServerRegistration, PluginGrantKind, PluginGrantMutation,
+    PluginSkillMutation,
 };
 use openbot_contracts::people::CurrentUserResponse;
 use openbot_contracts::remote_interrupt::{RemoteInterruptAnswer, RemoteInterruptResolved};
@@ -552,6 +553,12 @@ impl DesktopTauriProtocol {
         if path == "/api/plugins" {
             return self.plugins(request, authority).await;
         }
+        if path == "/api/plugins/connections" {
+            return self.plugin_connections(request, authority).await;
+        }
+        if path == "/api/plugins/servers" {
+            return self.curated_mcp_server(request, authority).await;
+        }
         if path == "/api/plugins/skills" {
             return self.plugin_skills(request, authority).await;
         }
@@ -794,6 +801,72 @@ impl DesktopTauriProtocol {
             .await
         {
             Ok(AppReply::McpAdminPage(page)) => json_response(&page),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn plugin_connections(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::GET || !request.body().is_empty() {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if request.uri().query().is_some() {
+            return error_response(AppError::MalformedPayload { field: "query" });
+        }
+        match self
+            .transport
+            .execute(authority.auth, AppCommand::ListMcpConnections)
+            .await
+        {
+            Ok(AppReply::McpConnections(connections)) => json_response(&connections),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn curated_mcp_server(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if request.method() != Method::POST {
+            request.body_mut().fill(0);
+            return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        if request.body().len() > MCP_ADMIN_BODY_MAX_BYTES {
+            request.body_mut().fill(0);
+            return payload_too_large();
+        }
+        if request.uri().query().is_some() {
+            request.body_mut().fill(0);
+            return error_response(AppError::MalformedPayload { field: "query" });
+        }
+        let selected = serde_json::from_slice::<McpCuratedServerSelection>(request.body());
+        request.body_mut().fill(0);
+        let selected = match selected {
+            Ok(selected) => selected,
+            Err(_) => return error_response(AppError::MalformedPayload { field: "body" }),
+        };
+        match self
+            .transport
+            .execute(
+                authority.auth,
+                AppCommand::AddCuratedMcpServer { key: selected.key },
+            )
+            .await
+        {
+            Ok(AppReply::McpServerMutation(receipt)) => json_response(&receipt),
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -3319,15 +3392,44 @@ mod tests {
 
     struct FakeRunCostBudgets(Mutex<Option<RunCostCap>>);
 
-    struct FakeMcpConnections;
+    #[derive(Default)]
+    struct FakeMcpConnections {
+        reads: Mutex<Vec<ActorId>>,
+        additions: Mutex<Vec<(ActorId, String)>>,
+    }
 
     #[async_trait]
     impl McpConnectionAdministration for FakeMcpConnections {
         async fn list_connections(
             &self,
-            _auth: &AuthContext,
+            auth: &AuthContext,
         ) -> Result<McpConnections, McpConnectionError> {
-            Err(McpConnectionError::Unavailable)
+            self.reads.lock().unwrap().push(auth.actor().clone());
+            Ok(McpConnections {
+                available_server_ids: vec![format!("notes-{}", auth.actor().as_str())],
+                connections: Vec::new(),
+                redirect_uri: None,
+            })
+        }
+
+        async fn add_curated_server(
+            &self,
+            auth: &AuthContext,
+            key: &str,
+        ) -> Result<McpServerMutation, McpConnectionError> {
+            self.additions
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), key.to_owned()));
+            if key != "google-drive" {
+                return Err(McpConnectionError::NotVisible);
+            }
+            Ok(McpServerMutation {
+                server_id: key.to_owned(),
+                catalog_generation: 1,
+                tool_count: 4,
+                suspended_grants: 0,
+            })
         }
 
         async fn list_admin_page(
@@ -3798,6 +3900,12 @@ mod tests {
     }
 
     fn protocol() -> (Arc<DesktopTauriProtocol>, PathBuf) {
+        protocol_with_mcp(Arc::new(FakeMcpConnections::default()))
+    }
+
+    fn protocol_with_mcp(
+        mcp: Arc<dyn McpConnectionAdministration>,
+    ) -> (Arc<DesktopTauriProtocol>, PathBuf) {
         let root = protocol_root();
         let preferences = Arc::new(FakePreferences(Mutex::new(UiPreferences {
             theme: Some(UiTheme::Dark),
@@ -3816,7 +3924,7 @@ mod tests {
                 .with_agent_administration(agents)
                 .with_ui_preferences(preferences)
                 .with_run_cost_budgets(Arc::new(FakeRunCostBudgets(Mutex::new(None))))
-                .with_mcp_connections(Arc::new(FakeMcpConnections))
+                .with_mcp_connections(mcp)
                 .with_remote_interrupts(Arc::new(FakeRemoteInterrupts))
                 .with_component_administration(Arc::new(FakeComponents))
                 .with_sandboxed_component_administration(Arc::new(FakeSandboxed))
@@ -5251,6 +5359,149 @@ mod tests {
                 approval_id: "approval-1".to_owned(),
                 decision: ToolApprovalDecision::Grant,
             }
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plugin_connection_reads_are_bound_to_the_host_window_and_reject_query_authority() {
+        let mcp = Arc::new(FakeMcpConnections::default());
+        let (protocol, root) = protocol_with_mcp(mcp.clone());
+        let request = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header("x-openbot-actor", "admin")
+                .body(Vec::new())
+                .unwrap()
+        };
+        let absent = protocol
+            .handle("user", request("/api/plugins/connections"))
+            .await;
+        assert_eq!(absent.status(), StatusCode::UNAUTHORIZED);
+        assert!(mcp.reads.lock().unwrap().is_empty());
+        protocol.bind_window("user", auth(), None).unwrap();
+        let injected = protocol
+            .handle("user", request("/api/plugins/connections?actor=admin"))
+            .await;
+        assert_eq!(injected.status(), StatusCode::BAD_REQUEST);
+        assert!(mcp.reads.lock().unwrap().is_empty());
+        let reply = protocol
+            .handle("user", request("/api/plugins/connections"))
+            .await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        assert_eq!(reply.headers()[CACHE_CONTROL], "no-store");
+        let page: McpConnections = serde_json::from_slice(reply.body()).unwrap();
+        assert_eq!(page.available_server_ids, ["notes-actor"]);
+        assert!(page.redirect_uri.is_none());
+        assert_eq!(*mcp.reads.lock().unwrap(), [ActorId::new("actor")]);
+        protocol.unbind_window("user").unwrap();
+        assert_eq!(
+            protocol
+                .handle("user", request("/api/plugins/connections"))
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(mcp.reads.lock().unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn curated_plugins_share_closed_selection_and_require_fresh_admin_before_effect() {
+        let mcp = Arc::new(FakeMcpConnections::default());
+        let (protocol, root) = protocol_with_mcp(mcp.clone());
+        protocol.bind_window("stale", admin_auth(), None).unwrap();
+        protocol
+            .bind_window("user", auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        protocol
+            .bind_window("admin", admin_auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        let request = |method: Method, uri: &str, body: Vec<u8>| {
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(body)
+                .unwrap()
+        };
+        let valid = br#"{"key":"google-drive"}"#.to_vec();
+        for (window, body, status) in [
+            ("absent", valid.clone(), StatusCode::UNAUTHORIZED),
+            ("stale", b"malformed".to_vec(), StatusCode::UNAUTHORIZED),
+            ("user", valid.clone(), StatusCode::FORBIDDEN),
+            ("admin", b"{}".to_vec(), StatusCode::BAD_REQUEST),
+            (
+                "admin",
+                br#"{"key":"google-drive","url":"https://injected.example.test"}"#.to_vec(),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "admin",
+                br#"{"key":"google-drive","actor":"forged"}"#.to_vec(),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "admin",
+                br#"{"key":"google-drive","key":"other"}"#.to_vec(),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "admin",
+                vec![b'x'; MCP_ADMIN_BODY_MAX_BYTES + 1],
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+        ] {
+            assert_eq!(
+                protocol
+                    .handle(window, request(Method::POST, "/api/plugins/servers", body))
+                    .await
+                    .status(),
+                status
+            );
+            assert!(mcp.additions.lock().unwrap().is_empty());
+        }
+        assert_eq!(
+            protocol
+                .handle(
+                    "admin",
+                    request(Method::GET, "/api/plugins/servers", Vec::new())
+                )
+                .await
+                .status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        assert_eq!(
+            protocol
+                .handle(
+                    "admin",
+                    request(
+                        Method::POST,
+                        "/api/plugins/servers?key=injected",
+                        valid.clone()
+                    )
+                )
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert!(mcp.additions.lock().unwrap().is_empty());
+        let reply = protocol
+            .handle(
+                "admin",
+                request(Method::POST, "/api/plugins/servers", valid),
+            )
+            .await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        assert_eq!(reply.headers()[CACHE_CONTROL], "no-store");
+        assert_eq!(
+            serde_json::from_slice::<McpServerMutation>(reply.body())
+                .unwrap()
+                .server_id,
+            "google-drive"
+        );
+        assert_eq!(
+            *mcp.additions.lock().unwrap(),
+            [(ActorId::new("admin"), "google-drive".to_owned())]
         );
         fs::remove_dir_all(root).unwrap();
     }

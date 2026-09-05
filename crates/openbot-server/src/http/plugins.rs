@@ -11,10 +11,10 @@ use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::error::AppError;
 use openbot_contracts::mcp::{
     GrantedPlugins, McpAdminPage, McpConnectionDisconnected, McpConnections,
-    McpCustomServerRegistration, McpOAuthAuthorization, McpOAuthClientRegistered,
-    McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation, McpServerRemoved,
-    PluginGrantKind, PluginGrantMutation, PluginMutationAcknowledged, PluginSkillMutation,
-    PluginSkills,
+    McpCuratedServerSelection, McpCustomServerRegistration, McpOAuthAuthorization,
+    McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
+    McpServerRemoved, PluginGrantKind, PluginGrantMutation, PluginMutationAcknowledged,
+    PluginSkillMutation, PluginSkills,
 };
 use serde::Deserialize;
 
@@ -140,12 +140,8 @@ pub async fn servers_oauth_client_post(
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 /// Closed curated-server request; endpoint/vendor/transport are not caller-controlled.
-pub struct AddCuratedServerBody {
-    key: String,
-}
+pub type AddCuratedServerBody = McpCuratedServerSelection;
 
 /// `POST /api/plugins/servers`; the request selects a reviewed key and can never supply a URL.
 pub async fn servers_post(

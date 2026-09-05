@@ -188,6 +188,15 @@ pub struct McpOAuthClientRegistered {
     pub ok: bool,
 }
 
+/// Closed catalogue selection shared by Server and Desktop framing. Endpoint and transport are
+/// resolved by the application; a renderer may only select the reviewed key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpCuratedServerSelection {
+    /// Reviewed catalogue key; never an arbitrary endpoint or vendor configuration.
+    pub key: String,
+}
+
 /// Result of adding or refreshing one reviewed server catalogue entry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
