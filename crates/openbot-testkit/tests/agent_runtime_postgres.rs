@@ -1542,6 +1542,7 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                     serde_json::json!({"type":"REASONING_START","messageId":"reason"}),
                     serde_json::json!({"type":"REASONING_MESSAGE_START","messageId":"reason-message","role":"reasoning"}),
                     serde_json::json!({"type":"REASONING_MESSAGE_CONTENT","messageId":"reason-message","delta":"checked evidence"}),
+                    serde_json::json!({"type":"REASONING_ENCRYPTED_VALUE","subtype":"message","entityId":"reason-message","encryptedValue":"ENCRYPTED_REASONING_CANARY"}),
                     serde_json::json!({"type":"REASONING_MESSAGE_END","messageId":"reason-message"}),
                     serde_json::json!({"type":"REASONING_END","messageId":"reason"}),
                     serde_json::json!({"type":"TEXT_MESSAGE_START","messageId":"answer","role":"assistant"}),
@@ -1647,8 +1648,8 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
             let thread = ThreadIdentity::new(&deployment).mint_from_entropy(entropy);
             directory
                 .begin_thread_run(BeginThreadRunRequest {
-                    deployment,
-                    tenant,
+                    deployment: deployment.clone(),
+                    tenant: tenant.clone(),
                     actor: ActorId::new("actor-a"),
                     command: BeginThreadRun {
                         thread_id: thread,
@@ -1661,6 +1662,58 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 .await
                 .map_err(|error| error.to_string())?;
             wait_for_terminal(&pool, "run-remote", "remote answer").await?;
+
+            for (run_id, entropy_tail, fixture, expected_code) in [
+                (
+                    "run-remote-error",
+                    11,
+                    RemoteFailureFixture::RunError,
+                    "provider_generation_failed",
+                ),
+                (
+                    "run-remote-malformed",
+                    12,
+                    RemoteFailureFixture::MalformedMessage,
+                    "provider_invalid_response",
+                ),
+            ] {
+                let failure_listener = TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let failure_address = failure_listener
+                    .local_addr()
+                    .map_err(|error| error.to_string())?;
+                let failure_endpoint = format!("http://{failure_address}/ag-ui");
+                let client = pool.get().await.map_err(|error| error.to_string())?;
+                client
+                    .execute(
+                        "UPDATE public.agents SET configuration=jsonb_build_object('endpoint',$2::text)
+                          WHERE id=$1",
+                        &[&"bot-remote", &failure_endpoint],
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                drop(client);
+                let failure_server = tokio::spawn(one_remote_agui_failure(
+                    failure_listener,
+                    run_id,
+                    fixture,
+                ));
+                begin_test_run_for_bot(
+                    &directory,
+                    &deployment,
+                    &tenant,
+                    entropy_tail,
+                    run_id,
+                    "bot-remote",
+                    "Trigger remote failure",
+                )
+                .await?;
+                wait_for_failure(&pool, run_id, expected_code).await?;
+                failure_server
+                    .await
+                    .map_err(|error| error.to_string())??;
+            }
             relay.stop().await;
             agent.stop().await;
             remote_server.await.map_err(|error| error.to_string())??;
@@ -1683,16 +1736,30 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
             let invoked: i64 = client
                 .query_one(
                     "SELECT count(*)::bigint FROM public.audit_events \
-                     WHERE event_type='agent.invoked' AND target_id='run-remote'",
+                     WHERE event_type='agent.invoked' AND target_id LIKE 'run-remote%'",
                     &[],
                 )
                 .await
                 .map_err(|error| error.to_string())?
                 .try_get(0)
                 .map_err(|error| error.to_string())?;
-            if reasoning != 1 || invoked != 1 {
+            let canary_rows: i64 = client
+                .query_one(
+                    "SELECT count(*)::bigint FROM (
+                       SELECT content::text AS value FROM public.messages
+                       UNION ALL SELECT payload::text FROM public.run_events
+                       UNION ALL SELECT payload::text FROM public.audit_events
+                     ) AS persisted WHERE value LIKE '%REMOTE_ERROR_SECRET_CANARY%'
+                                      OR value LIKE '%ENCRYPTED_REASONING_CANARY%'",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .try_get(0)
+                .map_err(|error| error.to_string())?;
+            if reasoning != 1 || invoked != 3 || canary_rows != 0 {
                 return Err(format!(
-                    "remote durable projection 漂移：reasoning={reasoning} invoked={invoked}"
+                    "remote durable projection 漂移：reasoning={reasoning} invoked={invoked} canary={canary_rows}"
                 ));
             }
             Ok(())
@@ -2660,6 +2727,27 @@ async fn begin_test_run(
     run_id: &str,
     message: &str,
 ) -> Result<openbot_contracts::ids::ThreadId, String> {
+    begin_test_run_for_bot(
+        directory,
+        deployment,
+        tenant,
+        entropy_tail,
+        run_id,
+        "bot-1",
+        message,
+    )
+    .await
+}
+
+async fn begin_test_run_for_bot(
+    directory: &PostgresThreadDirectory,
+    deployment: &DeploymentId,
+    tenant: &TenantId,
+    entropy_tail: u8,
+    run_id: &str,
+    bot_id: &str,
+    message: &str,
+) -> Result<openbot_contracts::ids::ThreadId, String> {
     let mut entropy = [0_u8; 16];
     entropy[15] = entropy_tail;
     let thread = ThreadIdentity::new(deployment).mint_from_entropy(entropy);
@@ -2671,7 +2759,7 @@ async fn begin_test_run(
             command: BeginThreadRun {
                 thread_id: thread.clone(),
                 run_id: RunId::new(run_id),
-                bot_id: BotId::new("bot-1"),
+                bot_id: BotId::new(bot_id),
                 anchor: ThreadRunAnchor::DirectBot,
                 message: message.to_owned(),
             },
@@ -2789,6 +2877,69 @@ async fn one_stalling_openai_response(listener: TcpListener) -> Result<(), Strin
     stream.flush().await.map_err(|error| error.to_string())?;
     tokio::time::sleep(Duration::from_millis(100)).await;
     let _ = stream.write_all(b"d\r\ndata: late\n\n\r\n0\r\n\r\n").await;
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum RemoteFailureFixture {
+    RunError,
+    MalformedMessage,
+}
+
+async fn one_remote_agui_failure(
+    listener: TcpListener,
+    expected_run: &'static str,
+    fixture: RemoteFailureFixture,
+) -> Result<(), String> {
+    let (mut stream, _) = listener.accept().await.map_err(|error| error.to_string())?;
+    let request = read_http_request(&mut stream).await?;
+    if !request.starts_with("POST /ag-ui ") {
+        return Err("remote AG-UI failure path drift".to_owned());
+    }
+    let input: serde_json::Value = serde_json::from_str(
+        request
+            .split("\r\n\r\n")
+            .nth(1)
+            .ok_or_else(|| "remote failure request body missing".to_owned())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if input["runId"] != expected_run {
+        return Err(format!("remote failure run drift: {input:?}"));
+    }
+    let thread_id = input["threadId"]
+        .as_str()
+        .ok_or_else(|| "remote failure thread missing".to_owned())?;
+    let terminal = match fixture {
+        RemoteFailureFixture::RunError => serde_json::json!({
+            "type":"RUN_ERROR",
+            "message":"REMOTE_ERROR_SECRET_CANARY",
+            "code":"vendor-secret-code"
+        }),
+        RemoteFailureFixture::MalformedMessage => serde_json::json!({
+            "type":"MESSAGES_SNAPSHOT",
+            "messages":[{"id":"bad","role":"assistant","content":{"secret":"REMOTE_ERROR_SECRET_CANARY"}}]
+        }),
+    };
+    let events = [
+        serde_json::json!({"type":"RUN_STARTED","threadId":thread_id,"runId":expected_run}),
+        terminal,
+    ];
+    let body = events
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(header.as_bytes())
+        .await
+        .map_err(|error| error.to_string())?;
+    stream
+        .write_all(body.as_bytes())
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
