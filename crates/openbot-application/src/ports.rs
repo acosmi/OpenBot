@@ -638,6 +638,8 @@ impl ThreadDirectoryError {
 /// application 已把权威 scope 与封闭 command 合并后的事务请求。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BeginThreadRunRequest {
+    /// Rust-resolved session generation, never accepted from the renderer.
+    pub auth_generation: AuthGeneration,
     /// 权威 deployment。
     pub deployment: DeploymentId,
     /// 权威 tenant。

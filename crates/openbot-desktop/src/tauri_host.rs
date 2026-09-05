@@ -1454,6 +1454,7 @@ impl DesktopTauriProtocol {
                 self.thread_command(
                     authority.auth,
                     AppCommand::BeginThreadRun(BeginThreadRun {
+                        selected_skill_slugs: body.selected_skill_slugs,
                         thread_id,
                         run_id: body.run_id,
                         bot_id: body.bot_id,
@@ -4564,6 +4565,7 @@ mod tests {
 
         let run_id = RunId::new("desktop-run-1");
         let begin_body = serde_json::to_vec(&BeginThreadRunBody {
+            selected_skill_slugs: vec!["skill-one".to_owned()],
             run_id: run_id.clone(),
             bot_id: BotId::new("agent-one"),
             anchor: ThreadRunAnchor::Channel {

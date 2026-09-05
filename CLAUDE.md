@@ -2,7 +2,7 @@
 
 OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这一份**。本仓 **public**。
 
-> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R201，2026-09-05；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
+> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R206，2026-09-05；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
 
 ---
 
@@ -29,6 +29,11 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 - **R199修复Engine父环境继承**：Unix从黑名单改env_clear+五键/cwd，Windows只读OS目录并构造固定九键UTF-16 block、不再枚举父环境。真实macOS两role main/renderer四canary由全true变全false，原完整输入/帧/cleanup通过；Computer67/fixture5、Windows portable4与cross-check/Clippy绿。fixtures38/20/58；Windows/runsc真机和更广filesystem/helper-exec/kernel仍缺，完整G5/G7/Alpha不勾，详见Batch123。
 - **R200收紧macOS main直接读取**：新SBPL只放scope/bundle/具名OS内容与ancestor metadata，dyld只补literal /锚点；旧3条跨scope读取实修为5负向拒绝、scope read/list/link正向成立，另有真实两role完整兼容。F0059后fixtures39/20/59；helper exec/Mach/FD/UDS/localhost、Windows/runsc、production与完整G5E/Alpha仍缺，详见Batch124。
 - **R201收紧macOS main outbound**：只放runtime两条精确pipe，三错误UDS/TCP端点从可达变拒绝，两pipe和真实两role兼容保持。F0060后fixtures40/20/60；helper自身网络/exec/签名与production代理/导航、Windows/runsc和完整G5E仍缺。main当前无TCP allow，不得恢复localhost通配；详见Batch125。
+- **R202固定Wrok Bot命名与本机启动**：用户要求全部名称迁移；新增`wrok-bot-server --local`、第一方本机包与16个`WROK_BOT_*`配置入口。旧部署/持久身份不盲改，新旧配置冲突和SSO→多用户local冲突拒绝；真实PG+模拟provider/Vault/重启通过，不称live或Alpha通过。crate/path/Desktop/Engine整体命名、安装及核心控制继续；见`docs/2026-09-05-WrokBot-本机启动与后端首版进度.md`。
+- **R203固定显式技能执行**：用户有序选择slug经Rust当前授权同事务解析为独立system快照，原文/原选择/run/event/outbox共同提交；后续编辑/撤销不改历史，精确重试不增写。最多16项为新增预算，技能不增加tool权限；前端交互仍由前端窗口实施。见`docs/2026-09-05-WrokBot-显式技能执行与持久快照-后端验收.md`。
+- **R204固定macOS首发**：用户明确首版先上mac。Windows E2继续修复回传，但仅Windows/Linux未通过项不阻塞macOS首发；影响macOS共享路径的缺陷仍阻断。macOS实际支持范围逐项过A0–A7，CPU架构/系统版本按真机证据声明，全量v4及平台todo保留；见`docs/2026-09-05-WrokBot-macOS首版发布范围与阻断清单.md`。
+- **R205登记记忆数据层复用**：用户明确授权参考/复制适配CrabCode Rust记忆管理层，按固定提交只读评估并逐项登记来源、适配和测试；不改源仓、不重复问同一授权。保持本项目唯一PG/ACL和显式记忆语义；扩展能力独立规格，评估不计已实现。见`docs/2026-09-05-WrokBot-记忆数据层复用评估与台账.md`。
+- **R206固定macOS helper诊断与发行分界**：包epoch5/schema2、操作协议4；main/5helper显式hardened profile、完整hash与固定入口验证，注入拒绝与真实两role9项通过。`engine verify --release`仍拒绝诊断签名，不称安装包已可发行；helper全面执行/网络与production继续，见本批加载器验收报告。
 - 阶段进度：**Phase 0（Evidence Freeze）产物已落地** —— `parity/*.yaml`（9 份；条目数随实施推进增长，真源是各台账自己的 recount，由 `cargo xtask recount` 逐条实跑，**不在本文件钉死**）、`provenance/sources.spdx.json`、`fixtures/**`、`tools/pins.toml`、十个业务/parity 核心 crate 骨架（R127 后另有唯一 Win32 安全边界 crate）、`cargo xtask parity-check`（§19.3）。CI 必须拒绝未归类项与没有证据的 `done`。
   **G0 仍有一项未闭合**：§1.1 要求把两份输入文档原件归档到 `docs/inputs/`，仓内与本机都不存在原件，只有 SHA-256 —— 在补齐之前不得宣称 G0 通过。
 - **G1（Rust Core 与 PostgreSQL）四条判据本轮全部达成**（§24，四条缺一不可）：① 十个业务/parity 核心 crate + R127 唯一 Windows 安全边界 crate 的 locked build 绿（业务入口与 parity owner 仍只有原十个）；② 同一个 `Arc<dyn ApplicationService>` 经 Axum 与 in-process 两条 transport 结果一致（当前 `cargo test -p openbot-testkit --test transport_parity` = 8 passed，Batch30新增channel detail与port scope逐字段对拍）；③ 28 表 / 13 migration 映射对走完 13 条 migration 的真参照库逐字段相等，read checksum 168/168 行逐字节相同；④ tracing span + 关联字段 + 脱敏 + Prometheus metrics 从首个 vertical slice 生效。
@@ -236,7 +241,7 @@ Firecracker / youki · Restate / Temporal 等 durable execution 平台 · Codex 
 ## 9. 来源、许可与品牌（§23）
 
 - OpenBot 上游 MIT，衍生实现保留 `Copyright (c) 2026 CopilotKit` 与 MIT 文本；Codex / Grok Build 为 Apache-2.0，复制文件保留 SPDX、来源 commit、修改声明；Grok Build 里源自 Codex/OpenCode 的工具必须回溯原始来源。**`grok-bot/` 与 Grok Build 是两个不同的东西**：前者是 Anysphere（Cursor）Grok Bot 0.18.0 的反编译重建，无上游源码许可（其 NOTICE 自述），Apache-2.0 不覆盖它；用户已裁决权利状态不作为技术计划的阻断项，风险登记在方案 §23.1 条 8，方法固定为规格先行吸收、不翻译不复制、每次吸收记 `source_lineage`、原始安装包不入仓（§11.5 / R116）。
-- **CrabCode 是闭源专有软件**：每个复制文件须有 `SOURCE_PROVENANCE`（权利人、原路径、上游 commit、原/目标 hash、许可证、修改声明、书面授权编号）；workspace 里的 `license = MIT` 是元数据，不等于授权。无授权只能按行为 clean-room 重写（§11.4）。
+- **CrabCode 是闭源专有软件**：每个复制文件须有 `SOURCE_PROVENANCE`（权利人、原路径、上游 commit、原/目标 hash、许可证、修改声明、明确授权记录；R191/R205的本会话授权已适用，不重复索要）；workspace 里的 `license = MIT` 是元数据，不等于授权。无授权只能按行为 clean-room 重写（§11.4）。
 - **R191用户已裁决本项目走开源共建方向**；根LICENSE/Cargo/SPDX在完成书面发布范围与whole-tree license audit前仍维持原实际许可。只复制自有模块的授权不自动公开整个源项目，不擅自授予第三方权利（§23.2）。
 - native thread/memory/realtime 只能依据 OpenBot MIT 源码、开放协议与黑盒可观察契约 clean-room 实现；不得把 Intelligence 私有响应或反编译结果当源码（§23.3）。
 - 对外名称、bundle ID、domain、deep-link scheme 不得含 OpenBot / CopilotKit / Codex / OpenAI / Grok / xAI；内部代号 `openbot-rs`。禁止复用 CrabCode 的 updater key、bundle ID、证书、OAuth client（§16.2）。

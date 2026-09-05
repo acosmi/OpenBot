@@ -9,6 +9,20 @@ use subtle::ConstantTimeEq as _;
 use time::OffsetDateTime;
 use zeroize::Zeroizing;
 
+/// Existing skill slug wire grammar: 2–40 lowercase ASCII letters, digits or internal hyphens.
+#[must_use]
+pub fn valid_skill_slug(slug: &str) -> bool {
+    (2..=40).contains(&slug.len())
+        && slug
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && !slug.starts_with('-')
+        && !slug.ends_with('-')
+}
+
+/// Maximum UTF-8 bytes in one stored skill instruction, shared by management and run snapshots.
+pub const MAX_SKILL_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+
 /// Supported confidential-client authentication at MCP token/revocation endpoints.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

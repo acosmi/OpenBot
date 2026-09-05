@@ -47,6 +47,7 @@ pub mod address;
 pub mod agent;
 pub mod env;
 pub mod error;
+pub mod launch;
 pub mod migration;
 pub mod policy;
 pub mod preflight;

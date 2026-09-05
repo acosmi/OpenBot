@@ -584,10 +584,12 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
             let thread = ThreadIdentity::new(&deployment).mint_from_entropy(entropy);
             directory
                 .begin_thread_run(BeginThreadRunRequest {
+                    auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
                     deployment: deployment.clone(),
                     tenant,
                     actor: ActorId::new("actor-a"),
                     command: BeginThreadRun {
+                        selected_skill_slugs: Vec::new(),
                         thread_id: thread.clone(),
                         run_id: RunId::new("run-agent-1"),
                         bot_id: BotId::new("bot-1"),
@@ -1701,10 +1703,12 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
             let thread = ThreadIdentity::new(&deployment).mint_from_entropy(entropy);
             directory
                 .begin_thread_run(BeginThreadRunRequest {
+                    auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
                     deployment: deployment.clone(),
                     tenant: tenant.clone(),
                     actor: ActorId::new("actor-a"),
                     command: BeginThreadRun {
+                        selected_skill_slugs: Vec::new(),
                         thread_id: thread,
                         run_id: RunId::new("run-remote"),
                         bot_id: BotId::new("bot-remote"),
@@ -2156,10 +2160,12 @@ async fn remote_agui_interrupt_resolves_through_application_and_makes_a_second_s
             entropy[15] = 44;
             directory
                 .begin_thread_run(BeginThreadRunRequest {
+                    auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
                     deployment: deployment.clone(),
                     tenant: tenant.clone(),
                     actor: ActorId::new("actor-a"),
                     command: BeginThreadRun {
+                        selected_skill_slugs: Vec::new(),
                         thread_id: ThreadIdentity::new(&deployment).mint_from_entropy(entropy),
                         run_id: RunId::new("run-interrupt"),
                         bot_id: BotId::new("bot-interrupt"),
@@ -3265,10 +3271,12 @@ async fn begin_test_run_for_bot(
     let thread = ThreadIdentity::new(deployment).mint_from_entropy(entropy);
     directory
         .begin_thread_run(BeginThreadRunRequest {
+            auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
             deployment: deployment.clone(),
             tenant: tenant.clone(),
             actor: ActorId::new("actor-a"),
             command: BeginThreadRun {
+                selected_skill_slugs: Vec::new(),
                 thread_id: thread.clone(),
                 run_id: RunId::new(run_id),
                 bot_id: BotId::new(bot_id),

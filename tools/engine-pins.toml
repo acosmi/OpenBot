@@ -31,7 +31,7 @@ generated_at = "2026-08-28"
 # ===========================================================================
 [engines.electron]
 version = "43.3.0"
-release_epoch = 4
+release_epoch = 5
 protocol_version = 4
 chromium = "150.0.7871.212"
 node = "24.18.1"

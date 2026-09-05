@@ -1113,6 +1113,7 @@ pub async fn begin_thread_run(
             .credentials(RequestCredentials::SameOrigin)
             .redirect(RequestRedirect::Error)
             .json(&BeginThreadRunBody {
+                selected_skill_slugs: Vec::new(),
                 run_id: run_id.clone(),
                 bot_id: agent_id.clone(),
                 anchor,

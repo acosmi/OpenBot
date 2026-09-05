@@ -19,9 +19,9 @@ use openbot_application::{
 use openbot_contracts::auth::{AuthContext, Role};
 use openbot_contracts::ids::{ActorId, DeploymentId, TenantId};
 use openbot_contracts::mcp::{
-    GrantedPluginSkill, GrantedPluginTool, GrantedPlugins, McpAdminAuthentication,
-    McpAdminCatalogueEntry, McpAdminPage, McpAdminServer, McpAdminSkill, McpAdminTool,
-    McpAdminToolEffect, McpConnection, McpConnectionDisconnected, McpConnections,
+    GrantedPluginSkill, GrantedPluginTool, GrantedPlugins, MAX_SKILL_INSTRUCTIONS_BYTES,
+    McpAdminAuthentication, McpAdminCatalogueEntry, McpAdminPage, McpAdminServer, McpAdminSkill,
+    McpAdminTool, McpAdminToolEffect, McpConnection, McpConnectionDisconnected, McpConnections,
     McpCustomServerRegistration, McpOAuthAuthorization, McpOAuthClientAuthMethod,
     McpOAuthClientRegistered, McpOAuthClientRegistration, McpOAuthReturnTo, McpServerMutation,
     McpServerRemoved, McpVendorRevocationStatus, PluginGrantKind, PluginGrantMutation,
@@ -75,7 +75,6 @@ const MAX_CUSTOM_SERVER_TITLE_BYTES: usize = 256;
 const MAX_CUSTOM_SERVER_URL_BYTES: usize = 8 * 1024;
 const MAX_SKILL_TITLE_BYTES: usize = 256;
 const MAX_SKILL_SUMMARY_BYTES: usize = 4 * 1024;
-const MAX_SKILL_INSTRUCTIONS_BYTES: usize = 64 * 1024;
 const PLUGIN_ADMIN_LOCK_SEED: i64 = 0x504c_5547_494e_4131; // `PLUGINA1`
 
 /// Production MCP OAuth connection coordinator.
@@ -3587,14 +3586,7 @@ fn prepare_skill_mutation(
 }
 
 fn validate_skill_slug(slug: &str) -> Result<(), McpConnectionError> {
-    if slug.len() < 2
-        || slug.len() > MAX_CUSTOM_SERVER_ID_BYTES
-        || !slug
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        || slug.starts_with('-')
-        || slug.ends_with('-')
-    {
+    if !openbot_contracts::mcp::valid_skill_slug(slug) {
         return Err(McpConnectionError::InvalidInput { field: "slug" });
     }
     Ok(())

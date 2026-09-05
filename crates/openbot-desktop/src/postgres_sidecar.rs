@@ -2190,6 +2190,7 @@ mod tests {
             .execute(
                 prepared.auth_context().clone(),
                 AppCommand::BeginThreadRun(BeginThreadRun {
+                    selected_skill_slugs: Vec::new(),
                     thread_id: minted.thread_id,
                     run_id: run_id.clone(),
                     bot_id: BotId::new("desktop-assistant"),

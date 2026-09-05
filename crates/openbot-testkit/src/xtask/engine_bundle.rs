@@ -1,6 +1,6 @@
 //! Rust-only Electron bundle assembly: ASAR, rebrand, fuses, integrity and manifest (R117).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 const MANIFEST_SCHEMA: &str = "openbot-engine-bundle";
-const MANIFEST_VERSION: u64 = 1;
+const MANIFEST_VERSION: u64 = 2;
+const MACOS_SIGNING_PROFILE: &str = "local-hardened-adhoc-fixture-v1";
 const PRODUCT_NAME: &str = "Acosmi Engine Fixture";
 const PRODUCT_SLUG: &str = "AcosmiEngine";
 const BUNDLE_ID: &str = "com.acosmi.engine.fixture";
@@ -37,6 +38,7 @@ struct BundleManifest {
     app_asar: String,
     asar_header_sha256: String,
     fuse_wire: String,
+    signing_profile: String,
     files: BTreeMap<String, String>,
 }
 
@@ -70,7 +72,7 @@ pub(crate) fn bundle(root: &Path) -> Result<()> {
     let version = crate::engine::string(electron, "version")?;
     let release_epoch = crate::engine::positive_u64(electron, "release_epoch")?;
     let protocol_version = crate::engine::positive_u64(electron, "protocol_version")?;
-    if release_epoch != 4 || protocol_version != 4 {
+    if release_epoch != 5 || protocol_version != 4 {
         bail!("engine bundle: engine pins release/protocol version drift from v4 contracts");
     }
     let parent = root.join(format!("target/engine/bundle/electron-{version}"));
@@ -113,7 +115,7 @@ pub(crate) fn bundle(root: &Path) -> Result<()> {
     fs::rename(&staging, &destination)
         .with_context(|| format!("publish {}", destination.display()))?;
     println!(
-        "engine bundle: ok ({}; app.asar={} bytes; header_sha256={}; fuse_sentinels={fuse_count}; release_epoch=4)",
+        "engine bundle: ok ({}; app.asar={} bytes; header_sha256={}; fuse_sentinels={fuse_count}; release_epoch=5)",
         destination.display(),
         fs::metadata(destination.join(relative(&layout.root, &layout.app_asar)))?.len(),
         asar.header_sha256
@@ -140,10 +142,20 @@ pub(crate) fn verify_if_required(root: &Path) -> Result<()> {
     .context("parse engine bundle manifest")?;
     verify_layout(&bundle, &manifest)?;
     println!(
-        "engine bundle verify: ok ({platform}; release_epoch={}; protocol={}; asar_header={})",
+        "engine bundle verify: local fixture ok, not release-qualified ({platform}; release_epoch={}; protocol={}; asar_header={})",
         manifest.release_epoch, manifest.protocol_version, manifest.asar_header_sha256
     );
     Ok(())
+}
+
+pub(crate) fn verify_release(root: &Path) -> Result<()> {
+    verify_if_required(root)?;
+    // Every currently accepted product identity and signing profile is explicitly a fixture.
+    // A future release implementation must validate real identity/signing/provenance instead of
+    // bypassing this with a CLI flag or treating a local ad-hoc signature as notarization.
+    bail!(
+        "engine release gate: current bundle is diagnostic-only; trusted release identity/signing and full gates are not satisfied"
+    )
 }
 
 fn rebrand(root: &Path, platform: &str) -> Result<BundleLayout> {
@@ -544,26 +556,101 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
         .collect()
 }
 
+fn macos_helpers(app: &Path) -> [PathBuf; 5] {
+    let frameworks = app.join("Contents/Frameworks");
+    [
+        frameworks.join("Electron Helper.app/Contents/MacOS/Electron Helper"),
+        frameworks.join("Electron Helper (GPU).app/Contents/MacOS/Electron Helper (GPU)"),
+        frameworks.join("Electron Helper (Plugin).app/Contents/MacOS/Electron Helper (Plugin)"),
+        frameworks.join("Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)"),
+        frameworks.join("Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler"),
+    ]
+}
+
+fn fixture_entitlements() -> plist::Value {
+    let mut values = plist::Dictionary::new();
+    values.insert(
+        "com.apple.security.cs.allow-jit".to_owned(),
+        plist::Value::Boolean(true),
+    );
+    // An ad-hoc fixture has no Team ID and cannot validate its bundled framework. This exception
+    // is explicitly diagnostic-only, never production release evidence. DYLD/debug/page-protection
+    // and unsigned-executable-memory exceptions are deliberately absent.
+    values.insert(
+        "com.apple.security.cs.disable-library-validation".to_owned(),
+        plist::Value::Boolean(true),
+    );
+    plist::Value::Dictionary(values)
+}
+
 fn codesign_adhoc(app: &Path) -> Result<()> {
+    let entitlements = app
+        .parent()
+        .context("app parent")?
+        .join("fixture-signing.entitlements");
+    fixture_entitlements().to_file_xml(&entitlements)?;
     let status = Command::new("/usr/bin/codesign")
         .args([
             "--sign",
             "-",
             "--force",
             "--deep",
-            "--preserve-metadata=entitlements,requirements,flags,runtime",
+            "--options",
+            "runtime",
+            "--timestamp=none",
+            "--entitlements",
         ])
+        .arg(&entitlements)
         .arg(app)
         .status()?;
+    fs::remove_file(&entitlements)?;
     if !status.success() {
-        bail!("ad-hoc codesign failed with {status}");
+        bail!("local hardened ad-hoc fixture signing failed with {status}");
     }
-    let verify = Command::new("/usr/bin/codesign")
+    verify_fixture_signing(app)?;
+    Ok(())
+}
+
+fn verify_fixture_signing(app: &Path) -> Result<()> {
+    let status = Command::new("/usr/bin/codesign")
         .args(["--verify", "--deep", "--strict"])
         .arg(app)
         .status()?;
-    if !verify.success() {
-        bail!("ad-hoc codesign verification failed with {verify}");
+    if !status.success() {
+        bail!("fixture code signature verification failed");
+    }
+    let main = app.join(format!("Contents/MacOS/{PRODUCT_SLUG}"));
+    for executable in std::iter::once(main).chain(macos_helpers(app)) {
+        let information = Command::new("/usr/bin/codesign")
+            .args(["-dv", "--verbose=4"])
+            .arg(&executable)
+            .output()?;
+        if !information.status.success() || information.stderr.len() > 64 * 1024 {
+            bail!("bounded codesign metadata failed");
+        }
+        let text = std::str::from_utf8(&information.stderr)?;
+        let flags = text
+            .lines()
+            .find(|line| line.starts_with("CodeDirectory "))
+            .and_then(|line| line.split_once("flags=0x"))
+            .and_then(|(_, rest)| rest.split_once('('))
+            .and_then(|(digits, _)| u64::from_str_radix(digits, 16).ok())
+            .context("CodeDirectory flags missing")?;
+        if flags & 0x10002 != 0x10002 {
+            bail!("fixture must be ad-hoc and hardened runtime");
+        }
+        let entitlements = Command::new("/usr/bin/codesign")
+            .args(["-d", "--entitlements", "-", "--xml"])
+            .arg(&executable)
+            .output()?;
+        if !entitlements.status.success() || entitlements.stdout.len() > 16 * 1024 {
+            bail!("bounded entitlement inspection failed");
+        }
+        let actual = plist::Value::from_reader_xml(entitlements.stdout.as_slice())
+            .context("parse fixture entitlements")?;
+        if actual != fixture_entitlements() {
+            bail!("fixture entitlement set differs from reviewed JIT/library-validation profile");
+        }
     }
     Ok(())
 }
@@ -577,8 +664,16 @@ fn manifest(
     asar_header_sha256: &str,
 ) -> Result<BundleManifest> {
     let mut files = BTreeMap::new();
-    for path in [&layout.executable, &layout.fuse_file, &layout.app_asar] {
-        files.insert(relative(&layout.root, path), sha256(path)?);
+    let mut paths = vec![
+        layout.executable.clone(),
+        layout.fuse_file.clone(),
+        layout.app_asar.clone(),
+    ];
+    if let Some(app) = &layout.app_bundle {
+        paths.extend(macos_helpers(app));
+    }
+    for path in paths {
+        files.insert(relative(&layout.root, &path), sha256(&path)?);
     }
     Ok(BundleManifest {
         schema: MANIFEST_SCHEMA.to_owned(),
@@ -595,6 +690,12 @@ fn manifest(
         app_asar: relative(&layout.root, &layout.app_asar),
         asar_header_sha256: asar_header_sha256.to_owned(),
         fuse_wire: String::from_utf8(FUSE_WIRE.to_vec()).expect("ASCII fuse wire"),
+        signing_profile: if platform.starts_with("macos-") {
+            MACOS_SIGNING_PROFILE
+        } else {
+            "platform-fixture"
+        }
+        .to_owned(),
         files,
     })
 }
@@ -603,14 +704,21 @@ fn verify_layout(root: &Path, manifest: &BundleManifest) -> Result<()> {
     if manifest.schema != MANIFEST_SCHEMA
         || manifest.schema_version != MANIFEST_VERSION
         || manifest.platform != crate::engine::current_platform()?
-        || manifest.release_epoch != 4
+        || manifest.release_epoch != 5
         || manifest.protocol_version != 4
         || manifest.product_name != PRODUCT_NAME
         || manifest.bundle_id != BUNDLE_ID
+        || manifest.signing_profile
+            != if manifest.platform.starts_with("macos-") {
+                MACOS_SIGNING_PROFILE
+            } else {
+                "platform-fixture"
+            }
         || manifest.fuse_wire.as_bytes() != FUSE_WIRE
     {
         bail!("engine bundle manifest fixed fields drift: {manifest:?}");
     }
+    verify_manifest_paths(manifest)?;
     for (path, expected) in &manifest.files {
         let path = root.join(path);
         let actual = sha256(&path)?;
@@ -634,6 +742,51 @@ fn verify_layout(root: &Path, manifest: &BundleManifest) -> Result<()> {
     }
     if manifest.platform == "windows-x64" {
         verify_windows(root, manifest)?;
+    }
+    Ok(())
+}
+
+fn verify_manifest_paths(manifest: &BundleManifest) -> Result<()> {
+    let expected = match manifest.platform.as_str() {
+        "macos-arm64" | "macos-x64" => (
+            "AcosmiEngine.app/Contents/MacOS/AcosmiEngine",
+            "AcosmiEngine.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework",
+            "AcosmiEngine.app/Contents/Resources/app.asar",
+        ),
+        "windows-x64" => (
+            "acosmi-engine-fixture.exe",
+            "acosmi-engine-fixture.exe",
+            "resources/app.asar",
+        ),
+        "linux-arm64" | "linux-x64" => (
+            "acosmi-engine-fixture",
+            "acosmi-engine-fixture",
+            "resources/app.asar",
+        ),
+        _ => bail!("unsupported engine manifest platform"),
+    };
+    if (
+        manifest.executable.as_str(),
+        manifest.fuse_file.as_str(),
+        manifest.app_asar.as_str(),
+    ) != expected
+    {
+        bail!("engine manifest executable/fuse/ASAR paths are not the fixed bundle layout");
+    }
+    let mut required = [
+        expected.0.to_owned(),
+        expected.1.to_owned(),
+        expected.2.to_owned(),
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    if manifest.platform.starts_with("macos-") {
+        for helper in macos_helpers(Path::new("AcosmiEngine.app")) {
+            required.insert(relative(Path::new(""), &helper));
+        }
+    }
+    if required != manifest.files.keys().cloned().collect() {
+        bail!("engine manifest must hash exactly every executable, fuse, ASAR and required helper");
     }
     Ok(())
 }
@@ -740,13 +893,7 @@ fn verify_macos(root: &Path, manifest: &BundleManifest) -> Result<()> {
     {
         bail!("ElectronAsarIntegrity drift");
     }
-    let status = Command::new("/usr/bin/codesign")
-        .args(["--verify", "--deep", "--strict"])
-        .arg(app)
-        .status()?;
-    if !status.success() {
-        bail!("bundle code signature verification failed");
-    }
+    verify_fixture_signing(&app)?;
     Ok(())
 }
 
@@ -847,6 +994,67 @@ mod tests {
         FUSE_SENTINEL, FUSE_WIRE, WindowsAsarIntegrity, find_subslice, integrity, pickle_string,
         pickle_u32, windows_integrity_payload,
     };
+
+    #[test]
+    fn manifest_inventory_requires_helpers_and_fixed_launch_paths_before_file_reads() {
+        let main = "AcosmiEngine.app/Contents/MacOS/AcosmiEngine";
+        let framework = "AcosmiEngine.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework";
+        let asar = "AcosmiEngine.app/Contents/Resources/app.asar";
+        let helper = "AcosmiEngine.app/Contents/Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper";
+        let paths = [
+            main,
+            framework,
+            asar,
+            helper,
+            "AcosmiEngine.app/Contents/Frameworks/Electron Helper (GPU).app/Contents/MacOS/Electron Helper (GPU)",
+            "AcosmiEngine.app/Contents/Frameworks/Electron Helper (Plugin).app/Contents/MacOS/Electron Helper (Plugin)",
+            "AcosmiEngine.app/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)",
+            "AcosmiEngine.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler",
+        ];
+        let mut manifest = super::BundleManifest {
+            schema: super::MANIFEST_SCHEMA.to_owned(),
+            schema_version: 2,
+            platform: "macos-arm64".to_owned(),
+            arch: "aarch64".to_owned(),
+            electron_version: "43.3.0".to_owned(),
+            release_epoch: 5,
+            protocol_version: 4,
+            product_name: super::PRODUCT_NAME.to_owned(),
+            bundle_id: super::BUNDLE_ID.to_owned(),
+            executable: main.to_owned(),
+            fuse_file: framework.to_owned(),
+            app_asar: asar.to_owned(),
+            asar_header_sha256: "a".repeat(64),
+            fuse_wire: "000011001".to_owned(),
+            signing_profile: super::MACOS_SIGNING_PROFILE.to_owned(),
+            files: paths
+                .into_iter()
+                .map(|path| (path.to_owned(), "b".repeat(64)))
+                .collect(),
+        };
+        super::verify_manifest_paths(&manifest).expect("full fixed inventory");
+        manifest.files.remove(helper);
+        assert!(
+            super::verify_manifest_paths(&manifest).is_err(),
+            "missing helper hash"
+        );
+        manifest.files.insert(helper.to_owned(), "b".repeat(64));
+        manifest.executable = helper.to_owned();
+        manifest.files.remove(main);
+        assert!(
+            super::verify_manifest_paths(&manifest).is_err(),
+            "helper cannot become entry point"
+        );
+        manifest.executable = main.to_owned();
+        manifest.files.insert(main.to_owned(), "b".repeat(64));
+        manifest
+            .files
+            .insert("../outside".to_owned(), "b".repeat(64));
+        assert!(
+            super::verify_manifest_paths(&manifest).is_err(),
+            "no out-of-root hash reads"
+        );
+    }
 
     #[test]
     fn pickle_layout_matches_official_asar_shape() {

@@ -87,10 +87,12 @@ async fn lost_notify_replays_and_one_commit_wakes_two_replicas_without_duplicate
             .map_err(|error| error.to_string())?;
             directory
                 .begin_thread_run(BeginThreadRunRequest {
+                    auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
                     deployment: deployment.clone(),
                     tenant: tenant.clone(),
                     actor: actor.clone(),
                     command: BeginThreadRun {
+                        selected_skill_slugs: Vec::new(),
                         thread_id: thread.clone(),
                         run_id: run.clone(),
                         bot_id: BotId::new("bot-1"),

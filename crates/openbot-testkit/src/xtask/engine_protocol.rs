@@ -90,7 +90,7 @@ fn validate_descriptor(value: &serde_json::Value) -> Result<()> {
     }
     if value["schema"] != "openbot-engine-protocol"
         || value["version"] != 4
-        || value["release_epoch"] != 4
+        || value["release_epoch"] != 5
         || value["frame_magic"] != "OBFRAME2"
         || value["frame_hello_magic"] != "OBFHELLO"
         || value["frame_fixed_header_bytes"] != 76

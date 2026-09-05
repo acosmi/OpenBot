@@ -72,10 +72,12 @@ async fn durable_cancel_is_scoped_idempotent_and_poll_terminalizes_when_no_child
             .map_err(|error| error.to_string())?;
             directory
                 .begin_thread_run(BeginThreadRunRequest {
+                    auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
                     deployment: deployment.clone(),
                     tenant: tenant.clone(),
                     actor: actor.clone(),
                     command: BeginThreadRun {
+                        selected_skill_slugs: Vec::new(),
                         thread_id: thread.clone(),
                         run_id: RunId::new("run-cancel-1"),
                         bot_id: BotId::new("bot-1"),

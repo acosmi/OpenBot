@@ -315,6 +315,7 @@ mod tests {
             ),
             (
                 AppCommand::BeginThreadRun(openbot_contracts::command::BeginThreadRun {
+                    selected_skill_slugs: Vec::new(),
                     thread_id: openbot_contracts::ids::ThreadId::new(
                         "550e8400-e29b-81d4-a716-446655440000",
                     ),

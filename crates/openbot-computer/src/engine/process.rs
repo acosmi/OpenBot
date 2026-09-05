@@ -157,7 +157,7 @@ impl EngineBundle {
         let manifest: BundleManifest =
             serde_json::from_slice(&manifest_bytes).map_err(|_| EngineProcessError::BundleShape)?;
         if manifest.schema != "openbot-engine-bundle"
-            || manifest.schema_version != 1
+            || manifest.schema_version != 2
             || manifest.platform != expected_platform()
             || manifest.arch != std::env::consts::ARCH
             || manifest.electron_version != "43.3.0"
@@ -165,22 +165,47 @@ impl EngineBundle {
             || manifest.protocol_version != u64::from(ENGINE_PROTOCOL_VERSION)
             || manifest.product_name != "Acosmi Engine Fixture"
             || manifest.bundle_id != "com.acosmi.engine.fixture"
+            || manifest.signing_profile
+                != if cfg!(target_os = "macos") {
+                    "local-hardened-adhoc-fixture-v1"
+                } else {
+                    "platform-fixture"
+                }
             || manifest.fuse_wire != "000011001"
             || EngineBundleDigest::from_hex(&manifest.asar_header_sha256).is_err()
+            || (
+                manifest.executable.as_str(),
+                manifest.fuse_file.as_str(),
+                manifest.app_asar.as_str(),
+            ) != expected_bundle_paths()
         {
             return Err(EngineProcessError::BundleShape);
         }
-        let required_files = [
-            manifest.executable.as_str(),
-            manifest.fuse_file.as_str(),
-            manifest.app_asar.as_str(),
+        let mut required_files = [
+            manifest.executable.clone(),
+            manifest.fuse_file.clone(),
+            manifest.app_asar.clone(),
         ]
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>();
+        #[cfg(target_os = "macos")]
+        {
+            for helper in macos_bundle_helpers(&root) {
+                let relative = helper
+                    .strip_prefix(&root)
+                    .map_err(|_| EngineProcessError::BundleShape)?
+                    .to_str()
+                    .ok_or(EngineProcessError::BundleShape)?
+                    .to_owned();
+                required_files.insert(relative);
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = &mut required_files;
         let manifest_files = manifest
             .files
             .keys()
-            .map(String::as_str)
+            .cloned()
             .collect::<std::collections::BTreeSet<_>>();
         if manifest_files != required_files {
             return Err(EngineProcessError::BundleShape);
@@ -241,6 +266,7 @@ struct BundleManifest {
     app_asar: String,
     asar_header_sha256: String,
     fuse_wire: String,
+    signing_profile: String,
     files: BTreeMap<String, String>,
 }
 
@@ -1648,15 +1674,9 @@ fn engine_args(profile_dir: &Path, temp_dir: &Path) -> Vec<OsString> {
 }
 
 #[cfg(target_os = "macos")]
-fn sandbox_profile(
-    executable: &Path,
-    bundle: &Path,
-    profile: &Path,
-    temp: &Path,
-    runtime: &Path,
-) -> Result<String, EngineProcessError> {
+fn macos_bundle_helpers(bundle: &Path) -> [PathBuf; 5] {
     let app = bundle.join("AcosmiEngine.app/Contents");
-    let helpers = [
+    [
         app.join("Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper"),
         app.join("Frameworks/Electron Helper (GPU).app/Contents/MacOS/Electron Helper (GPU)"),
         app.join("Frameworks/Electron Helper (Plugin).app/Contents/MacOS/Electron Helper (Plugin)"),
@@ -1666,7 +1686,18 @@ fn sandbox_profile(
         app.join(
             "Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler",
         ),
-    ];
+    ]
+}
+
+#[cfg(target_os = "macos")]
+fn sandbox_profile(
+    executable: &Path,
+    bundle: &Path,
+    profile: &Path,
+    temp: &Path,
+    runtime: &Path,
+) -> Result<String, EngineProcessError> {
+    let helpers = macos_bundle_helpers(bundle);
     for path in std::iter::once(executable)
         .chain(std::iter::once(bundle))
         .chain(std::iter::once(profile))
@@ -1894,6 +1925,26 @@ fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, EngineProcessError>
         return Err(EngineProcessError::BundleShape);
     }
     Ok(root.join(path))
+}
+
+fn expected_bundle_paths() -> (&'static str, &'static str, &'static str) {
+    match std::env::consts::OS {
+        "macos" => (
+            "AcosmiEngine.app/Contents/MacOS/AcosmiEngine",
+            "AcosmiEngine.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework",
+            "AcosmiEngine.app/Contents/Resources/app.asar",
+        ),
+        "windows" => (
+            "acosmi-engine-fixture.exe",
+            "acosmi-engine-fixture.exe",
+            "resources/app.asar",
+        ),
+        _ => (
+            "acosmi-engine-fixture",
+            "acosmi-engine-fixture",
+            "resources/app.asar",
+        ),
+    }
 }
 
 fn expected_platform() -> &'static str {
@@ -2419,5 +2470,190 @@ mod tests {
             _ => false,
         };
         assert!(connected, "owned socket probe was refused");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires real macOS Engine helper, cc and sandbox-exec; synthetic loader fixture only"]
+    fn macos_helper_rejects_loader_injection_after_parent_profile_release() {
+        use std::path::{Path, PathBuf};
+        use std::process::Command;
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = Path::new("/private/tmp").join(format!("ob-helper-{}", std::process::id()));
+        assert!(!root.exists());
+        fs::create_dir(&root).expect("owned loader test root");
+        let _cleanup = Cleanup(root.clone());
+        let profile = root.join("profile");
+        let temp = root.join("temp");
+        let runtime = root.join("runtime");
+        let sibling = root.join("sibling");
+        for path in [&profile, &temp, &runtime, &sibling] {
+            fs::create_dir(path).expect("owned fixture directory");
+        }
+        let marker = sibling.join("synthetic-marker");
+        let library = profile.join("native-attack-fixture.dylib");
+        let source = profile.join("native-attack-fixture.c");
+        // Deliberately untrusted native test data, compiled only into the owned temporary folder.
+        // It touches exactly one synthetic path then exits before Electron startup; no user data,
+        // network, shell, persistence, or production native implementation is involved.
+        let literal =
+            serde_json::to_string(marker.to_str().expect("synthetic path")).expect("path literal");
+        fs::write(&source,format!("#include <fcntl.h>\n#include <unistd.h>\n__attribute__((constructor)) static void probe(void) {{ int f=open({literal},O_WRONLY|O_CREAT|O_EXCL,0600); if(f>=0){{write(f,\"fixture\",7);close(f);_exit(0);}} _exit(42); }}\n")).expect("untrusted fixture source");
+        assert!(
+            Command::new("/usr/bin/cc")
+                .args(["-dynamiclib", "-o"])
+                .arg(&library)
+                .arg(&source)
+                .status()
+                .expect("fixture compiler")
+                .success()
+        );
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace");
+        let bundle = std::env::var_os("OPENBOT_ENGINE_LOADER_FIXTURE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| workspace.join("target/engine/bundle/electron-43.3.0/macos-arm64"));
+        let helper=bundle.join("AcosmiEngine.app/Contents/Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper");
+        assert!(helper.is_file(), "real fixed helper bundle required");
+        // A normal ad-hoc test binary is the positive control for the loader fixture itself.
+        let positive = Command::new(std::env::current_exe().expect("test executable"))
+            .env_clear()
+            .env("DYLD_INSERT_LIBRARIES", &library)
+            .output()
+            .expect("fixture positive");
+        assert!(
+            positive.status.success() && marker.exists(),
+            "native loader fixture must execute without protection"
+        );
+        fs::remove_file(&marker).expect("reset marker");
+        let rules = super::sandbox_profile(
+            Path::new("/usr/bin/env"),
+            &bundle,
+            &profile,
+            &temp,
+            &runtime,
+        )
+        .expect("production parent policy");
+        let env_arg = format!("DYLD_INSERT_LIBRARIES={}", library.display());
+        // env sets DYLD after sandbox-exec has applied the parent policy, modelling a compromised
+        // main's own child environment construction, not inherited host credentials.
+        let result = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &rules, "/usr/bin/env"])
+            .arg(env_arg)
+            .arg(&helper)
+            .arg("--version")
+            .env_clear()
+            .env("HOME", &profile)
+            .env("TMPDIR", &temp)
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&profile)
+            .output()
+            .expect("owned helper loader probe");
+        let escaped = marker.exists();
+        println!(
+            "helper-loader synthetic_outside_marker={escaped} exited={}",
+            result.status.success()
+        );
+        assert!(
+            !escaped,
+            "approved helper must not execute a scope-controlled injected library outside the parent policy"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires generated epoch-5 bundle; tests only copied/hardlinked fixture files"]
+    fn bundle_rejects_legacy_schema_missing_helper_and_modified_helper_bytes() {
+        use sha2::Digest as _;
+        use std::path::{Path, PathBuf};
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace");
+        let source = std::env::var_os("OPENBOT_ENGINE_LOADER_FIXTURE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                workspace.join(format!(
+                    "target/engine/bundle/electron-43.3.0/{}",
+                    super::expected_platform()
+                ))
+            });
+        let original: serde_json::Value =
+            serde_json::from_slice(&fs::read(source.join("manifest.json")).expect("real bundle"))
+                .expect("manifest");
+        let root = std::env::temp_dir().join(format!("ob-bundle-integrity-{}", std::process::id()));
+        assert!(!root.exists());
+        fs::create_dir(&root).expect("owned root");
+        let _cleanup = Cleanup(root.clone());
+        let write_manifest = |value: &serde_json::Value| {
+            let bytes = serde_json::to_vec(value).expect("manifest JSON");
+            fs::write(root.join("manifest.json"), &bytes).expect("manifest write");
+            super::EngineBundleDigest(sha2::Sha256::digest(bytes).into())
+        };
+        let mut stale = original.clone();
+        stale["schema_version"] = serde_json::json!(1);
+        assert!(matches!(
+            super::EngineBundle::open(&root, write_manifest(&stale)),
+            Err(super::EngineProcessError::BundleShape)
+        ));
+        let helper = "AcosmiEngine.app/Contents/Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper";
+        let mut redirected = original.clone();
+        let main = redirected["executable"]
+            .as_str()
+            .expect("main path")
+            .to_owned();
+        redirected["executable"] = serde_json::json!(helper);
+        redirected["files"]
+            .as_object_mut()
+            .expect("files")
+            .remove(&main);
+        assert!(matches!(
+            super::EngineBundle::open(&root, write_manifest(&redirected)),
+            Err(super::EngineProcessError::BundleShape)
+        ));
+        let mut missing = original.clone();
+        missing["files"]
+            .as_object_mut()
+            .expect("files")
+            .remove(helper);
+        assert!(matches!(
+            super::EngineBundle::open(&root, write_manifest(&missing)),
+            Err(super::EngineProcessError::BundleShape)
+        ));
+        for path in original["files"].as_object().expect("files").keys() {
+            let target = root.join(path);
+            fs::create_dir_all(target.parent().expect("parent")).expect("target directories");
+            if path == helper {
+                fs::copy(source.join(path), &target).expect("isolated helper copy");
+            } else {
+                fs::hard_link(source.join(path), &target).expect("read-only fixture reference");
+            }
+        }
+        let digest = write_manifest(&original);
+        assert!(super::EngineBundle::open(&root, digest).is_ok());
+        use std::io::Write as _;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(root.join(helper))
+            .expect("own helper copy")
+            .write_all(b"tamper")
+            .expect("tamper fixture");
+        assert!(matches!(
+            super::EngineBundle::open(&root, digest),
+            Err(super::EngineProcessError::BundleDigest)
+        ));
     }
 }
