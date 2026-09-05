@@ -2,6 +2,7 @@
 
 先读同目录 `2026-09-04-v4第二轮外派任务-总则.md` 和列出的第一真源，全部共同约束适用。
 固定基线 `87d84bb85d0056dfa4dcc2b35be4c2a610a55ae3`；分支 `feat/2026-09-04-P1-windows-runtime-audit`。
+用户已授权主控将R196+任务说明推送为远程E分支，准备SHA=`de8d0ecc7d71e88e41e9b3b6bf7884c9d89c53fd`；实现候选从该SHA起算恰一个commit，代码base仍R196，详见总则交接例外和远程分支交接说明。
 本任务必须在 Windows x64 原生运行；macOS cross-check、Wine、WSL 内 Linux 运行不能替代。
 
 ## 任务与范围
