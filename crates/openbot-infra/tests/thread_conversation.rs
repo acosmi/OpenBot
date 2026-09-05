@@ -79,10 +79,12 @@ async fn atomic_snapshot_bridges_active_text_cursor_live_terminal_and_materializ
             .map_err(|error| error.to_string())?;
             directory
                 .begin_thread_run(BeginThreadRunRequest {
+                    auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
                     deployment: deployment.clone(),
                     tenant: TenantId::new("tenant"),
                     actor: ActorId::new("actor"),
                     command: BeginThreadRun {
+                        selected_skill_slugs: Vec::new(),
                         thread_id: thread.clone(),
                         run_id: RunId::new("run-1"),
                         bot_id: BotId::new("bot-1"),

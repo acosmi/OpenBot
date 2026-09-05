@@ -76,8 +76,14 @@ pub async fn begin_thread_run<D: ThreadDirectory>(
     {
         return Err(AppError::MalformedPayload { field: "message" });
     }
+    if !openbot_contracts::command::valid_selected_skill_slugs(&command.selected_skill_slugs) {
+        return Err(AppError::MalformedPayload {
+            field: "selected_skill_slugs",
+        });
+    }
     directory
         .begin_thread_run(BeginThreadRunRequest {
+            auth_generation: auth.auth_generation(),
             deployment: auth.deployment().clone(),
             tenant: auth.tenant().clone(),
             actor: auth.actor().clone(),
@@ -369,6 +375,7 @@ mod tests {
 
     fn begin_command() -> BeginThreadRun {
         BeginThreadRun {
+            selected_skill_slugs: Vec::new(),
             thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
             run_id: openbot_contracts::ids::RunId::new("run-1"),
             bot_id: openbot_contracts::ids::BotId::new("bot-1"),
@@ -404,6 +411,7 @@ mod tests {
         assert_eq!(
             directory.calls.lock().expect("fake lock").as_slice(),
             &[BeginThreadRunRequest {
+                auth_generation: openbot_contracts::auth::AuthGeneration::new(7),
                 deployment: DeploymentId::new("dep-authoritative"),
                 tenant: TenantId::new("tenant-authoritative"),
                 actor: ActorId::new("actor-authoritative"),
@@ -455,6 +463,22 @@ mod tests {
                     .await
                     .unwrap_err(),
                 AppError::MalformedPayload { field }
+            );
+            assert!(directory.calls.lock().expect("fake lock").is_empty());
+        }
+        for slugs in [
+            vec!["missing/grammar".to_owned()],
+            vec!["repeat".to_owned(), "repeat".to_owned()],
+            (0..17).map(|index| format!("skill-{index}")).collect(),
+        ] {
+            let directory = begin_directory(Err(ThreadDirectoryError::Unavailable));
+            let mut command = begin_command();
+            command.selected_skill_slugs = slugs;
+            assert_eq!(
+                begin_thread_run(&directory, &auth(), command).await,
+                Err(AppError::MalformedPayload {
+                    field: "selected_skill_slugs"
+                }),
             );
             assert!(directory.calls.lock().expect("fake lock").is_empty());
         }

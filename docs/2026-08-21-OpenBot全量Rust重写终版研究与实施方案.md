@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R202，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R204，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -67,14 +67,15 @@ Electron/Chromium browser engine（无业务裁决权）
 
 （R125，2026-08-28）**12 人 / 52 周的日历基线作废**：§19 改为只用入口条件、产物与退出证据控制的阶段门（P0-code → P1 → … 与既有 G3 / G4 / G6 余项并行），不再给没有实证的周数。两次不参与编码的独立安全审计保留：第一次仍按 §24 G2，第二次在 G8 之前、P3 之后。范围约束不变：任何新增数据库、额外 MCP 协议面、第二浏览器 driver、移动端、Firecracker、ACP、新模型专用集成，或**来自参考源的产品能力**（R115），都不得挤入本次重写范围。
 
-### 0.5 受控Alpha与开源共建方向（2026-09-04，R191）
+### 0.5 受控Alpha与开源共建方向（R191；2026-09-05 R204明确macOS首发）
 
 用户明确要求尽早上线可用、逐步补全v4，并将本项目面向社区开源共建，由维护者审查PR。
-首批为本人及少量受邀用户的受控本机试用；首版必须同时具备基础工作台、AI对话/工具闭环、
+首版明确先发布 **macOS**，面向本人及少量受邀用户的独立本机试用；必须具备基础工作台、AI对话/工具闭环、
 浏览器和原生电脑操控。原生OS桌面控制超出既有Browser/file/shell parity的部分标为新增，不能借旧T-ID勾选。
 
 本方向新增独立Alpha里程碑，**不改变§25所定义的v4完整完成条件**；G0–G8、parity/fixtures和平台/外审等
-仍全量保留。Alpha支持面按准确平台、部署和数据边界声明，哪个平台先实际通过适用闸门，哪个先准入。
+仍全量保留。首发平台固定macOS，其实际启用路径须通过适用闸门；Windows/Linux按后续版本独立验收，
+不再作为macOS首版的跨平台前置条件。准确CPU架构、系统版本、部署和数据边界随实际验收包声明。
 不能把单用户服务共享给多用户，也不允许P0/P1、跨scope泄漏、audit-before-action违规或数据损坏以Alpha豁免。
 
 复用自有项目采用固定提交复制到本项目处理，禁止修改源仓。最新已合并基线已核实有macOS和Windows
@@ -961,6 +962,18 @@ pub trait VendorTransport {
 实现 `McpHttpTransport` 与 `GoogleDriveRestTransport`。Drive 使用 asker's per-user OAuth，scope 固定 read-only；search/recent/read/metadata 的结果带 vendor link 和 provenance，不缓存客户文档正文，不创建本地 ACL/index。
 
 ### 9.6 Skills 与 tool discovery
+
+R203（2026-09-05）补齐显式技能调用链：固定上游 `useSkillCommands` 的 `kind:chip` 只携带惰性
+指令，`channel-chat::deliver` 按选择顺序追加独立 system message，再追加用户原文；不是展开编辑器
+文本，也不是自动启用所有已授予技能。Rust `BeginThreadRun`/HTTP body 接受可选
+`selectedSkillSlugs`，最多16个、沿用2–40字节slug语法、重复拒绝（数量预算为**新增**）。renderer
+只能提交slug，不能提交system指令。新run在同事务验证当前actor generation/撤销、Agent可见性与
+package tenant、当前skill grant并锁定源行，把有序system指令快照、用户原文和原选择、run/event/
+outbox一起提交。Skill owner约束用于管理/授予；使用端以Agent grant为准，不额外要求skill owner。
+未知/撤销选择统一404且整次回滚；同runId改变消息、选择或顺序409。原样重试只返回既有receipt，
+后续编辑/撤销不改写已接受的指令历史、不自动重发run；当前actor失效仍拒绝。未选择的请求及历史
+保持原wire。history可选返回用户原选择，provider沿用独立system消息管线和既有6MiB/4096条上下文
+预算；技能不增加任何工具授权。定向证据见`docs/2026-09-05-WrokBot-显式技能执行与持久快照-后端验收.md`，GUI实现及真机/完整G4/G6不由此预记通过。
 
 - personal skill 只属于作者，可附加到作者拥有的 Bot；
 - deployment skill 只由 admin 管理；
@@ -2426,13 +2439,18 @@ R191新增的受控Alpha按§24.2单独准入，不视为G0–G8通过或§25完
 
 ### 24.2 受控Alpha准入（R191新增，尚未通过）
 
-仅适用于本人/少量受邀者的独立本地实例，按实际通过的平台逐腿开放；不适用于公开注册、多租户SaaS、
+**R204当前发布顺序：首版只发布macOS**，适用于本人/少量受邀者的独立本地实例；Windows后续独立准入，
+E2继续回收但不阻塞macOS首发。Linux/runsc及公开多用户Server属于后续支持范围，不预记平台通过。
+不适用于公开注册、多租户SaaS、
 跨用户共享桌面执行端或承诺v4全能力的正式发行。首版同时覆盖工作台、Agent工具、浏览器和原生电脑闭环。
 
 必须实际通过：A0支持范围/来源许可；A1干净环境启动与真实readiness；A2真provider/PG/GUI工具审批取消；
 A3指定浏览器target与接管/Stop；A4本产品身份的原生权限、动作receipt、结果变化及输入互斥/取消；
 A5数据/secret/像素出网与远端不可扩权；A6新数据backup/restore/checksum与升级失败恢复；
 A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R191研究方案§8。
+
+具体首发范围与阻断项见`docs/2026-09-05-WrokBot-macOS首版发布范围与阻断清单.md`。
+仅作用于Windows/Linux的未完成项不阻塞macOS；实际影响macOS共享路径的缺陷仍为首发阻断。
 
 这些A项均未在本次规划中自动勾选。P0/P1、跨scope泄漏、audit-before-action违规和不可恢复数据错误零容忍；
 未具备的能力不能在Alpha支持矩阵中启用。A项不替代G8的production-scale迁移、完整签名或外审证据。
@@ -2834,6 +2852,9 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R200 | §10.1 / §10.3 / §11.3 / §24 G5（2026-09-05 Batch124：macOS main直接读取） | R199关闭env继承后，SBPL仍allow-default而只约束write；实际kernel探针证明邻接文件、symlink、DataVolume别名可读，不能开放真实网页后再补。 | deny file-read*，仅scope/bundle/具名OS资源和ancestor metadata允许；避免 /System 覆盖Data卷。根据本机dyld事实只加literal /目录openat锚点，拒NUL注入。明确native cat/ls/ln探针与真实Engine兼容性分开；不宣称完成任意main compromise防线。 | 修复前3可读，后5负向全拒绝，scope内read/list/link及无sandbox hardlink正向成立；native1/0/0、真实两role父测试1/0/0，完整input/frame/env/stop/cleanup保持。Computer67+fixture5、Clippy、Windows/Linux check通过；跨平台仅编译。fixture1790 bytes/SHA 3f2e5ef4…，F0059后39/20/59；parity/overlay不变，strict160/0/0、Grok/shim通过。固定Chromium150.0.7871.212三source与本机dyld哈希已记录；helper exec/Mach/FD/UDS/kernel/production余项继续，详见Batch124。 |
 | R201 | §10.5 / §11.2 / §24 G5（2026-09-05 Batch125：macOS main精确pipe出口） | R200读取已收紧，但main仍可连接任意UDS/localhost；实际Rust子进程probe确认runtime额外socket、邻接scope socket和其它loopback端口均可达。 | 删两项通配，仅放当前runtime control/frame两literal；保持peer/token检查。native probe每个拒绝端点都有同client/endpoint unconfined正向，真实Engine兼容另跑。guard仅登记末尾cfg(test)一个数字TCP调用；不扩production出网面。 | native1/0/0：3错误端点由true变false、两正确pipe可连；真实两role父测试1/0/0，完整input/frame/env/cleanup保持。Computer/Clippy和Windows/Linux check绿；F0060后40/20/60，parity/overlay不变；strict160/0/0、Grok/shim/唯一出网guard通过。helper实查adhoc/flags0x2，with-no-sandbox执行/loader/网络仍未验证，不能由main规则推全Engine隔离；epoch4、gateway/native平台/production继续，详见Batch125。 |
 | R202 | §0.6 / §15.4 / §16.1 / §23.4 / §24.2（2026-09-05：Wrok Bot命名与本机启动） | 产品入口仍为旧名，默认金融包managed插槽要求预置key | 用户要求全部命名改Wrok Bot并优先可启动核心；默认包使初次配置key的工作台无法打开 | 新Server binary与16个品牌配置名；显式local包和loopback/default-origin，原部署不自动迁tenant；保留旧校验器与durable身份，逐步迁移底层名称；未配置key可进入工作台但run明确failed | Server242+7与最终launch7、Clippy；真实PG/SCRAM/正式Server/环回模拟provider/Vault/restart摘要与Origin403；非live/非Alpha通过，详见本批报告 |
+| R203 | §9.6（2026-09-05：显式技能调用） | Skills管理/授权已落，BeginThreadRun仅接受message，指令未入runtime | 自动全量grant或拼接用户文字均不符固定上游chip→system语义，renderer任意system正文不可信 | 可选有序slug经Rust当前授权与同事务快照；保留用户原文、历史选择与精确重试，新增16项预算，不增加tool capability | PG17.11/SCRAM9通过含并发撤销锁等待；Contracts110/Application166/Server242/Desktop134与Clippy通过，Desktop3项真实宿主测试忽略；非live/非完整GUI/G4/G6，详见本批报告 |
+| R204 | §0.5 / §24.2（2026-09-05：macOS首版发布裁决） | Alpha原按平台实际通过逐腿开放，近期估算混含Windows首版 | 用户明确首版先上mac并要求修正文档 | 首发平台固定macOS，Windows E2保留到后续版独立验收，不作为mac首发前置；mac实际启用范围仍逐项过A0–A7，全量v4与全部平台todo保留 | 用户本次明确裁决；同步首发范围、策略、进度、工作单与前端窗口，不新增通过标记或发布日期承诺 |
+
 
 ### 28.2 复核通过、原样保留的断言
 

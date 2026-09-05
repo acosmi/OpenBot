@@ -1251,6 +1251,7 @@ mod tests {
                 thread_id: ThreadId::new("550e8400-e29b-41d4-a716-446655440000"),
             },
             AppCommand::BeginThreadRun(BeginThreadRun {
+                selected_skill_slugs: Vec::new(),
                 thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
                 run_id: RunId::new("run-thread"),
                 bot_id: BotId::new("bot-1"),
@@ -1605,6 +1606,7 @@ mod tests {
         let (reply, _) = capture(service.execute(
             auth_for("actor-1"),
             AppCommand::BeginThreadRun(BeginThreadRun {
+                selected_skill_slugs: Vec::new(),
                 thread_id: thread_id.clone(),
                 run_id: run_id.clone(),
                 bot_id: BotId::new("bot-1"),

@@ -188,10 +188,12 @@ async fn create_is_atomic_scoped_independent_native_and_single_connection() {
             .map_err(|error| error.to_string())?;
             let started = directory
                 .begin_thread_run(BeginThreadRunRequest {
+                    auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
                     deployment: DeploymentId::new("dep-a"),
                     tenant: TenantId::new("tenant-a"),
                     actor: ActorId::new("actor"),
                     command: BeginThreadRun {
+                        selected_skill_slugs: Vec::new(),
                         thread_id: thread.clone(),
                         run_id: RunId::new("run-created-channel"),
                         bot_id: BotId::new("agent-a"),

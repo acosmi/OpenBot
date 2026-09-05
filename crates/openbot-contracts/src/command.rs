@@ -87,6 +87,17 @@ pub const MAX_CHANNEL_PAGE: u32 = 200;
 /// 所以 application 必须自己守住同一资源边界。JSON framing 会让 HTTP 实际可用文本略小，
 /// 但绝不能让 Desktop 绕过全局数量级。
 pub const MAX_THREAD_MESSAGE_BYTES: usize = 1024 * 1024;
+/// New per-turn selection budget; skills remain instructions, never tool capabilities.
+pub const MAX_SELECTED_SKILLS: usize = 16;
+
+/// Validate an ordered, bounded selection without silently dropping invalid or duplicate slugs.
+#[must_use]
+pub fn valid_selected_skill_slugs(slugs: &[String]) -> bool {
+    slugs.len() <= MAX_SELECTED_SKILLS
+        && slugs.iter().enumerate().all(|(index, slug)| {
+            crate::mcp::valid_skill_slug(slug) && !slugs[..index].contains(slug)
+        })
+}
 /// Maximum Unicode scalar count in one public create-time routing explanation.
 pub const MAX_CHANNEL_ROUTING_REASON_CODE_POINTS: usize = 500;
 /// Memory 管理页上限。
@@ -724,6 +735,9 @@ pub struct BeginThreadRun {
     pub anchor: ThreadRunAnchor,
     /// initial user message；原样保存，不做 Unicode normalization。
     pub message: String,
+    /// Explicitly selected granted skills, in invocation order. Rust resolves instruction bodies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_skill_slugs: Vec<String>,
 }
 
 /// Native HTTP body for beginning a run on the thread identified by the route path.
@@ -738,6 +752,9 @@ pub struct BeginThreadRunBody {
     pub anchor: ThreadRunAnchor,
     /// Initial user message.
     pub message: String,
+    /// Explicit skill selection; omitted/empty preserves the original no-skill request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_skill_slugs: Vec<String>,
 }
 
 /// thread/message/run/event/outbox 同事务提交后的 receipt。
@@ -808,6 +825,9 @@ pub enum ThreadHistoryRole {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ThreadHistoryMessage {
+    /// Original explicit skill selection for a user turn; independent of later grant changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_skill_slugs: Vec<String>,
     /// Durable message id。
     pub id: String,
     /// AG-UI role。
@@ -1168,6 +1188,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn selected_skill_wire_is_optional_ordered_and_cannot_carry_instructions() {
+        let legacy = serde_json::json!({"runId":"run-1","botId":"bot-1",
+            "anchor":{"kind":"direct_bot"},"message":"unchanged"});
+        let mut command: BeginThreadRunBody = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(command.selected_skill_slugs.is_empty());
+        assert_eq!(serde_json::to_value(&command).unwrap(), legacy);
+        command.selected_skill_slugs = vec!["z-last".to_owned(), "a-first".to_owned()];
+        let wire = serde_json::to_value(&command).unwrap();
+        assert_eq!(
+            wire["selectedSkillSlugs"],
+            serde_json::json!(["z-last", "a-first"])
+        );
+        assert_eq!(
+            serde_json::from_value::<BeginThreadRunBody>(wire).unwrap(),
+            command
+        );
+        let mut forged = legacy;
+        forged["skillInstructions"] = serde_json::json!(["arbitrary system text"]);
+        assert!(serde_json::from_value::<BeginThreadRunBody>(forged).is_err());
+        for slug in ["a", "Bad", "a/skill", "-bad", "bad-", "bad\0"] {
+            assert!(!valid_selected_skill_slugs(&[slug.to_owned()]));
+        }
+        assert!(!valid_selected_skill_slugs(&["x".repeat(41)]));
+        assert!(valid_selected_skill_slugs(&["a".repeat(40)]));
+        assert!(valid_selected_skill_slugs(
+            &(0..16).map(|i| format!("skill-{i}")).collect::<Vec<_>>()
+        ));
+    }
+
     /// §15.3 末条的机械兑现：空页必须是 `{"items":[],"next_cursor":null}`。
     ///
     /// `[]` 与 `null` 在客户端是两种东西 —— 后者会让「没有 channel」和「字段缺失」不可
@@ -1291,6 +1341,7 @@ mod tests {
         );
 
         let begin = BeginThreadRunBody {
+            selected_skill_slugs: Vec::new(),
             run_id: RunId::new("run-1"),
             bot_id: BotId::new("bot-1"),
             anchor: ThreadRunAnchor::Channel {
@@ -1331,6 +1382,7 @@ mod tests {
     fn native_conversation_snapshot_is_closed_and_cursor_explicit() {
         let snapshot = ThreadConversationSnapshot {
             messages: vec![ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "message-1".to_owned(),
                 role: ThreadHistoryRole::User,
                 content: "hello".to_owned(),
@@ -1489,6 +1541,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<AppCommand>(&wire).unwrap(), status);
 
         let begin = AppCommand::BeginThreadRun(BeginThreadRun {
+            selected_skill_slugs: Vec::new(),
             thread_id: ThreadId::new("550e8400-e29b-81d4-a716-446655440000"),
             run_id: RunId::new("run-1"),
             bot_id: BotId::new("bot-1"),
@@ -1679,6 +1732,7 @@ mod tests {
 
         let history = AppReply::ThreadHistory(ThreadHistory {
             messages: vec![ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "m-1".to_owned(),
                 role: ThreadHistoryRole::User,
                 content: "hello".to_owned(),

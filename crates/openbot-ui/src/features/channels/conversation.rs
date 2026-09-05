@@ -1851,6 +1851,7 @@ mod tests {
         let mut state = ConversationState::default();
         state.install_snapshot(ThreadConversationSnapshot {
             messages: vec![ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "user-1".to_owned(),
                 role: ThreadHistoryRole::User,
                 content: "hello".to_owned(),
@@ -1876,6 +1877,7 @@ mod tests {
     fn history_projects_user_assistant_tool_activity_but_not_system_prompt() {
         let lines = project_history(&[
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "system".to_owned(),
                 role: ThreadHistoryRole::System,
                 content: "secret standing instruction".to_owned(),
@@ -1886,6 +1888,7 @@ mod tests {
                 tool_calls: None,
             },
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "user".to_owned(),
                 role: ThreadHistoryRole::User,
                 content: "hello".to_owned(),
@@ -1896,6 +1899,7 @@ mod tests {
                 tool_calls: None,
             },
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "assistant".to_owned(),
                 role: ThreadHistoryRole::Assistant,
                 content: String::new(),
@@ -1908,6 +1912,7 @@ mod tests {
                 ]),
             },
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "tool".to_owned(),
                 role: ThreadHistoryRole::Tool,
                 content: serde_json::to_string("found it").unwrap(),
@@ -1929,6 +1934,7 @@ mod tests {
     fn durable_component_call_and_result_pair_into_one_transcript_renderer() {
         let messages = [
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "component-call".to_owned(),
                 role: ThreadHistoryRole::Assistant,
                 content: String::new(),
@@ -1946,6 +1952,7 @@ mod tests {
                 })]),
             },
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "component-result".to_owned(),
                 role: ThreadHistoryRole::Tool,
                 content: "The quotation is now on screen for the person.".to_owned(),
@@ -1999,6 +2006,7 @@ mod tests {
     fn durable_decision_result_is_retained_for_completed_renderer_replay() {
         let lines = project_history(&[
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "decision-call".to_owned(),
                 role: ThreadHistoryRole::Assistant,
                 content: String::new(),
@@ -2019,6 +2027,7 @@ mod tests {
                 })]),
             },
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "decision-result".to_owned(),
                 role: ThreadHistoryRole::Tool,
                 content: r#"{"choice":"prod","label":"Production"}"#.to_owned(),
@@ -2044,6 +2053,7 @@ mod tests {
     fn durable_sandboxed_call_is_projected_by_exact_namespace_not_prefix_guess() {
         let messages = [
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "sandbox-call".to_owned(),
                 role: ThreadHistoryRole::Assistant,
                 content: String::new(),
@@ -2061,6 +2071,7 @@ mod tests {
                 })]),
             },
             ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "sandbox-result".to_owned(),
                 role: ThreadHistoryRole::Tool,
                 content: "It is now on screen for the person.".to_owned(),

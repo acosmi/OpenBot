@@ -89,6 +89,7 @@ pub async fn begin_run(
         .execute(
             auth,
             AppCommand::BeginThreadRun(BeginThreadRun {
+                selected_skill_slugs: body.selected_skill_slugs,
                 thread_id: ThreadId::new(thread_id),
                 run_id: body.run_id,
                 bot_id: body.bot_id,
@@ -807,6 +808,7 @@ mod tests {
         let directory =
             FakeThreadDirectory::new(Ok(true)).with_conversation(Ok(ThreadConversationSnapshot {
                 messages: vec![ThreadHistoryMessage {
+                    selected_skill_slugs: Vec::new(),
                     id: "message-1".to_owned(),
                     role: ThreadHistoryRole::User,
                     content: "hello".to_owned(),
@@ -908,7 +910,7 @@ mod tests {
                 app(directory, FixedAuthResolver::granting(auth("u1"))),
                 Some("https://app.example.test"),
                 thread,
-                r#"{"runId":"run-1","botId":"agent-1","anchor":{"kind":"channel","channel_id":"channel-1"},"message":"hello"}"#,
+                r#"{"runId":"run-1","botId":"agent-1","anchor":{"kind":"channel","channel_id":"channel-1"},"message":"hello","selectedSkillSlugs":["skill-one"]}"#,
             )
             .await;
             assert_eq!(status, expected);
@@ -919,10 +921,12 @@ mod tests {
             assert_eq!(
                 visible.begin_calls(),
                 [BeginThreadRunRequest {
+                    auth_generation: openbot_contracts::auth::AuthGeneration::new(1),
                     deployment: DeploymentId::new("openbot-test"),
                     tenant: TenantId::new("tenant-test"),
                     actor: ActorId::new("u1"),
                     command: BeginThreadRun {
+                        selected_skill_slugs: vec!["skill-one".to_owned()],
                         thread_id: ThreadId::new(thread),
                         run_id: RunId::new("run-1"),
                         bot_id: openbot_contracts::ids::BotId::new("agent-1"),
@@ -1207,6 +1211,7 @@ mod tests {
         let thread = ThreadId::new("550e8400-e29b-41d4-a716-446655440000");
         let directory = FakeThreadDirectory::new(Ok(true)).with_history(Ok(ThreadHistory {
             messages: vec![ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: "m-1".to_owned(),
                 role: ThreadHistoryRole::User,
                 content: "hello".to_owned(),

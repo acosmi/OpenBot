@@ -2120,6 +2120,7 @@ impl FixtureThreads {
             ThreadConversationSnapshot {
                 messages: vec![
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-user-message".to_owned(),
                         role: ThreadHistoryRole::User,
                         content: "Categorize these expenses.".to_owned(),
@@ -2130,6 +2131,7 @@ impl FixtureThreads {
                         tool_calls: None,
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-assistant-message".to_owned(),
                         role: ThreadHistoryRole::Assistant,
                         content: "Categorized three expenses.".to_owned(),
@@ -2140,6 +2142,7 @@ impl FixtureThreads {
                         tool_calls: None,
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-component-call".to_owned(),
                         role: ThreadHistoryRole::Assistant,
                         content: String::new(),
@@ -2161,6 +2164,7 @@ impl FixtureThreads {
                         })]),
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-component-result".to_owned(),
                         role: ThreadHistoryRole::Tool,
                         content: "The quotation is now on screen for the person.".to_owned(),
@@ -2171,6 +2175,7 @@ impl FixtureThreads {
                         tool_calls: None,
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-activity-component-call".to_owned(),
                         role: ThreadHistoryRole::Assistant,
                         content: String::new(),
@@ -2188,6 +2193,7 @@ impl FixtureThreads {
                         })]),
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-activity-component-result".to_owned(),
                         role: ThreadHistoryRole::Tool,
                         content: "The report is on screen for the person, filled with figures read from this deployment. You were not given the figures.".to_owned(),
@@ -2198,6 +2204,7 @@ impl FixtureThreads {
                         tool_calls: None,
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-refusals-component-call".to_owned(),
                         role: ThreadHistoryRole::Assistant,
                         content: String::new(),
@@ -2215,6 +2222,7 @@ impl FixtureThreads {
                         })]),
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-refusals-component-result".to_owned(),
                         role: ThreadHistoryRole::Tool,
                         content: "The report is on screen for the person, filled with figures read from this deployment. You were not given the figures.".to_owned(),
@@ -2225,6 +2233,7 @@ impl FixtureThreads {
                         tool_calls: None,
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-refused-component-call".to_owned(),
                         role: ThreadHistoryRole::Assistant,
                         content: String::new(),
@@ -2242,6 +2251,7 @@ impl FixtureThreads {
                         })]),
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-refused-component-result".to_owned(),
                         role: ThreadHistoryRole::Tool,
                         content: "Not shown: Notice.".to_owned(),
@@ -2252,6 +2262,7 @@ impl FixtureThreads {
                         tool_calls: None,
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-sandboxed-component-call".to_owned(),
                         role: ThreadHistoryRole::Assistant,
                         content: String::new(),
@@ -2272,6 +2283,7 @@ impl FixtureThreads {
                         })]),
                     },
                     ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: "fixture-sandboxed-component-result".to_owned(),
                         role: ThreadHistoryRole::Tool,
                         content: "It is now on screen for the person.".to_owned(),
@@ -2307,6 +2319,7 @@ impl FixtureThreads {
                 thread.to_owned(),
                 ThreadConversationSnapshot {
                     messages: vec![ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: format!("{run}:user"),
                         role: ThreadHistoryRole::User,
                         content: prompt.to_owned(),
@@ -2412,6 +2425,7 @@ impl FixtureThreads {
                 return Err(ComponentAdministrationError::NotVisible);
             }
             snapshot.messages.push(ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: format!("{}:assistant", pending.decision_id),
                 role: ThreadHistoryRole::Assistant,
                 content: String::new(),
@@ -2429,6 +2443,7 @@ impl FixtureThreads {
                 })]),
             });
             snapshot.messages.push(ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: format!("{}:tool", pending.decision_id),
                 role: ThreadHistoryRole::Tool,
                 content: result,
@@ -2543,6 +2558,7 @@ impl ThreadDirectory for FixtureThreads {
                 .last_event_sequence
                 .map_or(0, |value| value.saturating_add(1));
             snapshot.messages.push(ThreadHistoryMessage {
+                selected_skill_slugs: Vec::new(),
                 id: format!("{}:user", run.as_str()),
                 role: ThreadHistoryRole::User,
                 content: request.command.message.clone(),
@@ -2638,6 +2654,7 @@ impl ThreadDirectory for FixtureThreads {
                 && let Some(snapshot) = snapshots.get_mut(thread.as_str())
             {
                 snapshot.messages.push(ThreadHistoryMessage {
+                    selected_skill_slugs: Vec::new(),
                     id: format!("{}:assistant", run.as_str()),
                     role: ThreadHistoryRole::Assistant,
                     content: "Fixture reply".to_owned(),
@@ -2737,6 +2754,7 @@ impl ThreadDirectory for FixtureThreads {
                     .map_or(0, |value| value.saturating_add(1));
                 if !snapshot.active_run_text.is_empty() {
                     snapshot.messages.push(ThreadHistoryMessage {
+                        selected_skill_slugs: Vec::new(),
                         id: format!("{}:assistant", terminal_run.as_str()),
                         role: ThreadHistoryRole::Assistant,
                         content: snapshot.active_run_text.clone(),
@@ -3962,10 +3980,12 @@ mod approval_pg_tests {
 
         threads
             .begin_thread_run(BeginThreadRunRequest {
+                auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
                 deployment,
                 tenant,
                 actor,
                 command: openbot_contracts::command::BeginThreadRun {
+                    selected_skill_slugs: Vec::new(),
                     thread_id: thread,
                     run_id: RunId::new("fixture-direct-run"),
                     bot_id: BotId::new("fixture-owned-private"),

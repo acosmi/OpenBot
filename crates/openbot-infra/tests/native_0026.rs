@@ -46,10 +46,12 @@ fn request(deployment: &DeploymentId, entropy_tail: u64, run_id: &str) -> BeginT
     let mut entropy = [0_u8; 16];
     entropy[8..].copy_from_slice(&entropy_tail.to_be_bytes());
     BeginThreadRunRequest {
+        auth_generation: openbot_contracts::auth::AuthGeneration::new(0),
         deployment: deployment.clone(),
         tenant: TenantId::new("tenant-a"),
         actor: ActorId::new("budget-owner"),
         command: BeginThreadRun {
+            selected_skill_slugs: Vec::new(),
             thread_id: ThreadIdentity::new(deployment).mint_from_entropy(entropy),
             run_id: RunId::new(run_id),
             bot_id: BotId::new("bot-budget"),

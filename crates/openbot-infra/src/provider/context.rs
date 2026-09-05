@@ -497,7 +497,10 @@ impl AgentContextSource for PostgresAgentContextSource {
             let text = text_content(&content).ok_or(AgentContextError::Corrupt {
                 field: "message_content",
             })?;
-            if role == "system" && text == standing_prompt {
+            if role == "system"
+                && text == standing_prompt
+                && content.get("selectedSkillSlug").is_none()
+            {
                 continue;
             }
             let tool_calls = if role == "assistant" {

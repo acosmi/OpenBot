@@ -2,7 +2,7 @@
 
 OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这一份**。本仓 **public**。
 
-> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R202，2026-09-05；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
+> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R204，2026-09-05；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
 
 ---
 
@@ -30,6 +30,8 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 - **R200收紧macOS main直接读取**：新SBPL只放scope/bundle/具名OS内容与ancestor metadata，dyld只补literal /锚点；旧3条跨scope读取实修为5负向拒绝、scope read/list/link正向成立，另有真实两role完整兼容。F0059后fixtures39/20/59；helper exec/Mach/FD/UDS/localhost、Windows/runsc、production与完整G5E/Alpha仍缺，详见Batch124。
 - **R201收紧macOS main outbound**：只放runtime两条精确pipe，三错误UDS/TCP端点从可达变拒绝，两pipe和真实两role兼容保持。F0060后fixtures40/20/60；helper自身网络/exec/签名与production代理/导航、Windows/runsc和完整G5E仍缺。main当前无TCP allow，不得恢复localhost通配；详见Batch125。
 - **R202固定Wrok Bot命名与本机启动**：用户要求全部名称迁移；新增`wrok-bot-server --local`、第一方本机包与16个`WROK_BOT_*`配置入口。旧部署/持久身份不盲改，新旧配置冲突和SSO→多用户local冲突拒绝；真实PG+模拟provider/Vault/重启通过，不称live或Alpha通过。crate/path/Desktop/Engine整体命名、安装及核心控制继续；见`docs/2026-09-05-WrokBot-本机启动与后端首版进度.md`。
+- **R203固定显式技能执行**：用户有序选择slug经Rust当前授权同事务解析为独立system快照，原文/原选择/run/event/outbox共同提交；后续编辑/撤销不改历史，精确重试不增写。最多16项为新增预算，技能不增加tool权限；前端交互仍由前端窗口实施。见`docs/2026-09-05-WrokBot-显式技能执行与持久快照-后端验收.md`。
+- **R204固定macOS首发**：用户明确首版先上mac。Windows E2继续修复回传，但仅Windows/Linux未通过项不阻塞macOS首发；影响macOS共享路径的缺陷仍阻断。macOS实际支持范围逐项过A0–A7，CPU架构/系统版本按真机证据声明，全量v4及平台todo保留；见`docs/2026-09-05-WrokBot-macOS首版发布范围与阻断清单.md`。
 - 阶段进度：**Phase 0（Evidence Freeze）产物已落地** —— `parity/*.yaml`（9 份；条目数随实施推进增长，真源是各台账自己的 recount，由 `cargo xtask recount` 逐条实跑，**不在本文件钉死**）、`provenance/sources.spdx.json`、`fixtures/**`、`tools/pins.toml`、十个业务/parity 核心 crate 骨架（R127 后另有唯一 Win32 安全边界 crate）、`cargo xtask parity-check`（§19.3）。CI 必须拒绝未归类项与没有证据的 `done`。
   **G0 仍有一项未闭合**：§1.1 要求把两份输入文档原件归档到 `docs/inputs/`，仓内与本机都不存在原件，只有 SHA-256 —— 在补齐之前不得宣称 G0 通过。
 - **G1（Rust Core 与 PostgreSQL）四条判据本轮全部达成**（§24，四条缺一不可）：① 十个业务/parity 核心 crate + R127 唯一 Windows 安全边界 crate 的 locked build 绿（业务入口与 parity owner 仍只有原十个）；② 同一个 `Arc<dyn ApplicationService>` 经 Axum 与 in-process 两条 transport 结果一致（当前 `cargo test -p openbot-testkit --test transport_parity` = 8 passed，Batch30新增channel detail与port scope逐字段对拍）；③ 28 表 / 13 migration 映射对走完 13 条 migration 的真参照库逐字段相等，read checksum 168/168 行逐字节相同；④ tracing span + 关联字段 + 脱敏 + Prometheus metrics 从首个 vertical slice 生效。

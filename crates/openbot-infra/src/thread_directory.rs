@@ -30,6 +30,8 @@ use crate::run_runtime::{RUN_CANCEL_DESTINATION, RUN_CONTROL_TOPIC, run_cancel_o
 use crate::thread_id::mint_thread_id;
 use crate::thread_listener::ThreadListenerDatabase;
 
+mod skills;
+
 /// foreground writer lease 的新增默认值；每 30 秒失效，后续 runtime 必须在 10 秒内续租。
 ///
 /// 这不是上游 parity 常量。它只决定 failover/fencing 窗口，不是 run deadline；绝不能拿它
@@ -587,6 +589,27 @@ fn decode_history_message(
         _ => return Err(ThreadDirectoryError::Corrupt { field: "role" }),
     };
     let content = history_text(&value).ok_or(ThreadDirectoryError::Corrupt { field: "content" })?;
+    let selected_skill_slugs = match value.get("selectedSkillSlugs") {
+        None => Vec::new(),
+        Some(slugs) if role == ThreadHistoryRole::User => {
+            let slugs: Vec<String> = serde_json::from_value(slugs.clone()).map_err(|_| {
+                ThreadDirectoryError::Corrupt {
+                    field: "selected_skill_slugs",
+                }
+            })?;
+            if !openbot_contracts::command::valid_selected_skill_slugs(&slugs) {
+                return Err(ThreadDirectoryError::Corrupt {
+                    field: "selected_skill_slugs",
+                });
+            }
+            slugs
+        }
+        Some(_) => {
+            return Err(ThreadDirectoryError::Corrupt {
+                field: "selected_skill_slugs",
+            });
+        }
+    };
     let agent_id = decode::<Option<String>>(row, "agent_id")?.map(BotId::new);
     let tool_call_id = if role == ThreadHistoryRole::Tool {
         Some(
@@ -630,6 +653,7 @@ fn decode_history_message(
         None
     };
     Ok(ThreadHistoryMessage {
+        selected_skill_slugs,
         id,
         role,
         content,
@@ -1101,6 +1125,7 @@ async fn apply_begin(
     runtime: &RuntimeLease,
     request: &BeginThreadRunRequest,
 ) -> Result<BeginOutcome, ThreadDirectoryError> {
+    skills::validate_actor(transaction, request).await?;
     let command = &request.command;
     transaction
         .query_one(
@@ -1183,11 +1208,17 @@ async fn apply_begin(
         return Err(ThreadDirectoryError::LeaseConflict);
     }
 
-    let message_sequence = checked_sequence(state.next_message_seq, "next_message_seq")?;
+    let skill_snapshots = skills::resolve(transaction, request).await?;
+    let user_message_seq = state
+        .next_message_seq
+        .checked_add(skill_snapshots.len() as i64)
+        .ok_or(ThreadDirectoryError::Corrupt {
+            field: "next_message_seq",
+        })?;
+    let message_sequence = checked_sequence(user_message_seq, "next_message_seq")?;
     let event_sequence = checked_sequence(state.next_event_seq, "next_event_seq")?;
     let next_message_seq =
-        state
-            .next_message_seq
+        user_message_seq
             .checked_add(1)
             .ok_or(ThreadDirectoryError::Corrupt {
                 field: "next_message_seq",
@@ -1251,7 +1282,7 @@ async fn apply_begin(
         None => (None, None),
     };
     let message_id = input_message_id(command.run_id.as_str());
-    let content = json!({"text": command.message});
+    let content = skills::input_content(command);
     let message = Message::new(
         MessageId::new(&message_id),
         command.thread_id.clone(),
@@ -1313,6 +1344,28 @@ async fn apply_begin(
         )
         .await
         .map_err(|error| write_error("写 running run 失败", error))?;
+    for (index, snapshot) in skill_snapshots.iter().enumerate() {
+        let skill_message_id = format!("{}:selected_skill:{index}", command.run_id);
+        let content = json!({"text": snapshot.instructions, "selectedSkillSlug": snapshot.slug});
+        transaction
+            .execute(
+                "INSERT INTO public.messages( \
+               message_id,thread_id,seq,role,content,search_text,run_id,actor_id,created_at \
+             ) VALUES($1,$2,$3,'system',$4,$5,$6,$7,$8)",
+                &[
+                    &skill_message_id,
+                    &command.thread_id.as_str(),
+                    &(state.next_message_seq + index as i64),
+                    &content,
+                    &snapshot.instructions,
+                    &command.run_id.as_str(),
+                    &request.actor.as_str(),
+                    &now,
+                ],
+            )
+            .await
+            .map_err(|error| write_error("写 selected skill snapshot 失败", error))?;
+    }
     transaction
         .execute(
             "INSERT INTO public.messages( \
@@ -1477,7 +1530,7 @@ async fn replay_existing(
         || bot != command.bot_id.as_str()
         || actor != request.actor.as_str()
         || !foreground
-        || content.as_ref() != Some(&json!({"text": command.message}))
+        || content.as_ref() != Some(&skills::input_content(command))
     {
         return Err(ThreadDirectoryError::RequestConflict);
     }
