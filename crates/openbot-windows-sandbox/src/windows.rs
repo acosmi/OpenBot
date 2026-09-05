@@ -1353,13 +1353,11 @@ mod tests {
 
         let allowed = profile.join("allowed.txt");
         let escaped = outside.join("escaped.txt");
-        let command = format!(
-            "echo allowed>\"{}\" & echo escaped>\"{}\"",
-            allowed.display(),
-            escaped.display()
-        );
-        let system_root = std::env::var_os("SystemRoot").expect("SystemRoot");
-        let executable = PathBuf::from(system_root).join("System32/cmd.exe");
+        // No space may precede `&`: `cmd.exe` lifts the redirection out of the command and echoes
+        // whatever text is left, so `echo allowed>file & …` writes `allowed ` and only an exact
+        // `allowed\r\n` proves the child produced the byte content this probe claims.
+        let command = "echo allowed>profile\\allowed.txt&echo escaped>outside\\escaped.txt";
+        let executable = probe_shell();
         let policy = SpawnPolicy::new(
             &executable,
             vec![
@@ -1375,24 +1373,82 @@ mod tests {
             256 * 1024 * 1024,
         )
         .expect("policy");
-        let mut child = spawn_restricted(&policy).expect("restricted spawn");
-        drop(child.take_stdin());
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let status = loop {
-            if let Some(status) = child.try_wait().expect("wait") {
-                break status;
-            }
-            assert!(Instant::now() < deadline, "restricted child timed out");
-            std::thread::sleep(Duration::from_millis(20));
-        };
+        let status = run_probe_to_completion(&policy);
         assert!(!status.success(), "outside write unexpectedly succeeded");
         assert_eq!(
             fs::read_to_string(&allowed).expect("allowed write"),
             "allowed\r\n"
         );
         assert!(!escaped.exists(), "low-integrity child wrote medium object");
-        drop(child);
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    /// Minimal reproduction of the blocker the Windows two-role conformance run hit: Electron 43's
+    /// Node bootstrap opens the `nul` device unconditionally and aborts with
+    /// `node_bindings.cc … Unable to open nul device needed for initialization` before the shim
+    /// runs, because the write-restricted token evaluates writes against the lone Restricted Code
+    /// SID and the `\Device\Null` security descriptor does not name it. `cmd.exe` reproduces the
+    /// denial without Electron: `&&` runs the profile write only when `echo x>nul` succeeded, so a
+    /// missing `allowed.txt` is the negative and the same line under an unrestricted token is the
+    /// positive. Fixing this is an authority-level decision about the R127 token, not a probe fix.
+    #[test]
+    #[ignore = "P1 Windows minimal repro: WRITE_RESTRICTED denies the nul device Electron needs"]
+    fn restricted_write_process_cannot_open_the_nul_device() {
+        let root = test_root("restricted-nul");
+        let profile = root.join("profile");
+        let temp = root.join("temp");
+        fs::create_dir_all(&profile).expect("profile");
+        fs::create_dir_all(&temp).expect("temp");
+
+        let allowed = profile.join("allowed.txt");
+        let command = "echo x>nul && echo allowed>profile\\allowed.txt";
+        let policy = SpawnPolicy::new(
+            probe_shell(),
+            vec![
+                OsString::from("/D"),
+                OsString::from("/S"),
+                OsString::from("/C"),
+                OsString::from(command),
+            ],
+            &root,
+            &profile,
+            &temp,
+            2,
+            256 * 1024 * 1024,
+        )
+        .expect("policy");
+        run_probe_to_completion(&policy);
+        assert!(
+            !allowed.exists(),
+            "the write-restricted child opened the nul device, so the Electron blocker is gone \
+             and this reproduction must be retired together with the R127 token decision"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    /// `cmd.exe` parses its own raw command line, and `encode_command_line` leaves a separator-only
+    /// argv[0] unquoted because `CommandLineToArgvW` consumers such as the Engine executable want
+    /// it that way. A `System32/cmd.exe` built with a forward slash therefore reaches the shell as
+    /// the switch `/cmd.exe`, which rejects the whole line with `The syntax of the command is
+    /// incorrect.` before any access check runs, so every probe below must use native separators.
+    fn probe_shell() -> PathBuf {
+        let system_root = std::env::var_os("SystemRoot").expect("SystemRoot");
+        PathBuf::from(system_root).join("System32").join("cmd.exe")
+    }
+
+    /// `cmd.exe /S` strips only the outer quote pair and reads the remainder literally, so probe
+    /// command strings stay quote-free and redirect relative to the policy's working directory.
+    fn run_probe_to_completion(policy: &SpawnPolicy) -> std::process::ExitStatus {
+        let mut child = spawn_restricted(policy).expect("restricted spawn");
+        drop(child.take_stdin());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().expect("wait") {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "restricted child timed out");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn test_root(label: &str) -> PathBuf {
