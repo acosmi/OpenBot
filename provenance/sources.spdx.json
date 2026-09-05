@@ -1163,6 +1163,44 @@
         }
       ],
       "primaryPackagePurpose": "SOURCE"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-anthropic-go-recorded-trace",
+      "name": "Anthropic Go Messages recorded test trace",
+      "versionInfo": "e9c104e7e5fb80a26ff26e398c0e4e3fe1fe7f33",
+      "downloadLocation": "https://github.com/anthropics/anthropic-sdk-go/blob/e9c104e7e5fb80a26ff26e398c0e4e3fe1fe7f33/toolrunner/testdata/cassettes/tool_runner_streaming_all.yaml",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "a523fe3e4db93da6e1b8f715e151d448bc9cc2231bae603d5357f2f6583140fe"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright 2023 Anthropic, PBC.",
+      "homepage": "https://github.com/anthropics/anthropic-sdk-go",
+      "primaryPackagePurpose": "SOURCE",
+      "comment": "Batch121/R197: official published response-body test asset, independently verified source blob 2085d5a9d2bb3b97992e74206a35fb0c92253ecb / 10980 bytes and deterministic extraction. Local fixture fixtures/provider/anthropic-messages-tool-use-stream.sse: 3489 bytes, SHA-256 9e75e3423449cfda1266e73327f43949fa0318b68a1d17293d4d06fe7ecbd783. Fixed source and extraction have identical response bytes. Production AnthropicProvider/SafeDialer offline loopback replay; no live account or billing proof. Request/identity headers excluded; retained public message/tool identifiers grant no authority. The PHP source README declares captured raw HTTP; this is publisher attribution, not an independently observed capture session. No SDK runtime dependency."
+    },
+    {
+      "SPDXID": "SPDXRef-Package-anthropic-php-recorded-trace",
+      "name": "Anthropic PHP Messages captured test trace",
+      "versionInfo": "93aa419595dceeb7062292e09406b4e2a63b96e1",
+      "downloadLocation": "https://github.com/anthropics/anthropic-sdk-php/blob/93aa419595dceeb7062292e09406b4e2a63b96e1/fixtures/ga/thinking.txt",
+      "filesAnalyzed": false,
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "70366a8b43b634eb1bc1e4e1fabbc7c14a8d182cca7561402ff40c07594652ef"
+        }
+      ],
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright 2023 Anthropic, PBC.",
+      "homepage": "https://github.com/anthropics/anthropic-sdk-php",
+      "primaryPackagePurpose": "SOURCE",
+      "comment": "Batch121/R197: official published response-body test asset, independently verified source blob b6d1f6575606504542fd59bf55b8ef6cbeaa7731 / 1609 bytes and deterministic extraction. Local fixture fixtures/provider/anthropic-messages-thinking-stream.sse: 1415 bytes, SHA-256 d5cf8f848dd95e809110c93c7531d3689331f52a92f0722211ca5c71bbff23d8. Fixed source and extraction have identical response bytes. Production AnthropicProvider/SafeDialer offline loopback replay; no live account or billing proof. Request/identity headers excluded; retained public message/tool identifiers grant no authority. The PHP source README declares captured raw HTTP; this is publisher attribution, not an independently observed capture session. No SDK runtime dependency."
     }
   ],
   "relationships": [
@@ -1513,6 +1551,18 @@
       "relationshipType": "GENERATED_FROM",
       "relatedSpdxElement": "SPDXRef-Package-ag-ui-core-schema-0-0-57",
       "comment": "Test-only official AG-UI schema and synthetic protocol corpus; not linked into production."
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-anthropic-go-recorded-trace",
+      "comment": "仅对应fixtures/provider中的公开response body测试夹具；许可与提取规则见NOTICE及一对一provenance，不进入生产provider请求。"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-openbot-rs",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-Package-anthropic-php-recorded-trace",
+      "comment": "仅对应fixtures/provider中的公开response body测试夹具；许可与提取规则见NOTICE及一对一provenance，不进入生产provider请求。"
     }
   ]
 }

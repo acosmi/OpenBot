@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 55
+    expect: 56
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 20
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 35
+    expect: 36
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 55 55
+    expect: 56 56
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 45 0
+    expect: 10 46 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -915,3 +915,18 @@ entries:
       只关闭需求驱动capture暂停/恢复与source owner，不关闭完整T-BROP-0027/G7。
       production ComputerManager/source装配、auth失效hook、Desktop loopback、fps/paint/fallback与
       Windows/runsc runtime仍未完成；跨平台编译不冒充真机。原生OS桌面复用评估与本fixture无关。
+
+  - id: provider-anthropic-messages-recorded-traces
+    upstream: "-"
+    label: 新增
+    target: fixtures/provider/anthropic-messages-tool-use-stream.sse + anthropic-messages-thinking-stream.sse -> openbot_infra::provider::anthropic
+    owner: openbot-infra
+    test_id: T-FIX-0056
+    migration_rule: "n/a: v4 §24 G4 Anthropic 官方发布的 recorded/captured response-body 证据"
+    status: done
+    evidence: "Go SDK e9c104e7e5fb80a26ff26e398c0e4e3fe1fe7f33 的 go-vcr cassette：source 10980 bytes/blob 2085d5a9d2bb3b97992e74206a35fb0c92253ecb；PHP SDK 93aa419595dceeb7062292e09406b4e2a63b96e1 的 shared accumulator raw HTTP：source 1609 bytes/blob b6d1f6575606504542fd59bf55b8ef6cbeaa7731。主控独立抓取、核commit时间/LICENSE和逐字节提取。"
+    done_evidence: "tool body 3489 bytes/SHA-256 9e75e3423449cfda1266e73327f43949fa0318b68a1d17293d4d06fe7ecbd783；thinking body 1415 bytes/SHA-256 d5cf8f848dd95e809110c93c7531d3689331f52a92f0722211ca5c71bbff23d8；两份cmp完全相等。当前主控基线production AnthropicProvider→SafeDialer→真实loopback chunked SSE 3/0/0：每份whole/irregular/bytewise等价、text/tool/thinking/usage和唯一terminal，negative mutation错误正文不回显。provider units32/0/0、Infra all-target/all-feature Clippy、fmt及三trace guard绿。NOTICE/SPDX一对一登记。"
+    notes: >-
+      只补Anthropic一家；现有OpenAI加本项为2/3，Google候选公开bodySegments无法恢复原始SSE，仍todo。
+      PHP capture身份依据官方README和测试声明，非本项目亲历vendor捕获；公开示例signature忽略，非secret/authority。
+      无live凭据、PG/UI或账单证据；T-FIX-0013等跨provider完整corpus、G4及Alpha/v4整关保持未完成。

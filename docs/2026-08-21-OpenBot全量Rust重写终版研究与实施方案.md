@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R196，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R197，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -2058,7 +2058,15 @@ R191新增的受控Alpha按§24.2单独准入，不视为G0–G8通过或§25完
     record/blob/SHA与MIT许可，36段ResponseBody逐字节提取为9,070-byte SSE；production
     OpenAiProvider→SafeDialer→HTTP/SSE对整块/非规则/逐字节chunk输出同一function-call/usage/唯一terminal，
     provenance/NOTICE/SPDX/secret guard同批闭合。只勾三家中的OpenAI **1/3** 与T-FIX-0046；该trace
-    不含text/reasoning，T-FIX-0013及Anthropic/Google/live credential保持todo；
+    不含text/reasoning；本批当时Anthropic/Google未齐，当前以R197新增证据为准，T-FIX-0013/live继续todo；
+  - [x] Batch121/R197 Anthropic官方recorded/captured trace：Go cassette与PHP shared raw HTTP两份
+    source/commit/blob/bytes/SHA/MIT主控独立核验，提取3489/1415 bytes均cmp相等。production
+    AnthropicProvider→SafeDialer→真实loopback chunked SSE 3/0/0，whole/irregular/bytewise逐事件等价，
+    text/tool/thinking/usage与唯一terminal成立；原文错误canary不回显，negative mutation与原录制分开。
+    新T-FIX-0056、NOTICE/SPDX同步；与R178 OpenAI合计2/3，不是live/PG/UI或完整provider corpus；
+  - [ ] Google官方原始SSE仍缺：Batch121验收调查候选7dcba21，22项source身份与recorder流程复核。
+    所审Google/test-server与SDK recordings只有parsed bodySegments等不可逆资产，不重包为假SSE。
+    这不宣称穷尽所有官方来源；新合格原始recording到达后继续production replay，G4保持未完成；
   - [x] Anthropic Messages adapter：system/messages/tools 分域、thinking/text/partial tool JSON/usage、固定 version + header-only key、未知事件隔离；
   - [x] Google streamGenerateContent adapter：systemInstruction/content/function call+result/usage、header-only key、无 vendor response id 时确定性 trace id；
   - [x] package `model.yaml` model/credential ref、每 run PostgreSQL active credential 精确选择、stored-first/env fallback/corrupt-no-fallback、standing prompt/provenance 与 Server production assembly；
@@ -2752,6 +2760,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R194 | §9 / §24 G6（2026-09-04 Batch118：Desktop Plugins基础framing） | Batch117的共同GUI仍因Desktop没有connections读路由而加载失败，curated启用也没有对应custom-protocol handler。 | 补GET connections与POST servers，只派发既有typed command；closed McpCuratedServerSelection与Server共享，window actor/fresh/admin先于副作用，query拒绝、16KiB body与清零规则明确。 | Desktop tauri-host112/0/0（Plugins3条）、Contracts105/Server233通过；Server沙箱13条socket PermissionDenied后允许loopback宿主重跑全绿。Clippy与Windows x64 cross-check绿，后者不算真机。strict160/0/0，T-API-0081/0086 revalidate后overlay1271/433/2/6；parity873/839/1712、fixtures35/20/55不变。真实Wry/GUI/Local OAuth、三Plugins route与G6仍todo，无新PG/vendor/golden或远端操作。 |
 | R195 | §6.4 / §24 G2/G6（2026-09-04 Batch119：三类GUI密钥所有权修复） | 真源禁止secret进入Leptos state，但Plugins OAuth、OIDC与Agent Authorization仍用RwSignal<String>；Agent响应式校验还反复克隆认证请求。旧局部浏览器绿只证明遮挡/不回显。 | 删除普通Input的Password变体，统一DOM-owned SecretInput，响应式状态仅校验事实/代次；提交/取消/切换/卸载清理，失败不回填。三个DTO接受零化分配所有权，Serde字段在后续形态错误时也能清理；敏感JSON不经过Value，Rust JSON与DTO交给浏览器后在await前释放。 | Contracts108/UI188/Server233/Desktop112、Clippy含WASM、release浏览器三表单均通过。失败后不重填无请求、重填一次成功；OIDC切换后register0、失败重试不增；Agent probe失效、取消后hasAuth=false、显式保存/空编辑hasAuth=true，公开响应/页面canary0。i18n870、wasm gzip2025831B/CSS116942B，strict160/0/0；模块export触发24原语revalidation后overlay1247/457/2/6，parity873/839/1712、fixtures35/20/55不变。包仍829，仅UI依赖边；无新PG/vendor/真实Wry/Windows/golden或全关证明。 |
 | R196 | §2.4 / §6.4 / §9.4 / §24 G2/G6（2026-09-04 Batch120：凭据管理完整工作链） | Vault/consumer已有底层，但四个admin凭据API与正式页面仍缺；直接照译upstream rotate会留下孤儿，通用metadata与内部revocation混用还会污染清理权威。 | 保留manual三kind与managed六kind库存区别；shared command/PG/Vault组装，fresh admin+Origin before-body、current DB actor锁与role/gen重验。新DEK/v2回读、MCP指针/代次/grant失效、old退役和audit同事务；OAuth冻结原client上下文并经既有reconciler清理。metadata namespace隔离，100行keyset、配置model引用提示与SecretInput GUI闭环。本地失败不激活替代值；外部pending/operator独立且不冒充vendor撤销。 | PG4+OAuth3+RMCP11、Server235/Desktop113、Contracts109/Domain372/Application166/UI188均通过；Windows只cross-check。真实PG/session GUI得2条v2全retired，create/rotate/revoke audit各1、actor/payload正确/canary0；100+3分页，降权NotFound且row/dialog0，中英/键盘/焦点/overflow/console通过。i18n904，wasm gzip2074750B/CSS116942B/字体740216B；13条原有条目闭合后parity886/826/1712、overlay1234/470/2/6，fixtures35/20/55不变。真实vendor、KMS/外审、Wry/Windows/runsc/golden与G2/G6/G8/Alpha整关仍未通过；磁盘满只清本仓incremental缓存，未改源码/证据冻结面。 |
+| R197 | §7.3 / §21.2 / §23 / §24 G4（2026-09-04 Batch121：provider外部交付独立验收） | R196仅OpenAI官方recorded 1/3，A/B预留仍写未启动；用户交付Anthropic候选与Google调查，候选日志不能替代主控复算，parsed JSON不能冒充原始SSE。 | 从R196逐commit择取A/B，独立验证官方来源/许可/字节；Anthropic两份原body进入production回放并登记T-FIX-0056、NOTICE/SPDX，现2/3。Google所审录制转换不可逆，只接受来源不足调查，不创建fake fixture或关闭其任务。E–K按R196预留分离范围，I/K明确离线；原Browser gateway在制稿完整保存后继续，不改源仓。 | A原7903e61→442b6fe，B原7dcba21→2d15051；32份官方材料重抓，Anthropic source/body identity与commit time/MIT相符，Google22项文件身份与关键转换复核。主控production recorded3/0/0、provider units32/0/0、Infra Clippy/fmt/3-trace guard绿；strict160/0/0、Grok2110/shim595/600/唯一manifest绿。fixtures36/20/56，parity886/826/1712、overlay1234/470/2/6不变。无live/PG/UI/Windows/runsc/全供应链新证据，不派发Actions、不合并PR，完整G4/Alpha/v4仍未完成；详见Batch121。 |
 
 ### 28.2 复核通过、原样保留的断言
 

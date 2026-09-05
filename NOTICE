@@ -359,6 +359,40 @@ OFL-1.1 的两条硬约束在本项目的用法下均满足，但改变用法时
   OpenAI版权行和MIT条款。
 
 --------------------------------------------------------------------------------
+4.3C Anthropic Go/PHP Messages recorded test traces —— MIT
+--------------------------------------------------------------------------------
+
+  Go来源仓库 : https://github.com/anthropics/anthropic-sdk-go
+  固定 commit: e9c104e7e5fb80a26ff26e398c0e4e3fe1fe7f33
+  源记录     : toolrunner/testdata/cassettes/tool_runner_streaming_all.yaml
+  源字节     : 10,980 B；Git blob SHA-1
+               2085d5a9d2bb3b97992e74206a35fb0c92253ecb；SHA-256
+               a523fe3e4db93da6e1b8f715e151d448bc9cc2231bae603d5357f2f6583140fe
+  本仓文件   : fixtures/provider/anthropic-messages-tool-use-stream.sse
+  派生       : interactions[0].response.body literal scalar逐字节提取，3,489 B；
+               SHA-256 9e75e3423449cfda1266e73327f43949fa0318b68a1d17293d4d06fe7ecbd783
+
+  PHP来源仓库: https://github.com/anthropics/anthropic-sdk-php
+  固定 commit: 93aa419595dceeb7062292e09406b4e2a63b96e1
+  源记录     : fixtures/ga/thinking.txt
+  源字节     : 1,609 B；Git blob SHA-1
+               b6d1f6575606504542fd59bf55b8ef6cbeaa7731；SHA-256
+               70366a8b43b634eb1bc1e4e1fabbc7c14a8d182cca7561402ff40c07594652ef
+  本仓文件   : fixtures/provider/anthropic-messages-thinking-stream.sse
+  派生       : 固定raw HTTP response首个LF-LF之后的response body逐字节提取，1,415 B；
+               SHA-256 d5cf8f848dd95e809110c93c7531d3689331f52a92f0722211ca5c71bbff23d8
+
+  许可证     : MIT
+  版权行     : Copyright 2023 Anthropic, PBC.
+
+  Go资产由官方go-vcr recording/replay测试发布；PHP资产由官方README明确声明为verbatim captured
+  raw HTTP streaming response并经正式streaming entrypoint回放。本仓只保存response body；请求正文、
+  Authorization/API key、organization/request/rate-limit header、账号/客户标识和客户数据均不复制。
+  保留的message/tool-use ID与公开示例signature只作不可信trace correlation/协议测试，不授予authority，
+  不是credential或secret。许可证全文与本文件§1收录的标准MIT条款相同；分发上述fixture时须同时保留
+  Anthropic版权行和MIT条款。
+
+--------------------------------------------------------------------------------
 4.4 binaryen / wasm-opt（构建期工具，不进发行物）
 --------------------------------------------------------------------------------
 
