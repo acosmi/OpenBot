@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString, c_void};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -50,6 +49,7 @@ use windows_sys::Win32::System::Pipes::{
     CreateNamedPipeW, CreatePipe, GetNamedPipeClientProcessId, PIPE_READMODE_BYTE,
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
 };
+use windows_sys::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
 use windows_sys::Win32::System::SystemServices::{
     SECURITY_MANDATORY_HIGH_RID, SECURITY_MANDATORY_MEDIUM_RID,
 };
@@ -399,7 +399,7 @@ pub fn spawn_restricted(policy: &SpawnPolicy) -> Result<RestrictedChild, Windows
     let executable = wide_null(policy.executable.as_os_str())?;
     let mut command_line = encode_command_line(policy.executable.as_os_str(), &policy.args)?;
     let working_directory = wide_null(policy.working_directory.as_os_str())?;
-    let environment = sanitized_environment(&policy.temp_directory)?;
+    let environment = engine_environment(&policy.profile_directory, &policy.temp_directory)?;
     let mut startup: STARTUPINFOEXW = unsafe { MaybeUninit::zeroed().assume_init() };
     startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -1002,47 +1002,32 @@ fn inheritable_null() -> Result<File, WindowsSandboxError> {
     Ok(file)
 }
 
-fn sanitized_environment(temp: &Path) -> Result<Vec<u16>, WindowsSandboxError> {
-    let mut values = BTreeMap::<String, (OsString, OsString)>::new();
-    for (key, value) in std::env::vars_os() {
-        let folded = key.to_string_lossy().to_ascii_uppercase();
-        if matches!(
-            folded.as_str(),
-            "ELECTRON_RUN_AS_NODE"
-                | "NODE_OPTIONS"
-                | "NODE_EXTRA_CA_CERTS"
-                | "ELECTRON_ENABLE_LOGGING"
-        ) {
-            continue;
-        }
-        validate_environment_pair(&key, &value)?;
-        values.insert(folded, (key, value));
+fn engine_environment(profile: &Path, temp: &Path) -> Result<Vec<u16>, WindowsSandboxError> {
+    // Read the real OS directory, not a potentially poisoned inherited SystemRoot or PATH.
+    let mut directory = vec![0_u16; 32_768];
+    // SAFETY: directory is a writable buffer of exactly the stated UTF-16 capacity. Zero means
+    // failure and a required size at/above capacity is rejected before reading the returned data.
+    let length =
+        unsafe { GetSystemWindowsDirectoryW(directory.as_mut_ptr(), directory.len() as u32) };
+    if length == 0 {
+        return Err(last_error());
     }
-    let temp_value = temp.as_os_str().to_owned();
-    values.insert("TEMP".into(), ("TEMP".into(), temp_value.clone()));
-    values.insert("TMP".into(), ("TMP".into(), temp_value));
-
-    let mut block = Vec::new();
-    for (_, (key, value)) in values {
-        block.extend(key.encode_wide());
-        block.push(u16::from(b'='));
-        block.extend(value.encode_wide());
-        block.push(0);
-    }
-    block.push(0);
-    Ok(block)
-}
-
-fn validate_environment_pair(key: &OsStr, value: &OsStr) -> Result<(), WindowsSandboxError> {
-    let key_units = key.encode_wide().collect::<Vec<_>>();
-    if key_units.is_empty()
-        || key_units.contains(&0)
-        || value.encode_wide().any(|unit| unit == 0)
-        || (key_units[0] != u16::from(b'=') && key_units.contains(&u16::from(b'=')))
-    {
+    if length as usize >= directory.len() {
         return Err(WindowsSandboxError::InvalidInput);
     }
-    Ok(())
+    let system_root = String::from_utf16(&directory[..length as usize])
+        .map_err(|_| WindowsSandboxError::InvalidInput)?;
+    let profile_text = profile.to_str().ok_or(WindowsSandboxError::InvalidInput)?;
+    let temp_text = temp.to_str().ok_or(WindowsSandboxError::InvalidInput)?;
+    let block =
+        crate::environment::engine_environment_block(&system_root, profile_text, temp_text)?;
+    for child in [
+        profile.join("AppData").join("Local"),
+        profile.join("AppData").join("Roaming"),
+    ] {
+        std::fs::create_dir_all(child)?;
+    }
+    Ok(block)
 }
 
 fn identity_for_pid(pid: u32) -> Result<ProcessIdentity, WindowsSandboxError> {

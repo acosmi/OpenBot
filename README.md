@@ -6,7 +6,7 @@
 
 - **接手实施先读这份**：[实施移交指南](docs/2026-08-23-OpenBot-实施移交指南.md) —— 环境搭建、闸门跑法与它照不到的地方、台账现状、下一批工作单、待裁决项与已知的坑。
 - **仓库纪律**：[CLAUDE.md](CLAUDE.md) —— 红线、固定基线、发布级不变量、闸门清单、协作约定。**阶段进度的真源也在这里（§1）**，逐条写明什么已达成、什么明确未闭合。
-- **实施真源（后端）**：[OpenBot 全量 Rust 重写：终版研究、前置审计与实施方案](docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md)（v4 = v3 就地修订至 §28.1 R198，2026-09-04；R115–R125 是范围/参考源/Engine阶段裁决，R126–R198 是后续实施裁决，实施前必读；R180覆盖RMCP旧wire，R182固定Golden分界，R183–R188固定CDP pure/live、正式screencast、ScreenHub、viewer coordinate与Server/production分界）
+- **实施真源（后端）**：[OpenBot 全量 Rust 重写：终版研究、前置审计与实施方案](docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md)（v4 = v3 就地修订至 §28.1 R199，2026-09-05；R115–R125 是范围/参考源/Engine阶段裁决，R126–R199 是后续实施裁决，实施前必读；R180覆盖RMCP旧wire，R182固定Golden分界，R183–R188固定CDP pure/live、正式screencast、ScreenHub、viewer coordinate与Server/production分界）
 - **实施真源（GUI）**：[GUI 设计系统与视觉规格](docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md)（v2，2026-08-28 同 PR 修订）
 - **历史文档**：`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，不是实施依据；`grok-bot/` 是参考树（定位与方法见后端方案 §11.5），不是产品代码。
 
@@ -39,3 +39,5 @@ Batch120/R196完成[凭据管理工作链](docs/2026-09-04-G2-凭据管理完整
 Batch121/R197完成[provider外部交付主控验收](docs/2026-09-04-G4-provider外部交付主控验收-batch121.md)：Anthropic补至recorded 2/3，Google原始SSE仍缺；fixtures36/20/56。新增可派发范围见[第二轮任务总则](docs/2026-09-04-v4第二轮外派任务-总则.md)，完整v4目标继续。
 
 Batch122/R198完成[Rust出口网关库](docs/2026-09-04-G5-Rust出口网关基座-batch122.md)的15项本机转发/取消/预算验证；fixtures37/20/57。Engine与生产scope装配仍缺，尚未据此开放浏览或关闭G5/Alpha。
+
+Batch123/R199修复[Engine父环境继承](docs/2026-09-05-G5-Engine启动环境隔离-batch123.md)：macOS两角色main/renderer四canary清零，Windows采用封闭环境块；fixtures38/20/58，完整浏览器与平台安全准入继续。

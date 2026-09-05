@@ -625,6 +625,112 @@ async fn demand_viewer(
         .expect("viewer")
 }
 
+#[cfg(target_os = "macos")]
+const PARENT_ENVIRONMENT_CANARY: &str = "OPENBOT_ENGINE_PARENT_ENVIRONMENT_CANARY";
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires real Engine bundle and host permission; spawns isolated canary test parents"]
+fn both_roles_exclude_the_parent_environment_from_main_and_renderer() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/computer/engine-child-environment-v1.json"
+    ))
+    .expect("environment fixture");
+    assert_eq!(fixture["schema"], "openbot-engine-child-environment-v1");
+    assert!(
+        fixture["canary_evidence"]["after"]
+            .as_object()
+            .expect("four observations")
+            .values()
+            .all(|value| value == false)
+    );
+    assert!(
+        fixture["remaining"]
+            .as_object()
+            .expect("unfinished gates")
+            .values()
+            .all(|value| value == false)
+    );
+    let mut passed = true;
+    for name in [
+        "browser_role_start_frame_stop_has_no_debug_listener_or_orphan",
+        "component_role_start_frame_stop_has_no_debug_listener_or_orphan",
+    ] {
+        let result = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                name,
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(
+                PARENT_ENVIRONMENT_CANARY,
+                "non-secret-synthetic-inheritance-probe",
+            )
+            .output()
+            .expect("isolated conformance parent");
+        // Only these two exact, content-free observations may leave the subprocess capture.
+        let observations: Vec<_> = result
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .filter(|line| {
+                *line == b"engine-environment-inherited=true"
+                    || *line == b"engine-environment-inherited=false"
+            })
+            .collect();
+        for observation in &observations {
+            println!(
+                "environment-conformance case={name} {}",
+                core::str::from_utf8(observation).expect("fixed observation")
+            );
+        }
+        for line in result.stderr.split(|byte| *byte == b'\n') {
+            if line.starts_with(b"thread '")
+                && line.windows(12).any(|bytes| bytes == b"panicked at ")
+                && line.len() < 300
+            {
+                println!(
+                    "environment-conformance failure-location={}",
+                    String::from_utf8_lossy(line)
+                );
+            }
+        }
+        passed &= result.status.success() && observations.len() == 2;
+    }
+    assert!(
+        passed,
+        "Engine environment conformance failed; arbitrary subprocess output is withheld"
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn parent_environment_present(pid: u32) -> bool {
+    if std::env::var_os(PARENT_ENVIRONMENT_CANARY).is_none() {
+        return false;
+    }
+    let marker = format!("{PARENT_ENVIRONMENT_CANARY}=non-secret-synthetic-inheritance-probe");
+    let inspect = |pid: u32| {
+        let result = std::process::Command::new("/bin/ps")
+            .args(["eww", "-p", &pid.to_string(), "-o", "command="])
+            .output()
+            .expect("inspect only an owned process environment");
+        assert!(result.status.success());
+        assert!(result.stdout.len() <= 1024 * 1024);
+        result
+            .stdout
+            .windows(marker.len())
+            .any(|bytes| bytes == marker.as_bytes())
+    };
+    assert!(
+        inspect(std::process::id()),
+        "positive parent environment control unavailable"
+    );
+    let inherited = inspect(pid);
+    println!("\nengine-environment-inherited={inherited}");
+    inherited
+}
+
 async fn run_role(role: EngineRole) {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -675,6 +781,8 @@ async fn run_role(role: EngineRole) {
     .expect("launch + peer credential + ready");
     assert_eq!(process.sandbox_fidelity(), expected_fidelity());
     let pid = process.pid();
+    #[cfg(target_os = "macos")]
+    let mut inherited_environment = parent_environment_present(pid);
     assert!(process.main_creation_time().is_finite());
     assert!(process.main_creation_time() > 0.0);
     assert_no_tcp_listener(pid);
@@ -693,6 +801,10 @@ async fn run_role(role: EngineRole) {
     assert!(started.frame.bytes().starts_with(&[0xff, 0xd8, 0xff]));
     assert!(started.frame.bytes().ends_with(&[0xff, 0xd9]));
     assert!(started.renderer_pid > 0);
+    #[cfg(target_os = "macos")]
+    {
+        inherited_environment |= parent_environment_present(started.renderer_pid);
+    }
     assert!(started.renderer_creation_time.is_finite());
     assert!(started.renderer_creation_time > 0.0);
     assert!(started.renderer_sandboxed, "OS-level ProcessMetric sandbox");
@@ -882,6 +994,11 @@ async fn run_role(role: EngineRole) {
             "profile lock `{lock}` remained after shutdown"
         );
     }
+    #[cfg(target_os = "macos")]
+    assert!(
+        !inherited_environment,
+        "an Engine process inherited the synthetic parent canary"
+    );
 }
 
 async fn prove_slow_engine_ingress(

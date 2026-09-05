@@ -1615,11 +1615,16 @@ fn launch_command(
 fn append_engine_args(command: &mut Command, profile_dir: &Path, temp_dir: &Path) {
     command
         .args(engine_args(profile_dir, temp_dir))
-        .env_remove("ELECTRON_RUN_AS_NODE")
-        .env_remove("NODE_OPTIONS")
-        .env_remove("NODE_EXTRA_CA_CERTS")
-        .env_remove("ELECTRON_ENABLE_LOGGING")
-        .env("TMPDIR", temp_dir);
+        // This changes only the child environment, never the host's HOME or other variables.
+        // A blacklist of Electron switches leaked unrelated provider/DB credentials and loader
+        // settings. Build this leaf process's complete environment from authority-owned paths.
+        .env_clear()
+        .env("HOME", profile_dir)
+        .env("TMPDIR", temp_dir)
+        .env("TEMP", temp_dir)
+        .env("TMP", temp_dir)
+        .env("PATH", "/usr/bin:/bin")
+        .current_dir(profile_dir);
 }
 
 fn engine_args(profile_dir: &Path, temp_dir: &Path) -> Vec<OsString> {
