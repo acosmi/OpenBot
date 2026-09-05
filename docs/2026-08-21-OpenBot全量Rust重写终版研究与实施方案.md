@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R197，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R198，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1049,6 +1049,19 @@ Desktop shell 只有平台 sandbox fidelity 为 `Enforced` 时才可启用高风
 4. gateway 对 DNS A/AAAA、redirect 每跳、IPv4/IPv6 reserved/private/metadata、port、scheme 和 tenant allow/deny 执行策略；
 5. 所有 iframe、script、image、font、XHR/fetch、worker、service worker 和 popup 都经过同一出口；
 6. Desktop 做同样的应用级代理与 URL policy，但文档明确它不是 kernel-level tenant boundary。
+
+Batch122/R198先落Rust gateway库（`openbot_infra::net::scope_gateway`）：每实例独立loopback端口与256-bit
+proxy凭据，immutable exact/wildcard host+deny-first+port规则，只有通过认证/形状/host后才调用
+SafeDialer private ProxyHop执行fresh DNS/IP与peer绑定；HTTP/CONNECT/WS转发及撤销join有本机证据。
+默认新增上界=32连接、header32KiB/64字段、header/DNS/connect/upgrade10秒、idle30秒、lifetime30分钟，
+HTTP request8MiB/response64MiB、tunnel双向1GiB、实例8MiB/s与1MiB burst、copy16KiB，调用方只能收紧。
+HTTP每请求一条连接，不自动pool/retry/redirect；已发送前缀后失败不能推断远端未执行。
+
+该库尚无production ComputerManager完整scope/generation绑定、tenant policy加载、Engine proxy bootstrap、
+Server namespace路由或kernel边界。CONNECT仅验证authority/DNS/IP/port；不检查加密内层SNI/HTTP authority/path，
+这类细粒度策略仍需额外约束和实测。不得把本机library的成功当作上述六条整体达成；Engine仍是epoch4
+黑洞代理/内部诊断页。IPv6按typed URL host避免错误DNS路径的修复同批回归，详见Batch122。
+
 
 ### 10.6 EngineScope 与 ExecutionRealm（R118 / R120，2026-08-28）
 
@@ -2204,6 +2217,11 @@ R191新增的受控Alpha按§24.2单独准入，不视为G0–G8通过或§25完
     低confidence均由Application成功fallback，tool output拒绝，消息与模型理由不进hash-chain audit；
   - [ ] provider gate 要求的三家 recorded vendor trace 当前为 **1/3**：OpenAI官方RecordedTest response-body trace已由Batch104闭合，Anthropic与Google仍缺；本批未使用 live vendor credential。human approval 的 Leptos/Axum可点击竖切、critical realtime、真实PG与production session resolver浏览器均已落，但真实OIDC/SAML登录、完整 thread/cancel/computer 集成仍未闭合；run-wide normalized token、operator-attested cost upper bound、用户费用cap/API/UI与并发tool runtime budget已落，仍缺computer runtime budget；Desktop Local installed-app client/system browser/random loopback callback、computer/file/shell各自的协议级cancel notification/process-tree、RMCP完整官方conformance、Plugins/Skills完整UI、G8 typed operator-attestation/最终secret retirement，Agent Desktop正式capability/真实Wry journey、browser/file/shell executor尚未闭合。AG-UI十一event family、单家trace、RMCP run cancel与admin-delete compensation/runbook都不能替代这些G4/G8余项；Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
+  - [x] Batch122/R198 Rust出口网关库子项：macOS真实HTTP/CONNECT/WS/TLS、认证前DNS0、policy/CIDR/IPv6、
+    实际body/tunnel预算、共享rate、idle/lifetime与cancel/Drop共15/0/0；SafeDialer14、provider32与recorded4回归。
+    T-FIX-0057记录明确未装配边界；Linux仅check，Windows server-runtime卡ring缺MSVC C头文件，不能写通过。
+    ComputerManager/Engine/kernel/TLS内层策略仍缺，G5/G7及Alpha整关不勾。
+
   - [x] P0-code 规则与台账地基：engine fetch/verify、shim 静态 allowlist、boot/role/confinement/render/conformance T-ID、HumanLeaseEpoch checked + generation-recoverable poison 已绿。
   - [x] Batch53 macOS P1 子证据：clean-room shim 404 LOC；Rust-only ASAR/fuses/rebrand/integrity/signature/release manifest；digest-before-spawn、4 KiB stdin token、双 UDS peer PID + live child、hello/ready/command/shutdown deadline与独立 binary frame；main executable 精确继承 SBPL profile，仅四个 Electron Helper + crashpad 五个 literal 可 `with no-sandbox` 后由 Chromium renderer sandbox 接管。Browser/Component 两 role 真 Electron 各自 start→1280×800 JPEG→stop→shutdown，renderer `ProcessMetric.sandboxed=true` + creationTime，主/全部后代 TCP LISTEN 0，全部 PID/profile lock 清理 0。
   - [x] Batch106固定上游browser residency选择与Rust manager owner子证据：13条selector、完整scope/代次、
@@ -2761,6 +2779,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R195 | §6.4 / §24 G2/G6（2026-09-04 Batch119：三类GUI密钥所有权修复） | 真源禁止secret进入Leptos state，但Plugins OAuth、OIDC与Agent Authorization仍用RwSignal<String>；Agent响应式校验还反复克隆认证请求。旧局部浏览器绿只证明遮挡/不回显。 | 删除普通Input的Password变体，统一DOM-owned SecretInput，响应式状态仅校验事实/代次；提交/取消/切换/卸载清理，失败不回填。三个DTO接受零化分配所有权，Serde字段在后续形态错误时也能清理；敏感JSON不经过Value，Rust JSON与DTO交给浏览器后在await前释放。 | Contracts108/UI188/Server233/Desktop112、Clippy含WASM、release浏览器三表单均通过。失败后不重填无请求、重填一次成功；OIDC切换后register0、失败重试不增；Agent probe失效、取消后hasAuth=false、显式保存/空编辑hasAuth=true，公开响应/页面canary0。i18n870、wasm gzip2025831B/CSS116942B，strict160/0/0；模块export触发24原语revalidation后overlay1247/457/2/6，parity873/839/1712、fixtures35/20/55不变。包仍829，仅UI依赖边；无新PG/vendor/真实Wry/Windows/golden或全关证明。 |
 | R196 | §2.4 / §6.4 / §9.4 / §24 G2/G6（2026-09-04 Batch120：凭据管理完整工作链） | Vault/consumer已有底层，但四个admin凭据API与正式页面仍缺；直接照译upstream rotate会留下孤儿，通用metadata与内部revocation混用还会污染清理权威。 | 保留manual三kind与managed六kind库存区别；shared command/PG/Vault组装，fresh admin+Origin before-body、current DB actor锁与role/gen重验。新DEK/v2回读、MCP指针/代次/grant失效、old退役和audit同事务；OAuth冻结原client上下文并经既有reconciler清理。metadata namespace隔离，100行keyset、配置model引用提示与SecretInput GUI闭环。本地失败不激活替代值；外部pending/operator独立且不冒充vendor撤销。 | PG4+OAuth3+RMCP11、Server235/Desktop113、Contracts109/Domain372/Application166/UI188均通过；Windows只cross-check。真实PG/session GUI得2条v2全retired，create/rotate/revoke audit各1、actor/payload正确/canary0；100+3分页，降权NotFound且row/dialog0，中英/键盘/焦点/overflow/console通过。i18n904，wasm gzip2074750B/CSS116942B/字体740216B；13条原有条目闭合后parity886/826/1712、overlay1234/470/2/6，fixtures35/20/55不变。真实vendor、KMS/外审、Wry/Windows/runsc/golden与G2/G6/G8/Alpha整关仍未通过；磁盘满只清本仓incremental缓存，未改源码/证据冻结面。 |
 | R197 | §7.3 / §21.2 / §23 / §24 G4（2026-09-04 Batch121：provider外部交付独立验收） | R196仅OpenAI官方recorded 1/3，A/B预留仍写未启动；用户交付Anthropic候选与Google调查，候选日志不能替代主控复算，parsed JSON不能冒充原始SSE。 | 从R196逐commit择取A/B，独立验证官方来源/许可/字节；Anthropic两份原body进入production回放并登记T-FIX-0056、NOTICE/SPDX，现2/3。Google所审录制转换不可逆，只接受来源不足调查，不创建fake fixture或关闭其任务。E–K按R196预留分离范围，I/K明确离线；原Browser gateway在制稿完整保存后继续，不改源仓。 | A原7903e61→442b6fe，B原7dcba21→2d15051；32份官方材料重抓，Anthropic source/body identity与commit time/MIT相符，Google22项文件身份与关键转换复核。主控production recorded3/0/0、provider units32/0/0、Infra Clippy/fmt/3-trace guard绿；strict160/0/0、Grok2110/shim595/600/唯一manifest绿。fixtures36/20/56，parity886/826/1712、overlay1234/470/2/6不变。无live/PG/UI/Windows/runsc/全供应链新证据，不派发Actions、不合并PR，完整G4/Alpha/v4仍未完成；详见Batch121。 |
+| R198 | §10.5 / §24 G5/G7（2026-09-04 Batch122：Rust出口网关基座） | Engine仍黑洞网络，缺受控HTTP/CONNECT/WS转发；在制稿有HTTP占位、撤销订阅竞态与未join的driver风险。仅URL检查不足，数值IPv6又被旧host_str括号误送DNS。 | 新增unique loopback/token owner、deny-first host/port、私有ProxyHop与有界streaming/upgrade、共享rate和cancel/join；原出网路径唯一性不变，IPv6与TLS identity使用typed host。预算是新增，不冒充upstream；透明CONNECT只验证authority/IP，不冒充内层TLS策略。fixture把production scope/policy/Engine/namespace/kernel/G5/G7均保持false。 | 15项真实loopback测试全过；IPv6先失败后成功/DNS0，原safe_http14/provider32/官方recorded4回归；Clippy/fmt与出网guard通过。guard修复既有Screen test-only漏登，未增加production客户端；Linux target check0，Windows在ring缺assert.h失败、未伪记通过。strict160/0/0、Grok2110/shim595/600/唯一manifest绿，Cargo829/lock不变。fixtures37/20/57，parity886/826/1712、overlay1234/470/2/6不变。Engine仍epoch4内部页，完整目标继续；详见Batch122。 |
 
 ### 28.2 复核通过、原样保留的断言
 

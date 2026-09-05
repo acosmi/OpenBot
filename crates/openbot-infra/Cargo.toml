@@ -64,7 +64,7 @@ bytes = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 httpdate = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
-hyper = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true, features = ["server"] }
 hyper-util = { workspace = true, optional = true }
 ipnet = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }

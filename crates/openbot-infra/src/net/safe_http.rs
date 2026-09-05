@@ -12,7 +12,7 @@
 //! - 所有 credential header 只在同 origin redirect 保留，跨 origin 构造性删除；
 //! - 带 secret body 的 POST 不跨 origin 做 307/308，301/302 的含混 POST 语义直接拒绝；
 //! - 总墙钟与响应体大小在读取时执行，不先把无界 body 收进内存；
-//! - HTTP/1 only，无代理、无自动 retry、无自动 redirect、无自动解压。
+//! - HTTP/1 only，出网端无上游/系统代理、无自动 retry、无自动 redirect、无自动解压。
 //!
 //! TLS 使用 rustls 0.23 + ring provider + lockfile 固定的 Mozilla roots。ring **不是纯 Rust**：
 //! 它的 C/汇编 build.rs 与 Windows 预生成对象见 W-7 delta audit；本模块只说明运行时边界，
@@ -645,6 +645,17 @@ impl SafeDialer {
         self.resolve_and_filter(url).await.map(|_| ())
     }
 
+    /// Open a proxy hop only after the same fresh DNS/IP validation used by every protocol
+    /// adapter. The returned socket is pinned to a vetted SocketAddr; no proxy resolver exists.
+    /// Scope authentication, host/port policy, lifetimes and byte limits belong to scope_gateway.
+    pub(super) async fn connect_proxy_hop(&self, url: &Url) -> Result<ProxyHop, SafeHttpError> {
+        validate_url(url, SchemePolicy::HttpOrHttps)?;
+        let addresses = self.resolve_and_filter(url).await?;
+        connect_validated(&addresses)
+            .await
+            .map(|(stream, _peer)| ProxyHop(stream))
+    }
+
     /// 生产构造：系统 DNS + lockfile 固定的 Mozilla roots。
     #[must_use]
     pub fn new(policy: EgressPolicy) -> Self {
@@ -827,14 +838,16 @@ impl SafeDialer {
     }
 
     async fn resolve_and_filter(&self, url: &Url) -> Result<Vec<SocketAddr>, SafeHttpError> {
-        let host = url.host_str().ok_or(SafeHttpError::InvalidUrl)?;
         let port = url
             .port_or_known_default()
             .ok_or(SafeHttpError::InvalidUrl)?;
 
-        let raw = match IpAddr::from_str(host) {
-            Ok(ip) => vec![SocketAddr::new(ip, port)],
-            Err(_) => self
+        // URL host_str keeps the brackets around IPv6. Match the typed host instead of treating
+        // `[::1]` as a DNS name; numeric IPs never enter an alternate resolver path.
+        let raw = match url.host().ok_or(SafeHttpError::InvalidUrl)? {
+            url::Host::Ipv4(ip) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
+            url::Host::Ipv6(ip) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
+            url::Host::Domain(host) => self
                 .resolver
                 .resolve(host, port)
                 .await
@@ -865,9 +878,12 @@ impl SafeDialer {
         match request.url.scheme() {
             "http" => send_http1(stream, http_request).await,
             "https" => {
-                let host = request.url.host_str().ok_or(SafeHttpError::InvalidUrl)?;
-                let server_name =
-                    ServerName::try_from(host.to_owned()).map_err(|_| SafeHttpError::InvalidUrl)?;
+                let server_name = match request.url.host().ok_or(SafeHttpError::InvalidUrl)? {
+                    url::Host::Ipv4(ip) => ServerName::IpAddress(IpAddr::V4(ip).into()),
+                    url::Host::Ipv6(ip) => ServerName::IpAddress(IpAddr::V6(ip).into()),
+                    url::Host::Domain(host) => ServerName::try_from(host.to_owned())
+                        .map_err(|_| SafeHttpError::InvalidUrl)?,
+                };
                 let tls = TlsConnector::from(Arc::clone(&self.tls))
                     .connect(server_name, stream)
                     .await
@@ -880,6 +896,38 @@ impl SafeDialer {
             }
             _ => Err(SafeHttpError::SchemeRejected),
         }
+    }
+}
+
+/// A freshly vetted, already connected hop. Only the sibling scope gateway consumes this type;
+/// it cannot substitute a downstream socket or resolve the target for a second time.
+pub(super) struct ProxyHop(TcpStream);
+
+impl ProxyHop {
+    pub(super) fn into_tunnel(self) -> TcpStream {
+        self.0
+    }
+
+    pub(super) async fn http<B>(
+        self,
+    ) -> Result<
+        (
+            http1::SendRequest<B>,
+            impl Future<Output = Result<(), hyper::Error>> + Send,
+        ),
+        SafeHttpError,
+    >
+    where
+        B: Body<Data = Bytes> + Send + 'static,
+        B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        let mut builder = http1::Builder::new();
+        builder.max_headers(64).max_buf_size(32 * 1024);
+        let (sender, connection) = builder
+            .handshake(TokioIo::new(self.0))
+            .await
+            .map_err(|_| SafeHttpError::ProtocolFailed)?;
+        Ok((sender, connection.with_upgrades()))
     }
 }
 

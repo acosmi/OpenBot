@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 56
+    expect: 57
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 20
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 36
+    expect: 37
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 56 56
+    expect: 57 57
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 46 0
+    expect: 10 47 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -930,3 +930,20 @@ entries:
       只补Anthropic一家；现有OpenAI加本项为2/3，Google候选公开bodySegments无法恢复原始SSE，仍todo。
       PHP capture身份依据官方README和测试声明，非本项目亲历vendor捕获；公开示例signature忽略，非secret/authority。
       无live凭据、PG/UI或账单证据；T-FIX-0013等跨provider完整corpus、G4及Alpha/v4整关保持未完成。
+
+  - id: scoped-egress-gateway-substrate
+    upstream: "-"
+    label: 新增
+    target: fixtures/computer/scoped-egress-v1.json -> openbot_infra::net::scope_gateway
+    owner: openbot-infra
+    test_id: T-FIX-0057
+    migration_rule: "n/a: v4 §10.5 Rust-owned network gateway substrate; production ComputerManager/Engine/namespace assembly is separate"
+    status: done
+    evidence: "cargo test -p openbot-infra --test scoped_egress --locked：macOS真实loopback HTTP/CONNECT/WebSocket/TLS、认证前DNS0、deny/空allow/host/port/private拒绝、resolver port覆盖、逐连接fresh DNS、header清理与不自动redirect/retry、IPv6、实际body/tunnel预算、共享rate、idle/lifetime/cancel/Drop"
+    done_evidence: "fixture=3310 bytes/SHA-256 adfe8295ecb2435bb4a8bc68a8c74926a5033e6b5fdb70b52d8703afd1987928；15/0/0，原safe_http14/0/0、provider32/0/0、官方recorded4/0/0；Infra all-target/all-feature Clippy与唯一出网guard绿。IPv6测试先失败，改typed URL host后实际::1可达且DNS0。HTTP/CONNECT/WS完全经过SafeDialer私有ProxyHop；无第二DNS/connect/HTTP client调用面。"
+    notes: >-
+      只验证唯一实例/256-bit proxy token的本机转发基座，不等于完整ComputerSecurityScope业务绑定。
+      production manager/tenant policy loading、Engine proxy bootstrap、Server namespace路由与kernel隔离、
+      TLS内层内容/SNI策略均明确false，完整G5/G7不勾。默认数值属本项目新增，不冒充upstream parity。
+      Windows server-runtime cross-check卡在ring缺MSVC assert.h；Linux target check成功也仅为compile-only。
+      已发送prefix后越限只能失败/中断，不保证远端没执行，也不自动重试；HTTPS透明tunnel不声称TLS解密审查。
