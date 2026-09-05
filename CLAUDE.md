@@ -2,7 +2,7 @@
 
 OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这一份**。本仓 **public**。
 
-> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R199，2026-09-05；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
+> 真源 = `docs/2026-08-21-OpenBot全量Rust重写终版研究与实施方案.md`（**v4** = v3 就地修订至 §28.1 R200，2026-09-05；架构 / 能力 / 旅程）+ `docs/2026-08-22-OpenBot-GUI设计系统与视觉规格-方案.md`（**v2**；GUI 视觉 / token / 布局 / 主题 / i18n / a11y / 视觉闸门）。本文件只摘约束与理由，细节一律以两份方案章节为准；两者冲突时以方案为准（视觉归设计系统文档、架构归后端方案），并同 PR 修订本文件。`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被 R115–R125 吸收，只作历史记录，不是实施依据；真源五层优先级见后端方案 §28.5。
 
 ---
 
@@ -27,6 +27,7 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
 - **R197验收provider外部交付**：Anthropic两份官方body独立核来源/字节/许可，production replay3/0/0、provider units32/0/0、Infra Clippy/fmt/guard通过，T-FIX-0056后fixtures36/20/56。recorded现OpenAI+Anthropic2/3；Google所审bodySegments非原始SSE，接受调查但保持实现缺口。strict160/0/0，parity/overlay不变；E–K分范围预留，I/K无需联网调研，均未预记启动。无live/平台/完整G4或Alpha通过，详见Batch121。
 - **R198落地Rust出口网关库**：unique loopback/token、SafeDialer私有hop、HTTP/CONNECT/WS和预算/撤销join在macOS15项实跑通过；IPv6数值地址改typed host，原dialer14/provider32/recorded4回归。fixtures37/20/57、strict160/0/0；Linux仅check，Windows server-runtime卡MSVC C头文件未通过。production ComputerManager/tenant policy/Engine/bootstrap/namespace/kernel和TLS内层策略仍缺，Engine仍epoch4黑洞网络，不勾G5/G7/Alpha；详见Batch122。
 - **R199修复Engine父环境继承**：Unix从黑名单改env_clear+五键/cwd，Windows只读OS目录并构造固定九键UTF-16 block、不再枚举父环境。真实macOS两role main/renderer四canary由全true变全false，原完整输入/帧/cleanup通过；Computer67/fixture5、Windows portable4与cross-check/Clippy绿。fixtures38/20/58；Windows/runsc真机和更广filesystem/helper-exec/kernel仍缺，完整G5/G7/Alpha不勾，详见Batch123。
+- **R200收紧macOS main直接读取**：新SBPL只放scope/bundle/具名OS内容与ancestor metadata，dyld只补literal /锚点；旧3条跨scope读取实修为5负向拒绝、scope read/list/link正向成立，另有真实两role完整兼容。F0059后fixtures39/20/59；helper exec/Mach/FD/UDS/localhost、Windows/runsc、production与完整G5E/Alpha仍缺，详见Batch124。
 - 阶段进度：**Phase 0（Evidence Freeze）产物已落地** —— `parity/*.yaml`（9 份；条目数随实施推进增长，真源是各台账自己的 recount，由 `cargo xtask recount` 逐条实跑，**不在本文件钉死**）、`provenance/sources.spdx.json`、`fixtures/**`、`tools/pins.toml`、十个业务/parity 核心 crate 骨架（R127 后另有唯一 Win32 安全边界 crate）、`cargo xtask parity-check`（§19.3）。CI 必须拒绝未归类项与没有证据的 `done`。
   **G0 仍有一项未闭合**：§1.1 要求把两份输入文档原件归档到 `docs/inputs/`，仓内与本机都不存在原件，只有 SHA-256 —— 在补齐之前不得宣称 G0 通过。
 - **G1（Rust Core 与 PostgreSQL）四条判据本轮全部达成**（§24，四条缺一不可）：① 十个业务/parity 核心 crate + R127 唯一 Windows 安全边界 crate 的 locked build 绿（业务入口与 parity owner 仍只有原十个）；② 同一个 `Arc<dyn ApplicationService>` 经 Axum 与 in-process 两条 transport 结果一致（当前 `cargo test -p openbot-testkit --test transport_parity` = 8 passed，Batch30新增channel detail与port scope逐字段对拍）；③ 28 表 / 13 migration 映射对走完 13 条 migration 的真参照库逐字段相等，read checksum 168/168 行逐字节相同；④ tracing span + 关联字段 + 脱敏 + Prometheus metrics 从首个 vertical slice 生效。
@@ -120,7 +121,7 @@ OpenBot 全量 Rust 重写 —— 仓库级 AI 协作指引，入仓**首读这�
   **D-5 已建立棘轮**：CI 钉 `cargo-vet 0.10.0` 并跑 `cargo vet --locked`；Google exact/delta import 锁定 15 个 fully audited。350 个是 R45 bootstrap exemptions；W-7 TLS 新增 20 个、W-7b SAML 新增 30 个、G3 WebSocket 新增 3 个、G4 Batch 11 RMCP/schema 新增 32 个精确 exemption，逐条带 `owner=security` 与 `not a full source audit`，合计 **435**，不冒充审计。Batch 15 GUI baseline 在当前 target-aware no-all-features 口径为 **181 unvetted**；Batch81引入的macOS-only Keychain两包使all-features为macOS **272** / Windows **269**（对Batch16分别+2/+0）。没有批量补 exemption，故cargo-vet明确红；新增/升级未覆盖版本仍当场判红。见 R45/R48/R50/R67/R74/R78/R79/R155。
   **D-3 已正式采用 `zeroize`**：`SecretBytes` 内层是 `Zeroizing<Vec<u8>>` 并标记 `ZeroizeOnDrop`，drop 清除当前 length+capacity；历史扩容 allocation 与调用方副本仍不冒充可擦除。见 R46。
   **D-2 已按真实契约消费者裁决**：Attempt/Capability/Catalog/Auth 四类型穿 application/infra 边界，收口到 contracts 且不 serde，`AuthContext` 不再用裸 `u64` 表示代际；CredentialGeneration 尚未穿 port。SecretId/ServiceId 在 W-7b/R59 后由 infra adapter 就地构造并只传给 domain `RecordBinding`，不是 application/transport contract，继续留在 vault domain；第一次穿 port 时必须同批上收。见 R47/R59。
-- §28.1 当前 **199** 条（R1–R199）。实施时除既有安全/G2裁决外，必须读R61–R114、R115–R125、
+- §28.1 当前 **200** 条（R1–R200）。实施时除既有安全/G2裁决外，必须读R61–R114、R115–R125、
   **R126–R129（macOS/Windows/runsc/Xvfb P1）**与**R130–R188（后续实施裁决）**；R180覆盖R179的
   RMCP现代取消wire，R182区分Golden，R183–R188依次区分CDP pure/live、正式screencast、ScreenHub、viewer coordinate与Server/production余项。AppSidebar/
   完整跨页面Composer、provider品牌、P1 Windows/runsc真机、P2 CDP/ScreenHub、P3 Desktop renderer、

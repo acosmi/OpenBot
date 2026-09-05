@@ -5,22 +5,22 @@ generated_by: manual
 recount:
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(len(d['entries']))\""
     cwd: repo
-    expect: 58
+    expect: 59
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='todo'))\""
     cwd: repo
     expect: 20
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['status']=='done'))\""
     cwd: repo
-    expect: 38
+    expect: 39
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));e=d['entries'];assert all(('done_evidence' in x)==(x['status']=='done') for x in e);print('ok')\""
     cwd: repo
     expect: ok
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));t=[x['test_id'] for x in d['entries']];print(len(t),len(set(t)))\""
     cwd: repo
-    expect: 58 58
+    expect: 59 59
   - command: "python3 -c \"import yaml,io;d=yaml.safe_load(io.open('fixtures/MANIFEST.yaml',encoding='utf-8'));print(sum(1 for e in d['entries'] if e['label']=='parity'),sum(1 for e in d['entries'] if e['label']=='新增'),sum(1 for e in d['entries'] if e['label']=='替代'))\""
     cwd: repo
-    expect: 10 48 0
+    expect: 10 49 0
 entries:
   # ===========================================================================
   # 已产出（本轮）
@@ -962,3 +962,19 @@ entries:
       只关闭环境继承子项；Windows/runsc runtime、macOS文件读取/UDS/localhost/helper exec compromise仍缺，
       不宣称Known Folder API或kernel文件/网络权限因HOME变量改变。没有改agent宿主HOME或读取生产凭据。
       Engine仍epoch4；E交接base R196未包含本delta，最终真机验收须纳入；G5/G7/Alpha/v4不勾。
+
+  - id: macos-engine-main-direct-read-boundary
+    upstream: "-"
+    label: 新增
+    target: fixtures/computer/macos-engine-main-read-v1.json -> openbot_computer::engine::process::sandbox_profile
+    owner: openbot-computer
+    test_id: T-FIX-0059
+    migration_rule: "n/a: v4 §10.1/§10.3/§17.2 direct Engine main filesystem read confinement"
+    status: done
+    evidence: "同一production SBPL generator的macOS native cat/ls/ln探针，仅读任务自建文件；自身read/list/link正向成立，旧规则sibling/symlink/DataVolume三处可读，收紧后再证邻接枚举与跨scope hardlink也拒绝。真实两role Engine同时回归。"
+    done_evidence: "fixture1790 bytes/SHA-256 3f2e5ef49c8c37eb231fefad8879c69a17dd3f33f30e80c499d89276958958b6；native policy1/0/0，五负向均false且scope正向成立；真实Engine父测试1/0/0（内部Browser/Component完整input/frame/sandbox/env/stop/cleanup）。本机macOS26.5.2/25F84，dyld依赖literal /作为openat锚点；不放行 / 或 /System 的整棵内容子树。Computer Clippy与Windows/Linux check绿，跨平台只compile。"
+    notes: >-
+      native cat/ls/ln是明确的kernel-policy探针，不冒充恶意Electron exploitation；另有真实Engine兼容证据。
+      OS具名内容根与精确ancestor metadata允许，不是只保护某个用户目录的黑名单。
+      helper exec、Mach brokers、inherited FDs、UDS/localhost、Windows读取与runsc边界、production manager及
+      完整G5E/Alpha仍未闭合。没有改Grok树、源项目、shim/protocol/品牌或平台外派范围。

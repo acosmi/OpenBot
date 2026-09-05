@@ -1677,13 +1677,81 @@ fn sandbox_profile(
         let value = path
             .to_str()
             .ok_or(EngineProcessError::SandboxUnavailable)?;
-        if value.contains(['"', '\\', '\n', '\r']) {
+        if value.contains(['"', '\\', '\n', '\r', '\0']) {
             return Err(EngineProcessError::SandboxUnavailable);
         }
+    }
+    // Allow only scoped content and narrowly named OS resources. In particular, /System as a
+    // whole includes /System/Volumes/Data and must never be a read-data allowlist entry.
+    let os_roots = [
+        "/System/Library",
+        "/System/Cryptexes",
+        "/System/Volumes/Preboot/Cryptexes/OS",
+        "/System/Volumes/Preboot/Cryptexes/Incoming/OS",
+        "/System/Volumes/Preboot/Cryptexes/App/System",
+        "/usr/lib",
+        "/usr/share",
+        "/Library/Apple/System/Library",
+        "/Library/Fonts",
+        "/Library/ColorSync/Profiles",
+        "/private/var/db/timezone",
+    ];
+    let content_roots = [bundle, profile, temp, runtime];
+    // Current dyld/libignition opens the root directory as an openat anchor. A literal root
+    // permits that directory handle only; it is deliberately not a subpath grant.
+    let os_files = [
+        "/",
+        "/usr/bin/sandbox-exec",
+        "/dev/null",
+        "/dev/random",
+        "/dev/urandom",
+        "/private/etc/passwd",
+        "/private/etc/hosts",
+        "/private/etc/resolv.conf",
+    ];
+    let mut metadata = std::collections::BTreeSet::new();
+    for path in content_roots
+        .iter()
+        .copied()
+        .chain(os_roots.iter().map(Path::new))
+        .chain(os_files.iter().map(Path::new))
+        .chain(std::iter::once(executable))
+    {
+        for ancestor in path.ancestors() {
+            metadata.insert(ancestor.to_path_buf());
+        }
+    }
+    let mut reads = String::from("(deny file-read*)\n");
+    for path in metadata {
+        reads.push_str(&format!(
+            "(allow file-read-metadata (literal \"{}\"))\n",
+            path.display()
+        ));
+    }
+    for path in content_roots
+        .iter()
+        .copied()
+        .chain(os_roots.iter().map(Path::new))
+    {
+        reads.push_str(&format!(
+            "(allow file-read* (subpath \"{}\"))\n",
+            path.display()
+        ));
+    }
+    for path in os_files
+        .iter()
+        .map(Path::new)
+        .chain(std::iter::once(executable))
+    {
+        reads.push_str(&format!(
+            "(allow file-read* (literal \"{}\"))\n",
+            path.display()
+        ));
     }
     Ok(format!(
         "(version 1)\n\
          (allow default)\n\
+         {reads}\
          (deny file-write*)\n\
          (allow file-write* (subpath \"{}\") (subpath \"{}\") (subpath \"{}\") (literal \"/dev/null\"))\n\
          (deny network-inbound)\n\
@@ -2039,6 +2107,166 @@ mod tests {
                 std::path::Path::new("/tmp/runtime"),
             )
             .is_err()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires macOS sandbox-exec; tests only owned synthetic files through the production policy generator"]
+    fn macos_main_read_policy_blocks_sibling_symlink_and_data_volume_alias() {
+        use std::os::unix::fs::symlink;
+        use std::path::{Path, PathBuf};
+        use std::process::Command;
+
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/computer/macos-engine-main-read-v1.json"
+        ))
+        .expect("read-boundary fixture");
+        assert_eq!(fixture["schema"], "openbot-macos-engine-main-read-v1");
+        assert!(
+            fixture["remaining"]
+                .as_object()
+                .expect("unfinished boundaries")
+                .values()
+                .all(|value| value == false)
+        );
+
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root =
+            std::env::temp_dir().join(format!("openbot-macos-read-policy-{}", std::process::id()));
+        assert!(
+            !root.exists(),
+            "test directory must not overwrite prior evidence"
+        );
+        fs::create_dir(&root).expect("owned test root");
+        let root = root.canonicalize().expect("canonical root");
+        let _cleanup = Cleanup(root.clone());
+        let bundle = root.join("bundle");
+        let profile = root.join("profile");
+        let temp = root.join("temp");
+        let runtime = root.join("runtime");
+        let sibling = root.join("profile-other");
+        for path in [&bundle, &profile, &temp, &runtime, &sibling] {
+            fs::create_dir(path).expect("owned directory");
+        }
+        let inside = profile.join("inside.txt");
+        let outside = sibling.join("canary.txt");
+        fs::write(&inside, b"owned-readable-fixture").expect("inside fixture");
+        fs::write(&outside, b"outside-synthetic-canary").expect("outside fixture");
+        let link = profile.join("link-to-outside");
+        symlink(&outside, &link).expect("owned test symlink");
+        // This is a native policy probe, not an Electron substitute: only the approved main
+        // executable is /bin/cat. Scope/bundle/OS rules come from the production generator.
+        let rules =
+            super::sandbox_profile(Path::new("/bin/cat"), &bundle, &profile, &temp, &runtime)
+                .expect("production policy");
+        let inspect = |path: &Path| {
+            let child = Command::new("/usr/bin/sandbox-exec")
+                .args(["-p", &rules, "/bin/cat"])
+                .arg(path)
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .current_dir(&profile)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("native policy probe");
+            println!("main-read-policy owned_probe_pid={}", child.id());
+            child.wait_with_output().expect("wait native policy probe")
+        };
+        let allowed = inspect(&inside);
+        assert!(
+            allowed.status.success(),
+            "owned-file positive control failed ({:?}): {}",
+            allowed.status,
+            String::from_utf8_lossy(&allowed.stderr[..allowed.stderr.len().min(2048)])
+        );
+        assert!(allowed.stdout == b"owned-readable-fixture");
+        let mut failures = 0;
+        for (name, path) in [("sibling", outside.clone()), ("symlink", link)] {
+            let result = inspect(&path);
+            let leaked = result.status.success() || !result.stdout.is_empty();
+            println!("main-read-policy case={name} outside_readable={leaked}");
+            failures += usize::from(leaked);
+        }
+        let alias = Path::new("/System/Volumes/Data")
+            .join(outside.strip_prefix("/").expect("absolute fixture"));
+        if alias.exists() {
+            let result = inspect(&alias);
+            let leaked = result.status.success() || !result.stdout.is_empty();
+            println!("main-read-policy case=data-volume-alias outside_readable={leaked}");
+            failures += usize::from(leaked);
+        } else {
+            println!("main-read-policy case=data-volume-alias unavailable=true");
+        }
+        let list_rules =
+            super::sandbox_profile(Path::new("/bin/ls"), &bundle, &profile, &temp, &runtime)
+                .expect("list policy");
+        let own_listing = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &list_rules, "/bin/ls"])
+            .arg(&profile)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&profile)
+            .output()
+            .expect("own directory positive control");
+        assert!(own_listing.status.success());
+        assert!(
+            own_listing
+                .stdout
+                .windows(b"inside.txt".len())
+                .any(|bytes| bytes == b"inside.txt")
+        );
+        let listed = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &list_rules, "/bin/ls"])
+            .arg(&sibling)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&profile)
+            .output()
+            .expect("directory read probe");
+        let enumerated = listed.status.success() || !listed.stdout.is_empty();
+        println!("main-read-policy case=sibling-listing outside_readable={enumerated}");
+        failures += usize::from(enumerated);
+
+        let hardlink = profile.join("hardlink-to-outside");
+        fs::hard_link(&outside, &hardlink).expect("filesystem hardlink positive control");
+        fs::remove_file(&hardlink).expect("reset hardlink control");
+        let link_rules =
+            super::sandbox_profile(Path::new("/bin/ln"), &bundle, &profile, &temp, &runtime)
+                .expect("link policy");
+        let own_hardlink = profile.join("hardlink-to-inside");
+        let own_linked = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &link_rules, "/bin/ln"])
+            .arg(&inside)
+            .arg(&own_hardlink)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&profile)
+            .output()
+            .expect("own hardlink positive control");
+        assert!(own_linked.status.success());
+        assert!(fs::read(&own_hardlink).expect("own linked data") == b"owned-readable-fixture");
+        let linked = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &link_rules, "/bin/ln"])
+            .arg(&outside)
+            .arg(&hardlink)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&profile)
+            .output()
+            .expect("hardlink creation probe");
+        let linked_outside = linked.status.success() || hardlink.exists();
+        println!("main-read-policy case=hardlink-creation outside_linkable={linked_outside}");
+        failures += usize::from(linked_outside);
+        assert_eq!(
+            failures, 0,
+            "outside reads must be denied without returning any canary bytes"
         );
     }
 }

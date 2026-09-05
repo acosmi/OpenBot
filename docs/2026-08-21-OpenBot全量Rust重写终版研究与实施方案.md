@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R199，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R200，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1124,6 +1124,13 @@ Linux runsc只追加既有固定DISPLAY=:99。Windows不枚举父环境，唯一
 构造固定APPDATA/HOME/LOCALAPPDATA/PATH/SystemRoot/TEMP/TMP/USERPROFILE/WINDIR九键UTF-16 block。
 禁把provider/DB凭据、loader/proxy/key-log变量或父PATH带给Engine；接口不接受任意env map。
 macOS两role的main/renderer canary从四处true实修为四处false，不改变host本身HOME；Windows/runsc真机仍待验。
+
+macOS main直接文件读取（R200新增收紧）：SBPL明确deny file-read*，再允许authority bundle/profile/temp/runtime、
+具名OS资源和精确ancestor metadata；禁止对 / 或 /System/Data 全子树放行。macOS26.5.2的dyld/libignition
+需literal /目录句柄作openat锚点，只有该字面目录开放，不能扩大为subpath。自建kernel探针在read/list/link正向
+下证明五种跨scope数据/枚举/link路径被拒绝，真实两role输入/帧/退出兼容。此证据只关闭direct-read子项，
+不替代helper exec、Mach broker、FD继承、UDS/localhost、Windows/runsc或完整G5E验证。
+
 此项不替代文件读取、UDS/localhost、helper exec或compromised main边界，完整G5E继续未通过。
 
 boot handshake（R119，三平台统一）：Rust 先创建 pipe endpoint（macOS/Linux 为随机路径、`0600` 的 UDS；Windows 为随机名、仅当前用户 SID 可访问的 Named Pipe），再 spawn engine，并向其 stdin 恰写入一行 ≤ 4 KiB 的 boot capability（pipe 名、`EngineRole`、protocol version、release epoch、一次性 128-bit token），随后关闭 stdin；engine 连接 pipe 后发送 `hello{token}`，Rust 校验 token **与 peer credential**（UDS：`SO_PEERCRED` / `getpeereid`；Named Pipe：`GetNamedPipeClientProcessId` 等于 spawn 得到的 PID 且进程创建时间一致），二者任一不符即 kill 并推进 `ComputerGeneration`。engine 二进制、shim ASAR 与协议 hash 的 digest 由 Rust 在 spawn **之前**校验（§16.2），engine 不自报。
@@ -2225,6 +2232,10 @@ R191新增的受控Alpha按§24.2单独准入，不视为G0–G8通过或§25完
     低confidence均由Application成功fallback，tool output拒绝，消息与模型理由不进hash-chain audit；
   - [ ] provider gate 要求的三家 recorded vendor trace 当前为 **1/3**：OpenAI官方RecordedTest response-body trace已由Batch104闭合，Anthropic与Google仍缺；本批未使用 live vendor credential。human approval 的 Leptos/Axum可点击竖切、critical realtime、真实PG与production session resolver浏览器均已落，但真实OIDC/SAML登录、完整 thread/cancel/computer 集成仍未闭合；run-wide normalized token、operator-attested cost upper bound、用户费用cap/API/UI与并发tool runtime budget已落，仍缺computer runtime budget；Desktop Local installed-app client/system browser/random loopback callback、computer/file/shell各自的协议级cancel notification/process-tree、RMCP完整官方conformance、Plugins/Skills完整UI、G8 typed operator-attestation/最终secret retirement，Agent Desktop正式capability/真实Wry journey、browser/file/shell executor尚未闭合。AG-UI十一event family、单家trace、RMCP run cancel与admin-delete compensation/runbook都不能替代这些G4/G8余项；Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
+  - [x] Batch124/R200 macOS main直接读取：旧规则sibling/symlink/DataVolume三路径实测可读，scope与具名OS
+    读取白名单后五负向全拒绝，同时自身read/list/link正向成立。native policy1/0/0与真实两role1/0/0通过；
+    F0059只记录direct-read与兼容性，helper exec/Mach/FD/network边界和完整G5E/Alpha仍不勾。
+
   - [x] Batch123/R199 Engine父环境泄漏子项：真实macOS Browser/Component main/renderer四个canary
     修复前全true、修复后全false，父进程正向成立且原两role完整输入/帧/退出旅程通过。Unix封闭五键，
     Windows OS目录来源+九键UTF-16 block；portable4、Computer67+fixture5与cross-check/Clippy通过。
@@ -2794,6 +2805,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R197 | §7.3 / §21.2 / §23 / §24 G4（2026-09-04 Batch121：provider外部交付独立验收） | R196仅OpenAI官方recorded 1/3，A/B预留仍写未启动；用户交付Anthropic候选与Google调查，候选日志不能替代主控复算，parsed JSON不能冒充原始SSE。 | 从R196逐commit择取A/B，独立验证官方来源/许可/字节；Anthropic两份原body进入production回放并登记T-FIX-0056、NOTICE/SPDX，现2/3。Google所审录制转换不可逆，只接受来源不足调查，不创建fake fixture或关闭其任务。E–K按R196预留分离范围，I/K明确离线；原Browser gateway在制稿完整保存后继续，不改源仓。 | A原7903e61→442b6fe，B原7dcba21→2d15051；32份官方材料重抓，Anthropic source/body identity与commit time/MIT相符，Google22项文件身份与关键转换复核。主控production recorded3/0/0、provider units32/0/0、Infra Clippy/fmt/3-trace guard绿；strict160/0/0、Grok2110/shim595/600/唯一manifest绿。fixtures36/20/56，parity886/826/1712、overlay1234/470/2/6不变。无live/PG/UI/Windows/runsc/全供应链新证据，不派发Actions、不合并PR，完整G4/Alpha/v4仍未完成；详见Batch121。 |
 | R198 | §10.5 / §24 G5/G7（2026-09-04 Batch122：Rust出口网关基座） | Engine仍黑洞网络，缺受控HTTP/CONNECT/WS转发；在制稿有HTTP占位、撤销订阅竞态与未join的driver风险。仅URL检查不足，数值IPv6又被旧host_str括号误送DNS。 | 新增unique loopback/token owner、deny-first host/port、私有ProxyHop与有界streaming/upgrade、共享rate和cancel/join；原出网路径唯一性不变，IPv6与TLS identity使用typed host。预算是新增，不冒充upstream；透明CONNECT只验证authority/IP，不冒充内层TLS策略。fixture把production scope/policy/Engine/namespace/kernel/G5/G7均保持false。 | 15项真实loopback测试全过；IPv6先失败后成功/DNS0，原safe_http14/provider32/官方recorded4回归；Clippy/fmt与出网guard通过。guard修复既有Screen test-only漏登，未增加production客户端；Linux target check0，Windows在ring缺assert.h失败、未伪记通过。strict160/0/0、Grok2110/shim595/600/唯一manifest绿，Cargo829/lock不变。fixtures37/20/57，parity886/826/1712、overlay1234/470/2/6不变。Engine仍epoch4内部页，完整目标继续；详见Batch122。 |
 | R199 | §11.2 / §11.3 / §17.2 / §24 G5（2026-09-05 Batch123：Engine父环境隔离） | R126/R127只过滤四项Electron/Node变量，Unix默认继承、Windows枚举父环境；provider/DB凭据与其它loader/key-log变量仍可能进入引擎。真实两role探针证实main/renderer四处canary为true。 | Unixenv_clear后固定五键和scope cwd，Linux只加固定DISPLAY；Windows从只读OS目录API构造九键有界UTF-16 block，删除父环境枚举并同步唯一unsafe边界许可。角色测试用隔离父进程注入synthetic canary，实际PS观测只输出固定布尔事实，完成cleanup后判定，不读取生产凭据或打印原始环境。 | 修复前4 true，修复后4 false，真实两role完整conformance由1个父测试复算；Computer67/fixture5、Windows portable4、两crate Clippy与Windows/Linux check绿。T-FIX-0058，fixtures38/20/58；其余parity/overlay不变，strict160/0/0、Grok/shim/六target bans-sources通过。Windows/runtime、runsc、macOS读取/localhost/UDS/helper-exec仍未通过，不能把HOME变量当文件隔离。磁盘满只回收本仓3.1GiB incremental后原命令重跑；不改E远程R196基线、不上传或合并，详见Batch123。 |
+| R200 | §10.1 / §10.3 / §11.3 / §24 G5（2026-09-05 Batch124：macOS main直接读取） | R199关闭env继承后，SBPL仍allow-default而只约束write；实际kernel探针证明邻接文件、symlink、DataVolume别名可读，不能开放真实网页后再补。 | deny file-read*，仅scope/bundle/具名OS资源和ancestor metadata允许；避免 /System 覆盖Data卷。根据本机dyld事实只加literal /目录openat锚点，拒NUL注入。明确native cat/ls/ln探针与真实Engine兼容性分开；不宣称完成任意main compromise防线。 | 修复前3可读，后5负向全拒绝，scope内read/list/link及无sandbox hardlink正向成立；native1/0/0、真实两role父测试1/0/0，完整input/frame/env/stop/cleanup保持。Computer67+fixture5、Clippy、Windows/Linux check通过；跨平台仅编译。fixture1790 bytes/SHA 3f2e5ef4…，F0059后39/20/59；parity/overlay不变，strict160/0/0、Grok/shim通过。固定Chromium150.0.7871.212三source与本机dyld哈希已记录；helper exec/Mach/FD/UDS/kernel/production余项继续，详见Batch124。 |
 
 ### 28.2 复核通过、原样保留的断言
 
