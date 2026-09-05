@@ -78,6 +78,7 @@ pub mod approval_admin;
 pub mod builtin_tools;
 pub mod chunk;
 pub mod components;
+pub mod credential_admin;
 pub mod cursor;
 pub mod intelligence_import;
 pub mod mcp_connections;

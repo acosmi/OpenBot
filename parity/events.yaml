@@ -684,31 +684,34 @@ entries:
   - id: 'audit-credential-created'
     upstream: 'server/src/credentials.ts::createCredential'
     label: 'parity'
-    target: 'openbot-contracts::audit::AuditEventType::CredentialCreated'
+    target: "openbot_domain::audit::event::AuditEventType::CREDENTIAL_CREATED"
     owner: 'openbot-application'
     test_id: 'T-EVT-0050'
     migration_rule: 'preserve: 事件名字符串原样保留'
-    status: 'todo'
+    status: done
+    done_evidence: "Batch120：Application管理员usecase经PostgresCredentialAdministration在同一业务事务追加typed hash-chain audit；真实GUI PG三类各一条，actor精确fixture-actor，payload只有kind/provider/keyId及rotate前驱/revoke vendor=false，无canary。审计失败同事务回滚；重复revoke不重复记event。"
     evidence: 'rg -n --no-heading -g ''!*.test.ts'' ''"credential.created"'' server/src'
     notes: '铸造在 openbot-application、落库在 openbot-infra（§8.6 业务 DB role 对 audit 只有 INSERT/SELECT）；owner 取实际所有者。'
   - id: 'audit-credential-revoked'
     upstream: 'server/src/credentials.ts::revokeCredential'
     label: 'parity'
-    target: 'openbot-contracts::audit::AuditEventType::CredentialRevoked'
+    target: "openbot_domain::audit::event::AuditEventType::CREDENTIAL_REVOKED"
     owner: 'openbot-application'
     test_id: 'T-EVT-0051'
     migration_rule: 'preserve: 事件名字符串原样保留'
-    status: 'todo'
+    status: done
+    done_evidence: "Batch120：Application管理员usecase经PostgresCredentialAdministration在同一业务事务追加typed hash-chain audit；真实GUI PG三类各一条，actor精确fixture-actor，payload只有kind/provider/keyId及rotate前驱/revoke vendor=false，无canary。审计失败同事务回滚；重复revoke不重复记event。"
     evidence: 'rg -n --no-heading -g ''!*.test.ts'' ''"credential.revoked"'' server/src'
     notes: 'v3 §2.4 issue #53：上游 rotate 先写新值再 revoke 旧值，失败留 orphan。Rust 版单事务切 active pointer，外部 revoke 独立进 reconciliation。 铸造在 openbot-application、落库在 openbot-infra（§8.6 业务 DB role 对 audit 只有 INSERT/SELECT）；owner 取实际所有者。'
   - id: 'audit-credential-rotated'
     upstream: 'server/src/credentials.ts::rotateCredential'
     label: 'parity'
-    target: 'openbot-contracts::audit::AuditEventType::CredentialRotated'
+    target: "openbot_domain::audit::event::AuditEventType::CREDENTIAL_ROTATED"
     owner: 'openbot-application'
     test_id: 'T-EVT-0052'
     migration_rule: 'preserve: 事件名字符串原样保留'
-    status: 'todo'
+    status: done
+    done_evidence: "Batch120：Application管理员usecase经PostgresCredentialAdministration在同一业务事务追加typed hash-chain audit；真实GUI PG三类各一条，actor精确fixture-actor，payload只有kind/provider/keyId及rotate前驱/revoke vendor=false，无canary。审计失败同事务回滚；重复revoke不重复记event。"
     evidence: 'rg -n --no-heading -g ''!*.test.ts'' ''"credential.rotated"'' server/src'
     notes: '同 credential.revoked：§2.4 issue #53 的单事务修正落在这一对上。 铸造在 openbot-application、落库在 openbot-infra（§8.6 业务 DB role 对 audit 只有 INSERT/SELECT）；owner 取实际所有者。'
   - id: 'audit-identity-provider-registered'

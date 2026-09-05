@@ -1,5 +1,7 @@
 //! Local-only deterministic GUI fixture host required by the GUI first-source golden workflow.
 
+#[path = "ui_fixture/credentials.rs"]
+mod fixture_credentials;
 #[path = "ui_fixture/plugins.rs"]
 mod fixture_plugins;
 
@@ -3691,6 +3693,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let routing_probe = routing.probe();
     let agents = Arc::new(FixtureAgents::new());
     let plugins = fixture_plugins::PluginsFixture::new(connections);
+    let credentials = fixture_credentials::assemble(postgres_probe.as_ref())?;
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
@@ -3706,6 +3709,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_threads(threads)
             .with_memory(memory)
             .with_mcp_connections(Arc::new(plugins.clone()))
+            .with_credentials(credentials)
             .with_tool_approvals(approvals)
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );

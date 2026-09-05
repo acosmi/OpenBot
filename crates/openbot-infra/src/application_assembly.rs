@@ -23,6 +23,7 @@ use url::Url;
 use crate::agent_callback::{PostgresAgentCallbackTokens, PostgresRemoteCallbackAuthenticator};
 use crate::agent_tools::PostgresBuiltInToolControlPlane;
 use crate::component_catalogue::PostgresComponentAdministration;
+use crate::credential_admin::PostgresCredentialAdministration;
 use crate::google_drive::GoogleDriveRestTransport;
 use crate::google_drive_oauth::GoogleDriveOAuthClient;
 use crate::mcp::SafeRmcpClient;
@@ -369,6 +370,19 @@ pub async fn assemble_postgres_application(
         .map_err(|_| fail("remote_callback_auth"))?
         .with_mcp_catalog(mcp_catalog.clone()),
     );
+    let credentials = Arc::new(
+        PostgresCredentialAdministration::new(
+            pool.clone(),
+            credential_vault.clone(),
+            deployment.clone(),
+            tenant.clone(),
+            SecretBytes::new(audit_key.to_vec()),
+            mcp_connections.clone(),
+        )
+        .map_err(|_| fail("credential_administration"))?
+        .with_model_reference("openai".to_owned(), credential_key_id.clone())
+        .map_err(|_| fail("credential_model_reference"))?,
+    );
     let channel_routing = build_channel_routing(
         pool.clone(),
         model,
@@ -403,6 +417,7 @@ pub async fn assemble_postgres_application(
         .with_component_administration(components.clone())
         .with_sandboxed_component_administration(sandboxed_components.clone())
         .with_mcp_connections(mcp_connections.clone())
+        .with_credentials(credentials)
         .with_tool_approvals(tool_approvals)
         .with_ui_preferences(ui_preferences)
         .with_run_cost_budgets(Arc::new(PostgresRunCostBudgetAdministration::new(

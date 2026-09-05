@@ -24,6 +24,9 @@ use openbot_contracts::components::{
     ComponentDraftRequest, ComponentFunctionCallRequest, ComponentFunctionGrantRequest,
     ComponentGovernanceMutation, ComponentHumanDecisionAnswer, ComponentPublicationRequest,
 };
+use openbot_contracts::credential_admin::{
+    CredentialPageRequest, CredentialRevocationReceipt, CredentialWrite,
+};
 use openbot_contracts::desktop::{
     DESKTOP_STRUCTURED_CLOSE_COMMAND, DESKTOP_STRUCTURED_OPEN_COMMAND,
     DesktopStructuredSubscriptionCloseRequest, DesktopStructuredSubscriptionOpened,
@@ -553,6 +556,9 @@ impl DesktopTauriProtocol {
         if path == "/api/plugins" {
             return self.plugins(request, authority).await;
         }
+        if path == "/api/admin/credentials" || path.starts_with("/api/admin/credentials/") {
+            return self.credential_administration(request, authority).await;
+        }
         if path == "/api/plugins/connections" {
             return self.plugin_connections(request, authority).await;
         }
@@ -782,6 +788,116 @@ impl DesktopTauriProtocol {
         };
         match self.transport.execute(authority.auth, command).await {
             Ok(AppReply::RunCostBudget(preference)) => json_response(&preference),
+            Ok(_) => dependency_response(),
+            Err(error) => error_response(error),
+        }
+    }
+
+    async fn credential_administration(
+        &self,
+        mut request: Request<Vec<u8>>,
+        authority: WindowAuthority,
+    ) -> Response<Vec<u8>> {
+        if !authority
+            .auth
+            .has_role(openbot_contracts::auth::Role::Admin)
+        {
+            request.body_mut().fill(0);
+            return error_response(AppError::ForbiddenRole {
+                required: openbot_contracts::auth::Role::Admin,
+            });
+        }
+        let path = request.uri().path().to_owned();
+        let listing = path == "/api/admin/credentials" && request.method() == Method::GET;
+        if !listing && !authority.is_fresh() {
+            request.body_mut().fill(0);
+            return error_response(AppError::SensitiveWriteRefused {
+                reason: SensitiveWriteReason::SessionNotFresh,
+            });
+        }
+        let command = if listing {
+            if !request.body().is_empty() {
+                request.body_mut().fill(0);
+                return error_response(AppError::MalformedPayload { field: "body" });
+            }
+            let cursor = match request.uri().query() {
+                None | Some("") => None,
+                Some(query)
+                    if query.len() <= 1536
+                        && !query.contains('&')
+                        && query.starts_with("cursor=") =>
+                {
+                    let Some(cursor) = percent_decode_query_component(&query[7..]) else {
+                        return error_response(AppError::MalformedPayload { field: "cursor" });
+                    };
+                    Some(cursor)
+                }
+                _ => return error_response(AppError::MalformedPayload { field: "query" }),
+            };
+            AppCommand::ListCredentials(CredentialPageRequest { cursor })
+        } else {
+            if request.method() != Method::POST {
+                request.body_mut().fill(0);
+                return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+            }
+            if request.uri().query().is_some() {
+                request.body_mut().fill(0);
+                return error_response(AppError::MalformedPayload { field: "query" });
+            }
+            if request.body().len() > 512 * 1024 {
+                request.body_mut().fill(0);
+                return payload_too_large();
+            }
+            let route = path.strip_prefix("/api/admin/credentials/");
+            if let Some(raw_id) = route.and_then(|route| route.strip_suffix("/revoke")) {
+                if !request.body().is_empty() {
+                    request.body_mut().fill(0);
+                    return error_response(AppError::MalformedPayload { field: "body" });
+                }
+                let Some(credential_id) = percent_decode_segment(raw_id) else {
+                    return error_response(AppError::MalformedPayload {
+                        field: "credential_id",
+                    });
+                };
+                AppCommand::RevokeCredential { credential_id }
+            } else {
+                let parsed = serde_json::from_slice::<CredentialWrite>(request.body());
+                request.body_mut().fill(0);
+                let input = match parsed {
+                    Ok(input) => input,
+                    Err(_) => return error_response(AppError::MalformedPayload { field: "body" }),
+                };
+                if path == "/api/admin/credentials" {
+                    AppCommand::CreateCredential(input)
+                } else if let Some(raw_id) = route.and_then(|route| route.strip_suffix("/rotate")) {
+                    let Some(credential_id) = percent_decode_segment(raw_id) else {
+                        return error_response(AppError::MalformedPayload {
+                            field: "credential_id",
+                        });
+                    };
+                    AppCommand::RotateCredential {
+                        credential_id,
+                        input,
+                    }
+                } else {
+                    return error_response(AppError::NotVisible);
+                }
+            }
+        };
+        let created = matches!(command, AppCommand::CreateCredential(_));
+        let revoking = matches!(command, AppCommand::RevokeCredential { .. });
+        match self.transport.execute(authority.auth, command).await {
+            Ok(AppReply::Credentials(page)) if listing => json_response(&page),
+            Ok(AppReply::CredentialWritten(receipt)) if !listing && !revoking => {
+                let mut response = json_response(&receipt);
+                if created {
+                    *response.status_mut() = StatusCode::CREATED;
+                }
+                response
+            }
+            Ok(AppReply::CredentialRevoked(credential)) if revoking => {
+                json_response(&CredentialRevocationReceipt { credential })
+            }
             Ok(_) => dependency_response(),
             Err(error) => error_response(error),
         }
@@ -3906,6 +4022,16 @@ mod tests {
     fn protocol_with_mcp(
         mcp: Arc<dyn McpConnectionAdministration>,
     ) -> (Arc<DesktopTauriProtocol>, PathBuf) {
+        protocol_with_admin_ports(
+            mcp,
+            Arc::new(openbot_application::credential_admin::NoCredentialAdministration),
+        )
+    }
+
+    fn protocol_with_admin_ports(
+        mcp: Arc<dyn McpConnectionAdministration>,
+        credentials: Arc<dyn openbot_application::credential_admin::CredentialAdministration>,
+    ) -> (Arc<DesktopTauriProtocol>, PathBuf) {
         let root = protocol_root();
         let preferences = Arc::new(FakePreferences(Mutex::new(UiPreferences {
             theme: Some(UiTheme::Dark),
@@ -3925,6 +4051,7 @@ mod tests {
                 .with_ui_preferences(preferences)
                 .with_run_cost_budgets(Arc::new(FakeRunCostBudgets(Mutex::new(None))))
                 .with_mcp_connections(mcp)
+                .with_credentials(credentials)
                 .with_remote_interrupts(Arc::new(FakeRemoteInterrupts))
                 .with_component_administration(Arc::new(FakeComponents))
                 .with_sandboxed_component_administration(Arc::new(FakeSandboxed))
@@ -5359,6 +5486,175 @@ mod tests {
                 approval_id: "approval-1".to_owned(),
                 decision: ToolApprovalDecision::Grant,
             }
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[derive(Default)]
+    struct CredentialProbe(Mutex<Vec<(ActorId, &'static str)>>);
+
+    #[async_trait]
+    impl openbot_application::credential_admin::CredentialAdministration for CredentialProbe {
+        async fn list(
+            &self,
+            auth: &AuthContext,
+            _: &CredentialPageRequest,
+        ) -> Result<
+            openbot_contracts::credential_admin::CredentialPage,
+            openbot_application::credential_admin::CredentialAdministrationError,
+        > {
+            self.0.lock().unwrap().push((auth.actor().clone(), "list"));
+            Ok(openbot_contracts::credential_admin::CredentialPage {
+                credentials: Vec::new(),
+                next_cursor: None,
+                model_reference: None,
+            })
+        }
+        async fn create(
+            &self,
+            auth: &AuthContext,
+            input: &CredentialWrite,
+        ) -> Result<
+            openbot_contracts::credential_admin::CredentialWritten,
+            openbot_application::credential_admin::CredentialAdministrationError,
+        > {
+            self.0
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), "create"));
+            assert_eq!(input.expose_plaintext(), "desktop-secret-canary");
+            Ok(credential_probe_receipt(input))
+        }
+        async fn rotate(
+            &self,
+            auth: &AuthContext,
+            _: &str,
+            input: &CredentialWrite,
+        ) -> Result<
+            openbot_contracts::credential_admin::CredentialWritten,
+            openbot_application::credential_admin::CredentialAdministrationError,
+        > {
+            self.0
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), "rotate"));
+            Ok(credential_probe_receipt(input))
+        }
+        async fn revoke(
+            &self,
+            auth: &AuthContext,
+            id: &str,
+        ) -> Result<
+            openbot_contracts::credential_admin::CredentialRevoked,
+            openbot_application::credential_admin::CredentialAdministrationError,
+        > {
+            self.0
+                .lock()
+                .unwrap()
+                .push((auth.actor().clone(), "revoke"));
+            Ok(openbot_contracts::credential_admin::CredentialRevoked {
+                id: id.to_owned(),
+                revoked_at: time::OffsetDateTime::UNIX_EPOCH,
+                external_revocation:
+                    openbot_contracts::credential_admin::CredentialExternalRevocation::Pending,
+            })
+        }
+    }
+    fn credential_probe_receipt(
+        input: &CredentialWrite,
+    ) -> openbot_contracts::credential_admin::CredentialWritten {
+        use openbot_contracts::credential_admin::{
+            CredentialExternalRevocation, CredentialRecordKind, CredentialStatus, CredentialWritten,
+        };
+        CredentialWritten {
+            credential: CredentialStatus {
+                id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                kind: CredentialRecordKind::Model,
+                provider: input.provider().to_owned(),
+                key_id: input.key_id().to_owned(),
+                metadata: input.metadata().clone(),
+                revoked_at: None,
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+                external_revocation: CredentialExternalRevocation::NotRequested,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn credential_framing_enforces_host_admin_freshness_and_keeps_secret_out_of_receipts() {
+        let probe = Arc::new(CredentialProbe::default());
+        let (protocol, root) =
+            protocol_with_admin_ports(Arc::new(FakeMcpConnections::default()), probe.clone());
+        protocol.bind_window("stale", admin_auth(), None).unwrap();
+        protocol
+            .bind_window("user", auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        protocol
+            .bind_window("admin", admin_auth(), Some(Duration::from_secs(60)))
+            .unwrap();
+        let request = |path: &str, body: Vec<u8>| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(path)
+                .body(body)
+                .unwrap()
+        };
+        let valid=br#"{"kind":"model","provider":"openai","keyId":"primary","metadata":{},"plaintext":"desktop-secret-canary"}"#.to_vec();
+        for (window,body,expected) in [("absent",valid.clone(),StatusCode::UNAUTHORIZED),("stale",b"bad".to_vec(),StatusCode::UNAUTHORIZED),("user",b"bad".to_vec(),StatusCode::FORBIDDEN),("admin",br#"{"kind":"mcp_user_token","provider":"openai","keyId":"primary","metadata":{},"plaintext":"canary"}"#.to_vec(),StatusCode::BAD_REQUEST)] {
+            assert_eq!(protocol.handle(window,request("/api/admin/credentials",body)).await.status(),expected);
+            assert!(probe.0.lock().unwrap().is_empty());
+        }
+        for (path, expected) in [
+            ("/api/admin/credentials", StatusCode::CREATED),
+            ("/api/admin/credentials/old/rotate", StatusCode::OK),
+        ] {
+            let reply = protocol.handle("admin", request(path, valid.clone())).await;
+            assert_eq!(reply.status(), expected);
+            assert_eq!(reply.headers()[CACHE_CONTROL], "no-store");
+            assert!(!String::from_utf8_lossy(reply.body()).contains("desktop-secret-canary"));
+        }
+        let reply = protocol
+            .handle(
+                "admin",
+                request("/api/admin/credentials/old/revoke", Vec::new()),
+            )
+            .await;
+        assert_eq!(reply.status(), StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<CredentialRevocationReceipt>(reply.body())
+                .unwrap()
+                .credential
+                .id,
+            "old"
+        );
+        let forged = protocol
+            .handle(
+                "admin",
+                Request::builder()
+                    .uri("/api/admin/credentials?actor=other")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(forged.status(), StatusCode::BAD_REQUEST);
+        let list = protocol
+            .handle(
+                "admin",
+                Request::builder()
+                    .uri("/api/admin/credentials")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        assert_eq!(
+            *probe.0.lock().unwrap(),
+            [
+                (ActorId::new("admin"), "create"),
+                (ActorId::new("admin"), "rotate"),
+                (ActorId::new("admin"), "revoke"),
+                (ActorId::new("admin"), "list")
+            ]
         );
         fs::remove_dir_all(root).unwrap();
     }

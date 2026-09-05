@@ -5,6 +5,45 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  - id: T-API-0011
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-API-0012
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-API-0013
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-API-0014
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-EVT-0050
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-EVT-0051
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-EVT-0052
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0675
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0676
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0683
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0684
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-TEST-0685
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
+  - id: T-ROUTE-0018
+    disposition: revalidate
+    notes: "Batch120 implements and verifies credential administration with real PG/Vault transactions, HTTP and Desktop framing, plus the real PG/session GUI journey. Full platform/golden/vendor release gates remain separate."
   # Batch119 only adds the SecretInput export in primitives/mod.rs; sibling implementation bytes
   # are unchanged. All UI unit tests and the release forms are rerun; no new golden claim.
   - id: T-UI-0001

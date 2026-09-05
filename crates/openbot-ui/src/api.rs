@@ -9,6 +9,9 @@ pub(crate) mod desktop_transport;
 #[path = "plugins_api.rs"]
 pub(crate) mod plugins;
 
+#[path = "credentials_api.rs"]
+pub(crate) mod credentials;
+
 /// Serialize a sensitive request without a serde_json::Value copy. The temporary Rust JSON buffer
 /// is zeroized before awaiting the browser request; JS/network buffers remain browser-owned.
 #[cfg(target_arch = "wasm32")]

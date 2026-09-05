@@ -113,6 +113,7 @@ pub struct OpenBotApplication<
     channel_administration: std::sync::Arc<dyn ChannelAdministration>,
     channel_routing: std::sync::Arc<dyn ChannelRoutingBackend>,
     mcp_connections: std::sync::Arc<dyn McpConnectionAdministration>,
+    credentials: std::sync::Arc<dyn crate::credential_admin::CredentialAdministration>,
     tool_approvals: std::sync::Arc<dyn ToolApprovalAdministration>,
     ui_preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
     run_cost_budgets: std::sync::Arc<dyn RunCostBudgetAdministration>,
@@ -153,6 +154,7 @@ impl<R>
             channel_administration: std::sync::Arc::new(NoChannelAdministration),
             channel_routing: std::sync::Arc::new(NoChannelRoutingBackend),
             mcp_connections: std::sync::Arc::new(NoMcpConnectionAdministration),
+            credentials: std::sync::Arc::new(crate::credential_admin::NoCredentialAdministration),
             tool_approvals: std::sync::Arc::new(NoToolApprovalAdministration),
             ui_preferences: std::sync::Arc::new(NoUiPreferenceAdministration),
             run_cost_budgets: std::sync::Arc::new(NoRunCostBudgetAdministration),
@@ -184,6 +186,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
@@ -213,6 +216,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
@@ -242,6 +246,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
@@ -275,6 +280,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
@@ -304,6 +310,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
@@ -333,6 +340,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
@@ -365,6 +373,7 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
             channel_administration: self.channel_administration,
             channel_routing: self.channel_routing,
             mcp_connections: self.mcp_connections,
+            credentials: self.credentials,
             tool_approvals: self.tool_approvals,
             ui_preferences: self.ui_preferences,
             run_cost_budgets: self.run_cost_budgets,
@@ -458,6 +467,16 @@ impl<R, P, A, K, C, J, T, M, B> OpenBotApplication<R, P, A, K, C, J, T, M, B> {
         preferences: std::sync::Arc<dyn UiPreferenceAdministration>,
     ) -> Self {
         self.ui_preferences = preferences;
+        self
+    }
+
+    /// Attach the same credential administration and audit boundary to both transports.
+    #[must_use]
+    pub fn with_credentials(
+        mut self,
+        credentials: std::sync::Arc<dyn crate::credential_admin::CredentialAdministration>,
+    ) -> Self {
+        self.credentials = credentials;
         self
     }
 
@@ -785,6 +804,38 @@ where
                     revoke_agent_callback_token(&self.callback_tokens, auth, &agent_id).await?,
                 ))
             }
+            AppCommand::ListCredentials(request) => Ok(AppReply::Credentials(
+                crate::credential_admin::list_credentials(
+                    self.credentials.as_ref(),
+                    auth,
+                    &request,
+                )
+                .await?,
+            )),
+            AppCommand::CreateCredential(input) => Ok(AppReply::CredentialWritten(
+                crate::credential_admin::create_credential(self.credentials.as_ref(), auth, &input)
+                    .await?,
+            )),
+            AppCommand::RotateCredential {
+                credential_id,
+                input,
+            } => Ok(AppReply::CredentialWritten(
+                crate::credential_admin::rotate_credential(
+                    self.credentials.as_ref(),
+                    auth,
+                    &credential_id,
+                    &input,
+                )
+                .await?,
+            )),
+            AppCommand::RevokeCredential { credential_id } => Ok(AppReply::CredentialRevoked(
+                crate::credential_admin::revoke_credential(
+                    self.credentials.as_ref(),
+                    auth,
+                    &credential_id,
+                )
+                .await?,
+            )),
             AppCommand::ListMcpConnections => Ok(AppReply::McpConnections(
                 list_mcp_connections(self.mcp_connections.as_ref(), auth).await?,
             )),

@@ -92,6 +92,7 @@ pub mod auth;
 mod channel_activity;
 #[cfg(feature = "server-runtime")]
 pub mod component_catalogue;
+pub mod credential_admin;
 pub mod db;
 #[cfg(feature = "server-runtime")]
 pub mod google_drive;

@@ -788,6 +788,10 @@ G6 重写后的文本（替换 v3 原四条）：
   CPU/内存硬隔离、具名a11y豁免、admin正式route journey/golden/AX仍todo。Batch51只补其前置
   HumanLease/epoch与closed BrowserInput，browser-operations=`7/39/46`、总parity=`693/993/1686`；没有
   Electron/CDP/ScreenHub实证，不改变上述Desktop renderer与a11y todo；
+- [x] Batch120/R196补`/admin/credentials`与AdminSidebar入口：shared typed API/PG/Vault，100行keyset、
+  默认model引用预填、write-only SecretInput、create/rotate/revoke、local/vendor状态分开；真实PG/session
+  浏览器中英与100+3分页/降权/键盘/焦点通过。4 API/3 event/5 test/1 route闭合，不关闭正式golden/AX、
+  Wry/Windows或G2/G6整关；i18n904、wasm gzip2074750B/CSS116942B/字体740216B。元信息不会回显密文或明文；
 - [ ] Plugins/Skills GUI仍不勾：Batch99–100已给Server/Desktop同一typed ApplicationService补齐
   `GET /api/plugins`、custom add/delete/general refresh、custom private-egress CIDR、personal/deployment
   skills、MCP/skill grants与actor-specific for-Agent后端；管理页的`grantedTo`按tenant与actor-visible

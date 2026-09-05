@@ -692,6 +692,18 @@ pub fn router(state: ServerState) -> Router {
             delete(auth_sso::remove_admin),
         )
         .route("/api/admin/people", get(admin::people_list))
+        .route(
+            "/api/admin/credentials",
+            get(admin::credentials_list).post(admin::credentials_create),
+        )
+        .route(
+            "/api/admin/credentials/{credential_id}/rotate",
+            post(admin::credentials_rotate),
+        )
+        .route(
+            "/api/admin/credentials/{credential_id}/revoke",
+            post(admin::credentials_revoke),
+        )
         .route("/api/agent-tools/call", post(agent_tools::call))
         .route(
             "/api/agents/{agent_id}/callback-token",

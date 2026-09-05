@@ -69,6 +69,84 @@ const CLIENT_SECRET: &str = "oauth-client-secret";
 const SCOPE: &str = "notes:read";
 const AUDIT_KEY: &[u8] = b"mcp-oauth-runtime-audit-key-at-least-32";
 
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and loopback sockets; set OPENBOT_TEST_DATABASE_URL"]
+async fn admin_credential_retirement_keeps_exact_oauth_context_through_retry_replacement_and_server_removal()
+ {
+    use openbot_application::credential_admin::CredentialAdministration;
+    use openbot_contracts::credential_admin::CredentialExternalRevocation;
+    use openbot_infra::credential_admin::PostgresCredentialAdministration;
+    let config = harness::admin_config("admin_credential_oauth_retirement");
+    harness::with_temp_database(&config, "credoauth", |config| async move {
+        let pool = pool::connect(&config).await.map_err(|e| e.to_string())?;
+        let outcome = async {
+            let mut pg = pool.get().await.map_err(|e| e.to_string())?;
+            baseline::apply(&pg).await.map_err(|e| e.to_string())?;
+            native::apply(&mut pg).await.map_err(|e| e.to_string())?;
+            pg.batch_execute("INSERT INTO public.users(id,email,auth_generation) VALUES('credential-admin','admin@example.test',0),('token-one','one@example.test',0),('token-two','two@example.test',0); INSERT INTO public.user_roles(user_id,role) VALUES('credential-admin','admin');").await.map_err(|e| e.to_string())?;
+            let spawned = spawn_oauth_mcp().await?;
+            let vault = CredentialRecordVault::single_key(TenantId::new("admin-token-tenant"), KeyVersion::new(1), WrappingKey::from_bytes(vec![0x59;32]).map_err(|e| e.to_string())?);
+            let client_id = uuid::Uuid::now_v7();
+            let client_body = serde_json::to_vec(&serde_json::json!({"clientId":CLIENT_ID,"clientSecret":CLIENT_SECRET,"issuer":spawned.state.issuer.as_ref(),"tokenEndpointAuthMethod":"client_secret_basic"})).unwrap();
+            let cipher = vault.seal(&client_id,SecretKind::McpOauthClient,SecretPrincipal::Deployment,SecretPrincipal::Service(ServiceId::new(SERVER)),&SecretBytes::new(client_body)).unwrap();
+            pg.execute("INSERT INTO public.credentials(id,kind,provider,key_id,encrypted_value,metadata) VALUES($1,'mcp_oauth_client',$2,'oauth-client',$3,'{}')",&[&client_id,&SERVER,&cipher]).await.map_err(|e| format!("{e:?}"))?;
+            pg.execute("INSERT INTO public.mcp_servers(id,title,vendor,url,provenance,transport,credential_id,credential_generation,egress_allow_cidrs) VALUES($1,'OAuth Notes','test',$2,'custom','mcp',$3,0,ARRAY['127.0.0.1/32'])",&[&SERVER,&spawned.resource.as_str(),&client_id]).await.map_err(|e| format!("{e:?}"))?;
+            let mut tokens = Vec::new();
+            for owner in ["token-one","token-two"] {
+                let id = uuid::Uuid::now_v7();
+                let encrypted = vault.seal(&id,SecretKind::McpUserToken,SecretPrincipal::Actor(ActorId::new(owner)),SecretPrincipal::Service(ServiceId::new(SERVER)),&SecretBytes::new(format!("refresh-{owner}").into_bytes())).unwrap();
+                pg.execute("INSERT INTO public.credentials(id,kind,provider,key_id,encrypted_value,metadata) VALUES($1,'mcp_user_token',$2,$3,$4,'{\"revocation_status\":\"active\"}')",&[&id,&SERVER,&owner,&encrypted]).await.map_err(|e| format!("{e:?}"))?;
+                pg.execute("INSERT INTO public.mcp_user_credentials(server_id,user_id,credential_id,scope) VALUES($1,$2,$3,$4)",&[&SERVER,&owner,&id,&SCOPE]).await.map_err(|e| format!("{e:?}"))?;
+                tokens.push(id);
+            }
+            drop(pg);
+            let catalog = Arc::new(PostgresMcpCatalog::new(pool.clone(),rmcp_client(),AUDIT_KEY.to_vec()).map_err(|e| e.to_string())?);
+            let connections = Arc::new(PostgresMcpConnections::new(pool.clone(),vault.clone(),McpOAuthClient::new(SafeDialer::new(EgressPolicy::default()),SchemePolicy::HttpOrHttps),catalog,DeploymentId::new("admin-token-deployment"),TenantId::new("admin-token-tenant"),vec![0x5a;32],AUDIT_KEY.to_vec(),None,None,SchemePolicy::HttpOrHttps).map_err(|e| e.to_string())?);
+            let admin = PostgresCredentialAdministration::new(pool.clone(),vault,DeploymentId::new("admin-token-deployment"),TenantId::new("admin-token-tenant"),SecretBytes::new(AUDIT_KEY.to_vec()),connections.clone()).map_err(|e| e.to_string())?;
+            let auth = AuthContextBuilder::from_verified_session(DeploymentId::new("admin-token-deployment"),TenantId::new("admin-token-tenant"),ActorId::new("credential-admin"),AuthGeneration::new(0),false).with_roles([Role::Admin]).build();
+            let retired = admin.revoke(&auth,&tokens[0].to_string()).await.map_err(|e| e.to_string())?;
+            assert_eq!(retired.external_revocation,CredentialExternalRevocation::Pending);
+            let pg=pool.get().await.map_err(|e| e.to_string())?;
+            assert_eq!(pg.query_one("SELECT count(*)::bigint FROM public.mcp_user_credentials",&[]).await.map_err(|e| e.to_string())?.get::<_,i64>(0),1);
+            pg.execute("UPDATE public.credentials SET updated_at=clock_timestamp()-interval '1 minute' WHERE id=$1",&[&tokens[0]]).await.map_err(|e| e.to_string())?;drop(pg);
+            spawned.state.revoke_failure.store(true,Ordering::SeqCst);
+            let failed=connections.reconcile_pending_revocations().await.map_err(|e| e.to_string())?;
+            assert_eq!((failed.attempted,failed.pending,failed.revoked),(1,1,0));
+            spawned.state.revoke_failure.store(false,Ordering::SeqCst);
+            let pg=pool.get().await.map_err(|e| e.to_string())?;
+            pg.execute("UPDATE public.credentials SET updated_at=clock_timestamp()-interval '1 minute' WHERE id=$1",&[&tokens[0]]).await.map_err(|e| e.to_string())?;drop(pg);
+            assert_eq!(connections.reconcile_pending_revocations().await.map_err(|e| e.to_string())?.revoked,1);
+
+            // Retiring the deployment client locally retires the remaining user token too.
+            assert_eq!(admin.revoke(&auth,&client_id.to_string()).await.map_err(|e| e.to_string())?.external_revocation,CredentialExternalRevocation::OperatorRequired);
+            let pg=pool.get().await.map_err(|e| e.to_string())?;
+            assert_eq!(pg.query_one("SELECT count(*)::bigint FROM public.mcp_user_credentials",&[]).await.map_err(|e| e.to_string())?.get::<_,i64>(0),0);
+            drop(pg);
+            connections.register_oauth_client(&auth,SERVER,&McpOAuthClientRegistration::new("different-client".to_owned(),"different-secret".to_owned(),spawned.state.issuer.to_string(),McpOAuthClientAuthMethod::ClientSecretBasic,None).unwrap()).await.map_err(|e| e.to_string())?;
+            connections.remove_server(&auth,SERVER).await.map_err(|e| e.to_string())?;
+            let pg=pool.get().await.map_err(|e| e.to_string())?;
+            pg.execute("UPDATE public.credentials SET updated_at=clock_timestamp()-interval '1 minute' WHERE id=$1",&[&tokens[1]]).await.map_err(|e| e.to_string())?;drop(pg);
+            let last=connections.reconcile_pending_revocations().await.map_err(|e| e.to_string())?;
+            assert_eq!((last.attempted,last.revoked,last.pending),(1,1,0));
+            assert_eq!(spawned.state.revoke_calls.load(Ordering::SeqCst),3);
+            let pg=pool.get().await.map_err(|e| e.to_string())?;
+            let row=pg.query_one("SELECT metadata->>'revocation_status', metadata ? 'credential_revocation' FROM public.credentials WHERE id=$1",&[&tokens[1]]).await.map_err(|e| e.to_string())?;
+            assert_eq!(row.get::<_,String>(0),"revoked"); assert!(!row.get::<_,bool>(1));
+            assert_eq!(pg.query_one("SELECT count(*)::bigint FROM public.audit_events WHERE event_type='credential.revoked' AND actor_user_id='credential-admin'",&[]).await.map_err(|e| e.to_string())?.get::<_,i64>(0),2);
+            pg.execute("UPDATE public.credentials SET metadata=metadata || '{\"revocation_status\":\"pending\",\"revocation_reason\":\"credential_revoked\",\"credential_revocation\":{\"version\":999}}', updated_at=clock_timestamp()-interval '1 minute' WHERE id=$1", &[&tokens[0]]).await.map_err(|e| e.to_string())?;
+            drop(pg);
+            let corrupted=connections.reconcile_pending_revocations().await.map_err(|e| e.to_string())?;
+            assert_eq!((corrupted.attempted,corrupted.operator_required),(1,1));
+            assert_eq!(spawned.state.revoke_calls.load(Ordering::SeqCst),3);
+            let pg=pool.get().await.map_err(|e| e.to_string())?;
+            assert_eq!(pg.query_one("SELECT count(*)::bigint FROM public.credentials WHERE kind='mcp_oauth_client' AND metadata ? 'automatic_user_token_revocation_failed_at'",&[]).await.map_err(|e| e.to_string())?.get::<_,i64>(0),0);
+            spawned.handle.abort();
+            Ok(())
+        }.await;
+        pool.close(); outcome
+    }).await;
+}
+
 #[derive(Clone)]
 struct OAuthFixtureState {
     resource: Arc<str>,

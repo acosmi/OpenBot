@@ -113,7 +113,7 @@ recount:
     expect: 1
   - command: "grep -c '^    status: todo$' parity/tests.yaml"
     cwd: repo
-    expect: 577
+    expect: 572
   - command: "grep -oE '^    upstream: \"[^:\"]+' parity/tests.yaml | sed 's/.*\"//' | sort -u | wc -l"
     cwd: repo
     expect: 105
@@ -7311,21 +7311,23 @@ entries:
   - id: "server-tests-credentials--credential-encryption--creates-a-write-only-credential-and-audits-safe-metadata"
     upstream: "server/tests/credentials.test.ts::credential encryption"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::creates_a_write_only_credential_and_audits_safe_metadata"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0675
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[807]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「creates a write-only credential and audits safe metadata」。"
   - id: "server-tests-credentials--credential-encryption--rotates-then-revokes-credentials-without-returning-plain"
     upstream: "server/tests/credentials.test.ts::credential encryption"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::rotates_then_revokes_credentials_without_returning_plain"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0676
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[808]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「rotates then revokes credentials without returning plaintext」。"
   - id: "server-tests-credentials--credential-encryption--decrypts-only-an-active-credential-for-server-side-use"
@@ -7396,31 +7398,34 @@ entries:
   - id: "server-tests-credentials--admin-credential-api--returns-only-credential-status-and-metadata"
     upstream: "server/tests/credentials.test.ts::admin credential API"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::returns_only_credential_status_and_metadata"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0683
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[818]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「returns only credential status and metadata」。"
   - id: "server-tests-credentials--admin-credential-api--accepts-plaintext-only-on-credential-creation-and-return"
     upstream: "server/tests/credentials.test.ts::admin credential API"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::accepts_plaintext_only_on_credential_creation_and_return"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0684
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[819]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「accepts plaintext only on credential creation and returns safe status」。"
   - id: "server-tests-credentials--admin-credential-api--rotates-and-revokes-through-write-only-administrator-ope"
     upstream: "server/tests/credentials.test.ts::admin credential API"
     label: 替代
-    target: "openbot_infra::vault::credentials::tests::rotates_and_revokes_through_write_only_administrator_ope"
+    target: "openbot_infra::credential_admin::PostgresCredentialAdministration + crates/openbot-infra/tests/credential_admin.rs + openbot_server::http::admin::credential_tests"
     owner: openbot-infra
     test_id: T-TEST-0685
     migration_rule: "rename: ported —— 判据保留，承载它的机制在 Rust 版换了一个"
-    status: todo
+    status: done
+    done_evidence: "Batch120：credential_admin真实PG四测试＋Server credentials framing二测试＋Desktop framing一测试；v2/readback、write-only metadata、安全audit、single-tx rotate/revoke、audit/回读故障回滚和双竞争一胜均亲跑。真实PG/session GUI另证create/rotate/revoke audit各一、密文无canary、分页与降权拒绝。机制替代遵守§2.4；非vendor live或全关证明。"
     evidence: "fixtures/tests/upstream-ast-inventory.json::nodes[820]（cargo xtask test-inventory，oxc_parser 0.146.0）"
     notes: "ported —— v3 §2.4 第 3 行（上游 issue #53：credential rotate 先写新值再 revoke 旧值，失败留 orphan）明写不得照译 —— Rust 版单事务切换 active pointer、外部 revoke 独立进 reconciliation，故轮换语义换了一个；加解密与查找判据逐条移植。上游用例标题：「rotates and revokes through write-only administrator operations」。"
   # ---------------------------------------------------------------------------

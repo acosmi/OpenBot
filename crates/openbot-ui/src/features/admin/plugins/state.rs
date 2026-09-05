@@ -53,7 +53,7 @@ impl PluginActions {
         });
     }
 
-    pub fn return_to(self, id: &'static str) {
+    pub fn return_to(self, id: &str) {
         #[cfg(target_arch = "wasm32")]
         if let Some(window) = web_sys::window()
             && let Ok(path) = window.location().pathname()
@@ -68,7 +68,7 @@ impl PluginActions {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn restore_focus(self) {
+    pub(crate) fn restore_focus(self) {
         let saved = self.focus.get_untracked();
         self.focus.set(None);
         if let Some((path, id)) = saved {
@@ -94,8 +94,11 @@ impl PluginActions {
                 }
                 let target = document
                     .get_element_by_id(&id)
-                    .filter(|element| element.closest("[hidden]").ok().flatten().is_none())
-                    .or_else(|| document.get_element_by_id("plugins-title"));
+                    .filter(|element| {
+                        !element.has_attribute("disabled")
+                            && element.closest("[hidden]").ok().flatten().is_none()
+                    })
+                    .or_else(|| document.query_selector("main h1").ok().flatten());
                 if let Some(target) =
                     target.and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
                 {

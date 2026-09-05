@@ -6,8 +6,9 @@ use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
 
 use crate::features::admin::{
-    AdminAuditPage, AdminBoundariesPage, AdminHomePage, AdminIdentityProvidersPage,
-    AdminPeoplePage, AdminPluginsPage, AdminShell, SandboxPlaygroundPage,
+    AdminAuditPage, AdminBoundariesPage, AdminCredentialsPage, AdminHomePage,
+    AdminIdentityProvidersPage, AdminPeoplePage, AdminPluginsPage, AdminShell,
+    SandboxPlaygroundPage,
 };
 use crate::features::agents::AgentsPage;
 use crate::features::approvals::ApprovalPage;
@@ -61,6 +62,7 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/admin/components/:name") view=AdminComponentDetailRoute />
                 <Route path=path!("/admin/components") view=AdminComponentsRoute />
                 <Route path=path!("/admin/identity-providers") view=AdminIdentityProvidersRoute />
+                <Route path=path!("/admin/credentials") view=AdminCredentialsRoute />
                 <Route path=path!("/admin/people") view=AdminPeopleRoute />
                 <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
                 <Route path=path!("/admin/plugins/:key/tools/:tool") view=AdminPluginsRoute />
@@ -91,6 +93,7 @@ fn AppRoutes() -> impl IntoView {
                 <Route path=path!("/admin/components/:name") view=AdminComponentDetailRoute />
                 <Route path=path!("/admin/components") view=AdminComponentsRoute />
                 <Route path=path!("/admin/identity-providers") view=AdminIdentityProvidersRoute />
+                <Route path=path!("/admin/credentials") view=AdminCredentialsRoute />
                 <Route path=path!("/admin/people") view=AdminPeopleRoute />
                 <Route path=path!("/admin/playground") view=AdminPlaygroundRoute />
                 <Route path=path!("/admin/plugins/:key/tools/:tool") view=AdminPluginsRoute />
@@ -107,6 +110,11 @@ fn AppRoutes() -> impl IntoView {
             </Routes>
         }
     }
+}
+
+#[component]
+fn AdminCredentialsRoute() -> impl IntoView {
+    view! { <AdminShell><AdminCredentialsPage /></AdminShell> }
 }
 
 #[component]

@@ -1272,7 +1272,7 @@ impl PostgresMcpConnections {
         let scrubbed = transaction
             .execute(
                 "UPDATE public.credentials SET
-                   metadata=metadata-'server_removal_revocation',updated_at=clock_timestamp()
+                   metadata=metadata-'server_removal_revocation'-'credential_revocation',updated_at=clock_timestamp()
                  WHERE id=$1 AND metadata->>'revocation_status'='revoked'",
                 &[&credential_id],
             )
@@ -1310,13 +1310,190 @@ impl PostgresMcpConnections {
         format!("{origin}/settings/connected-accounts?connected=failed")
     }
 
+    /// Prepare local admin retirement under the caller's existing credential transaction. The
+    /// returned metadata is Rust-owned and never accepted from an administration request body.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn prepare_admin_credential_retirement(
+        &self,
+        tx: &tokio_postgres::Transaction<'_>,
+        auth: &AuthContext,
+        credential_id: Uuid,
+        kind: CredentialKind,
+        server_id: &str,
+        owner_key: &str,
+        now: OffsetDateTime,
+    ) -> Result<serde_json::Value, McpConnectionError> {
+        if auth.deployment() != &self.deployment
+            || auth.tenant() != &self.tenant
+            || !auth.has_role(Role::Admin)
+        {
+            return Err(McpConnectionError::NotVisible);
+        }
+        let stamp = now
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|_| corrupt("clock"))?;
+        let operator = || serde_json::json!({"revocation_status":"operator_required", "revocation_reason":"credential_revoked", "operator_required_at":stamp});
+        if !matches!(
+            kind,
+            CredentialKind::McpUserToken | CredentialKind::McpOauthClient
+        ) {
+            return Ok(operator());
+        }
+        let server = tx.query_opt("SELECT url,coalesce(transport,'mcp') AS transport,credential_id,coalesce(egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs FROM public.mcp_servers WHERE id=$1 FOR UPDATE", &[&server_id]).await.map_err(query_unavailable)?;
+        let mut frozen = None;
+        let mut attached_client = false;
+        if let Some(server) = server {
+            let pointer: Option<Uuid> = server
+                .try_get("credential_id")
+                .map_err(|_| corrupt("credential_id"))?;
+            attached_client = pointer == Some(credential_id);
+            let resource: String = server
+                .try_get("url")
+                .map_err(|_| corrupt("server_endpoint"))?;
+            let transport: String = server
+                .try_get("transport")
+                .map_err(|_| corrupt("transport"))?;
+            let egress_allow_cidrs: Vec<String> = server
+                .try_get("egress_allow_cidrs")
+                .map_err(|_| corrupt("egress_allow_cidrs"))?;
+            let transport_kind =
+                VendorTransportKind::parse(&transport).map_err(|_| corrupt("transport"))?;
+            let context_valid = valid_server_removal_resource(&resource)
+                && parse_stored_mcp_egress(&egress_allow_cidrs).is_ok()
+                && (transport_kind != VendorTransportKind::GoogleDriveRest
+                    || (server_id == GOOGLE_DRIVE_SERVER_ID
+                        && resource == GOOGLE_DRIVE_API_BASE
+                        && egress_allow_cidrs.is_empty()));
+            if let Some(pointer) = pointer
+                && context_valid
+                && (kind == CredentialKind::McpUserToken || attached_client)
+            {
+                let client = tx.query_opt("SELECT kind,provider,encrypted_value,revoked_at FROM public.credentials WHERE id=$1 FOR SHARE", &[&pointer]).await.map_err(query_unavailable)?;
+                if let Some(client) = client {
+                    let client_kind: CredentialKind = client
+                        .try_get("kind")
+                        .map_err(|_| corrupt("credential_kind"))?;
+                    let provider: String = client
+                        .try_get("provider")
+                        .map_err(|_| corrupt("credential_provider"))?;
+                    let revoked: Option<OffsetDateTime> = client
+                        .try_get("revoked_at")
+                        .map_err(|_| corrupt("credential_revoked_at"))?;
+                    let encrypted: String = client
+                        .try_get("encrypted_value")
+                        .map_err(|_| corrupt("credential_value"))?;
+                    let usable = client_kind == CredentialKind::McpOauthClient
+                        && provider == server_id
+                        && revoked.is_none()
+                        && self
+                            .vault
+                            .open(
+                                &pointer,
+                                SecretKind::McpOauthClient,
+                                SecretPrincipal::Deployment,
+                                SecretPrincipal::Service(ServiceId::new(server_id)),
+                                &encrypted,
+                            )
+                            .is_ok_and(|opened| {
+                                self.oauth
+                                    .validate_stored_client(opened.into_secret().expose())
+                                    .is_ok()
+                            });
+                    if usable {
+                        frozen = Some(
+                            serde_json::to_value(RemovedServerRevocationContext {
+                                version: REMOVED_SERVER_REVOCATION_VERSION,
+                                resource,
+                                transport,
+                                client_credential_id: Some(pointer),
+                                egress_allow_cidrs,
+                            })
+                            .map_err(|_| corrupt("credential_revocation"))?,
+                        );
+                    }
+                }
+            }
+        }
+        let token_metadata = match frozen {
+            Some(context) => {
+                serde_json::json!({"revocation_status":"pending", "revocation_reason":"credential_revoked", "credential_revocation":context})
+            }
+            None => operator(),
+        };
+        let owners = if kind == CredentialKind::McpUserToken {
+            // The row's key_id is the token's authoritative owner. A mismatched join is corruption,
+            // not permission to disconnect a different person's current credential.
+            let bad: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM public.mcp_user_credentials WHERE credential_id=$1 AND (server_id<>$2 OR user_id<>$3))", &[&credential_id,&server_id,&owner_key]).await.map_err(query_unavailable)?.try_get(0).map_err(|_| corrupt("user_credential_binding"))?;
+            if bad {
+                return Err(corrupt("user_credential_binding"));
+            }
+            tx.execute(
+                "DELETE FROM public.mcp_user_credentials WHERE credential_id=$1",
+                &[&credential_id],
+            )
+            .await
+            .map_err(query_unavailable)?;
+            vec![owner_key.to_owned()]
+        } else if attached_client {
+            let rows = tx.query("UPDATE public.credentials SET revoked_at=$2,updated_at=$2,metadata=metadata || $3::jsonb WHERE kind='mcp_user_token' AND provider=$1 AND revoked_at IS NULL RETURNING key_id", &[&server_id,&now,&token_metadata]).await.map_err(query_unavailable)?;
+            tx.execute(
+                "DELETE FROM public.mcp_user_credentials WHERE server_id=$1",
+                &[&server_id],
+            )
+            .await
+            .map_err(query_unavailable)?;
+            rows.into_iter()
+                .map(|row| {
+                    row.try_get::<_, String>("key_id")
+                        .map_err(|_| corrupt("credential_owner"))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+        for owner in owners {
+            let (id, created_at) = next_event_coordinates(tx)
+                .await
+                .map_err(|_| McpConnectionError::Unavailable)?;
+            let event = AuditEvent {
+                id,
+                actor: Some(auth.actor().clone()),
+                event_type: AuditEventType::parse("mcp.account_disconnected").expect("known event"),
+                target_kind: AuditLabel::new("mcp_server"),
+                target_id: Some(AuditIdentifier::new(server_id).map_err(|_| corrupt("server_id"))?),
+                payload: AuditPayload::from_facts([
+                    AuditFact::CredentialOwner(
+                        AuditIdentifier::new(owner).map_err(|_| corrupt("credential_owner"))?,
+                    ),
+                    AuditFact::RevocationReason(AuditLabel::new("credential_revoked")),
+                    AuditFact::VendorRevoked(false),
+                ])
+                .map_err(|_| corrupt("audit_payload"))?,
+                created_at,
+            };
+            append_event_in_transaction(tx, &event, self.checkpoint_key.expose())
+                .await
+                .map_err(|_| McpConnectionError::Unavailable)?;
+        }
+        Ok(if kind == CredentialKind::McpUserToken {
+            token_metadata
+        } else {
+            operator()
+        })
+    }
+
     async fn removed_server_client_material(
         &self,
         claim: &PendingRevocation,
+        admin_retirement: bool,
     ) -> Result<ServerClientMaterial, McpConnectionError> {
         let raw = claim
             .metadata
-            .get("server_removal_revocation")
+            .get(if admin_retirement {
+                "credential_revocation"
+            } else {
+                "server_removal_revocation"
+            })
             .cloned()
             .ok_or_else(|| corrupt("server_removal_revocation"))?;
         let context: RemovedServerRevocationContext =
@@ -1369,11 +1546,12 @@ impl PostgresMcpConnections {
             .map_err(|_| corrupt("server_removal_client"))?;
         if kind != crate::db::types::CredentialKind::McpOauthClient
             || provider != claim.server_id
-            || revoked_at.is_none()
-            || metadata
-                .get("revocation_reason")
-                .and_then(serde_json::Value::as_str)
-                != Some("mcp_server_removed")
+            || (!admin_retirement
+                && (revoked_at.is_none()
+                    || metadata
+                        .get("revocation_reason")
+                        .and_then(serde_json::Value::as_str)
+                        != Some("mcp_server_removed")))
         {
             return Err(corrupt("server_removal_client"));
         }
@@ -1431,7 +1609,12 @@ impl PostgresMcpConnections {
                 .get("revocation_reason")
                 .and_then(serde_json::Value::as_str)
                 == Some("mcp_server_removed");
-            let (refresh, material) = if removed_server {
+            let admin_retirement = claim
+                .metadata
+                .get("revocation_reason")
+                .and_then(serde_json::Value::as_str)
+                == Some("credential_revoked");
+            let (refresh, material) = if removed_server || admin_retirement {
                 let refresh = match refresh {
                     Ok(refresh) => refresh,
                     Err(_) => {
@@ -1440,7 +1623,10 @@ impl PostgresMcpConnections {
                         continue;
                     }
                 };
-                let material = match self.removed_server_client_material(&claim).await {
+                let material = match self
+                    .removed_server_client_material(&claim, admin_retirement)
+                    .await
+                {
                     Ok(material) => material,
                     Err(error) if removed_server_material_error_is_permanent(error) => {
                         self.mark_revocation_operator_required(&claim).await?;
@@ -1500,7 +1686,7 @@ impl PostgresMcpConnections {
                    updated_at=clock_timestamp()
                  WHERE id=$1 AND kind='mcp_user_token' AND provider=$2
                    AND revoked_at IS NOT NULL
-                   AND metadata->>'revocation_reason'='mcp_server_removed'
+                   AND metadata->>'revocation_reason' IN ('mcp_server_removed','credential_revoked')
                    AND metadata->>'revocation_status'='revoking'",
                 &[&claim.credential_id, &claim.server_id],
             )
@@ -1509,9 +1695,15 @@ impl PostgresMcpConnections {
         if updated != 1 {
             return Err(McpConnectionError::NotVisible);
         }
-        transaction
-            .execute(
-                "UPDATE public.credentials SET
+        if claim
+            .metadata
+            .get("revocation_reason")
+            .and_then(serde_json::Value::as_str)
+            == Some("mcp_server_removed")
+        {
+            transaction
+                .execute(
+                    "UPDATE public.credentials SET
                    metadata=coalesce(metadata,'{}'::jsonb)||jsonb_build_object(
                      'revocation_status','operator_required',
                      'operator_required_at',clock_timestamp(),
@@ -1522,10 +1714,11 @@ impl PostgresMcpConnections {
                    AND metadata->>'revocation_reason'='mcp_server_removed'
                    AND metadata->>'revocation_status' IN (
                      'retained_for_user_token_revocation','operator_required')",
-                &[&claim.server_id],
-            )
-            .await
-            .map_err(query_unavailable)?;
+                    &[&claim.server_id],
+                )
+                .await
+                .map_err(query_unavailable)?;
+        }
         self.append_connection_audit(
             &transaction,
             &ActorId::new(&claim.actor_id),
@@ -2494,7 +2687,9 @@ impl McpConnectionAdministration for PostgresMcpConnections {
                       FROM public.credentials
                      WHERE kind='mcp_user_token' AND provider=$1
                        AND (revoked_at IS NULL OR
-                            metadata->>'revocation_status' IN ('pending','revoking'))
+                            (metadata->>'revocation_status' IN ('pending','revoking')
+                             AND NOT (coalesce(metadata->>'revocation_reason'='credential_revoked',false)
+                                      AND metadata ? 'credential_revocation')))
                      FOR UPDATE
                  )
                  UPDATE public.credentials c SET

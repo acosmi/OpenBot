@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R195，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R196，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -223,7 +223,7 @@ Electron/Chromium browser engine（无业务裁决权）
 | --- | --- |
 | [Agent endpoint 30x 可绕过初始 URL 检查；DNS rebinding 仍未解决](https://github.com/CopilotKit/openbot/issues/36) | 每一跳重新做 scheme/host/IP policy；安全 dialer 固定已校验 IP 与 TLS SNI；Server 再以 egress gateway 强制执行 |
 | [malformed AG-UI `message.content` 可使 transcript 崩溃](https://github.com/CopilotKit/openbot/issues/44) | 所有外部 payload 做结构验证；未知/损坏事件隔离成可展示错误，UI 不崩溃 |
-| [credential rotate 先写新值、再 revoke 旧值，失败会留下 orphan](https://github.com/CopilotKit/openbot/issues/53) | 单事务切换 active pointer；外部 revoke 独立进入 reconciliation；失败时新凭据不生效 |
+| [credential rotate 先写新值、再 revoke 旧值，失败会留下 orphan](https://github.com/CopilotKit/openbot/issues/53) | 单事务切换 active pointer；外部 revoke 独立进入 reconciliation；本地校验/事务失败时新凭据不生效 |
 | [从未运行的 thread history 返回 500](https://github.com/CopilotKit/openbot/issues/72) | 明确返回空 history；真实上游/数据库错误仍返回 5xx |
 | [withdrawn tool 的 stale grant 可能在 transport 切换后复活](https://github.com/CopilotKit/openbot/issues/106) | catalog refresh 将 grant 标为 `suspended_missing`；工具重现后仍需管理员重新启用，永不静默复活 |
 | Google Drive disconnect 尚未实现 | 本地立即 deny 并 tombstone；调用 vendor revoke；失败进入 `revocation_pending` 重试，UI 不谎报 vendor 已撤权 |
@@ -536,6 +536,18 @@ drop 时清除 `Vec` 当前长度和整个 capacity，并以稳定 Rust 优化�
 它仍不伪称能擦除所有副本：调用方交出所有权之前的读缓冲/拷贝，以及该 `Vec`
 交出前扩容留下的旧 allocation，都不在类型可达范围。`SecretBytes` 仍无 Clone /
 Serialize / Display / PartialEq，只能显式 `expose`。（§28.1 R46）
+
+Batch120（R196）实现部署凭据管理完整工作链：固定上游manual allowlist只含model/connector/mcp，
+Agent/OAuth client/个人token不由该输入制造。四个shared typed command经Server/Desktop进入同一PG/Vault
+服务；fresh admin/Origin先于body，数据库重验configured scope/current role/generation并锁actor。
+每记录随机DEK/v2 AAD、存后回读、新旧记录切换/MCP pointer与grant失效/audit同事务，双并发轮换只有一胜。
+keyId仍按固定模型配置使用；旧newest-active/tie-break/stored-first/env-fallback/corrupt-no-fallback不变。
+本地事务失败不激活新记录，外部清理独立且明确为pending或operator_required，不能称vendor已撤权。
+受管OAuth撤销冻结原client/resource/transport/CIDR，重试、client替换与server删除后不重绑定新身份；
+坏snapshot一次转人工且无网络。公开metadata与内部生命周期namespace分离，100行keyset与默认模型引用提示
+接入AdminCredentialsPage；SecretInput不回填。真实PG/session GUI create/rotate/revoke、100+3分页、降权拒绝，
+以及PG4+OAuth3+RMCP11、Server235/Desktop113、Contracts109/Domain372/Application166/UI188通过。
+关闭4 API、3 event、5 test、1 route后parity886/826/1712，fixtures35/20/55不变；完整G2/G6/G8与Alpha仍未通过。
 
 ### 6.5 Group access 的修正
 
@@ -2739,6 +2751,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R193 | §9 / §24 G6（2026-09-04 Batch117：Plugins Server Web 管理子面） | 后端已有 MCP admin/private-egress/grants，但三条管理页面尚未实现；hasCredential 无法区分部署 Bearer、个人 OAuth 和匿名配置。 | 共用 AdminShell/typed API 实现 index/detail/tool、custom HTTPS/CIDR、OAuth client/本人连接、刷新/移除与 per-Agent grant。Rust 新增 authentication 闭合投影；App owner 串行写入，失败/202 unknown 只读回，无自动重放；补校验、局部错误与跨 route/模态焦点规则。 | PG/loopback 31+11+1、UI187、Contracts105、Server233全部实绿；Clippy含WASM、release中英浏览器验证和设计/i18n869/预算绿。wasm gzip2007787B/CSS116942B/字体740216B/外链脚本1/inline0；strict160/0/0。三route仍todo，保留完整Bearer产品面、production PG/session→GUI权限旅程、Desktop transport/Local OAuth/真实宿主、golden/AX/Skills与G6；parity873/839/1712、fixtures35/20/55不变。无schema/Cargo/Engine/Grok/Actions或远端写入。 |
 | R194 | §9 / §24 G6（2026-09-04 Batch118：Desktop Plugins基础framing） | Batch117的共同GUI仍因Desktop没有connections读路由而加载失败，curated启用也没有对应custom-protocol handler。 | 补GET connections与POST servers，只派发既有typed command；closed McpCuratedServerSelection与Server共享，window actor/fresh/admin先于副作用，query拒绝、16KiB body与清零规则明确。 | Desktop tauri-host112/0/0（Plugins3条）、Contracts105/Server233通过；Server沙箱13条socket PermissionDenied后允许loopback宿主重跑全绿。Clippy与Windows x64 cross-check绿，后者不算真机。strict160/0/0，T-API-0081/0086 revalidate后overlay1271/433/2/6；parity873/839/1712、fixtures35/20/55不变。真实Wry/GUI/Local OAuth、三Plugins route与G6仍todo，无新PG/vendor/golden或远端操作。 |
 | R195 | §6.4 / §24 G2/G6（2026-09-04 Batch119：三类GUI密钥所有权修复） | 真源禁止secret进入Leptos state，但Plugins OAuth、OIDC与Agent Authorization仍用RwSignal<String>；Agent响应式校验还反复克隆认证请求。旧局部浏览器绿只证明遮挡/不回显。 | 删除普通Input的Password变体，统一DOM-owned SecretInput，响应式状态仅校验事实/代次；提交/取消/切换/卸载清理，失败不回填。三个DTO接受零化分配所有权，Serde字段在后续形态错误时也能清理；敏感JSON不经过Value，Rust JSON与DTO交给浏览器后在await前释放。 | Contracts108/UI188/Server233/Desktop112、Clippy含WASM、release浏览器三表单均通过。失败后不重填无请求、重填一次成功；OIDC切换后register0、失败重试不增；Agent probe失效、取消后hasAuth=false、显式保存/空编辑hasAuth=true，公开响应/页面canary0。i18n870、wasm gzip2025831B/CSS116942B，strict160/0/0；模块export触发24原语revalidation后overlay1247/457/2/6，parity873/839/1712、fixtures35/20/55不变。包仍829，仅UI依赖边；无新PG/vendor/真实Wry/Windows/golden或全关证明。 |
+| R196 | §2.4 / §6.4 / §9.4 / §24 G2/G6（2026-09-04 Batch120：凭据管理完整工作链） | Vault/consumer已有底层，但四个admin凭据API与正式页面仍缺；直接照译upstream rotate会留下孤儿，通用metadata与内部revocation混用还会污染清理权威。 | 保留manual三kind与managed六kind库存区别；shared command/PG/Vault组装，fresh admin+Origin before-body、current DB actor锁与role/gen重验。新DEK/v2回读、MCP指针/代次/grant失效、old退役和audit同事务；OAuth冻结原client上下文并经既有reconciler清理。metadata namespace隔离，100行keyset、配置model引用提示与SecretInput GUI闭环。本地失败不激活替代值；外部pending/operator独立且不冒充vendor撤销。 | PG4+OAuth3+RMCP11、Server235/Desktop113、Contracts109/Domain372/Application166/UI188均通过；Windows只cross-check。真实PG/session GUI得2条v2全retired，create/rotate/revoke audit各1、actor/payload正确/canary0；100+3分页，降权NotFound且row/dialog0，中英/键盘/焦点/overflow/console通过。i18n904，wasm gzip2074750B/CSS116942B/字体740216B；13条原有条目闭合后parity886/826/1712、overlay1234/470/2/6，fixtures35/20/55不变。真实vendor、KMS/外审、Wry/Windows/runsc/golden与G2/G6/G8/Alpha整关仍未通过；磁盘满只清本仓incremental缓存，未改源码/证据冻结面。 |
 
 ### 28.2 复核通过、原样保留的断言
 

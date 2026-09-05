@@ -78,6 +78,7 @@ pub mod auth;
 pub mod budget;
 pub mod command;
 pub mod components;
+pub mod credential_admin;
 pub mod desktop;
 pub mod engine;
 pub mod error;

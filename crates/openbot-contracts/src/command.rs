@@ -427,6 +427,23 @@ pub enum AppCommand {
     /// List only the authenticated actor's per-user MCP connections.
     ListMcpConnections,
 
+    /// Read bounded safe deployment credential metadata as an administrator.
+    ListCredentials(crate::credential_admin::CredentialPageRequest),
+    /// Create an encrypted manual credential; no managed identity can be supplied.
+    CreateCredential(crate::credential_admin::CredentialWrite),
+    /// Replace a credential and retire its predecessor atomically.
+    RotateCredential {
+        /// Existing credential identity.
+        credential_id: String,
+        /// Closed replacement input; actor comes only from AuthContext.
+        input: crate::credential_admin::CredentialWrite,
+    },
+    /// Retire one credential locally and schedule applicable external cleanup.
+    RevokeCredential {
+        /// Existing credential identity.
+        credential_id: String,
+    },
+
     /// Read the deployment-wide Plugins administration projection visible to this actor.
     ListMcpAdminPage,
 
@@ -614,6 +631,12 @@ pub enum AppReply {
     AgentCallbackTokenRevoked(CallbackTokenRevoked),
     /// [`AppCommand::ListMcpConnections`] response.
     McpConnections(McpConnections),
+    /// [`AppCommand::ListCredentials`] safe inventory page.
+    Credentials(crate::credential_admin::CredentialPage),
+    /// [`AppCommand::CreateCredential`] / [`AppCommand::RotateCredential`] receipt.
+    CredentialWritten(crate::credential_admin::CredentialWritten),
+    /// [`AppCommand::RevokeCredential`] local retirement receipt.
+    CredentialRevoked(crate::credential_admin::CredentialRevoked),
     /// [`AppCommand::ListMcpAdminPage`] response.
     McpAdminPage(McpAdminPage),
     /// [`AppCommand::BeginMcpOAuth`] response.

@@ -311,7 +311,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0011"
     migration_rule: "preserve"
-    status: "todo"
+    status: done
+    done_evidence: "Batch120：Server/Desktop同一ListCredentials；仅显式metadata列，100行keyset分页与配置默认model引用，403/当前DB角色与generation重验，无密文/明文输出。真实PG分页100+1、浏览器PG/session分页100+3及降权NotFound/数据0；Server2与Desktop1 framing通过。"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "admin。§6.4 vault 读取面，只回 metadata 不回明文。错误码：401 未登录 / 403 非 admin（auth/guards.ts::requireAdmin）/ 400 malformed / 503 依赖未配置"
   - id: "api-admin-credentials-post"
@@ -321,7 +322,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0012"
     migration_rule: "preserve"
-    status: "todo"
+    status: done
+    done_evidence: "Batch120：固定上游manual allowlist仅model/connector/mcp；closed零化输入不含actor，fresh admin+Origin先于body poll。每记录新DEK/v2 AAD、存后解封回读、credential.created hash-chain audit同事务，201只回status。真实PG和GUI证实v2/审计/无明文，坏回读无记录无audit；默认模型新密钥由同一adapter实际发往loopback对端。"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "admin。成功 201。错误码：401 未登录 / 403 非 admin（auth/guards.ts::requireAdmin）/ 400 malformed / 503 依赖未配置"
   - id: "api-admin-credentials-rotate-post"
@@ -331,7 +333,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0013"
     migration_rule: "preserve"
-    status: "todo"
+    status: done
+    done_evidence: "Batch120：锁前驱并检查kind/provider不变，生成新UUID，MCP pointer/generation/grant suspension、旧记录retire和credential.rotated audit同事务；不把两个HTTP调用拼成rotate。真实PG audit故障无孤儿、并发两次只有一胜，模型同adapter发送旧/新两个key；GUI PG/session旧/新状态与audit通过。metadata和keyId可显式更新；外部清理独立且不宣称vendor已撤销。"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "admin。95 条里的多行写法之一。缺陷修正，不照译：上游 issue #53 先写新值再 revoke 旧值，失败留 orphan；v3 §2.4 定为单事务切换 active pointer，外部 revoke 走 reconciliation，失败时新凭据不生效。错误码：401 未登录 / 403 非 admin（auth/guards.ts::requireAdmin）/ 400 malformed / 503 依赖未配置 / 409 reconciliation 未决"
   - id: "api-admin-credentials-revoke-post"
@@ -341,7 +344,8 @@ entries:
     owner: "openbot-server"
     test_id: "T-API-0014"
     migration_rule: "preserve"
-    status: "todo"
+    status: done
+    done_evidence: "Batch120：各kind均本地事务退役，重复revoke保留首次时间且无重复audit。MCP指针保留为不可用而不NULL回落匿名，grants失效；OAuth个人或deployment client退役同时清join并冻结原client/resource/transport/CIDR，失败重试、替换/删除后仍用原上下文，损坏一次转operator且网络0。模型/connector/Agent/部署bearer外部清理由operator完成，200显式区分local/vendor；commit不确定202不自动重放。PG/HTTP/Desktop/真实PG GUI均验证。"
     evidence: "grep -rnE '^\\s*(app|routes)\\.(get|post|put|patch|delete|all)\\(' server/src --include=*.ts | grep -v '\\.test\\.' —— 本轮实跑，95 行逐条归类"
     notes: "admin。95 条里的多行写法之一。错误码：401 未登录 / 403 非 admin（auth/guards.ts::requireAdmin）/ 400 malformed / 503 依赖未配置 / 409 revocation_pending"
   - id: "api-admin-package-get"
