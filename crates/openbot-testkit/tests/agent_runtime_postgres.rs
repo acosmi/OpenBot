@@ -17,20 +17,21 @@ use openbot_agent::{
     RetryingProviderConfig,
 };
 use openbot_application::{
-    ApplicationService, BeginThreadRunRequest, CancelThreadRunRequest, ComponentAdministration,
-    MemoryAdministrationError, OpenBotApplication, ProviderAdapter, ProviderEvent, ProviderMessage,
-    ProviderPortError, ProviderRequest, ProviderSession, ProviderUsage, RememberToolMemory,
-    RememberToolMemoryRequest, RunExecutionLease, RunRuntime, RunToolExchange, ThreadDirectory,
-    remember_provider_tool,
+    AppEventStream, ApplicationService, BeginThreadRunRequest, CancelThreadRunRequest,
+    ComponentAdministration, MemoryAdministrationError, OpenBotApplication, ProviderAdapter,
+    ProviderEvent, ProviderMessage, ProviderPortError, ProviderRequest, ProviderSession,
+    ProviderUsage, RememberToolMemory, RememberToolMemoryRequest, RunExecutionLease, RunRuntime,
+    RunToolExchange, ThreadDirectory, remember_provider_tool,
 };
 use openbot_contracts::auth::{AuthContextBuilder, AuthGeneration, Role};
 use openbot_contracts::command::{
-    AppCommand, AppReply, BeginThreadRun, CancelThreadRun, ThreadRunAnchor,
+    AppCommand, AppReply, BeginThreadRun, CancelThreadRun, SubscriptionRequest, ThreadRunAnchor,
     ThreadRunCancellationState,
 };
 use openbot_contracts::components::{
     ASK_APPROVAL_COMPONENT_NAME, ComponentApprovalAnswer, ComponentApprovalDecision,
-    ComponentHumanDecisionAnswer, compiled_component_manifest,
+    ComponentHumanDecisionAnswer, SHOW_NOTICE_COMPONENT_NAME, SHOW_QUOTE_COMPONENT_NAME,
+    compiled_component_manifest,
 };
 use openbot_contracts::ids::thread::ThreadIdentity;
 use openbot_contracts::ids::{ActorId, BotId, DeploymentId, RunId, TenantId};
@@ -69,6 +70,7 @@ use openbot_infra::thread_directory::{DEFAULT_THREAD_LEASE_DURATION, PostgresThr
 use openbot_infra::vault::CredentialRecordVault;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Barrier;
 use url::Url;
 use uuid::Uuid;
 
@@ -134,6 +136,122 @@ impl ProviderAdapter for RecordedProvider {
 
 struct RecordedSession {
     events: VecDeque<ProviderEvent>,
+}
+
+#[derive(Default)]
+struct ParallelComponentProvider {
+    requests: Mutex<Vec<ProviderRequest>>,
+}
+
+#[async_trait]
+impl ProviderAdapter for ParallelComponentProvider {
+    async fn start(
+        &self,
+        request: ProviderRequest,
+    ) -> Result<Box<dyn ProviderSession>, ProviderPortError> {
+        let turn = {
+            let mut requests = self.requests.lock().expect("parallel provider lock");
+            let turn = requests.len();
+            requests.push(request);
+            turn
+        };
+        let events = match turn {
+            0 => vec![
+                ProviderEvent::ToolCallCompleted {
+                    index: 1,
+                    call_id: "provider-notice".to_owned(),
+                    name: SHOW_NOTICE_COMPONENT_NAME.to_owned(),
+                    arguments: serde_json::json!({
+                        "title":"Status",
+                        "body":"Both views are ready.",
+                        "tone":"positive"
+                    }),
+                },
+                ProviderEvent::ToolCallCompleted {
+                    index: 0,
+                    call_id: "provider-quote".to_owned(),
+                    name: SHOW_QUOTE_COMPONENT_NAME.to_owned(),
+                    arguments: serde_json::json!({
+                        "quote":"Concurrency is bounded.",
+                        "attribution":"runtime proof"
+                    }),
+                },
+                ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 4,
+                    output_tokens: 4,
+                    total_tokens: 8,
+                }),
+                ProviderEvent::Completed,
+            ],
+            1 => vec![
+                ProviderEvent::TextDelta {
+                    index: 0,
+                    delta: "parallel components complete".to_owned(),
+                },
+                ProviderEvent::Usage(ProviderUsage {
+                    input_tokens: 4,
+                    output_tokens: 2,
+                    total_tokens: 6,
+                }),
+                ProviderEvent::Completed,
+            ],
+            _ => {
+                return Err(ProviderPortError::InvalidRequest {
+                    field: "parallel_component_turn_count",
+                });
+            }
+        };
+        Ok(Box::new(RecordedSession {
+            events: events.into(),
+        }))
+    }
+}
+
+struct ConcurrentComponentApplication {
+    inner: Arc<dyn ApplicationService>,
+    active: AtomicUsize,
+    max_active: AtomicUsize,
+    barrier: Barrier,
+}
+
+impl ConcurrentComponentApplication {
+    fn new(inner: Arc<dyn ApplicationService>) -> Self {
+        Self {
+            inner,
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            barrier: Barrier::new(2),
+        }
+    }
+}
+
+#[async_trait]
+impl ApplicationService for ConcurrentComponentApplication {
+    async fn execute(
+        &self,
+        auth: openbot_contracts::auth::AuthContext,
+        command: AppCommand,
+    ) -> Result<AppReply, openbot_contracts::error::AppError> {
+        let component_decision = matches!(&command, AppCommand::DecideComponent { .. });
+        if component_decision {
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active.fetch_max(active, Ordering::SeqCst);
+            self.barrier.wait().await;
+        }
+        let result = self.inner.execute(auth, command).await;
+        if component_decision {
+            self.active.fetch_sub(1, Ordering::SeqCst);
+        }
+        result
+    }
+
+    async fn subscribe(
+        &self,
+        auth: openbot_contracts::auth::AuthContext,
+        request: SubscriptionRequest,
+    ) -> Result<AppEventStream, openbot_contracts::error::AppError> {
+        self.inner.subscribe(auth, request).await
+    }
 }
 
 #[derive(Default)]
@@ -452,6 +570,7 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 2,
+                    max_tool_concurrency: 2,
                     lease_renew_interval: Duration::from_secs(1),
                     run_deadline: Some(Duration::from_secs(5)),
                 },
@@ -564,6 +683,171 @@ async fn provider_delta_flows_through_agent_host_into_replay_history_and_termina
 
 #[tokio::test]
 #[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
+async fn parallel_safe_components_share_budget_and_persist_provider_order_on_real_postgres() {
+    let admin = batch6_admin_config(
+        "parallel_safe_components_share_budget_and_persist_provider_order_on_real_postgres",
+    );
+    with_temp_database(&admin, "agentparallel", |config| async move {
+        let pool = pool::connect(&config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = async {
+            provision(&pool).await?;
+            let deployment = DeploymentId::new("dep-a");
+            let tenant = TenantId::new("tenant-a");
+            let auth = AuthContextBuilder::from_verified_session(
+                deployment.clone(),
+                tenant.clone(),
+                ActorId::new("actor-a"),
+                AuthGeneration::new(0),
+                false,
+            )
+            .with_roles([Role::User])
+            .build();
+            let components = Arc::new(
+                PostgresComponentAdministration::new(pool.clone(), vec![0xda; 32])
+                    .map_err(|error| error.to_string())?,
+            );
+            components
+                .sync_catalogue(&auth, &compiled_component_manifest())
+                .await
+                .map_err(|error| error.to_string())?;
+            let owner = "runtime-parallel".to_owned();
+            let directory = PostgresThreadDirectory::with_runtime(
+                pool.clone(),
+                config,
+                owner.clone(),
+                DEFAULT_THREAD_LEASE_DURATION,
+            )
+            .map_err(|error| error.to_string())?;
+            let runtime: Arc<dyn RunRuntime> = Arc::new(
+                PostgresRunRuntime::new(
+                    pool.clone(),
+                    owner,
+                    DEFAULT_THREAD_LEASE_DURATION,
+                    DEFAULT_DISPATCH_CLAIM_DURATION,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+            let inner: Arc<dyn ApplicationService> = Arc::new(
+                OpenBotApplication::new(ChannelRepo::new(pool.clone()))
+                    .with_component_administration(components.clone()),
+            );
+            let observed = Arc::new(ConcurrentComponentApplication::new(inner));
+            let application: Arc<dyn ApplicationService> = observed.clone();
+            let tools: Arc<dyn AgentToolInvoker> = Arc::new(AuthorizedAgentToolGateway::new(
+                application,
+                Arc::new(PostgresAgentAuthorizationSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    false,
+                )),
+            ));
+            let context = Arc::new(
+                PostgresAgentContextSource::new(
+                    pool.clone(),
+                    deployment.clone(),
+                    tenant.clone(),
+                    Some(64),
+                )
+                .map_err(|error| error.to_string())?
+                .with_components(components),
+            );
+            let provider = Arc::new(ParallelComponentProvider::default());
+            let agent = BuiltInAgentRuntime::start(
+                runtime.clone(),
+                context,
+                provider.clone(),
+                tools,
+                Arc::new(
+                    PostgresAgentAudit::new(pool.clone(), vec![0xda; 32])
+                        .map_err(|error| error.to_string())?,
+                ),
+                BuiltInAgentConfig {
+                    queue_capacity: 4,
+                    max_concurrency: 1,
+                    max_tool_concurrency: 2,
+                    lease_renew_interval: Duration::from_secs(1),
+                    run_deadline: Some(Duration::from_secs(10)),
+                },
+            )
+            .map_err(|code| format!("agent config {code:?}"))?;
+            let relay = RunRelay::start(runtime, agent.consumer());
+            begin_test_run(
+                &directory,
+                &deployment,
+                &tenant,
+                9,
+                "run-parallel-components",
+                "Show two components.",
+            )
+            .await?;
+            wait_for_terminal(
+                &pool,
+                "run-parallel-components",
+                "parallel components complete",
+            )
+            .await?;
+
+            if observed.max_active.load(Ordering::SeqCst) != 2
+                || observed.active.load(Ordering::SeqCst) != 0
+            {
+                return Err(format!(
+                    "component concurrency drift: active={} max={}",
+                    observed.active.load(Ordering::SeqCst),
+                    observed.max_active.load(Ordering::SeqCst)
+                ));
+            }
+            let requests = provider.requests.lock().unwrap().clone();
+            if requests.len() != 2 {
+                return Err(format!(
+                    "parallel provider request count drift: {requests:?}"
+                ));
+            }
+            let tool_ids = requests[1]
+                .messages
+                .iter()
+                .filter(|message| message.role == openbot_application::ProviderMessageRole::Tool)
+                .filter_map(|message| message.tool_call_id.as_deref())
+                .collect::<Vec<_>>();
+            if tool_ids != ["provider-quote", "provider-notice"] {
+                return Err(format!("provider tool result order drift: {tool_ids:?}"));
+            }
+            let client = pool.get().await.map_err(|error| error.to_string())?;
+            let rows = client
+                .query(
+                    "SELECT content->>'toolCallId' AS provider_call_id
+                       FROM public.messages
+                      WHERE run_id='run-parallel-components' AND role='tool'
+                      ORDER BY seq",
+                    &[],
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let durable_ids = rows
+                .iter()
+                .map(|row| {
+                    row.try_get::<_, String>(0)
+                        .map_err(|error| error.to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if durable_ids != ["provider-quote", "provider-notice"] {
+                return Err(format!("durable tool result order drift: {durable_ids:?}"));
+            }
+            relay.stop().await;
+            agent.stop().await;
+            Ok(())
+        }
+        .await;
+        pool.close();
+        result
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需要真实 PostgreSQL：设 OPENBOT_TEST_DATABASE_URL 后加 --include-ignored 运行"]
 async fn component_decision_suspends_cross_replica_answer_then_commits_exchange_before_resample() {
     let admin = batch6_admin_config(
         "component_decision_suspends_cross_replica_answer_then_commits_exchange_before_resample",
@@ -646,6 +930,7 @@ async fn component_decision_suspends_cross_replica_answer_then_commits_exchange_
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 1,
+                    max_tool_concurrency: 2,
                     lease_renew_interval: Duration::from_secs(1),
                     run_deadline: Some(Duration::from_secs(10)),
                 },
@@ -901,6 +1186,7 @@ async fn remember_tool_runs_through_policy_capability_memory_audit_and_second_sa
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 1,
+                    max_tool_concurrency: 2,
                     lease_renew_interval: Duration::from_secs(1),
                     run_deadline: Some(Duration::from_secs(5)),
                 },
@@ -1349,6 +1635,7 @@ async fn remote_agui_row_routes_through_safe_sse_into_durable_text_reasoning_and
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 1,
+                    max_tool_concurrency: 2,
                     lease_renew_interval: Duration::from_secs(1),
                     run_deadline: Some(Duration::from_secs(5)),
                 },
@@ -1612,6 +1899,7 @@ async fn real_openai_http_stream_uses_fresh_vault_credential_and_durable_reasoni
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 2,
+                    max_tool_concurrency: 2,
                     lease_renew_interval: Duration::from_secs(1),
                     run_deadline: Some(Duration::from_secs(5)),
                 },
@@ -1977,6 +2265,7 @@ async fn cross_replica_durable_cancel_drops_the_active_child_before_cancelled_te
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 1,
+                    max_tool_concurrency: 2,
                     lease_renew_interval: Duration::from_millis(10),
                     run_deadline: Some(Duration::from_secs(5)),
                 },
@@ -2144,6 +2433,7 @@ async fn deadline_and_real_stream_stall_append_hash_chain_audits_before_terminal
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 1,
+                    max_tool_concurrency: 2,
                     lease_renew_interval: Duration::from_millis(5),
                     run_deadline: Some(Duration::from_millis(30)),
                 },
@@ -2212,6 +2502,7 @@ async fn deadline_and_real_stream_stall_append_hash_chain_audits_before_terminal
                 BuiltInAgentConfig {
                     queue_capacity: 4,
                     max_concurrency: 1,
+                    max_tool_concurrency: 2,
                     lease_renew_interval: Duration::from_secs(1),
                     run_deadline: Some(Duration::from_secs(5)),
                 },
@@ -2323,6 +2614,7 @@ impl ManagedRunHarness<'_> {
             BuiltInAgentConfig {
                 queue_capacity: 4,
                 max_concurrency: 2,
+                max_tool_concurrency: 2,
                 lease_renew_interval: Duration::from_secs(1),
                 run_deadline: Some(Duration::from_secs(5)),
             },

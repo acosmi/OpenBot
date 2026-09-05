@@ -848,6 +848,30 @@ pub fn compiled_component_confirmation(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether this exact build-owned component invocation may execute concurrently with another
+/// first-party tool call.
+///
+/// This is deliberately an explicit allowlist instead of deriving the answer from component kind
+/// or model-supplied metadata. Adding a renderer therefore cannot silently opt it into parallel
+/// execution; the new name must be reviewed here as well.
+#[must_use]
+pub fn compiled_component_parallel_safe(name: &str) -> bool {
+    matches!(
+        name,
+        SHOW_ACTIVITY_REPORT_COMPONENT_NAME
+            | SHOW_AREA_CHART_COMPONENT_NAME
+            | SHOW_BAR_CHART_COMPONENT_NAME
+            | SHOW_CHECKLIST_COMPONENT_NAME
+            | SHOW_LINE_CHART_COMPONENT_NAME
+            | SHOW_METRICS_COMPONENT_NAME
+            | SHOW_NOTICE_COMPONENT_NAME
+            | SHOW_PIE_CHART_COMPONENT_NAME
+            | SHOW_PROGRESS_COMPONENT_NAME
+            | SHOW_QUOTE_COMPONENT_NAME
+            | SHOW_RECORD_COMPONENT_NAME
+    )
+}
+
 /// Human-facing title for one ordinary renderer; used only in a normalized refusal sentence.
 #[must_use]
 pub fn compiled_component_title(name: &str) -> Option<&'static str> {
@@ -1902,6 +1926,28 @@ mod tests {
             validate_compiled_component_arguments("showStale", &json!({})),
             Err(ComponentArgumentsError::UnknownComponent)
         );
+    }
+
+    #[test]
+    fn only_the_eleven_ordinary_build_components_are_parallel_safe() {
+        let manifest = compiled_component_manifest();
+        assert_eq!(manifest.len(), 13);
+        let parallel = manifest
+            .iter()
+            .filter(|entry| compiled_component_parallel_safe(&entry.name))
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(parallel.len(), 11);
+        for entry in manifest {
+            assert_eq!(
+                compiled_component_parallel_safe(&entry.name),
+                compiled_component_confirmation(&entry.name).is_some(),
+                "parallel allowlist and ordinary renderer registry drifted for {}",
+                entry.name
+            );
+        }
+        assert!(!compiled_component_parallel_safe("custom_report"));
+        assert!(!compiled_component_parallel_safe("remember"));
     }
 
     #[test]

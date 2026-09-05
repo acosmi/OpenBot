@@ -1,9 +1,9 @@
 //! Built-in Agent dispatch consumer/host；pure decisions remain in `openbot-domain::agent`。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::{Future, pending};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -18,10 +18,11 @@ use openbot_contracts::components::is_component_human_decision_name;
 use openbot_domain::agent::{
     AgentEffect, AgentEvent, AgentFailure, AgentState, AgentTerminal, AgentToolCall, reduce,
 };
-use tokio::sync::{Mutex, Semaphore, mpsc, watch};
+use openbot_domain::tool::metadata::ResourceLockKey;
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use tokio::task::{JoinHandle, JoinSet};
 
-use crate::gateway::{AgentToolInvokeError, AgentToolInvoker};
+use crate::gateway::{AgentToolInvokeError, AgentToolInvoker, AgentToolReply, AgentToolScheduling};
 
 /// Upstream parity tool sampling step cap。
 pub const TOOL_STEP_CAP: u8 = 8;
@@ -35,6 +36,10 @@ pub const AGENT_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(5);
 pub const DEFAULT_AGENT_QUEUE_CAPACITY: usize = 256;
 /// Default simultaneous provider runs；独立于 per-thread foreground unique index。
 pub const DEFAULT_AGENT_CONCURRENCY: usize = 8;
+/// Default process-wide simultaneous tool invocations across all built-in runs.
+pub const DEFAULT_AGENT_TOOL_CONCURRENCY: usize = 8;
+/// Hard configuration ceiling for process-wide tool concurrency.
+pub const MAX_AGENT_TOOL_CONCURRENCY: usize = 256;
 
 /// Built-in runtime configuration。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +48,8 @@ pub struct BuiltInAgentConfig {
     pub queue_capacity: usize,
     /// Provider concurrency。
     pub max_concurrency: usize,
+    /// Process-wide active tool invocation cap across every run.
+    pub max_tool_concurrency: usize,
     /// Lease heartbeat。
     pub lease_renew_interval: Duration,
     /// `None` = explicitly disabled by OPENBOT_RUN_DEADLINE_MS=0。
@@ -54,6 +61,7 @@ impl Default for BuiltInAgentConfig {
         Self {
             queue_capacity: DEFAULT_AGENT_QUEUE_CAPACITY,
             max_concurrency: DEFAULT_AGENT_CONCURRENCY,
+            max_tool_concurrency: DEFAULT_AGENT_TOOL_CONCURRENCY,
             lease_renew_interval: DEFAULT_LEASE_RENEW_INTERVAL,
             run_deadline: Some(DEFAULT_RUN_DEADLINE),
         }
@@ -66,6 +74,8 @@ impl BuiltInAgentConfig {
             || self.queue_capacity > 4096
             || self.max_concurrency == 0
             || self.max_concurrency > self.queue_capacity
+            || self.max_tool_concurrency == 0
+            || self.max_tool_concurrency > MAX_AGENT_TOOL_CONCURRENCY
             || self.lease_renew_interval.is_zero()
             || self.run_deadline.is_some_and(|value| value.is_zero())
         {
@@ -113,6 +123,8 @@ impl BuiltInAgentRuntime {
             sender,
             reservations: Mutex::new(BTreeMap::new()),
             semaphore: Arc::new(Semaphore::new(config.max_concurrency)),
+            tool_semaphore: Arc::new(Semaphore::new(config.max_tool_concurrency)),
+            tool_resources: Arc::new(ToolResourceLocks::default()),
             stopped: AtomicBool::new(false),
         });
         let consumer = Arc::new(BuiltInAgentConsumer {
@@ -230,6 +242,8 @@ struct Inner {
     sender: mpsc::Sender<Activation>,
     reservations: Mutex<BTreeMap<String, Reservation>>,
     semaphore: Arc<Semaphore>,
+    tool_semaphore: Arc<Semaphore>,
+    tool_resources: Arc<ToolResourceLocks>,
     stopped: AtomicBool,
 }
 
@@ -242,6 +256,124 @@ struct Reservation {
 struct Activation {
     lease: RunExecutionLease,
     cancel: watch::Receiver<bool>,
+}
+
+#[derive(Default)]
+struct ToolResourceLocks {
+    entries: std::sync::Mutex<BTreeMap<ResourceLockKey, Weak<Semaphore>>>,
+}
+
+impl ToolResourceLocks {
+    async fn acquire(
+        &self,
+        keys: &[ResourceLockKey],
+    ) -> Result<Vec<OwnedSemaphorePermit>, AgentToolInvokeError> {
+        let semaphores = {
+            let mut entries = self
+                .entries
+                .lock()
+                .map_err(|_| AgentToolInvokeError::Unavailable)?;
+            entries.retain(|_, semaphore| semaphore.strong_count() > 0);
+            let mut semaphores = Vec::with_capacity(keys.len());
+            for key in keys {
+                let semaphore = entries.get(key).and_then(Weak::upgrade).unwrap_or_else(|| {
+                    let semaphore = Arc::new(Semaphore::new(1));
+                    entries.insert(key.clone(), Arc::downgrade(&semaphore));
+                    semaphore
+                });
+                semaphores.push(semaphore);
+            }
+            semaphores
+        };
+        let mut permits = Vec::with_capacity(semaphores.len());
+        for semaphore in semaphores {
+            permits.push(
+                semaphore
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| AgentToolInvokeError::Unavailable)?,
+            );
+        }
+        Ok(permits)
+    }
+}
+
+struct ToolBudgetPermit {
+    _resources: Vec<OwnedSemaphorePermit>,
+    _concurrency: OwnedSemaphorePermit,
+}
+
+async fn acquire_tool_budget(
+    semaphore: Arc<Semaphore>,
+    resources: Arc<ToolResourceLocks>,
+    scheduling: AgentToolScheduling,
+) -> Result<ToolBudgetPermit, AgentToolInvokeError> {
+    let resource_permits = resources.acquire(scheduling.resource_locks()).await?;
+    let concurrency = semaphore
+        .acquire_owned()
+        .await
+        .map_err(|_| AgentToolInvokeError::Unavailable)?;
+    Ok(ToolBudgetPermit {
+        _resources: resource_permits,
+        _concurrency: concurrency,
+    })
+}
+
+struct ScheduledToolCall {
+    call: AgentToolCall,
+    scheduling: AgentToolScheduling,
+}
+
+struct ToolWave {
+    parallel: bool,
+    calls: Vec<ScheduledToolCall>,
+}
+
+struct ToolRunControl<'a> {
+    cancel: &'a mut watch::Receiver<bool>,
+    lease: &'a RunExecutionLease,
+    renew: &'a mut tokio::time::Interval,
+    deadline: Option<tokio::time::Instant>,
+}
+
+fn schedule_tool_waves(tools: &dyn AgentToolInvoker, calls: Vec<AgentToolCall>) -> Vec<ToolWave> {
+    let mut waves = Vec::new();
+    let mut parallel_calls = Vec::new();
+    let mut held_resources = BTreeSet::new();
+    let flush_parallel = |waves: &mut Vec<ToolWave>, calls: &mut Vec<ScheduledToolCall>| {
+        if !calls.is_empty() {
+            waves.push(ToolWave {
+                parallel: true,
+                calls: core::mem::take(calls),
+            });
+        }
+    };
+
+    for call in calls {
+        let scheduling = tools.scheduling(&call.name);
+        let human = is_component_human_decision_name(&call.name);
+        if human || !scheduling.is_parallel_safe() {
+            flush_parallel(&mut waves, &mut parallel_calls);
+            held_resources.clear();
+            waves.push(ToolWave {
+                parallel: false,
+                calls: vec![ScheduledToolCall { call, scheduling }],
+            });
+            continue;
+        }
+        let conflicts = scheduling
+            .resource_locks()
+            .iter()
+            .any(|key| held_resources.contains(key));
+        if conflicts {
+            flush_parallel(&mut waves, &mut parallel_calls);
+            held_resources.clear();
+        }
+        held_resources.extend(scheduling.resource_locks().iter().cloned());
+        parallel_calls.push(ScheduledToolCall { call, scheduling });
+    }
+    flush_parallel(&mut waves, &mut parallel_calls);
+    waves
 }
 
 #[derive(Clone, Copy)]
@@ -671,142 +803,17 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
         if effects.next().is_some() {
             return;
         }
-        for call in calls {
-            let arguments = call.arguments.clone();
-            let waits_for_human = is_component_human_decision_name(&call.name);
-            if waits_for_human {
-                let Ok((next, effects)) = reduce(&state, AgentEvent::HumanRequired) else {
-                    return;
-                };
-                state = next;
-                if !matches!(effects.as_slice(), [AgentEffect::AwaitHuman]) {
-                    return;
-                }
-            }
-            let tools = inner.tools.clone();
-            let invocation_lease = lease.clone();
-            let provider_call_id = call.call_id.clone();
-            let tool_name = call.name.clone();
-            let invocation = async move {
-                tools
-                    .invoke(
-                        &invocation_lease,
-                        &provider_call_id,
-                        &tool_name,
-                        call.arguments,
-                    )
-                    .await
+        {
+            let mut control = ToolRunControl {
+                cancel: &mut activation.cancel,
+                lease,
+                renew: &mut renew,
+                deadline,
             };
-            let outcome = if waits_for_human {
-                // Dropping a JoinHandle detaches rather than aborts. On cancellation the durable
-                // waiter therefore survives long enough to observe the terminal run in PostgreSQL
-                // and atomically retire/audit its pending row. Ordinary effect tools stay inline so
-                // cancellation still drops them before the terminal commit.
-                match await_run_child(
-                    tokio::spawn(invocation),
-                    &mut activation.cancel,
-                    &mut renew,
-                    deadline,
-                    inner.runtime.as_ref(),
-                    lease,
-                )
-                .await
-                {
-                    ControlledChild::Ready(Ok(result)) => ControlledChild::Ready(result),
-                    ControlledChild::Ready(Err(error)) => {
-                        tracing::error!(
-                            cancelled = error.is_cancelled(),
-                            "component human-decision task ended without a result"
-                        );
-                        ControlledChild::Ready(Err(AgentToolInvokeError::Unavailable))
-                    }
-                    ControlledChild::Cancelled(source) => ControlledChild::Cancelled(source),
-                    ControlledChild::LeaseLost => ControlledChild::LeaseLost,
-                }
-            } else {
-                await_run_child(
-                    invocation,
-                    &mut activation.cancel,
-                    &mut renew,
-                    deadline,
-                    inner.runtime.as_ref(),
-                    lease,
-                )
-                .await
-            };
-            if waits_for_human && matches!(&outcome, ControlledChild::Ready(_)) {
-                let Ok((next, effects)) = reduce(&state, AgentEvent::HumanReleased) else {
-                    return;
-                };
-                state = next;
-                if !effects.is_empty() {
+            for wave in schedule_tool_waves(inner.tools.as_ref(), calls) {
+                if !execute_tool_wave(inner, &mut state, &mut journal, &mut control, wave).await {
                     return;
                 }
-            }
-            let reply = match outcome {
-                ControlledChild::Ready(Ok(reply)) => reply,
-                ControlledChild::Ready(Err(AgentToolInvokeError::ReconciliationRequired)) => {
-                    drive_terminal_event(
-                        &mut state,
-                        &mut journal,
-                        AgentEvent::JournalCommitUnknown,
-                    )
-                    .await;
-                    return;
-                }
-                ControlledChild::Ready(Err(AgentToolInvokeError::Unavailable)) => {
-                    drive_terminal_event(
-                        &mut state,
-                        &mut journal,
-                        AgentEvent::ToolRuntimeUnavailable,
-                    )
-                    .await;
-                    return;
-                }
-                ControlledChild::Cancelled(source) => {
-                    if waits_for_human {
-                        cancel_and_commit(
-                            &mut state,
-                            &mut journal,
-                            inner.audit.as_ref(),
-                            lease,
-                            source,
-                        )
-                        .await;
-                    } else {
-                        tool_interrupted(
-                            &mut state,
-                            &mut journal,
-                            inner.audit.as_ref(),
-                            lease,
-                            source,
-                        )
-                        .await;
-                    }
-                    return;
-                }
-                ControlledChild::LeaseLost => {
-                    drive_terminal_event(&mut state, &mut journal, AgentEvent::LeaseLost).await;
-                    return;
-                }
-            };
-            let exchange = match RunToolExchange::new(
-                reply.call_id().clone(),
-                call.call_id,
-                call.name,
-                arguments,
-                reply.content().to_owned(),
-                reply.error_code().map(str::to_owned),
-            ) {
-                Ok(exchange) => exchange,
-                Err(error) => {
-                    journal_failure(&mut state, &mut journal, error).await;
-                    return;
-                }
-            };
-            if let Err(error) = journal.append_tool_exchange(&exchange).await {
-                journal_failure(&mut state, &mut journal, error).await;
-                return;
             }
         }
         let Ok((next, effects)) = reduce(&state, AgentEvent::ToolResultCommitted) else {
@@ -827,6 +834,361 @@ async fn execute_run(inner: &Inner, activation: &mut Activation) {
         };
         sampling_index = next_sampling_index;
     }
+}
+
+async fn execute_tool_wave(
+    inner: &Inner,
+    state: &mut AgentState,
+    journal: &mut DurableTextRun,
+    control: &mut ToolRunControl<'_>,
+    wave: ToolWave,
+) -> bool {
+    if !wave.parallel {
+        for scheduled in wave.calls {
+            let Some((call, reply)) =
+                invoke_serial_tool(inner, state, journal, control, scheduled).await
+            else {
+                return false;
+            };
+            if !append_tool_reply(state, journal, call, reply).await {
+                return false;
+            }
+        }
+        return true;
+    }
+    if wave.calls.len() == 1 {
+        let scheduled = wave.calls.into_iter().next().expect("one tool call");
+        let Some((call, reply)) =
+            invoke_serial_tool(inner, state, journal, control, scheduled).await
+        else {
+            return false;
+        };
+        return append_tool_reply(state, journal, call, reply).await;
+    }
+
+    let Some(outputs) = invoke_parallel_tool_wave(inner, state, journal, control, wave.calls).await
+    else {
+        return false;
+    };
+    for (call, outcome) in outputs {
+        let reply = match outcome {
+            Ok(reply) => reply,
+            Err(AgentToolInvokeError::ReconciliationRequired) => {
+                drive_terminal_event(state, journal, AgentEvent::JournalCommitUnknown).await;
+                return false;
+            }
+            Err(AgentToolInvokeError::Unavailable) => {
+                drive_terminal_event(state, journal, AgentEvent::ToolRuntimeUnavailable).await;
+                return false;
+            }
+        };
+        if !append_tool_reply(state, journal, call, reply).await {
+            return false;
+        }
+    }
+    true
+}
+
+async fn invoke_serial_tool(
+    inner: &Inner,
+    state: &mut AgentState,
+    journal: &mut DurableTextRun,
+    control: &mut ToolRunControl<'_>,
+    scheduled: ScheduledToolCall,
+) -> Option<(AgentToolCall, AgentToolReply)> {
+    let lease = control.lease;
+    let waits_for_human = is_component_human_decision_name(&scheduled.call.name);
+    if waits_for_human {
+        let Ok((next, effects)) = reduce(state, AgentEvent::HumanRequired) else {
+            return None;
+        };
+        *state = next;
+        if !matches!(effects.as_slice(), [AgentEffect::AwaitHuman]) {
+            return None;
+        }
+    }
+
+    let budget = match await_run_child(
+        acquire_tool_budget(
+            inner.tool_semaphore.clone(),
+            inner.tool_resources.clone(),
+            scheduled.scheduling,
+        ),
+        control.cancel,
+        control.renew,
+        control.deadline,
+        inner.runtime.as_ref(),
+        lease,
+    )
+    .await
+    {
+        ControlledChild::Ready(Ok(budget)) => budget,
+        ControlledChild::Ready(Err(_)) => {
+            drive_terminal_event(state, journal, AgentEvent::ToolRuntimeUnavailable).await;
+            return None;
+        }
+        ControlledChild::Cancelled(source) => {
+            cancel_and_commit(state, journal, inner.audit.as_ref(), lease, source).await;
+            return None;
+        }
+        ControlledChild::LeaseLost => {
+            drive_terminal_event(state, journal, AgentEvent::LeaseLost).await;
+            return None;
+        }
+    };
+
+    let call = scheduled.call;
+    let arguments = call.arguments.clone();
+    let tools = inner.tools.clone();
+    let invocation_lease = lease.clone();
+    let provider_call_id = call.call_id.clone();
+    let tool_name = call.name.clone();
+    let invocation = async move {
+        let _budget = budget;
+        tools
+            .invoke(&invocation_lease, &provider_call_id, &tool_name, arguments)
+            .await
+    };
+    let outcome = if waits_for_human {
+        // The permit moves into the detached task as well: a cancelled human waiter remains inside
+        // the global tool budget until PostgreSQL reports terminal retirement.
+        match await_run_child(
+            tokio::spawn(invocation),
+            control.cancel,
+            control.renew,
+            control.deadline,
+            inner.runtime.as_ref(),
+            lease,
+        )
+        .await
+        {
+            ControlledChild::Ready(Ok(result)) => ControlledChild::Ready(result),
+            ControlledChild::Ready(Err(error)) => {
+                tracing::error!(
+                    cancelled = error.is_cancelled(),
+                    "component human-decision task ended without a result"
+                );
+                ControlledChild::Ready(Err(AgentToolInvokeError::Unavailable))
+            }
+            ControlledChild::Cancelled(source) => ControlledChild::Cancelled(source),
+            ControlledChild::LeaseLost => ControlledChild::LeaseLost,
+        }
+    } else {
+        await_run_child(
+            invocation,
+            control.cancel,
+            control.renew,
+            control.deadline,
+            inner.runtime.as_ref(),
+            lease,
+        )
+        .await
+    };
+    if waits_for_human && matches!(&outcome, ControlledChild::Ready(_)) {
+        let Ok((next, effects)) = reduce(state, AgentEvent::HumanReleased) else {
+            return None;
+        };
+        *state = next;
+        if !effects.is_empty() {
+            return None;
+        }
+    }
+    match outcome {
+        ControlledChild::Ready(Ok(reply)) => Some((call, reply)),
+        ControlledChild::Ready(Err(AgentToolInvokeError::ReconciliationRequired)) => {
+            drive_terminal_event(state, journal, AgentEvent::JournalCommitUnknown).await;
+            None
+        }
+        ControlledChild::Ready(Err(AgentToolInvokeError::Unavailable)) => {
+            drive_terminal_event(state, journal, AgentEvent::ToolRuntimeUnavailable).await;
+            None
+        }
+        ControlledChild::Cancelled(source) => {
+            if waits_for_human {
+                cancel_and_commit(state, journal, inner.audit.as_ref(), lease, source).await;
+            } else {
+                tool_interrupted(state, journal, inner.audit.as_ref(), lease, source).await;
+            }
+            None
+        }
+        ControlledChild::LeaseLost => {
+            drive_terminal_event(state, journal, AgentEvent::LeaseLost).await;
+            None
+        }
+    }
+}
+
+type ParallelToolOutcome = (
+    usize,
+    AgentToolCall,
+    Result<AgentToolReply, AgentToolInvokeError>,
+);
+
+async fn invoke_parallel_tool_wave(
+    inner: &Inner,
+    state: &mut AgentState,
+    journal: &mut DurableTextRun,
+    control: &mut ToolRunControl<'_>,
+    calls: Vec<ScheduledToolCall>,
+) -> Option<Vec<(AgentToolCall, Result<AgentToolReply, AgentToolInvokeError>)>> {
+    let lease = control.lease;
+    let ever_started = Arc::new(AtomicBool::new(false));
+    let mut tasks = JoinSet::<ParallelToolOutcome>::new();
+    let count = calls.len();
+    for (position, scheduled) in calls.into_iter().enumerate() {
+        let tools = inner.tools.clone();
+        let invocation_lease = lease.clone();
+        let tool_semaphore = inner.tool_semaphore.clone();
+        let tool_resources = inner.tool_resources.clone();
+        let started = ever_started.clone();
+        tasks.spawn(async move {
+            let call = scheduled.call;
+            let arguments = call.arguments.clone();
+            let budget =
+                acquire_tool_budget(tool_semaphore, tool_resources, scheduled.scheduling).await;
+            let outcome = match budget {
+                Ok(budget) => {
+                    started.store(true, Ordering::Release);
+                    let _budget = budget;
+                    tools
+                        .invoke(&invocation_lease, &call.call_id, &call.name, arguments)
+                        .await
+                }
+                Err(error) => Err(error),
+            };
+            (position, call, outcome)
+        });
+    }
+
+    let mut outputs = core::iter::repeat_with(|| None)
+        .take(count)
+        .collect::<Vec<Option<(AgentToolCall, Result<AgentToolReply, AgentToolInvokeError>)>>>();
+    while !tasks.is_empty() {
+        tokio::select! {
+            changed = control.cancel.changed() => {
+                if changed.is_err() || *control.cancel.borrow() {
+                    abort_tool_tasks(&mut tasks).await;
+                    if ever_started.load(Ordering::Acquire) {
+                        tool_interrupted(
+                            state,
+                            journal,
+                            inner.audit.as_ref(),
+                            lease,
+                            CancellationSource::User,
+                        ).await;
+                    } else {
+                        cancel_and_commit(
+                            state,
+                            journal,
+                            inner.audit.as_ref(),
+                            lease,
+                            CancellationSource::User,
+                        ).await;
+                    }
+                    return None;
+                }
+            }
+            () = wait_optional(control.deadline) => {
+                abort_tool_tasks(&mut tasks).await;
+                if ever_started.load(Ordering::Acquire) {
+                    tool_interrupted(
+                        state,
+                        journal,
+                        inner.audit.as_ref(),
+                        lease,
+                        CancellationSource::Deadline,
+                    ).await;
+                } else {
+                    cancel_and_commit(
+                        state,
+                        journal,
+                        inner.audit.as_ref(),
+                        lease,
+                        CancellationSource::Deadline,
+                    ).await;
+                }
+                return None;
+            }
+            _ = control.renew.tick() => {
+                if inner.runtime.renew_lease(lease).await.is_err() {
+                    abort_tool_tasks(&mut tasks).await;
+                    drive_terminal_event(state, journal, AgentEvent::LeaseLost).await;
+                    return None;
+                }
+            }
+            joined = tasks.join_next() => {
+                match joined {
+                    Some(Ok((position, call, outcome))) if position < outputs.len() => {
+                        outputs[position] = Some((call, outcome));
+                    }
+                    Some(Ok(_)) | Some(Err(_)) | None => {
+                        abort_tool_tasks(&mut tasks).await;
+                        drive_terminal_event(state, journal, AgentEvent::JournalCommitUnknown).await;
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    if *control.cancel.borrow() {
+        tool_interrupted(
+            state,
+            journal,
+            inner.audit.as_ref(),
+            lease,
+            CancellationSource::User,
+        )
+        .await;
+        return None;
+    }
+    if control
+        .deadline
+        .is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+    {
+        tool_interrupted(
+            state,
+            journal,
+            inner.audit.as_ref(),
+            lease,
+            CancellationSource::Deadline,
+        )
+        .await;
+        return None;
+    }
+    outputs.into_iter().collect()
+}
+
+async fn abort_tool_tasks(tasks: &mut JoinSet<ParallelToolOutcome>) {
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
+}
+
+async fn append_tool_reply(
+    state: &mut AgentState,
+    journal: &mut DurableTextRun,
+    call: AgentToolCall,
+    reply: AgentToolReply,
+) -> bool {
+    let exchange = match RunToolExchange::new(
+        reply.call_id().clone(),
+        call.call_id,
+        call.name,
+        call.arguments,
+        reply.content().to_owned(),
+        reply.error_code().map(str::to_owned),
+    ) {
+        Ok(exchange) => exchange,
+        Err(error) => {
+            journal_failure(state, journal, error).await;
+            return false;
+        }
+    };
+    if let Err(error) = journal.append_tool_exchange(&exchange).await {
+        journal_failure(state, journal, error).await;
+        return false;
+    }
+    true
 }
 
 async fn wait_optional(deadline: Option<tokio::time::Instant>) {
@@ -1251,7 +1613,7 @@ mod tests {
     use openbot_contracts::ids::{ActorId, BotId, RunId, ThreadId, ToolCallId};
     use openbot_domain::thread::FencingToken;
     use time::macros::datetime;
-    use tokio::sync::Notify;
+    use tokio::sync::{Barrier, Notify};
 
     use super::*;
     use crate::NoAgentToolInvoker;
@@ -1742,6 +2104,44 @@ mod tests {
         seen: StdMutex<Vec<u64>>,
     }
 
+    struct ParallelToolInvoker {
+        active: AtomicUsize,
+        max_active: AtomicUsize,
+        completed: StdMutex<Vec<u64>>,
+        pair_barrier: Barrier,
+    }
+
+    impl ParallelToolInvoker {
+        fn new() -> Self {
+            Self {
+                active: AtomicUsize::new(0),
+                max_active: AtomicUsize::new(0),
+                completed: StdMutex::new(Vec::new()),
+                pair_barrier: Barrier::new(2),
+            }
+        }
+    }
+
+    struct BudgetBlockingToolInvoker {
+        scheduled: AtomicUsize,
+        started: AtomicUsize,
+        first_started: Notify,
+        second_scheduled: Notify,
+    }
+
+    impl BudgetBlockingToolInvoker {
+        fn new() -> Self {
+            Self {
+                scheduled: AtomicUsize::new(0),
+                started: AtomicUsize::new(0),
+                first_started: Notify::new(),
+                second_scheduled: Notify::new(),
+            }
+        }
+    }
+
+    struct SchedulingOnlyInvoker;
+
     struct HumanToolInvoker {
         started: Notify,
         answer: Notify,
@@ -1812,6 +2212,93 @@ mod tests {
     }
 
     #[async_trait]
+    impl AgentToolInvoker for ParallelToolInvoker {
+        fn scheduling(&self, _tool_name: &str) -> AgentToolScheduling {
+            AgentToolScheduling::parallel(Vec::new())
+        }
+
+        async fn invoke(
+            &self,
+            _lease: &RunExecutionLease,
+            _provider_call_id: &str,
+            _tool_name: &str,
+            arguments: serde_json::Value,
+        ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
+            let order = arguments
+                .get("order")
+                .and_then(serde_json::Value::as_u64)
+                .expect("test order");
+            let active = self.active.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+            self.max_active.fetch_max(active, AtomicOrdering::SeqCst);
+            self.pair_barrier.wait().await;
+            if order.is_multiple_of(2) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            self.completed
+                .lock()
+                .expect("parallel completion")
+                .push(order);
+            self.active.fetch_sub(1, AtomicOrdering::SeqCst);
+            crate::AgentToolReply::new(
+                ToolCallId::new(format!("internal-{order}")),
+                format!("result-{order}"),
+                None,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl AgentToolInvoker for BudgetBlockingToolInvoker {
+        fn scheduling(&self, _tool_name: &str) -> AgentToolScheduling {
+            if self.scheduled.fetch_add(1, AtomicOrdering::SeqCst) + 1 == 2 {
+                self.second_scheduled.notify_one();
+            }
+            AgentToolScheduling::parallel(Vec::new())
+        }
+
+        async fn invoke(
+            &self,
+            _lease: &RunExecutionLease,
+            _provider_call_id: &str,
+            _tool_name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
+            let started = self.started.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+            if started == 1 {
+                self.first_started.notify_one();
+            }
+            pending().await
+        }
+    }
+
+    #[async_trait]
+    impl AgentToolInvoker for SchedulingOnlyInvoker {
+        fn scheduling(&self, tool_name: &str) -> AgentToolScheduling {
+            let lock = match tool_name {
+                "parallel-a-1" | "parallel-a-2" => Some("resource:a"),
+                "parallel-b" => Some("resource:b"),
+                _ => None,
+            };
+            match lock {
+                Some(lock) => AgentToolScheduling::parallel(vec![
+                    ResourceLockKey::new(lock).expect("test lock"),
+                ]),
+                None => AgentToolScheduling::serial(),
+            }
+        }
+
+        async fn invoke(
+            &self,
+            _lease: &RunExecutionLease,
+            _provider_call_id: &str,
+            _tool_name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<crate::AgentToolReply, AgentToolInvokeError> {
+            Err(AgentToolInvokeError::Unavailable)
+        }
+    }
+
+    #[async_trait]
     impl ProviderAdapter for FailingStartProvider {
         async fn start(
             &self,
@@ -1864,6 +2351,14 @@ mod tests {
         .unwrap()
     }
 
+    fn test_tool_call(name: &str, order: u64) -> AgentToolCall {
+        AgentToolCall {
+            call_id: format!("provider-{order}"),
+            name: name.to_owned(),
+            arguments: serde_json::json!({"order":order}),
+        }
+    }
+
     const fn receipt(sequence: u64) -> RunWriteReceipt {
         RunWriteReceipt {
             run_event_sequence: sequence,
@@ -1877,9 +2372,31 @@ mod tests {
         BuiltInAgentConfig {
             queue_capacity: 4,
             max_concurrency: 2,
+            max_tool_concurrency: 2,
             lease_renew_interval: Duration::from_secs(1),
             run_deadline: Some(Duration::from_secs(2)),
         }
+    }
+
+    #[test]
+    fn tool_concurrency_budget_rejects_zero_and_unbounded_configuration() {
+        assert!(
+            BuiltInAgentConfig {
+                max_tool_concurrency: 0,
+                ..BuiltInAgentConfig::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            BuiltInAgentConfig {
+                max_tool_concurrency: MAX_AGENT_TOOL_CONCURRENCY + 1,
+                ..BuiltInAgentConfig::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(BuiltInAgentConfig::default().validate().is_ok());
     }
 
     #[tokio::test]
@@ -2466,6 +2983,349 @@ mod tests {
         agent.stop().await;
     }
 
+    #[test]
+    fn scheduler_only_groups_parallel_safe_calls_with_disjoint_resource_locks() {
+        let waves = schedule_tool_waves(
+            &SchedulingOnlyInvoker,
+            vec![
+                test_tool_call("parallel-a-1", 0),
+                test_tool_call("parallel-b", 1),
+                test_tool_call("parallel-a-2", 2),
+                test_tool_call("serial", 3),
+            ],
+        );
+        assert_eq!(waves.len(), 3);
+        assert!(waves[0].parallel);
+        assert_eq!(waves[0].calls.len(), 2);
+        assert!(waves[1].parallel);
+        assert_eq!(waves[1].calls.len(), 1);
+        assert!(!waves[2].parallel);
+        assert_eq!(waves[2].calls.len(), 1);
+
+        let forced_human_serial = schedule_tool_waves(
+            &ParallelToolInvoker::new(),
+            vec![test_tool_call("askApproval", 4)],
+        );
+        assert_eq!(forced_human_serial.len(), 1);
+        assert!(!forced_human_serial[0].parallel);
+    }
+
+    #[tokio::test]
+    async fn resource_lock_budget_serializes_same_key_but_not_disjoint_keys() {
+        let resources = ToolResourceLocks::default();
+        let key_a = ResourceLockKey::new("resource:a").expect("test key");
+        let key_b = ResourceLockKey::new("resource:b").expect("test key");
+        let first_keys = vec![key_a.clone()];
+        let first = resources.acquire(&first_keys).await.unwrap();
+
+        let other_keys = vec![key_b];
+        let other = tokio::time::timeout(Duration::from_millis(50), resources.acquire(&other_keys))
+            .await
+            .expect("disjoint resource must not wait")
+            .unwrap();
+        drop(other);
+
+        let waiting_keys = vec![key_a];
+        let mut waiting = Box::pin(resources.acquire(&waiting_keys));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), waiting.as_mut())
+                .await
+                .is_err(),
+            "same resource lock must stay blocked"
+        );
+        drop(first);
+        tokio::time::timeout(Duration::from_millis(50), waiting)
+            .await
+            .expect("same resource proceeds after release")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn parallel_safe_batch_obeys_global_budget_and_commits_results_in_provider_order() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let provider = Arc::new(SequencedProvider {
+            sessions: StdMutex::new(
+                vec![
+                    vec![
+                        ProviderEvent::ToolCallCompleted {
+                            index: 3,
+                            call_id: "provider-3".to_owned(),
+                            name: "parallel".to_owned(),
+                            arguments: serde_json::json!({"order":3}),
+                        },
+                        ProviderEvent::ToolCallCompleted {
+                            index: 0,
+                            call_id: "provider-0".to_owned(),
+                            name: "parallel".to_owned(),
+                            arguments: serde_json::json!({"order":0}),
+                        },
+                        ProviderEvent::ToolCallCompleted {
+                            index: 2,
+                            call_id: "provider-2".to_owned(),
+                            name: "parallel".to_owned(),
+                            arguments: serde_json::json!({"order":2}),
+                        },
+                        ProviderEvent::ToolCallCompleted {
+                            index: 1,
+                            call_id: "provider-1".to_owned(),
+                            name: "parallel".to_owned(),
+                            arguments: serde_json::json!({"order":1}),
+                        },
+                        ProviderEvent::Usage(ProviderUsage {
+                            input_tokens: 4,
+                            output_tokens: 4,
+                            total_tokens: 8,
+                        }),
+                        ProviderEvent::Completed,
+                    ],
+                    vec![
+                        ProviderEvent::Usage(ProviderUsage {
+                            input_tokens: 2,
+                            output_tokens: 1,
+                            total_tokens: 3,
+                        }),
+                        ProviderEvent::Completed,
+                    ],
+                ]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        });
+        let tools = Arc::new(ParallelToolInvoker::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            provider,
+            tools.clone(),
+            Arc::new(NoAgentAudit),
+            BuiltInAgentConfig {
+                max_tool_concurrency: 2,
+                ..test_config()
+            },
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-parallel-tools");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+
+        assert_eq!(tools.max_active.load(AtomicOrdering::SeqCst), 2);
+        let mut completed = tools.completed.lock().expect("parallel completion").clone();
+        completed.sort_unstable();
+        assert_eq!(completed, [0, 1, 2, 3]);
+        assert_eq!(
+            runtime.calls(),
+            [
+                RuntimeCall::ToolExchange(
+                    1,
+                    "provider-0".to_owned(),
+                    "parallel".to_owned(),
+                    "result-0".to_owned(),
+                ),
+                RuntimeCall::ToolExchange(
+                    2,
+                    "provider-1".to_owned(),
+                    "parallel".to_owned(),
+                    "result-1".to_owned(),
+                ),
+                RuntimeCall::ToolExchange(
+                    3,
+                    "provider-2".to_owned(),
+                    "parallel".to_owned(),
+                    "result-2".to_owned(),
+                ),
+                RuntimeCall::ToolExchange(
+                    4,
+                    "provider-3".to_owned(),
+                    "parallel".to_owned(),
+                    "result-3".to_owned(),
+                ),
+                RuntimeCall::Finish(5, RunTerminal::Completed),
+            ]
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_waiting_for_tool_budget_never_starts_the_queued_tool() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let provider = Arc::new(SequencedProvider {
+            sessions: StdMutex::new(
+                vec![
+                    vec![
+                        ProviderEvent::ToolCallCompleted {
+                            index: 0,
+                            call_id: "provider-first".to_owned(),
+                            name: "parallel".to_owned(),
+                            arguments: serde_json::json!({"order":0}),
+                        },
+                        ProviderEvent::Usage(ProviderUsage {
+                            input_tokens: 1,
+                            output_tokens: 1,
+                            total_tokens: 2,
+                        }),
+                        ProviderEvent::Completed,
+                    ],
+                    vec![
+                        ProviderEvent::ToolCallCompleted {
+                            index: 0,
+                            call_id: "provider-second".to_owned(),
+                            name: "parallel".to_owned(),
+                            arguments: serde_json::json!({"order":1}),
+                        },
+                        ProviderEvent::Usage(ProviderUsage {
+                            input_tokens: 1,
+                            output_tokens: 1,
+                            total_tokens: 2,
+                        }),
+                        ProviderEvent::Completed,
+                    ],
+                ]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        });
+        let tools = Arc::new(BudgetBlockingToolInvoker::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            provider,
+            tools.clone(),
+            Arc::new(NoAgentAudit),
+            BuiltInAgentConfig {
+                queue_capacity: 2,
+                max_concurrency: 2,
+                max_tool_concurrency: 1,
+                lease_renew_interval: Duration::from_secs(1),
+                run_deadline: Some(Duration::from_secs(2)),
+            },
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let first = lease("run-tool-budget-first");
+        let second = lease("run-tool-budget-second");
+        assert_eq!(
+            consumer.dispatch(first.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&first).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), tools.first_started.notified())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            consumer.dispatch(second.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&second).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), tools.second_scheduled.notified())
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(
+            consumer.revoke(&second).await,
+            RunCancellationDisposition::ChildSignalled
+        );
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .expect("tool budget waiter must commit a terminal");
+        assert_eq!(tools.started.load(AtomicOrdering::SeqCst), 1);
+        assert!(
+            runtime
+                .calls()
+                .iter()
+                .any(|call| { matches!(call, RuntimeCall::Finish(1, RunTerminal::Cancelled)) })
+        );
+        agent.stop().await;
+    }
+
+    #[tokio::test]
+    async fn cancelling_started_parallel_tools_aborts_children_then_requires_reconciliation() {
+        let runtime = Arc::new(FakeRuntime::new());
+        let provider = Arc::new(SequencedProvider {
+            sessions: StdMutex::new(
+                vec![vec![
+                    ProviderEvent::ToolCallCompleted {
+                        index: 0,
+                        call_id: "provider-first".to_owned(),
+                        name: "parallel".to_owned(),
+                        arguments: serde_json::json!({"order":0}),
+                    },
+                    ProviderEvent::ToolCallCompleted {
+                        index: 1,
+                        call_id: "provider-second".to_owned(),
+                        name: "parallel".to_owned(),
+                        arguments: serde_json::json!({"order":1}),
+                    },
+                    ProviderEvent::Usage(ProviderUsage {
+                        input_tokens: 2,
+                        output_tokens: 2,
+                        total_tokens: 4,
+                    }),
+                    ProviderEvent::Completed,
+                ]]
+                .into(),
+            ),
+            starts: AtomicUsize::new(0),
+        });
+        let tools = Arc::new(BudgetBlockingToolInvoker::new());
+        let agent = BuiltInAgentRuntime::start(
+            runtime.clone(),
+            Arc::new(FakeContext),
+            provider,
+            tools.clone(),
+            Arc::new(NoAgentAudit),
+            BuiltInAgentConfig {
+                max_tool_concurrency: 2,
+                ..test_config()
+            },
+        )
+        .unwrap();
+        let consumer = agent.consumer();
+        let lease = lease("run-started-parallel-cancel");
+        assert_eq!(
+            consumer.dispatch(lease.clone()).await,
+            RunDispatchDecision::Accepted
+        );
+        consumer.activate(&lease).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while tools.started.load(AtomicOrdering::SeqCst) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            consumer.revoke(&lease).await,
+            RunCancellationDisposition::ChildSignalled
+        );
+        tokio::time::timeout(Duration::from_secs(1), runtime.terminal.notified())
+            .await
+            .unwrap();
+        assert!(runtime.calls().iter().any(|call| {
+            matches!(
+                call,
+                RuntimeCall::Finish(
+                    1,
+                    RunTerminal::ReconciliationRequired(RunFailureCode::JournalCommitUnknown)
+                )
+            )
+        }));
+        assert!(
+            !runtime
+                .calls()
+                .iter()
+                .any(|call| { matches!(call, RuntimeCall::Finish(_, RunTerminal::Cancelled)) })
+        );
+        agent.stop().await;
+    }
+
     #[tokio::test]
     async fn reported_output_above_authoritative_token_cap_fails_before_completed() {
         let runtime = Arc::new(FakeRuntime::new());
@@ -2666,6 +3526,7 @@ mod tests {
             BuiltInAgentConfig {
                 queue_capacity: 2,
                 max_concurrency: 1,
+                max_tool_concurrency: 1,
                 lease_renew_interval: Duration::from_secs(1),
                 run_deadline: Some(Duration::from_secs(2)),
             },
@@ -2720,6 +3581,7 @@ mod tests {
             BuiltInAgentConfig {
                 queue_capacity: 4,
                 max_concurrency: 2,
+                max_tool_concurrency: 2,
                 lease_renew_interval: Duration::from_millis(5),
                 run_deadline: Some(Duration::from_millis(30)),
             },

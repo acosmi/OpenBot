@@ -12,13 +12,15 @@ use openbot_contracts::auth::AuthContext;
 use openbot_contracts::command::{AppCommand, AppReply};
 use openbot_contracts::components::{
     ComponentDecisionRefusal, ComponentDecisionRequest, ComponentHumanDecisionRequest,
-    compiled_component_confirmation, compiled_component_title, is_component_human_decision_name,
-    validate_compiled_component_arguments, validate_component_human_decision_answer,
+    compiled_component_confirmation, compiled_component_parallel_safe, compiled_component_title,
+    is_component_human_decision_name, validate_compiled_component_arguments,
+    validate_component_human_decision_answer,
 };
 use openbot_contracts::error::AppError;
 use openbot_contracts::ids::{BotId, RunId, ToolCallId};
 use openbot_contracts::sandboxed::{SANDBOXED_COMPONENT_CONFIRMATION, is_sandboxed_component_name};
 use openbot_contracts::tool::{ToolInvocation, ToolResult};
+use openbot_domain::tool::metadata::ResourceLockKey;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -92,9 +94,78 @@ pub enum AgentToolInvokeError {
     ReconciliationRequired,
 }
 
+/// Maximum number of first-party resource-lock keys accepted for one parallel scheduling
+/// declaration. Exceeding it conservatively falls back to serial execution.
+pub const MAX_AGENT_TOOL_RESOURCE_LOCKS: usize = 32;
+
+/// Build-owned scheduling metadata consumed only by the Agent host.
+///
+/// This value never grants tool authority: every invocation still reloads `AuthContext` and goes
+/// through the existing `ApplicationService` policy/approval/capability pipeline. It only decides
+/// whether already-authoritative invocations may be in flight at the same time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentToolScheduling {
+    parallel_safe: bool,
+    resource_locks: Arc<[ResourceLockKey]>,
+}
+
+impl AgentToolScheduling {
+    /// Conservative default for every unknown, dynamic, acting, or human-decision tool.
+    #[must_use]
+    pub fn serial() -> Self {
+        Self {
+            parallel_safe: false,
+            resource_locks: Arc::from([]),
+        }
+    }
+
+    /// Declare one reviewed first-party tool parallel-safe with canonical resource locks.
+    ///
+    /// Too many lock keys cannot safely allocate an unbounded lock set, so the declaration becomes
+    /// serial instead of truncating keys and accidentally allowing a conflict.
+    #[must_use]
+    pub fn parallel(mut resource_locks: Vec<ResourceLockKey>) -> Self {
+        resource_locks.sort();
+        resource_locks.dedup();
+        if resource_locks.len() > MAX_AGENT_TOOL_RESOURCE_LOCKS {
+            return Self::serial();
+        }
+        Self {
+            parallel_safe: true,
+            resource_locks: resource_locks.into(),
+        }
+    }
+
+    /// Whether the first-party host explicitly allowed concurrent execution.
+    #[must_use]
+    pub const fn is_parallel_safe(&self) -> bool {
+        self.parallel_safe
+    }
+
+    /// Canonical opaque resource-lock keys.
+    #[must_use]
+    pub fn resource_locks(&self) -> &[ResourceLockKey] {
+        &self.resource_locks
+    }
+}
+
+impl Default for AgentToolScheduling {
+    fn default() -> Self {
+        Self::serial()
+    }
+}
+
 /// Host-facing tool boundary. Production implementation always reloads AuthContext first.
 #[async_trait]
 pub trait AgentToolInvoker: Send + Sync {
+    /// Return build-owned scheduling metadata for one exact tool name.
+    ///
+    /// The default is serial. Implementations must never derive this value from provider payloads,
+    /// MCP annotations, database-authored descriptions, or renderer input.
+    fn scheduling(&self, _tool_name: &str) -> AgentToolScheduling {
+        AgentToolScheduling::serial()
+    }
+
     /// Invoke one provider call through ApplicationService's unique tool pipeline.
     async fn invoke(
         &self,
@@ -541,6 +612,14 @@ impl core::fmt::Debug for AuthorizedAgentToolGateway {
 
 #[async_trait]
 impl AgentToolInvoker for AuthorizedAgentToolGateway {
+    fn scheduling(&self, tool_name: &str) -> AgentToolScheduling {
+        if compiled_component_parallel_safe(tool_name) {
+            AgentToolScheduling::parallel(Vec::new())
+        } else {
+            AgentToolScheduling::serial()
+        }
+    }
+
     async fn invoke(
         &self,
         lease: &RunExecutionLease,
@@ -1036,6 +1115,30 @@ mod tests {
             .await
             .expect_err("非 Tool reply 必须报契约破损");
         assert_eq!(error.code().as_str(), "dependency_unavailable");
+    }
+
+    #[test]
+    fn production_scheduling_only_allows_exact_ordinary_build_components() {
+        let gateway = AuthorizedAgentToolGateway::new(fake(false), Arc::new(FixedAuthorization));
+        assert!(
+            gateway
+                .scheduling(SHOW_QUOTE_COMPONENT_NAME)
+                .is_parallel_safe()
+        );
+        for serial in [
+            ASK_APPROVAL_COMPONENT_NAME,
+            "remember",
+            "custom_delivery_eta",
+            "vendor.claimed_parallel",
+        ] {
+            assert!(!gateway.scheduling(serial).is_parallel_safe());
+        }
+
+        let too_many = (0..=MAX_AGENT_TOOL_RESOURCE_LOCKS)
+            .map(|index| ResourceLockKey::new(format!("resource:{index}")))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(!AgentToolScheduling::parallel(too_many).is_parallel_safe());
     }
 
     #[tokio::test]
