@@ -304,6 +304,13 @@ async fn skills_grants_and_actor_specific_projection_are_transactional_and_audit
                 admin_page.skills.len() == 3,
                 format!("admin skill page drift: {:?}", admin_page.skills),
             )?;
+            require(
+                admin_page.servers.len() == 1
+                    && admin_page.servers[0].authentication
+                        == openbot_contracts::mcp::McpAdminAuthentication::None
+                    && !admin_page.servers[0].has_credential,
+                "anonymous MCP server authentication was guessed from presentation",
+            )?;
 
             let owned_skill_grant = skill_grant("review-notes", "agent-owned");
             connections

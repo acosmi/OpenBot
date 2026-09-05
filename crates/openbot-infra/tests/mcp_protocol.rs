@@ -1133,6 +1133,8 @@ async fn custom_admin_private_egress_is_db_bound_refreshes_and_retires_atomicall
                 .await
                 .map_err(|error| format!("denied admin page: {error}"))?;
             if denied_page.servers.len() != 1
+                || denied_page.servers[0].authentication
+                    != openbot_contracts::mcp::McpAdminAuthentication::DeploymentBearer
                 || denied_page.servers[0].last_error.as_deref() != Some("mcp_catalog_unavailable")
                 || !denied_page.servers[0].tools.is_empty()
             {

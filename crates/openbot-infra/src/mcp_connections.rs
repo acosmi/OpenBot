@@ -41,6 +41,7 @@ use url::Url;
 use uuid::Uuid;
 use zeroize::{Zeroize as _, Zeroizing};
 
+use crate::db::types::CredentialKind;
 use crate::google_drive::{
     GOOGLE_DRIVE_API_BASE, GOOGLE_DRIVE_PROVENANCE, GOOGLE_DRIVE_READONLY_SCOPE,
     GOOGLE_DRIVE_SERVER_ID, GOOGLE_DRIVE_TRANSPORT, GOOGLE_DRIVE_VENDOR,
@@ -304,11 +305,12 @@ impl PostgresMcpConnections {
 
         let server_rows = transaction
             .query(
-                "SELECT id,title,vendor,url,provenance,credential_id,tools_refreshed_at,
-                        last_error,added_by,
-                        coalesce(transport,'mcp') AS transport,
-                        coalesce(egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs
-                   FROM public.mcp_servers ORDER BY title,id",
+                "SELECT s.id,s.title,s.vendor,s.url,s.provenance,s.credential_id,s.tools_refreshed_at,
+                        s.last_error,s.added_by,c.kind AS credential_kind,
+                        coalesce(s.transport,'mcp') AS transport,
+                        coalesce(s.egress_allow_cidrs,ARRAY[]::text[]) AS egress_allow_cidrs
+                   FROM public.mcp_servers s
+                   LEFT JOIN public.credentials c ON c.id=s.credential_id ORDER BY s.title,s.id",
                 &[],
             )
             .await
@@ -361,6 +363,21 @@ impl PostgresMcpConnections {
                 summary,
                 docs_url,
                 provenance,
+                authentication: match (
+                    transport,
+                    row.try_get::<_, Option<CredentialKind>>("credential_kind")
+                        .map_err(|_| corrupt("credential_kind"))?,
+                ) {
+                    (VendorTransportKind::GoogleDriveRest, _)
+                    | (_, Some(CredentialKind::McpOauthClient)) => {
+                        McpAdminAuthentication::UserOAuth
+                    }
+                    (VendorTransportKind::Mcp, Some(CredentialKind::Mcp)) => {
+                        McpAdminAuthentication::DeploymentBearer
+                    }
+                    (VendorTransportKind::Mcp, None) => McpAdminAuthentication::None,
+                    _ => return Err(corrupt("credential_kind")),
+                },
                 has_credential: row
                     .try_get::<_, Option<Uuid>>("credential_id")
                     .map_err(|_| corrupt("credential_id"))?

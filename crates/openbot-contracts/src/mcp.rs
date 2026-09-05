@@ -291,6 +291,9 @@ pub struct McpAdminServer {
     pub docs_url: String,
     /// `first-party` or `custom`.
     pub provenance: String,
+    /// Authentication scheme resolved by Rust from transport and credential kind, never guessed
+    /// from `has_credential` or a vendor name in the GUI.
+    pub authentication: McpAdminAuthentication,
     /// Whether a deployment credential pointer is present.
     pub has_credential: bool,
     /// Last successful catalog refresh.

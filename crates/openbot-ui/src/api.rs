@@ -6,6 +6,9 @@
 #[path = "desktop_transport.rs"]
 pub(crate) mod desktop_transport;
 
+#[path = "plugins_api.rs"]
+pub(crate) mod plugins;
+
 use openbot_contracts::agent::{
     AgentConnectionTestRequest, AgentConnectionVerdict, AgentMutationRequest, AgentProfile,
     CallbackTokenIssued,

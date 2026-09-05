@@ -786,9 +786,12 @@ G6 重写后的文本（替换 v3 原四条）：
   skills、MCP/skill grants与actor-specific for-Agent后端；管理页的`grantedTo`按tenant与actor-visible
   Agent收窄，skill正文Debug脱敏。Batch101又以固定上游无调用者与真实typed run替代证据退役legacy
   browser call；Batch102把custom private CIDR贯穿registration/connect/code/refresh/revoke后端，但不包含
-  Desktop installed-app OAuth或任何页面。`/admin/plugins` index/detail/tool与`/admin/skills`四route、
-  AppSidebar/AdminSidebar destination、正式
-  browser journey/golden/AX均未实现。不得用后端API或Desktop framing冒充本GUI项完成；
+  Desktop installed-app OAuth或任何页面。Batch117/R193再补`/admin/plugins` index/detail/tool三条
+  Server Web路由与AdminSidebar入口，接custom HTTPS/CIDR、OAuth client/本人连接、刷新/移除与逐Agent grant。
+  Rust投影认证三态；串行写入、unknown读回、表单局部错误、开关/模态焦点已在release浏览器中英实走。
+  PG43/UI187/Contracts105/Server233绿、i18n869键、wasm gzip2007787B/CSS116942B/字体740216B。
+  三route仍todo：尚缺production PG/session→GUI整体权限旅程、完整Bearer凭据产品面、Desktop部分transport与
+  实际宿主/Local OAuth；`/admin/skills`、完整AppSidebar、正式golden/AX仍未完成。不得以本批关闭G6；
 - [ ] AppSidebar总项仍不勾：production roster/current-user/session/sign-out与三断点同一children已落，
   new-channel/Agents/Memory/Settings已接，但skills/admin真实destinations尚未迁移；完整channel route也仍缺
   markdown/sources/attachments/per-channel draft/steer/screen，不得用已接Stop/queue冒充完整journey；

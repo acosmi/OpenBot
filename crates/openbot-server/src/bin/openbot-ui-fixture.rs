@@ -1,5 +1,8 @@
 //! Local-only deterministic GUI fixture host required by the GUI first-source golden workflow.
 
+#[path = "ui_fixture/plugins.rs"]
+mod fixture_plugins;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::error::Error;
 use std::pin::Pin;
@@ -3687,6 +3690,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let routing = FixtureRouting::new();
     let routing_probe = routing.probe();
     let agents = Arc::new(FixtureAgents::new());
+    let plugins = fixture_plugins::PluginsFixture::new(connections);
     let application: Arc<dyn ApplicationService> = Arc::new(
         OpenBotApplication::new(channels.clone())
             .with_channel_administration(Arc::new(channels))
@@ -3701,7 +3705,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .with_policy(policy)
             .with_threads(threads)
             .with_memory(memory)
-            .with_mcp_connections(Arc::new(connections))
+            .with_mcp_connections(Arc::new(plugins.clone()))
             .with_tool_approvals(approvals)
             .with_ui_preferences(Arc::new(FixturePreferences::default())),
     );
@@ -3716,6 +3720,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
         builder = builder.with_dynamic_sso(dynamic_sso);
     }
     let mut router = builder.into_router();
+    let plugin_probe = plugins.clone();
+    router = router.route(
+        "/__fixture/plugins/proof",
+        axum::routing::get(move || {
+            let fixture = plugin_probe.clone();
+            async move { axum::Json(fixture.proof()) }
+        }),
+    );
+    router = router.route(
+        "/__fixture/plugins/control",
+        axum::routing::post(move |axum::Json(mode): axum::Json<u8>| {
+            let fixture = plugins.clone();
+            async move {
+                if fixture.control(mode) {
+                    axum::http::StatusCode::NO_CONTENT
+                } else {
+                    axum::http::StatusCode::BAD_REQUEST
+                }
+            }
+        }),
+    );
     if let Some(approval_probe) = approval_probe {
         router = router.route(
             "/__fixture/approval-probe",

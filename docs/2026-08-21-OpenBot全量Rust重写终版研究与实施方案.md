@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R192，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R193，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -940,6 +940,14 @@ admin 管理；MCP grant 绑定 current catalog/schema/effect/transport/credenti
 authority 的 legacy `/api/plugins/call`；真实能力继续只走 AgentToolGateway 的 typed run 管线。两批都
 不改变“两阶段 retrieval 尚未实现”的结论，也不代表 Plugins/Skills GUI 或 G4/G6 整关完成
 （§28.1 R174–R175）。
+
+Batch117（R193）补齐 Plugins 的 Server Web 管理子面：index/detail/tool 三路由复用既有 typed API，
+支持目录、自定义 HTTPS/CIDR、OAuth client、个人连接、刷新/移除和逐 Agent grant。Rust 从 transport
+与 credential kind 投影封闭认证三态，GUI 不从 hasCredential 猜测；App owner 串行写入，离页不假装取消，
+失败/unknown 只读回而不重放，字段与焦点按当前页面恢复。真实 PG/loopback 43 项、UI187、Contracts105、
+Server233及 release 浏览器中英/失败/unknown/离页/键盘通过。三条 T-ROUTE 仍todo：缺 production PG/session
+到 GUI 的整体权限旅程、Desktop 部分 transport/真实宿主与 Local OAuth，详情 Bearer 凭据创建/编辑面仍缺。
+正式 golden/AX、Skills UI、完整 AppSidebar 与 G6 不勾，详见 Batch117。
 
 ## 10. ComputerSecurityScope 与多 Bot/多用户隔离
 
@@ -2714,6 +2722,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R191 | §0.5 / §3 / §11.4 / §19 / §23.2 / §24–§25（2026-09-04：用户裁决开源共建与受控Alpha） | 仅沿全部v4待办推进会延后首个可用版本；用户明确要尽早可用后续升级、社区按v4共建并由维护者审PR，首版工作台/Agent工具/浏览器/原生电脑三类均必需。自有项目旧checkout不代表最新已合并Windows实现，复制与开源许可也不是同一件事。 | 新增独立受控Alpha方向与三条真实用户故事，平台分腿实际准入；保留全部v4 G0–G8/DoD和todo分母，不称Alpha通过=v4完成。按固定已合并提交复制最小Rust模块评估，不改源仓；明确最新已有macOS/Windows实现，移植后各自重验。开源先做范围/授权/whole-tree审计及许可证同步，社区任务固定基线/允许路径/T-ID/证据，维护者独立复算后合入；R63、固定Grok树、安全不变量不放宽。 | 用户本轮明确选择受控试用、三类能力均必需、开源共建、只复制不改源仓。只读Git与合并PR核实纠正旧平台判断；副本独立编译后坐标5/风险30/序列化14/图像15通过，Windows x64 check通过；均不是本产品runtime/签名证据。当前LICENSE仍专有，未发布或上传复制源码，未派发Actions、未合并PR。研究方案记录候选A0–A7、复用与社区流程；后续逐条实现，v4总目标保持active。 |
 
 | R192 | §7.5 / §21.2 / §23.1 / §24 G4（2026-09-04 Batch116：AG-UI官方事件fixture主控验收） | 十一事件族production已落但T-FIX-0010仍缺正式schema corpus。外部候选虽5项测试绿，却新增第二份package.json，测试只比fixture/Rust而未读官方枚举，报告byte/scenario漂移且从作者字段推定版权人/SLSA验签。 | 只将单候选dd7febe7…的允许文件导入主控分支并修正；官方package原字节改名为惰性package-manifest.json，加入official/fixture/Rust三向集合、exact库存/regular-file/bytes/hash验证；去宿主路径、按实物重写交付报告。SDK0.0.57发布schema54f13419…单独登记，不替换v4仓库oracle e42bdbed…；官方MIT原文保留，不发明版权人，Registry/SLSA payload与签名验证分开。 | 官方六文件Git tree/blob/bytes/SHA逐项独立复核，Registry元数据及attestation payload source commit吻合，Sigstore验签仍false。fixture39行/33type/3scenario=4426B/SHA256 6c13dad3…；公共AguiDecoder/encoder回放5/0/0、Agent57/0/0，Clippy/fmt/shim595/600与单manifest绿。T-FIX-0010 done后fixtures35/20/55，parity仍873/839/1712、overlay1273/431/2/6；SPDX独立schema source后57项。仅协议corpus，不是vendor录制或PG/UI/网络证明；T-FIX-0011/0012、G4/G6/G8与归属文字确认仍未完成。无production/Cargo/native/UI/Grok/workflow或远端写入。详见Batch116。 |
+| R193 | §9 / §24 G6（2026-09-04 Batch117：Plugins Server Web 管理子面） | 后端已有 MCP admin/private-egress/grants，但三条管理页面尚未实现；hasCredential 无法区分部署 Bearer、个人 OAuth 和匿名配置。 | 共用 AdminShell/typed API 实现 index/detail/tool、custom HTTPS/CIDR、OAuth client/本人连接、刷新/移除与 per-Agent grant。Rust 新增 authentication 闭合投影；App owner 串行写入，失败/202 unknown 只读回，无自动重放；补校验、局部错误与跨 route/模态焦点规则。 | PG/loopback 31+11+1、UI187、Contracts105、Server233全部实绿；Clippy含WASM、release中英浏览器验证和设计/i18n869/预算绿。wasm gzip2007787B/CSS116942B/字体740216B/外链脚本1/inline0；strict160/0/0。三route仍todo，保留完整Bearer产品面、production PG/session→GUI权限旅程、Desktop transport/Local OAuth/真实宿主、golden/AX/Skills与G6；parity873/839/1712、fixtures35/20/55不变。无schema/Cargo/Engine/Grok/Actions或远端写入。 |
 
 ### 28.2 复核通过、原样保留的断言
 
