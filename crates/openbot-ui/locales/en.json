@@ -1,5 +1,6 @@
 {
   "common": {
+    "secret_entry_help": "To send this secret again after saving, re-enter it. Closing this form clears it.",
     "app_name": "OpenBot",
     "save": "Save",
     "cancel": "Cancel",

@@ -267,7 +267,7 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 | `empty.tsx` | `EmptyState` | — | 纯展示 | — |
 | `field.tsx` | `Field`（label + 控件 + 说明 + 错误，`aria-describedby` / `aria-invalid` 自动接线） | — | — | invalid/disabled |
 | `input-group.tsx` | `InputGroup`（前后缀槽） | — | — | focus-within |
-| `input.tsx` | `Input` | base-ui Input | textbox | focus/disabled/invalid |
+| `input.tsx` | `Input` / 同家族 `SecretInput` | base-ui Input | textbox | focus/disabled/invalid |
 | `item.tsx` | `Item`（列表行：media / 标题 / 描述 / 动作槽） | — | 可为 link 或 button | hover/selected/disabled |
 | `label.tsx` | `Label` | — | `for` 绑定 | — |
 | `message-scroller.tsx` | `MessageScroller`（自动贴底、"回到底部"胶囊、新消息时保持阅读位置） | — | `role="log"`、`aria-live="polite"` | — |
@@ -281,6 +281,13 @@ sign-in 按钮（Google / Microsoft / Okta，parity 于上游 `auth/provider-log
 | `switch.tsx` | `Switch` | base-ui Switch | switch；`Space` | checked/disabled |
 | `textarea.tsx` | `Textarea`（自动增高，上限 10 行） | — | textbox multiline | focus/disabled/invalid |
 | `tooltip.tsx` | `Tooltip` | base-ui Tooltip | tooltip；hover/focus 显示、`Esc` 隐藏、延迟 400ms | open |
+
+R195规定Input家族的密钥专用实现：普通受控Input只含text/email/search/url，密码由SecretInput
+持DOM值，响应式层只有校验事实和修改代次。不得给密码控件绑定RwSignal<String>、StoredValue原文或
+明文change callback。Field继续提供label/ARIA及双语重填说明；保存消费输入，失败不回填，关闭/协议切换/
+卸载清理，Agent显式probe保留当前DOM输入但不存响应式副本。它不是新增产品能力或新的route/golden分母。
+Batch119在三个现有密码入口均实施，Contracts108/UI188、release中英局部旅程及静态闸门通过；正式AX/golden
+与浏览器底层物理擦除不由这些证据推出。
 
 **新增原语**（上游无，本项目需要）：`Toast`（非阻塞反馈，`role="status"`，5s 自动消失，用于一切 `accepted:false` 类用户可见反馈）、`Badge`（纯文字状态，语义色只落文字 + 状态点）、`Kbd`、`Avatar`（§6.6）、`ThemeToggle`（§7）、`LocaleSwitch`（§8）。
 

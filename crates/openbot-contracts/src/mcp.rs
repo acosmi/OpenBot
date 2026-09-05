@@ -40,6 +40,24 @@ impl McpOAuthClientRegistration {
         auth_method: McpOAuthClientAuthMethod,
         resource_metadata_url: Option<String>,
     ) -> Result<Self, McpOAuthClientRegistrationError> {
+        Self::with_zeroizing_secret(
+            client_id,
+            Zeroizing::new(client_secret),
+            issuer,
+            auth_method,
+            resource_metadata_url,
+        )
+    }
+
+    /// Accept a transient secret allocation from a write-only input. Validation failures erase the
+    /// allocation too; successful construction shares this exact allocation without a plain copy.
+    pub fn with_zeroizing_secret(
+        client_id: String,
+        client_secret: Zeroizing<String>,
+        issuer: String,
+        auth_method: McpOAuthClientAuthMethod,
+        resource_metadata_url: Option<String>,
+    ) -> Result<Self, McpOAuthClientRegistrationError> {
         if !valid_component(&client_id, 4 * 1024)
             || !valid_component(&client_secret, 16 * 1024)
             || !valid_component(&issuer, 8 * 1024)
@@ -51,7 +69,7 @@ impl McpOAuthClientRegistration {
         }
         Ok(Self {
             client_id,
-            client_secret: Arc::new(Zeroizing::new(client_secret)),
+            client_secret: Arc::new(client_secret),
             issuer,
             auth_method,
             resource_metadata_url,
@@ -156,7 +174,8 @@ impl<'de> Deserialize<'de> for McpOAuthClientRegistration {
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Wire {
             client_id: String,
-            client_secret: String,
+            #[serde(deserialize_with = "crate::secret_text::deserialize")]
+            client_secret: Zeroizing<String>,
             issuer: String,
             #[serde(default)]
             token_endpoint_auth_method: McpOAuthClientAuthMethod,
@@ -164,7 +183,7 @@ impl<'de> Deserialize<'de> for McpOAuthClientRegistration {
             resource_metadata_url: Option<String>,
         }
         let wire = Wire::deserialize(deserializer)?;
-        Self::new(
+        Self::with_zeroizing_secret(
             wire.client_id,
             wire.client_secret,
             wire.issuer,
@@ -559,6 +578,24 @@ fn valid_component(value: &str, max: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oauth_registration_transfers_one_secret_allocation_and_keeps_closed_decoding() {
+        let secret = Zeroizing::new("allocation-canary".to_owned());
+        let address = secret.as_ptr();
+        let input = McpOAuthClientRegistration::with_zeroizing_secret(
+            "client".to_owned(),
+            secret,
+            "https://issuer.example".to_owned(),
+            McpOAuthClientAuthMethod::ClientSecretBasic,
+            None,
+        )
+        .unwrap();
+        assert_eq!(input.expose_client_secret().as_ptr(), address);
+        assert_eq!(input.clone().expose_client_secret().as_ptr(), address);
+        assert!(!format!("{input:?}").contains("allocation-canary"));
+        assert!(serde_json::from_str::<McpOAuthClientRegistration>(r#"{"clientId":"client","clientSecret":"allocation-canary","issuer":"https://issuer.example","role":"admin"}"#).is_err());
+    }
 
     #[test]
     fn oauth_client_wire_round_trips_but_debug_never_contains_the_secret() {

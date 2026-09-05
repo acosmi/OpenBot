@@ -1,5 +1,6 @@
 {
   "common": {
+    "secret_entry_help": "提交后若需再次发送此密钥，请重新输入；关闭表单会清除密钥。",
     "app_name": "OpenBot",
     "save": "保存",
     "cancel": "取消",

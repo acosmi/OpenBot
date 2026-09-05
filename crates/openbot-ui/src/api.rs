@@ -9,6 +9,22 @@ pub(crate) mod desktop_transport;
 #[path = "plugins_api.rs"]
 pub(crate) mod plugins;
 
+/// Serialize a sensitive request without a serde_json::Value copy. The temporary Rust JSON buffer
+/// is zeroized before awaiting the browser request; JS/network buffers remain browser-owned.
+#[cfg(target_arch = "wasm32")]
+fn secret_json<T: serde::Serialize>(
+    builder: gloo_net::http::RequestBuilder,
+    value: &T,
+) -> Result<gloo_net::http::Request, ApiError> {
+    let body = zeroize::Zeroizing::new(
+        serde_json::to_string(value).map_err(|_| ApiError::InvalidResponse)?,
+    );
+    builder
+        .header("Content-Type", "application/json")
+        .body(body.as_str())
+        .map_err(|_| ApiError::InvalidResponse)
+}
+
 use openbot_contracts::agent::{
     AgentConnectionTestRequest, AgentConnectionVerdict, AgentMutationRequest, AgentProfile,
     CallbackTokenIssued,
@@ -1369,14 +1385,14 @@ pub async fn load_agent(agent_id: &str) -> Result<AgentProfile, ApiError> {
 }
 
 /// Create one caller-owned Agent; response is the authoritative profile.
-pub async fn create_agent(request: &AgentMutationRequest) -> Result<AgentProfile, ApiError> {
+pub async fn create_agent(request: AgentMutationRequest) -> Result<AgentProfile, ApiError> {
     agent_profile_mutation("/api/agents", "POST", request).await
 }
 
 /// Update one manageable Agent; response is the authoritative profile.
 pub async fn update_agent(
     agent_id: &str,
-    request: &AgentMutationRequest,
+    request: AgentMutationRequest,
 ) -> Result<AgentProfile, ApiError> {
     let path = agent_detail_path(agent_id)?;
     agent_profile_mutation(&path, "PATCH", request).await
@@ -1460,21 +1476,19 @@ pub async fn revoke_agent_callback_token(agent_id: &str) -> Result<(), ApiError>
 
 /// Perform one uncached real remote AG-UI connection probe.
 pub async fn test_agent_connection(
-    request: &AgentConnectionTestRequest,
+    request: AgentConnectionTestRequest,
 ) -> Result<AgentConnectionVerdict, ApiError> {
     #[cfg(target_arch = "wasm32")]
     {
         use gloo_net::http::Request;
         use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
-        let response = Request::post("/api/agents/test-connection")
+        let builder = Request::post("/api/agents/test-connection")
             .cache(RequestCache::NoStore)
             .credentials(RequestCredentials::SameOrigin)
-            .redirect(RequestRedirect::Error)
-            .json(request)
-            .map_err(|_| ApiError::InvalidResponse)?
-            .send()
-            .await
-            .map_err(|_| ApiError::Network)?;
+            .redirect(RequestRedirect::Error);
+        let outgoing = secret_json(builder, &request)?;
+        drop(request);
+        let response = outgoing.send().await.map_err(|_| ApiError::Network)?;
         if response.status() != 200 {
             return Err(status_error(response.status()));
         }
@@ -1500,7 +1514,7 @@ pub async fn test_agent_connection(
 async fn agent_profile_mutation(
     path: &str,
     method: &'static str,
-    request: &AgentMutationRequest,
+    request: AgentMutationRequest,
 ) -> Result<AgentProfile, ApiError> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -1511,15 +1525,13 @@ async fn agent_profile_mutation(
             "PATCH" => Request::patch(path),
             _ => return Err(ApiError::InvalidResponse),
         };
-        let response = builder
+        let builder = builder
             .cache(RequestCache::NoStore)
             .credentials(RequestCredentials::SameOrigin)
-            .redirect(RequestRedirect::Error)
-            .json(request)
-            .map_err(|_| ApiError::InvalidResponse)?
-            .send()
-            .await
-            .map_err(|_| ApiError::Network)?;
+            .redirect(RequestRedirect::Error);
+        let outgoing = secret_json(builder, &request)?;
+        drop(request);
+        let response = outgoing.send().await.map_err(|_| ApiError::Network)?;
         agent_profile_response(response).await
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -2099,15 +2111,18 @@ pub async fn register_identity_provider(
         use gloo_net::http::Request;
         use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
 
-        let response = Request::post("/api/auth/sso/register")
+        let builder = Request::post("/api/auth/sso/register")
             .cache(RequestCache::NoStore)
             .credentials(RequestCredentials::SameOrigin)
-            .redirect(RequestRedirect::Error)
-            .json(&request)
-            .map_err(|_| ApiError::InvalidResponse)?
-            .send()
-            .await
-            .map_err(|_| ApiError::Network)?;
+            .redirect(RequestRedirect::Error);
+        let expected = (
+            request.provider_id().to_owned(),
+            request.issuer().to_owned(),
+            request.protocol(),
+        );
+        let outgoing = secret_json(builder, &request)?;
+        drop(request);
+        let response = outgoing.send().await.map_err(|_| ApiError::Network)?;
         if !response.ok() {
             return Err(status_error(response.status()));
         }
@@ -2116,10 +2131,10 @@ pub async fn register_identity_provider(
             .await
             .map_err(|_| ApiError::InvalidResponse)?;
         validate_identity_provider(&provider)?;
-        if provider.provider_id != request.provider_id()
-            || provider.issuer != request.issuer()
+        if provider.provider_id != expected.0
+            || provider.issuer != expected.1
             || provider.domain != expected_domain
-            || provider.protocol != request.protocol()
+            || provider.protocol != expected.2
         {
             return Err(ApiError::InvalidResponse);
         }

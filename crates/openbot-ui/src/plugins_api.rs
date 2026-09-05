@@ -164,16 +164,39 @@ pub(crate) async fn remove(id: &str) -> Result<(), ApiError> {
 
 pub(crate) async fn register_client(
     id: &str,
-    registration: &McpOAuthClientRegistration,
+    registration: McpOAuthClientRegistration,
 ) -> Result<(), ApiError> {
-    acknowledged(
-        request(
-            "POST",
-            &format!("{}/oauth-client", server_path(id)?),
-            Some(serde_json::to_value(registration).map_err(|_| ApiError::InvalidResponse)?),
-        )
-        .await?,
-    )
+    let path = format!("{}/oauth-client", server_path(id)?);
+    #[cfg(target_arch = "wasm32")]
+    {
+        use gloo_net::http::Request;
+        use web_sys::{RequestCache, RequestCredentials, RequestRedirect};
+        let outgoing = super::secret_json(
+            Request::post(&path)
+                .cache(RequestCache::NoStore)
+                .credentials(RequestCredentials::SameOrigin)
+                .redirect(RequestRedirect::Error),
+            &registration,
+        )?;
+        drop(registration);
+        let response = outgoing.send().await.map_err(|_| ApiError::Network)?;
+        if response.status() != 200 {
+            return Err(super::status_error(response.status()));
+        }
+        let body = response
+            .text()
+            .await
+            .map_err(|_| ApiError::InvalidResponse)?;
+        if body.len() > 1024 {
+            return Err(ApiError::InvalidResponse);
+        }
+        acknowledged(serde_json::from_str(&body).map_err(|_| ApiError::InvalidResponse)?)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (path, registration);
+        Err(ApiError::Unavailable)
+    }
 }
 
 pub(crate) async fn begin_connection(id: &str) -> Result<String, ApiError> {

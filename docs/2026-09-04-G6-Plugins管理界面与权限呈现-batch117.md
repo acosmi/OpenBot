@@ -3,6 +3,8 @@
 日期：2026-09-04；分支：`feat/2026-09-04-G6-admin-plugins-ui`；起点：`22945bb`（R192）。
 依据：v4 §9、§24、§25、§28.1 R193；GUI 第一真源 §5、§9、§15。
 
+> R195更正：Batch117当时的OAuth密码仍采用RwSignal<String>，不符合§6.4；旧局部浏览器绿不证明密钥所有权。当前已由Batch119改为DOM输入和零化请求，失败保留只适用于非secret字段，密钥再次发送必须重填。
+
 ## 本批实际实现
 
 Server Web 的 `/admin/plugins`、`/admin/plugins/:key`、`/admin/plugins/:key/tools/:tool`

@@ -94,7 +94,16 @@ impl AgentAuthInput {
     /// The fixed product form sends `Authorization`; arbitrary header names would require a second
     /// redirect-stripping policy in the unique SafeDialer, so they are rejected rather than stored
     /// and silently ignored.
-    pub fn new(header: String, mut value: String) -> Result<Self, AgentWireError> {
+    pub fn new(header: String, value: String) -> Result<Self, AgentWireError> {
+        Self::with_zeroizing_value(header, Zeroizing::new(value))
+    }
+
+    /// Validate an already zeroizing input allocation; rejection and trimming keep the secret
+    /// under the same owner and successful construction does not duplicate it.
+    pub fn with_zeroizing_value(
+        header: String,
+        mut value: Zeroizing<String>,
+    ) -> Result<Self, AgentWireError> {
         let header = header.trim();
         let start = value.len().saturating_sub(value.trim_start().len());
         let trimmed_len = value.trim().len();
@@ -116,7 +125,7 @@ impl AgentAuthInput {
         }
         Ok(Self {
             header: "Authorization".to_owned(),
-            value: Arc::new(Zeroizing::new(value)),
+            value: Arc::new(value),
         })
     }
 
@@ -173,10 +182,11 @@ impl<'de> Deserialize<'de> for AgentAuthInput {
         #[serde(deny_unknown_fields)]
         struct Wire {
             header: String,
-            value: String,
+            #[serde(deserialize_with = "crate::secret_text::deserialize")]
+            value: Zeroizing<String>,
         }
         let wire = Wire::deserialize(deserializer)?;
-        Self::new(wire.header, wire.value).map_err(D::Error::custom)
+        Self::with_zeroizing_value(wire.header, wire.value).map_err(D::Error::custom)
     }
 }
 
@@ -404,6 +414,23 @@ pub struct CallbackTokenRevoked;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authorization_input_transfers_the_zeroizing_allocation_and_rejects_late_fields() {
+        let value = Zeroizing::new("Bearer allocation-canary".to_owned());
+        let address = value.as_ptr();
+        let input =
+            AgentAuthInput::with_zeroizing_value("Authorization".to_owned(), value).unwrap();
+        assert_eq!(input.expose_value().as_ptr(), address);
+        assert_eq!(input.clone().expose_value().as_ptr(), address);
+        assert!(!format!("{input:?}").contains("allocation-canary"));
+        assert!(
+            serde_json::from_str::<AgentAuthInput>(
+                r#"{"header":"Authorization","value":"allocation-canary","role":"admin"}"#
+            )
+            .is_err()
+        );
+    }
 
     fn profile() -> AgentProfile {
         AgentProfile {

@@ -91,6 +91,7 @@ pub mod policy;
 pub mod remote_interrupt;
 pub mod sandboxed;
 pub mod screen;
+mod secret_text;
 pub mod telemetry;
 pub mod text;
 pub mod tool;

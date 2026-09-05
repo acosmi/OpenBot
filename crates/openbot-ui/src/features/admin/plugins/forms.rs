@@ -7,7 +7,7 @@ use crate::api::plugins as api;
 use crate::i18n::{t, t_string, use_i18n};
 use crate::primitives::{
     Button, ButtonVariant, Dialog, DialogBody, DialogContent, DialogFooter, Field, Input,
-    InputType, Textarea,
+    InputType, SecretInput, SecretInputController, SecretInputPolicy, SecretInputStatus, Textarea,
 };
 use crate::primitives::{Select, SelectContent, SelectItem, SelectTrigger};
 
@@ -31,7 +31,7 @@ pub fn PluginDialogs(dialog: RwSignal<Option<PluginDialog>>) -> impl IntoView {
     let credential = RwSignal::new(String::new());
     let cidrs = RwSignal::new(String::new());
     let client_id = RwSignal::new(String::new());
-    let client_secret = RwSignal::new(String::new());
+    let client_secret = SecretInputController::new(16 * 1024, SecretInputPolicy::OpaqueToken);
     let issuer = RwSignal::new(String::new());
     let resource_metadata = RwSignal::new(String::new());
     let invalid = RwSignal::new(false);
@@ -52,12 +52,12 @@ pub fn PluginDialogs(dialog: RwSignal<Option<PluginDialog>>) -> impl IntoView {
             credential,
             cidrs,
             client_id,
-            client_secret,
             issuer,
             resource_metadata,
         ] {
             field.set(String::new());
         }
+        client_secret.clear();
         if let Some(PluginDialog::OAuth(server)) = selected
             && server == "google-drive"
         {
@@ -75,6 +75,9 @@ pub fn PluginDialogs(dialog: RwSignal<Option<PluginDialog>>) -> impl IntoView {
         actions.return_to(target);
     });
     let save = move |_| {
+        if actions.busy.get_untracked() {
+            return;
+        }
         invalid.set(false);
         let selected = dialog.get_untracked();
         let finish = move |ok| {
@@ -109,9 +112,13 @@ pub fn PluginDialogs(dialog: RwSignal<Option<PluginDialog>>) -> impl IntoView {
                     invalid.set(true);
                     return;
                 }
-                let registration = McpOAuthClientRegistration::new(
+                if client_secret.validate() != SecretInputStatus::Valid {
+                    invalid.set(true);
+                    return;
+                }
+                let registration = McpOAuthClientRegistration::with_zeroizing_secret(
                     client_id.get_untracked(),
-                    client_secret.get_untracked(),
+                    client_secret.take(),
                     issuer.get_untracked(),
                     if auth_method.get_untracked().as_deref() == Some("post") {
                         McpOAuthClientAuthMethod::ClientSecretPost
@@ -128,7 +135,7 @@ pub fn PluginDialogs(dialog: RwSignal<Option<PluginDialog>>) -> impl IntoView {
                 attempted.set(true);
                 actions.launch(
                     server.clone(),
-                    async move { api::register_client(&server, &registration).await },
+                    async move { api::register_client(&server, registration).await },
                     finish,
                 );
             }
@@ -163,7 +170,7 @@ pub fn PluginDialogs(dialog: RwSignal<Option<PluginDialog>>) -> impl IntoView {
                     <Show when=move || matches!(dialog.get(), Some(PluginDialog::OAuth(_)))>
                         <p class="text-fg-secondary">{move || t!(i18n, plugins.client_help)}</p>
                         <Field control_id="plugin-client-id" label=move || t_string!(i18n, plugins.client_id).to_owned() disabled=actions.busy><Input value=client_id /></Field>
-                        <Field control_id="plugin-client-secret" label=move || t_string!(i18n, plugins.client_secret).to_owned() disabled=actions.busy><Input value=client_secret input_type=InputType::Password /></Field>
+                        <Field control_id="plugin-client-secret" label=move || t_string!(i18n, plugins.client_secret).to_owned() description=move || t_string!(i18n, common.secret_entry_help).to_owned() disabled=actions.busy><SecretInput controller=client_secret /></Field>
                         <Field control_id="plugin-issuer" label=move || t_string!(i18n, plugins.issuer).to_owned() disabled=actions.busy><Input value=issuer input_type=InputType::Url /></Field>
                         <Select id="plugin-auth-method" open=method_open value=auth_method disabled=actions.busy>
                             <SelectTrigger aria_label=move || t_string!(i18n, plugins.auth_method).to_owned() placeholder=move || t_string!(i18n, plugins.auth_method).to_owned() />

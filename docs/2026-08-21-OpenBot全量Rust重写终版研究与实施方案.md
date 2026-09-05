@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R194，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-04 实施裁决 R126–R195，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -522,6 +522,14 @@ record AEAD 的 AAD 固定绑定 `tenant_id + secret_id + kind + owner + consume
 迁移期必须兼容读取当前 AES-GCM v1 envelope（12 字节 IV、无 AAD）。迁移顺序固定为：读 v1 → 解密 → 事务写 v2 → 校验回读 → 标记旧 envelope retired。不能在同一 release 同时更换 Auth、KEK 和 credential schema。
 
 以下值永不进入 Leptos state、Agent prompt、AG-UI、browser event、普通日志、trace、metric、crash dump 或 screen URL：model key、MCP/OAuth refresh token、OIDC/SAML secret、computer bootstrap secret、run signing key、updater key。
+
+R195将上述规则落实到现有密码输入面：用户输入只暂存在密码DOM，Leptos只持NodeRef与非secret的
+校验事实/修改代次，不用RwSignal或StoredValue缓存输入原文、前缀或hash。Plugins OAuth、OIDC、Agent
+Authorization统一使用Input家族的SecretInput；普通受控Input不再支持Password。保存时清空输入并把
+临时零化分配转交typed DTO，失败不得回填；连接测试只允许为同一次显式测试临时复制，编辑后使旧结果失效。
+请求字段反序列化失败、constructor失败与serialize阶段均保持零化所有权；Rust JSON/DTO在交给浏览器后、
+await前释放。不能由此声称物理擦除了JS/浏览器/HTTP/OS的全部瞬时副本。旧Batch62/70/117的视觉遮挡和
+回显负例不是此所有权边界的证明，当前修正及复算见Batch119。
 
 持有这些明文/密钥字节的 `SecretBytes` 内部固定为 `zeroize::Zeroizing<Vec<u8>>`：
 drop 时清除 `Vec` 当前长度和整个 capacity，并以稳定 Rust 优化屏障保证写不被删。
@@ -2730,6 +2738,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R192 | §7.5 / §21.2 / §23.1 / §24 G4（2026-09-04 Batch116：AG-UI官方事件fixture主控验收） | 十一事件族production已落但T-FIX-0010仍缺正式schema corpus。外部候选虽5项测试绿，却新增第二份package.json，测试只比fixture/Rust而未读官方枚举，报告byte/scenario漂移且从作者字段推定版权人/SLSA验签。 | 只将单候选dd7febe7…的允许文件导入主控分支并修正；官方package原字节改名为惰性package-manifest.json，加入official/fixture/Rust三向集合、exact库存/regular-file/bytes/hash验证；去宿主路径、按实物重写交付报告。SDK0.0.57发布schema54f13419…单独登记，不替换v4仓库oracle e42bdbed…；官方MIT原文保留，不发明版权人，Registry/SLSA payload与签名验证分开。 | 官方六文件Git tree/blob/bytes/SHA逐项独立复核，Registry元数据及attestation payload source commit吻合，Sigstore验签仍false。fixture39行/33type/3scenario=4426B/SHA256 6c13dad3…；公共AguiDecoder/encoder回放5/0/0、Agent57/0/0，Clippy/fmt/shim595/600与单manifest绿。T-FIX-0010 done后fixtures35/20/55，parity仍873/839/1712、overlay1273/431/2/6；SPDX独立schema source后57项。仅协议corpus，不是vendor录制或PG/UI/网络证明；T-FIX-0011/0012、G4/G6/G8与归属文字确认仍未完成。无production/Cargo/native/UI/Grok/workflow或远端写入。详见Batch116。 |
 | R193 | §9 / §24 G6（2026-09-04 Batch117：Plugins Server Web 管理子面） | 后端已有 MCP admin/private-egress/grants，但三条管理页面尚未实现；hasCredential 无法区分部署 Bearer、个人 OAuth 和匿名配置。 | 共用 AdminShell/typed API 实现 index/detail/tool、custom HTTPS/CIDR、OAuth client/本人连接、刷新/移除与 per-Agent grant。Rust 新增 authentication 闭合投影；App owner 串行写入，失败/202 unknown 只读回，无自动重放；补校验、局部错误与跨 route/模态焦点规则。 | PG/loopback 31+11+1、UI187、Contracts105、Server233全部实绿；Clippy含WASM、release中英浏览器验证和设计/i18n869/预算绿。wasm gzip2007787B/CSS116942B/字体740216B/外链脚本1/inline0；strict160/0/0。三route仍todo，保留完整Bearer产品面、production PG/session→GUI权限旅程、Desktop transport/Local OAuth/真实宿主、golden/AX/Skills与G6；parity873/839/1712、fixtures35/20/55不变。无schema/Cargo/Engine/Grok/Actions或远端写入。 |
 | R194 | §9 / §24 G6（2026-09-04 Batch118：Desktop Plugins基础framing） | Batch117的共同GUI仍因Desktop没有connections读路由而加载失败，curated启用也没有对应custom-protocol handler。 | 补GET connections与POST servers，只派发既有typed command；closed McpCuratedServerSelection与Server共享，window actor/fresh/admin先于副作用，query拒绝、16KiB body与清零规则明确。 | Desktop tauri-host112/0/0（Plugins3条）、Contracts105/Server233通过；Server沙箱13条socket PermissionDenied后允许loopback宿主重跑全绿。Clippy与Windows x64 cross-check绿，后者不算真机。strict160/0/0，T-API-0081/0086 revalidate后overlay1271/433/2/6；parity873/839/1712、fixtures35/20/55不变。真实Wry/GUI/Local OAuth、三Plugins route与G6仍todo，无新PG/vendor/golden或远端操作。 |
+| R195 | §6.4 / §24 G2/G6（2026-09-04 Batch119：三类GUI密钥所有权修复） | 真源禁止secret进入Leptos state，但Plugins OAuth、OIDC与Agent Authorization仍用RwSignal<String>；Agent响应式校验还反复克隆认证请求。旧局部浏览器绿只证明遮挡/不回显。 | 删除普通Input的Password变体，统一DOM-owned SecretInput，响应式状态仅校验事实/代次；提交/取消/切换/卸载清理，失败不回填。三个DTO接受零化分配所有权，Serde字段在后续形态错误时也能清理；敏感JSON不经过Value，Rust JSON与DTO交给浏览器后在await前释放。 | Contracts108/UI188/Server233/Desktop112、Clippy含WASM、release浏览器三表单均通过。失败后不重填无请求、重填一次成功；OIDC切换后register0、失败重试不增；Agent probe失效、取消后hasAuth=false、显式保存/空编辑hasAuth=true，公开响应/页面canary0。i18n870、wasm gzip2025831B/CSS116942B，strict160/0/0；模块export触发24原语revalidation后overlay1247/457/2/6，parity873/839/1712、fixtures35/20/55不变。包仍829，仅UI依赖边；无新PG/vendor/真实Wry/Windows/golden或全关证明。 |
 
 ### 28.2 复核通过、原样保留的断言
 

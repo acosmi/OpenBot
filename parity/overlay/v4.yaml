@@ -5,6 +5,80 @@ schema_version: 1
 baseline: v4
 generated_by: manual
 entries:
+  # Batch119 only adds the SecretInput export in primitives/mod.rs; sibling implementation bytes
+  # are unchanged. All UI unit tests and the release forms are rerun; no new golden claim.
+  - id: T-UI-0001
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0002
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0003
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0004
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0005
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0006
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0009
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0010
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0011
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0012
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0013
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0014
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0015
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0016
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0017
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0018
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0019
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0021
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0022
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0023
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0024
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0025
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0026
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
+  - id: T-UI-0027
+    disposition: revalidate
+    notes: "Batch119 reruns UI lib 188 and release form journeys after the shared primitives export adds DOM-owned SecretInput; this primitive implementation is unchanged. Existing formal golden remains separately todo."
   - id: T-API-0081
     disposition: revalidate
     notes: "Batch118 shares the closed catalogue selection DTO and verifies Desktop fresh-admin/size/unknown-field boundaries before port effects; Server lib 233 and Desktop tauri-host lib 112 rerun."
@@ -422,7 +496,7 @@ entries:
   # Added mechanically because the Batch62 Admin Identity Providers diff closes this target.
   - id: T-ROUTE-0019
     disposition: revalidate
-    notes: "Batch62 reruns closed SAML/OIDC forms, real PostgreSQL registration/removal and non-admin child suppression."
+    notes: "Batch119 replaces OIDC reactive client_secret with DOM ownership and zeroizing outbound DTO; protocol switch and failed submit require re-entry. Only one fixture registration request; no new PG/vendor or golden proof."
   # Added mechanically because the Batch63 Home Composer diff closes this target.
   - id: T-ROUTE-0006
     disposition: revalidate
@@ -475,7 +549,7 @@ entries:
     notes: "Batch64 reruns InputGroup composition after Input gains type-derived email autofill and optional IME-safe Enter submit."
   - id: T-UI-0008
     disposition: revalidate
-    notes: "Batch64 reruns Input type/state/Field wiring and release-browser email Enter behavior."
+    notes: "Batch119 removes controlled Password and verifies DOM-owned SecretInput on all three current secret-entry forms; UI188/Contracts108, release failure/re-entry/cancel/probe/save pass. No formal golden claim."
   # Added mechanically because Batch64 closes the authenticated boundary, sign route and tests.
   - id: T-ROUTE-0002
     disposition: revalidate
@@ -879,7 +953,7 @@ entries:
   # Batch70 closes and reruns the fixed-upstream Agent route/component targets with release Browser evidence.
   - id: T-ROUTE-0007
     disposition: revalidate
-    notes: "Batch70 reruns the complete /agents create/edit/duplicate/hide/recover/delete/start journey in the release Browser bundle."
+    notes: "Batch119 revalidates Agent Authorization: no reactive plaintext, probe invalidated on edit, cancel then managed creation hasAuth=false, explicit secret save/blank edit hasAuth=true. Existing backend and golden scopes remain separate."
   - id: T-UI-0031
     disposition: revalidate
     notes: "Batch70 reruns shared Agent fields, reactive validation, connection probe, and write-only auth behavior."

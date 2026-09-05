@@ -88,7 +88,8 @@ pub struct RegisterIdentityProviderRequest {
 #[serde(rename_all = "camelCase")]
 struct OidcRegistrationRequest {
     client_id: String,
-    client_secret: String,
+    #[serde(serialize_with = "crate::secret_text::serialize")]
+    client_secret: zeroize::Zeroizing<String>,
     discovery_endpoint: String,
 }
 
@@ -136,6 +137,25 @@ impl RegisterIdentityProviderRequest {
         issuer: String,
         client_id: String,
         client_secret: String,
+    ) -> Self {
+        Self::oidc_with_zeroizing_secret(
+            provider_id,
+            domain,
+            issuer,
+            client_id,
+            zeroize::Zeroizing::new(client_secret),
+        )
+    }
+
+    /// Transfer one transient write-only input directly into the request. The request erases its
+    /// secret allocation when dropped; this does not claim control of HTTP/browser copies.
+    #[must_use]
+    pub fn oidc_with_zeroizing_secret(
+        provider_id: String,
+        domain: String,
+        issuer: String,
+        client_id: String,
+        client_secret: zeroize::Zeroizing<String>,
     ) -> Self {
         let discovery_endpoint = format!(
             "{}/.well-known/openid-configuration",
@@ -186,6 +206,27 @@ impl RegisterIdentityProviderRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oidc_request_moves_the_existing_zeroizing_secret_and_preserves_the_wire() {
+        let secret = zeroize::Zeroizing::new("allocation-canary".to_owned());
+        let address = secret.as_ptr();
+        let request = RegisterIdentityProviderRequest::oidc_with_zeroizing_secret(
+            "idp".to_owned(),
+            "example.test".to_owned(),
+            "https://idp.example.test".to_owned(),
+            "client".to_owned(),
+            secret,
+        );
+        assert_eq!(
+            request.oidc_config.as_ref().unwrap().client_secret.as_ptr(),
+            address
+        );
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["oidcConfig"]["clientSecret"],
+            "allocation-canary"
+        );
+    }
 
     #[test]
     fn registration_bodies_are_protocol_exclusive_and_oidc_discovery_is_derived() {

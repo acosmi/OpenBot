@@ -13,8 +13,6 @@ pub enum InputType {
     Text,
     /// Email address.
     Email,
-    /// Password/secret entry.
-    Password,
     /// Search field.
     Search,
     /// URL entry.
@@ -26,7 +24,6 @@ impl InputType {
         match self {
             Self::Text => "text",
             Self::Email => "email",
-            Self::Password => "password",
             Self::Search => "search",
             Self::Url => "url",
         }
@@ -159,7 +156,7 @@ impl FieldContextView for super::field::FieldContext {
     }
 }
 
-fn resolve_control_id(
+pub(super) fn resolve_control_id(
     field: Option<&super::field::FieldContext>,
     explicit: Option<String>,
 ) -> Option<String> {
@@ -177,7 +174,7 @@ fn resolve_control_id(
     }
 }
 
-fn input_state_tokens(
+pub(super) fn input_state_tokens(
     preview: Option<InputPreviewState>,
     invalid: bool,
     disabled: bool,
@@ -201,7 +198,7 @@ mod tests {
 
     #[test]
     fn input_type_and_state_tokens_are_closed() {
-        assert_eq!(InputType::Password.as_str(), "password");
+        assert_eq!(InputType::Text.as_str(), "text");
         assert_eq!(InputType::Email.as_str(), "email");
         assert_eq!(input_state_tokens(None, false, false), None);
         assert_eq!(
