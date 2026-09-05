@@ -2,7 +2,7 @@
 
 > 日期：2026-08-21（America/Los_Angeles）；第二轮前置审计就地修订：2026-08-22；第三轮就地修订（v4：范围冻结、`grok-bot` 参考源定位、Electron 双 role engine、阶段闸门）：2026-08-28
 >
-> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R200，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
+> 文档状态：终版实施基线 v4（v3 + 2026-08-28 第三轮就地修订 R115–R125 + 2026-08-29–09-05 实施裁决 R126–R201，修订清单见 §28.1，修订方法与真源优先级见 §28.5；`docs/2026-08-28-OpenBot-TauriGUI-ElectronChromium-GrokBot大面积Rust迁移-v4修订计划-用户裁决版.md` 已被吸收，只作历史记录）
 >
 > 目标：将 `CopilotKit/openbot` 的当前可观察产品能力完整重写为 Rust 实现
 >
@@ -1049,6 +1049,12 @@ Desktop shell 只有平台 sandbox fidelity 为 `Enforced` 时才可启用高风
 4. gateway 对 DNS A/AAAA、redirect 每跳、IPv4/IPv6 reserved/private/metadata、port、scheme 和 tenant allow/deny 执行策略；
 5. 所有 iframe、script、image、font、XHR/fetch、worker、service worker 和 popup 都经过同一出口；
 6. Desktop 做同样的应用级代理与 URL policy，但文档明确它不是 kernel-level tenant boundary。
+
+R201先收紧macOS main outbound：只允许当前runtime的control.sock/frame.sock精确literal，不再允许全部UDS
+或localhost端口；真实两pipe正向、三个错误端点负向与两role Engine兼容通过。此规则只针对main，approved
+helper解除父profile继承后的网络/执行边界仍需独立验证，不冒充所有引擎只能通过gateway。未来gateway端口须
+按实际scope绑定增加精确规则；当前main无TCP allow、Engine仍epoch4内部页，production代理/导航仍未闭合。
+
 
 Batch122/R198先落Rust gateway库（`openbot_infra::net::scope_gateway`）：每实例独立loopback端口与256-bit
 proxy凭据，immutable exact/wildcard host+deny-first+port规则，只有通过认证/形状/host后才调用
@@ -2232,6 +2238,9 @@ R191新增的受控Alpha按§24.2单独准入，不视为G0–G8通过或§25完
     低confidence均由Application成功fallback，tool output拒绝，消息与模型理由不进hash-chain audit；
   - [ ] provider gate 要求的三家 recorded vendor trace 当前为 **1/3**：OpenAI官方RecordedTest response-body trace已由Batch104闭合，Anthropic与Google仍缺；本批未使用 live vendor credential。human approval 的 Leptos/Axum可点击竖切、critical realtime、真实PG与production session resolver浏览器均已落，但真实OIDC/SAML登录、完整 thread/cancel/computer 集成仍未闭合；run-wide normalized token、operator-attested cost upper bound、用户费用cap/API/UI与并发tool runtime budget已落，仍缺computer runtime budget；Desktop Local installed-app client/system browser/random loopback callback、computer/file/shell各自的协议级cancel notification/process-tree、RMCP完整官方conformance、Plugins/Skills完整UI、G8 typed operator-attestation/最终secret retirement，Agent Desktop正式capability/真实Wry journey、browser/file/shell executor尚未闭合。AG-UI十一event family、单家trace、RMCP run cancel与admin-delete compensation/runbook都不能替代这些G4/G8余项；Google `drive.readonly` restricted scope 的外部 verification/security assessment 也不是本机代码证据。
 - [ ] **G5**：ComputerSecurityScope/runsc/fault injection/engine compromise 未完整实施。
+  - [x] Batch125/R201 macOS main精确pipe outbound：旧3类错误端点真实可达，改为两literal后3负向拒绝、
+    control/frame正向和真实两role兼容保持。F0060仅记录main，不覆盖helper/Mach/签名/production或G5E整关。
+
   - [x] Batch124/R200 macOS main直接读取：旧规则sibling/symlink/DataVolume三路径实测可读，scope与具名OS
     读取白名单后五负向全拒绝，同时自身read/list/link正向成立。native policy1/0/0与真实两role1/0/0通过；
     F0059只记录direct-read与兼容性，helper exec/Mach/FD/network边界和完整G5E/Alpha仍不勾。
@@ -2806,6 +2815,7 @@ A7包摘要/版本/独立产品身份/关闭未支持入口。详细判据见R19
 | R198 | §10.5 / §24 G5/G7（2026-09-04 Batch122：Rust出口网关基座） | Engine仍黑洞网络，缺受控HTTP/CONNECT/WS转发；在制稿有HTTP占位、撤销订阅竞态与未join的driver风险。仅URL检查不足，数值IPv6又被旧host_str括号误送DNS。 | 新增unique loopback/token owner、deny-first host/port、私有ProxyHop与有界streaming/upgrade、共享rate和cancel/join；原出网路径唯一性不变，IPv6与TLS identity使用typed host。预算是新增，不冒充upstream；透明CONNECT只验证authority/IP，不冒充内层TLS策略。fixture把production scope/policy/Engine/namespace/kernel/G5/G7均保持false。 | 15项真实loopback测试全过；IPv6先失败后成功/DNS0，原safe_http14/provider32/官方recorded4回归；Clippy/fmt与出网guard通过。guard修复既有Screen test-only漏登，未增加production客户端；Linux target check0，Windows在ring缺assert.h失败、未伪记通过。strict160/0/0、Grok2110/shim595/600/唯一manifest绿，Cargo829/lock不变。fixtures37/20/57，parity886/826/1712、overlay1234/470/2/6不变。Engine仍epoch4内部页，完整目标继续；详见Batch122。 |
 | R199 | §11.2 / §11.3 / §17.2 / §24 G5（2026-09-05 Batch123：Engine父环境隔离） | R126/R127只过滤四项Electron/Node变量，Unix默认继承、Windows枚举父环境；provider/DB凭据与其它loader/key-log变量仍可能进入引擎。真实两role探针证实main/renderer四处canary为true。 | Unixenv_clear后固定五键和scope cwd，Linux只加固定DISPLAY；Windows从只读OS目录API构造九键有界UTF-16 block，删除父环境枚举并同步唯一unsafe边界许可。角色测试用隔离父进程注入synthetic canary，实际PS观测只输出固定布尔事实，完成cleanup后判定，不读取生产凭据或打印原始环境。 | 修复前4 true，修复后4 false，真实两role完整conformance由1个父测试复算；Computer67/fixture5、Windows portable4、两crate Clippy与Windows/Linux check绿。T-FIX-0058，fixtures38/20/58；其余parity/overlay不变，strict160/0/0、Grok/shim/六target bans-sources通过。Windows/runtime、runsc、macOS读取/localhost/UDS/helper-exec仍未通过，不能把HOME变量当文件隔离。磁盘满只回收本仓3.1GiB incremental后原命令重跑；不改E远程R196基线、不上传或合并，详见Batch123。 |
 | R200 | §10.1 / §10.3 / §11.3 / §24 G5（2026-09-05 Batch124：macOS main直接读取） | R199关闭env继承后，SBPL仍allow-default而只约束write；实际kernel探针证明邻接文件、symlink、DataVolume别名可读，不能开放真实网页后再补。 | deny file-read*，仅scope/bundle/具名OS资源和ancestor metadata允许；避免 /System 覆盖Data卷。根据本机dyld事实只加literal /目录openat锚点，拒NUL注入。明确native cat/ls/ln探针与真实Engine兼容性分开；不宣称完成任意main compromise防线。 | 修复前3可读，后5负向全拒绝，scope内read/list/link及无sandbox hardlink正向成立；native1/0/0、真实两role父测试1/0/0，完整input/frame/env/stop/cleanup保持。Computer67+fixture5、Clippy、Windows/Linux check通过；跨平台仅编译。fixture1790 bytes/SHA 3f2e5ef4…，F0059后39/20/59；parity/overlay不变，strict160/0/0、Grok/shim通过。固定Chromium150.0.7871.212三source与本机dyld哈希已记录；helper exec/Mach/FD/UDS/kernel/production余项继续，详见Batch124。 |
+| R201 | §10.5 / §11.2 / §24 G5（2026-09-05 Batch125：macOS main精确pipe出口） | R200读取已收紧，但main仍可连接任意UDS/localhost；实际Rust子进程probe确认runtime额外socket、邻接scope socket和其它loopback端口均可达。 | 删两项通配，仅放当前runtime control/frame两literal；保持peer/token检查。native probe每个拒绝端点都有同client/endpoint unconfined正向，真实Engine兼容另跑。guard仅登记末尾cfg(test)一个数字TCP调用；不扩production出网面。 | native1/0/0：3错误端点由true变false、两正确pipe可连；真实两role父测试1/0/0，完整input/frame/env/cleanup保持。Computer/Clippy和Windows/Linux check绿；F0060后40/20/60，parity/overlay不变；strict160/0/0、Grok/shim/唯一出网guard通过。helper实查adhoc/flags0x2，with-no-sandbox执行/loader/网络仍未验证，不能由main规则推全Engine隔离；epoch4、gateway/native平台/production继续，详见Batch125。 |
 
 ### 28.2 复核通过、原样保留的断言
 

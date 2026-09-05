@@ -1756,14 +1756,15 @@ fn sandbox_profile(
          (allow file-write* (subpath \"{}\") (subpath \"{}\") (subpath \"{}\") (literal \"/dev/null\"))\n\
          (deny network-inbound)\n\
          (deny network-outbound)\n\
-         (allow network-outbound (remote unix-socket))\n\
-         (allow network-outbound (remote ip \"localhost:*\"))\n\
+         (allow network-outbound (literal \"{}\") (literal \"{}\"))\n\
          (deny process-exec*)\n\
          (allow process-exec* (literal \"{}\"))\n\
          (allow process-exec* (with no-sandbox) (literal \"{}\") (literal \"{}\") (literal \"{}\") (literal \"{}\") (literal \"{}\"))\n",
         profile.display(),
         temp.display(),
         runtime.display(),
+        runtime.join("control.sock").display(),
+        runtime.join("frame.sock").display(),
         executable.display(),
         helpers[0].display(),
         helpers[1].display(),
@@ -2087,8 +2088,8 @@ mod tests {
             "(deny file-write*)",
             "(deny network-inbound)",
             "(deny network-outbound)",
-            "(remote unix-socket)",
-            "(remote ip \"localhost:*\")",
+            "(literal \"/private/tmp/runtime/control.sock\")",
+            "(literal \"/private/tmp/runtime/frame.sock\")",
             "(deny process-exec*)",
             "(with no-sandbox)",
             "(literal \"/Applications/AcosmiEngine.app/Contents/MacOS/AcosmiEngine\")",
@@ -2098,6 +2099,8 @@ mod tests {
             assert!(profile.contains(required), "missing `{required}`");
         }
         assert_eq!(profile.matches("(with no-sandbox)").count(), 1);
+        assert!(!profile.contains("(remote unix-socket)"));
+        assert!(!profile.contains("localhost:*"));
         assert!(
             super::sandbox_profile(
                 std::path::Path::new("/Applications/bad\"name.app/Contents/MacOS/AcosmiEngine"),
@@ -2268,5 +2271,153 @@ mod tests {
             failures, 0,
             "outside reads must be denied without returning any canary bytes"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires native macOS sandbox-exec and task-owned sockets; not an Engine/helper compromise claim"]
+    fn macos_main_network_policy_only_connects_its_two_owned_pipes() {
+        use std::net::TcpListener;
+        use std::os::unix::net::UnixListener;
+        use std::path::{Path, PathBuf};
+        use std::process::Command;
+
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/computer/macos-engine-main-network-v1.json"
+        ))
+        .expect("main network fixture");
+        assert_eq!(fixture["schema"], "openbot-macos-engine-main-network-v1");
+        assert!(
+            fixture["allowed_tcp_ports"]
+                .as_array()
+                .expect("TCP ports")
+                .is_empty()
+        );
+        assert!(
+            fixture["remaining"]
+                .as_object()
+                .expect("unfinished boundaries")
+                .values()
+                .all(|v| v == false)
+        );
+
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = Path::new("/private/tmp").join(format!("ob-net-{}", std::process::id()));
+        assert!(!root.exists());
+        fs::create_dir(&root).expect("own root");
+        let root = root.canonicalize().expect("canonical root");
+        let _cleanup = Cleanup(root.clone());
+        let bundle = root.join("bundle");
+        let profile = root.join("profile");
+        let temp = root.join("temp");
+        let runtime = root.join("runtime");
+        let sibling = root.join("sibling");
+        for path in [&bundle, &profile, &temp, &runtime, &sibling] {
+            fs::create_dir(path).expect("own directory");
+        }
+        let control = runtime.join("control.sock");
+        let frame = runtime.join("frame.sock");
+        let other = runtime.join("other.sock");
+        let foreign = sibling.join("control.sock");
+        let control_listener = UnixListener::bind(&control).expect("own control");
+        let frame_listener = UnixListener::bind(&frame).expect("own frame");
+        let other_listener = UnixListener::bind(&other).expect("wrong owned-directory socket");
+        let foreign_listener = UnixListener::bind(&foreign).expect("foreign socket");
+        for listener in [
+            &control_listener,
+            &frame_listener,
+            &other_listener,
+            &foreign_listener,
+        ] {
+            listener.set_nonblocking(true).expect("bounded accept");
+        }
+        let tcp = TcpListener::bind("127.0.0.1:0").expect("own TCP target");
+        tcp.set_nonblocking(true).expect("bounded TCP accept");
+        let executable = std::env::current_exe().expect("probe test executable");
+        let rules = super::sandbox_profile(&executable, &bundle, &profile, &temp, &runtime)
+            .expect("production network rules");
+        let invoke = |kind: &str, address: &str, confined: bool| {
+            let mut command = if confined {
+                let mut c = Command::new("/usr/bin/sandbox-exec");
+                c.args(["-p", &rules]).arg(&executable);
+                c
+            } else {
+                Command::new(&executable)
+            };
+            command
+                .args([
+                    "--exact",
+                    "engine::process::tests::macos_network_probe_child",
+                    "--ignored",
+                    "--test-threads=1",
+                ])
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("OPENBOT_NATIVE_NETWORK_PROBE_KIND", kind)
+                .env("OPENBOT_NATIVE_NETWORK_PROBE_ADDRESS", address)
+                .current_dir(&profile)
+                .output()
+                .expect("owned Rust socket probe")
+        };
+        for (path, listener) in [(&control, &control_listener), (&frame, &frame_listener)] {
+            let result = invoke("uds", path.to_str().expect("path"), true);
+            assert!(result.status.success(), "owned pipe connection must work");
+            assert!(listener.accept().is_ok());
+        }
+        let mut failures = 0;
+        for (name, path, listener) in [
+            ("extra-runtime-socket", &other, &other_listener),
+            ("sibling-socket", &foreign, &foreign_listener),
+        ] {
+            let address = path.to_str().expect("path");
+            assert!(
+                invoke("uds", address, false).status.success(),
+                "unconfined endpoint positive"
+            );
+            assert!(listener.accept().is_ok());
+            let result = invoke("uds", address, true);
+            let accepted = listener.accept().is_ok();
+            let connected = result.status.success() || accepted;
+            println!("main-network-policy case={name} unintended_connected={connected}");
+            failures += usize::from(connected);
+        }
+        let address = tcp.local_addr().expect("TCP address").to_string();
+        assert!(
+            invoke("tcp", &address, false).status.success(),
+            "unconfined TCP positive"
+        );
+        assert!(tcp.accept().is_ok());
+        let result = invoke("tcp", &address, true);
+        let accepted = tcp.accept().is_ok();
+        let connected = result.status.success() || accepted;
+        println!("main-network-policy case=other-loopback-port unintended_connected={connected}");
+        failures += usize::from(connected);
+        assert_eq!(
+            failures, 0,
+            "network authority must be limited to exact owned pipes"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "subprocess-only child of native network policy conformance"]
+    fn macos_network_probe_child() {
+        let kind = std::env::var("OPENBOT_NATIVE_NETWORK_PROBE_KIND").expect("owned probe kind");
+        let address =
+            std::env::var("OPENBOT_NATIVE_NETWORK_PROBE_ADDRESS").expect("owned probe address");
+        let connected = match kind.as_str() {
+            "uds" => std::os::unix::net::UnixStream::connect(address).is_ok(),
+            "tcp" => std::net::TcpStream::connect_timeout(
+                &address.parse().expect("numeric probe address"),
+                std::time::Duration::from_secs(1),
+            )
+            .is_ok(),
+            _ => false,
+        };
+        assert!(connected, "owned socket probe was refused");
     }
 }
