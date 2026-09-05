@@ -1,0 +1,359 @@
+{
+  "schema": "openbot-windows-engine-runtime-audit",
+  "schema_version": 2,
+  "task": "E2",
+  "recorded_at": "2026-09-05",
+  "timezone": "America/Los_Angeles",
+  "registered_in_central_manifest": false,
+  "note": "Native Windows x64 revalidation of task E on epoch 4. The first startup blocker is fixed; two further blockers were located and are escalated. No full Windows, P1, G5, G7, Alpha, or release acceptance.",
+  "supersedes": null,
+  "companion_report": "docs/2026-09-05-E2-Windows-Engine原生复验-交付.md",
+  "host": {
+    "os_caption": "Microsoft Windows 11 Home China",
+    "os_version": "10.0.26200",
+    "os_build": "26200",
+    "os_architecture": "64-bit",
+    "processor_architecture": "AMD64",
+    "native_run": true,
+    "wsl_or_wine": false,
+    "rustc": "1.98.0 (88d9e12ae 2026-08-18)",
+    "rustc_host": "x86_64-pc-windows-msvc",
+    "rustc_llvm": "22.1.8",
+    "toolchain_file_pin": "1.98.0",
+    "cargo": "1.98.0",
+    "git": "2.53.0.windows.3",
+    "windows_sdk": "10.0.26100.0"
+  },
+  "baseline": {
+    "branch": "fix/2026-09-05-windows-e-delivery-audit",
+    "task_start_sha": "ca8265b5090980fd37be4e5eec141c838ee22aa2",
+    "task_start_sha_matches_orchestrator_value": true,
+    "grok_tree": "86f5a85f560f721677fa7e587a67ac0ffc036cb5",
+    "release_epoch": 4,
+    "protocol_version": 4
+  },
+  "engine_artifacts": {
+    "platform": "windows-x64",
+    "electron_version": "43.3.0",
+    "release_epoch": 4,
+    "protocol_version": 4,
+    "archive_asset": "electron-v43.3.0-win32-x64.zip",
+    "archive_bytes": 144396349,
+    "archive_sha256": "18528bedc6a9b04bdc5efb7b803cbc3cb0e5ea6415d54046e23d464d89a00da9",
+    "archive_sha256_matches_engine_pins": true,
+    "archive_bytes_match_engine_pins": true,
+    "version_probe_stdout": "v43.3.0",
+    "bundle_manifest_sha256": "857f1490b1841b6839fc092742e1eb9730330f2b104534f002975af154041ac6",
+    "executable": "acosmi-engine-fixture.exe",
+    "executable_bytes": 225441792,
+    "executable_sha256": "6a205cc474e151893422f36f474b593708f68efd31746fb1b87ccb0d4a7587ee",
+    "app_asar_bytes": 30069,
+    "app_asar_sha256": "3141a5521ea819a21ee4e8b8f93948af6ca2baa11d4f458f05653672c5f5e11f",
+    "asar_header_sha256": "d795c804b80b9ac20f3c40ebc44dc61fe423cbee1e03c1c3ce95c2bfa6f926d1",
+    "asar_header_sha256_matches_macos_record": true,
+    "fuse_wire": "000011001",
+    "fuse_sentinels": 1,
+    "protocol_descriptor_sha256": "a2bd3a3978a650e199294437aba1661c7bb0ed0c8861ade85a09ff9a49a1252c",
+    "shim_files": 3,
+    "shim_non_empty_loc": 595,
+    "shim_loc_ceiling": 600,
+    "package_json_outside_grok_bot": 1,
+    "bytes_recomputed_on_this_host": true,
+    "bundle_restored_to_uninstrumented_state_before_delivery": true
+  },
+  "commands": [
+    {
+      "command": "cargo xtask engine fetch",
+      "exit_code": 0,
+      "result": "downloaded 144,396,349 B; sha256 equals the engine pin; --version=v43.3.0"
+    },
+    {
+      "command": "cargo xtask engine bundle",
+      "exit_code": 0,
+      "result": "app.asar=30069; header d795c804...; fuse_sentinels=1; release_epoch=4"
+    },
+    {
+      "command": "cargo xtask engine verify",
+      "exit_code": 0,
+      "result": "raw archive + --version + bundle verify including the PE resource round trip"
+    },
+    {
+      "command": "cargo xtask engine protocol --check",
+      "exit_code": 0,
+      "result": "version=4; sha256=a2bd3a39..."
+    },
+    {
+      "command": "cargo xtask electron-shim-check",
+      "exit_code": 0,
+      "result": "files=3; non-empty LOC=595/600; protocol hash match"
+    },
+    {
+      "command": "cargo test -p openbot-windows-sandbox --locked -- --nocapture",
+      "exit_code": 0,
+      "passed": 7,
+      "failed": 0,
+      "ignored": 5
+    },
+    {
+      "command": "cargo test -p openbot-windows-sandbox --locked restricted_write_process_ -- --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "cargo test -p openbot-computer --locked",
+      "exit_code": 0,
+      "lib": "67/0/0",
+      "engine_conformance": "5/0/3 ignored"
+    },
+    {
+      "command": "cargo test -p openbot-computer --test engine_conformance --locked -- --include-ignored --nocapture --test-threads=1",
+      "exit_code": 101,
+      "passed": 5,
+      "failed": 3,
+      "ignored": 0
+    },
+    {
+      "command": "cargo clippy -p openbot-windows-sandbox -p openbot-computer --all-targets --locked -- -D warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo clippy -p openbot-testkit --features xtask --bin xtask --locked -- -D warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo fmt --all --check",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo xtask parity-check",
+      "exit_code": 0,
+      "result": "0 violations; parity 886/826/1712; fixtures 40/20/60; overlay carry=1234 revalidate=470 split=2 superseded=6"
+    },
+    {
+      "command": "cargo xtask grok-inventory --check",
+      "exit_code": 0,
+      "result": "files=2110; families=92; tree_sha256=bb00e6367b2f4c8eb53d624edbb0a16c8e779df17721839c0e11c0a152e5732f"
+    }
+  ],
+  "not_run": [
+    "cargo xtask ci",
+    "GitHub Actions"
+  ],
+  "conformance_cases": [
+    {
+      "name": "demand_fixture_keeps_protocol_and_production_boundary_explicit",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "engine_input_fixture_locks_protocol_and_unfinished_platform_boundaries",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "screencast_fixture_locks_ack_order_latest_buffer_and_remaining_screen_boundary",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "screen_hub_fixture_locks_ticket_and_production_transport_boundary",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "screen_coordinate_fixture_locks_units_journeys_and_hardware_boundary",
+      "outcome": "passed",
+      "kind": "fixture"
+    },
+    {
+      "name": "browser_role_start_frame_stop_has_no_debug_listener_or_orphan",
+      "outcome": "failed",
+      "kind": "real-electron",
+      "error": "launch + peer credential + ready: ConnectTimeout",
+      "verified_cause": "E2-2 electron-replaces-process-stdin-on-windows"
+    },
+    {
+      "name": "component_role_start_frame_stop_has_no_debug_listener_or_orphan",
+      "outcome": "failed",
+      "kind": "real-electron",
+      "error": "launch + peer credential + ready: ConnectTimeout",
+      "verified_cause": "E2-2 electron-replaces-process-stdin-on-windows"
+    },
+    {
+      "name": "both_roles_pause_on_last_viewer_and_resume_the_same_document",
+      "outcome": "failed",
+      "kind": "real-electron",
+      "error": "engine: ConnectTimeout",
+      "verified_cause": "E2-2 electron-replaces-process-stdin-on-windows"
+    }
+  ],
+  "restricted_token_syscall_matrix": {
+    "note": "Isolated probe children spawned through the production spawn_restricted path. Only booleans, Win32 codes, counts and well-known SIDs are recorded; no user SID, account name, machine name, host environment or production data.",
+    "token": {
+      "is_restricted": true,
+      "integrity_rid": "0x2000",
+      "integrity_class": "medium",
+      "in_job": true,
+      "default_dacl_aces": [
+        {
+          "sid": "S-1-5-18",
+          "type": "ACCESS_ALLOWED",
+          "mask": "0x10000000"
+        },
+        {
+          "sid": "<redacted-current-user>",
+          "type": "ACCESS_ALLOWED",
+          "mask": "0x10000000"
+        },
+        {
+          "sid": "S-1-5-12",
+          "type": "ACCESS_ALLOWED",
+          "mask": "0x10000000"
+        }
+      ]
+    },
+    "inherited_stdio": {
+      "stdin_bytes_read": 22,
+      "stdin_newline_terminated": true,
+      "stdin_first_char_is_brace": true,
+      "stdout_write_ok": true,
+      "getstdhandle_stdin_file_type": 3,
+      "crt_fd0_valid": true,
+      "crt_fd0_file_type": 3,
+      "crt_fd0_same_handle_as_getstdhandle": true,
+      "same_result_for_console_and_gui_subsystem_children": true
+    },
+    "nul_device": {
+      "normal_token": {
+        "read": true,
+        "write": true,
+        "read_write": true
+      },
+      "restricted_token": {
+        "read": true,
+        "write": false,
+        "write_win32": 5,
+        "read_write": false,
+        "read_write_win32": 5
+      },
+      "dos_device_alias_matches": true
+    },
+    "default_security_named_pipe": {
+      "created_by_restricted_token": true,
+      "normal_token_reopen_read_write": true,
+      "restricted_token_reopen_read_write": false,
+      "restricted_token_reopen_read_write_win32": 5,
+      "restricted_token_reopen_read_only": true,
+      "object_dacl_aces": [
+        {
+          "sid": "S-1-5-18",
+          "mask": "0x001f01ff"
+        },
+        {
+          "sid": "S-1-5-32-544",
+          "mask": "0x001f01ff"
+        },
+        {
+          "sid": "<redacted-creator>",
+          "mask": "0x001f01ff"
+        },
+        {
+          "sid": "S-1-1-0",
+          "mask": "0x00120089"
+        },
+        {
+          "sid": "<redacted-logon-session>",
+          "mask": "0x00120089"
+        }
+      ],
+      "object_dacl_names_restricted_code_sid": false,
+      "npfs_copies_token_default_dacl": false
+    }
+  },
+  "findings": [
+    {
+      "id": "E2-1",
+      "severity": "blocker",
+      "layer": "R127 restricted token vs Electron 43 node bootstrap",
+      "summary": "Electron aborts startup because platform_util::IsNulDeviceEnabled performs _open(\"nul\", _O_RDWR) and WRITE_RESTRICTED denies every write open of the nul device.",
+      "child_stderr": "[FATAL:electron\\shell\\common\\node_bindings.cc:735] Unable to open nul device needed for initialization,aborting startup. As a workaround, try starting with --no-stdio-init",
+      "mechanism": "Measured with isolated probe children on the production spawn path: read open succeeds, write and read+write opens return ERROR_ACCESS_DENIED (5) under the restricted token and all three succeed under the normal token.",
+      "fix": "Windows-only --no-stdio-init appended after the shared engine argument set.",
+      "fix_justification": "Pinned sources: electron v43.3.0 node_bindings.cc gates only the fail-fast probe on the switch; node v24.18.1 src/node.cc shows kNoStdioInitialization on Windows disables only (1) that probe, (2) the fd 0-2 repair loop that opens nul when a handle is missing or FILE_TYPE_UNKNOWN, and (3) atexit(ResetStdio) whose Windows body is uv_tty_reset_mode(). spawn_restricted always supplies three valid handles through STARTF_USESTDHANDLES and never attaches a console, and Electron copies the switch to renderer and utility children via kCommonSwitchNames.",
+      "token_job_acl_protocol_unchanged": true,
+      "fixed_in_this_task": true,
+      "verified": "child stderr FATAL disappears and startup proceeds to the next stage",
+      "reproduction": "cargo test -p openbot-windows-sandbox --locked restricted_write_process_cannot_open_the_nul_device -- --ignored --nocapture"
+    },
+    {
+      "id": "E2-2",
+      "severity": "blocker",
+      "layer": "Electron 43 on Windows vs the shim stdin boot capability",
+      "summary": "Electron replaces process.stdin on Windows with an already-ended, non-configurable Readable, so readBootCapability() observes zero bytes and bootstrap fails before either pipe is connected.",
+      "evidence_in_pinned_binary": "\"win32\"===process.platform){const{Readable:e}=r(\"stream\"),t=new e;t.push(null),Object.defineProperty(process,\"stdin\",{configurable:!1,enumerable:!0,get:()=>t})}",
+      "sandbox_independent": true,
+      "controls": [
+        "unrestricted direct run with a shell pipe stdin and --no-stdio-init: zero bytes",
+        "unrestricted direct run with a shell pipe stdin and no --no-stdio-init: zero bytes",
+        "unrestricted direct run with a disk-file stdin: zero bytes",
+        "restricted probe child on the same spawn path reads the real 22-byte boot line, so the OS delivery is correct",
+        "GetStdHandle and _get_osfhandle(0) both valid and FILE_TYPE_PIPE in console and GUI subsystem children"
+      ],
+      "candidate_fix_verified_but_not_committed": "read fd 0 directly on Windows with new net.Socket({ fd: 0, readable: true, writable: false }); electron-shim-check still passes at 599/600 non-empty LOC and both pipes complete the handshake",
+      "why_not_committed": "the task explicitly excludes shim changes, and the change alters app.asar bytes and asar_header_sha256 on every platform, which would invalidate the pinned macOS artifact evidence; blocker E2-3 keeps Windows failing regardless",
+      "fixed_in_this_task": false,
+      "escalated": true
+    },
+    {
+      "id": "E2-3",
+      "severity": "blocker",
+      "layer": "Chromium Mojo IPC vs R127 WRITE_RESTRICTED primary token",
+      "summary": "mojo::PlatformChannel::CreateChannel creates a named pipe with the default security descriptor and immediately reopens it with GENERIC_READ | GENERIC_WRITE; NPFS does not copy the token default DACL, so the object never names the Restricted Code SID and the write open is refused.",
+      "child_stderr": "[FATAL:mojo\\public\\cpp\\platform\\platform_channel.cc:108] Check failed: . : ACCESS_DENIED (0x5)",
+      "upstream_reference": "chromium 150.0.7871.212 mojo/public/cpp/platform/platform_channel.cc CreateChannel",
+      "surfaced_after": "E2-1 fix plus the E2-2 candidate fix; the engine then reaches start and reports load_timeout",
+      "mechanism": "Same restricting-SID asymmetry as E2-1 but inside Chromium's own IPC backbone; the project cannot change the Chromium call, and removing the token/Job/ACL, enabling breakaway, editing host device or NPFS ACLs, adding a broad restricting SID, or downgrading the limit to a warning are all forbidden by the task.",
+      "fixed_in_this_task": false,
+      "escalated": true,
+      "requires_ruling_on": "R127 Windows token decision",
+      "reproduction": "cargo test -p openbot-windows-sandbox --locked restricted_write_process_cannot_reopen_default_security_kernel_objects -- --ignored --nocapture --test-threads=1"
+    }
+  ],
+  "changes": {
+    "production": [
+      "crates/openbot-computer/src/engine/process.rs: Windows-only windows_engine_args() appends --no-stdio-init after the unchanged shared set"
+    ],
+    "tests": [
+      "crates/openbot-computer/src/engine/process.rs: windows_engine_args_append_only_the_no_stdio_init_switch",
+      "crates/openbot-windows-sandbox/src/windows.rs: restricted_write_process_cannot_reopen_default_security_kernel_objects and its subprocess-only child"
+    ],
+    "windows_sandbox_non_test_code_byte_identical_to_task_start": true,
+    "r199_environment_isolation_preserved": true,
+    "protocol_epoch_shim_manifest_ledger_deps_unchanged": true,
+    "diagnostic_changes_reverted_before_delivery": true
+  },
+  "not_claimed": [
+    "Windows two-role handshake",
+    "Windows input, frame or ACK",
+    "Windows viewer pause/resume",
+    "Windows process-tree TCP LISTEN=0 negative control",
+    "renderer Job membership at runtime on Windows",
+    "renderer OS sandbox state on Windows",
+    "main/renderer creation-time binding at runtime on Windows",
+    "post-shutdown process-tree and profile-lock cleanup on Windows",
+    "kernel network or executable-path allowlist",
+    "native Desktop product journey",
+    "signed release or Authenticode",
+    "Windows golden screenshots",
+    "Credential Manager real-machine round trip",
+    "P1, G5, G7, Alpha or Windows release acceptance"
+  ],
+  "sandbox_fidelity": "Degraded",
+  "evidence_origin": "executed_natively_on_windows_11_x64_in_this_task"
+}

@@ -1441,6 +1441,167 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    /// Minimal reproduction of the restricting-SID asymmetry that blocks the Windows Engine at
+    /// two separate layers, pinned as one paired probe because it is one mechanism. Chromium's Mojo
+    /// `PlatformChannel::CreateChannel` creates a named pipe with the NPFS default security
+    /// descriptor and immediately reopens it with `GENERIC_READ | GENERIC_WRITE`, and Electron's
+    /// `platform_util::IsNulDeviceEnabled` opens the `nul` device with `_O_RDWR`. Neither default
+    /// descriptor names the single `Restricted Code` restricting SID this crate applies, and
+    /// `CreateRestrictedToken(WRITE_RESTRICTED)` re-checks restricting SIDs on write access only,
+    /// so both read opens succeed and both write opens are refused with `ERROR_ACCESS_DENIED`.
+    /// A missing result is not evidence: the unrestricted control must first complete the exact
+    /// same sequence, and the restricted child must still finish and report its own observations.
+    #[test]
+    #[ignore = "P1 Windows minimal repro: WRITE_RESTRICTED refuses the write opens Chromium needs"]
+    fn restricted_write_process_cannot_reopen_default_security_kernel_objects() {
+        let root = test_root("restricted-kernel-open");
+        fs::create_dir(&root).expect("fresh probe root");
+        let profile = root.join("profile");
+        let temp = root.join("temp");
+        fs::create_dir_all(&profile).expect("profile");
+        fs::create_dir_all(&temp).expect("temp");
+        let report = profile.join(KERNEL_OPEN_PROBE_REPORT);
+        let policy = SpawnPolicy::new(
+            std::env::current_exe().expect("current exe"),
+            KERNEL_OPEN_PROBE_ARGS.iter().map(OsString::from).collect(),
+            &root,
+            &profile,
+            &temp,
+            2,
+            256 * 1024 * 1024,
+        )
+        .expect("policy");
+        assert!(run_unrestricted_child(&policy).success());
+        assert_eq!(
+            fs::read_to_string(&report).expect("control report"),
+            "pipe_created=true pipe_write_open=true pipe_write_error=0 pipe_read_open=true \
+             nul_read_open=true nul_write_open=true nul_write_error=0"
+        );
+        fs::remove_file(&report).expect("clear control report");
+        let status = run_probe_to_completion(&policy);
+        assert!(
+            status.success(),
+            "restricted probe child must report its own observations"
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("restricted report"),
+            "pipe_created=true pipe_write_open=false pipe_write_error=5 pipe_read_open=true \
+             nul_read_open=true nul_write_open=false nul_write_error=5",
+            "the write-restricted child reopened a default-security kernel object, so the Chromium \
+             blocker is gone and this reproduction must be retired with the R127 token decision"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    /// Subprocess half of the probe above. It only touches objects it creates itself and writes
+    /// booleans and Win32 codes into the scoped profile; no SID, account or host value is emitted.
+    #[test]
+    #[ignore = "subprocess-only child of the default-security kernel object probe"]
+    fn default_security_kernel_open_probe_child() {
+        let profile = std::env::var_os("USERPROFILE").expect("scoped profile");
+        let (created, write_open, write_error) = default_security_pipe_open(0, true);
+        let (_, read_open, _) = default_security_pipe_open(1, false);
+        let (nul_read_open, _) = nul_open(false);
+        let (nul_write_open, nul_write_error) = nul_open(true);
+        let report = format!(
+            "pipe_created={created} pipe_write_open={write_open} pipe_write_error={write_error} \
+             pipe_read_open={read_open} nul_read_open={nul_read_open} \
+             nul_write_open={nul_write_open} nul_write_error={nul_write_error}"
+        );
+        fs::write(Path::new(&profile).join(KERNEL_OPEN_PROBE_REPORT), report).expect("report");
+    }
+
+    const KERNEL_OPEN_PROBE_REPORT: &str = "kernel-open-probe.txt";
+    const KERNEL_OPEN_PROBE_ARGS: [&str; 4] = [
+        "windows::tests::default_security_kernel_open_probe_child",
+        "--exact",
+        "--ignored",
+        "--test-threads=1",
+    ];
+
+    /// Create one named pipe exactly the way `PlatformChannel::CreateChannel` does — a null
+    /// security descriptor selects the object manager default — then reopen it with the requested
+    /// access. Returns whether the pipe was created, whether the reopen succeeded, and its code.
+    fn default_security_pipe_open(index: u32, write: bool) -> (bool, bool, i32) {
+        let name = format!(r"\\.\pipe\ob-e2-open-{}-{index}", std::process::id());
+        let wide = wide_null(OsStr::new(&name)).expect("probe pipe name");
+        // SAFETY: the name buffer outlives the call, and a null security descriptor is the
+        // documented way to request the default, which is exactly what Chromium relies on.
+        let handle = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
+                1,
+                PIPE_BUFFER_BYTES,
+                PIPE_BUFFER_BYTES,
+                5_000,
+                std::ptr::null(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+            return (
+                false,
+                false,
+                io::Error::last_os_error().raw_os_error().unwrap_or(-1),
+            );
+        }
+        let opened = OpenOptions::new().read(true).write(write).open(&name);
+        // SAFETY: this scope owns the only reference to the newly created pipe instance.
+        unsafe { CloseHandle(handle) };
+        match opened {
+            Ok(file) => {
+                drop(file);
+                (true, true, 0)
+            }
+            Err(error) => (true, false, error.raw_os_error().unwrap_or(-1)),
+        }
+    }
+
+    fn nul_open(write: bool) -> (bool, i32) {
+        match OpenOptions::new().read(true).write(write).open("NUL") {
+            Ok(file) => {
+                drop(file);
+                (true, 0)
+            }
+            Err(error) => (false, error.raw_os_error().unwrap_or(-1)),
+        }
+    }
+
+    /// Test-only positive control that runs the same probe child with the ordinary process token
+    /// and an equally closed environment. No parent environment or output capture is inherited.
+    fn run_unrestricted_child(policy: &SpawnPolicy) -> std::process::ExitStatus {
+        let mut child = std::process::Command::new(&policy.executable)
+            .args(KERNEL_OPEN_PROBE_ARGS)
+            .current_dir(&policy.working_directory)
+            .env_clear()
+            .env(
+                "SystemRoot",
+                std::env::var_os("SystemRoot").expect("SystemRoot"),
+            )
+            .env("USERPROFILE", &policy.profile_directory)
+            .env("TEMP", &policy.temp_directory)
+            .env("TMP", &policy.temp_directory)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("unrestricted control spawn");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return status,
+                Ok(None) if Instant::now() < deadline => {}
+                result => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("unrestricted control failed to finish: {result:?}");
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// `cmd.exe` parses its own raw command line, and `encode_command_line` leaves a separator-only
     /// argv[0] unquoted because `CommandLineToArgvW` consumers such as the Engine executable want
     /// it that way. A `System32/cmd.exe` built with a forward slash therefore reaches the shell as

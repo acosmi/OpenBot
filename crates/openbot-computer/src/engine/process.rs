@@ -1433,7 +1433,7 @@ fn spawn_engine(
     }
     let policy = SpawnPolicy::new(
         executable,
-        engine_args(profile_dir, temp_dir),
+        windows_engine_args(profile_dir, temp_dir),
         bundle_root,
         profile_dir,
         temp_dir,
@@ -1645,6 +1645,32 @@ fn engine_args(profile_dir: &Path, temp_dir: &Path) -> Vec<OsString> {
     .into_iter()
     .map(OsString::from)
     .collect()
+}
+
+/// Windows-only Engine arguments: the shared set plus one compatibility switch.
+///
+/// Electron 43.3.0 `NodeBindings::Initialize` aborts startup unless
+/// `platform_util::IsNulDeviceEnabled` can `_open("nul", _O_RDWR)`. The R127 token carries the
+/// single `Restricted Code` restricting SID, and `CreateRestrictedToken(WRITE_RESTRICTED)` applies
+/// restricting SIDs to write access only, so the host `NUL` device — whose DACL does not name that
+/// SID — answers read opens but denies every write open with `ERROR_ACCESS_DENIED`. That exact
+/// asymmetry is pinned by the paired probe in `openbot-windows-sandbox`, so the fail-fast check can
+/// never pass for a confined Engine.
+///
+/// `--no-stdio-init` sets only `node::ProcessInitializationFlags::kNoStdioInitialization`, whose
+/// Windows effect is (1) skipping that probe, (2) skipping the fd 0-2 repair loop that opens `nul`
+/// solely when a standard handle is absent or `FILE_TYPE_UNKNOWN`, and (3) skipping
+/// `atexit(ResetStdio)`, whose Windows body is `uv_tty_reset_mode()`. `spawn_restricted` always
+/// supplies exactly three valid handles through `STARTF_USESTDHANDLES` — the boot-capability pipe
+/// plus two parent-opened NUL handles — and never attaches a console, so all three are no-ops here
+/// and the stdin boot protocol is unchanged. Electron copies this switch to its own renderer and
+/// utility children, so the confinement, the Job, the directory ACLs and the protocol all stay as
+/// R127/R199 left them.
+#[cfg(windows)]
+fn windows_engine_args(profile_dir: &Path, temp_dir: &Path) -> Vec<OsString> {
+    let mut args = engine_args(profile_dir, temp_dir);
+    args.push(OsString::from("--no-stdio-init"));
+    args
 }
 
 #[cfg(target_os = "macos")]
@@ -2071,6 +2097,19 @@ mod tests {
         let result = EngineBundle::open(&root, EngineBundleDigest([0; 32]));
         assert!(matches!(result, Err(EngineProcessError::BundleDigest)));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_engine_args_append_only_the_no_stdio_init_switch() {
+        let profile = std::path::Path::new(r"C:\profile");
+        let temp = std::path::Path::new(r"C:\temp");
+        let shared = super::engine_args(profile, temp);
+        let windows = super::windows_engine_args(profile, temp);
+        assert!(!shared.iter().any(|arg| arg == "--no-stdio-init"));
+        assert_eq!(windows.len(), shared.len() + 1);
+        assert_eq!(windows[..shared.len()], shared[..]);
+        assert_eq!(windows.last().expect("switch"), "--no-stdio-init");
     }
 
     #[cfg(target_os = "macos")]
